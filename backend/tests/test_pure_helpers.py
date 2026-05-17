@@ -23,7 +23,7 @@ if BACKEND_DIR not in sys.path:
 # 1. services/calibration.py
 # ─────────────────────────────────────────────────────────────────────────────
 
-from services.calibration import _blend, apply_calibration, load_calibration
+from services.calibration import _blend, apply_calibration, load_calibration, _MAX_BLEND, _N_FULL
 
 
 class TestBlend:
@@ -39,17 +39,19 @@ class TestBlend:
         assert _blend(3) > 0.0
 
     def test_at_n_full_returns_max_blend(self):
-        """_N_FULL (20) samples → blend == _MAX_BLEND (0.90)."""
-        assert _blend(20) == 0.90
+        """_N_FULL samples → blend == _MAX_BLEND."""
+        assert _blend(_N_FULL) == pytest.approx(_MAX_BLEND)
 
     def test_above_n_full_capped_at_max_blend(self):
-        """More than 20 samples → blend capped at 0.90."""
-        assert _blend(100) == 0.90
-        assert _blend(1000) == 0.90
+        """More than _N_FULL samples → blend capped at _MAX_BLEND."""
+        assert _blend(_N_FULL * 5)  == pytest.approx(_MAX_BLEND)
+        assert _blend(1000)          == pytest.approx(_MAX_BLEND)
 
     def test_intermediate_blend_value(self):
-        """10 samples → blend = min(0.90, 10/20) = 0.50."""
-        assert _blend(10) == pytest.approx(0.50)
+        """Half of _N_FULL samples → blend = min(_MAX_BLEND, 0.5)."""
+        half = _N_FULL // 2
+        expected = min(_MAX_BLEND, half / _N_FULL)
+        assert _blend(half) == pytest.approx(expected)
 
     def test_monotonic_increase(self):
         """Blend increases with n up to max."""

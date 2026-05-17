@@ -168,13 +168,18 @@ async def resolve_outcomes() -> int:
             age = _age_days(sig)
             changed = False
 
+            # Skip calendar fills for signals already closed at a hard exit price.
+            # A stop or target exit locks outcome_pct at the exit level; overwriting
+            # with a 7-day mark-to-market would produce phantom wins/losses.
+            already_closed = sig.exit_type in ("stop", "target")
+
             if age >= 1 and sig.outcome_1d is None:
                 sig.outcome_1d = _pct(current, sig.entry, sig.action)
                 changed = True
             if age >= 3 and sig.outcome_3d is None:
                 sig.outcome_3d = _pct(current, sig.entry, sig.action)
                 changed = True
-            if age >= 7 and sig.outcome_pct is None:
+            if age >= 7 and sig.outcome_pct is None and not already_closed:
                 sig.outcome_pct = _pct(current, sig.entry, sig.action)
                 sig.outcome_at  = datetime.utcnow()
                 changed = True
@@ -295,11 +300,25 @@ async def resolve_mae_mfe() -> int:
 
                 sig_db = (await db.execute(select(Signal).where(Signal.id == sig.id))).scalar_one_or_none()
                 if sig_db:
-                    sig_db.mae       = round(worst_pct, 2)
-                    sig_db.mfe       = round(best_pct,  2)
-                    sig_db.hit_stop  = _hit_stop
+                    sig_db.mae        = round(worst_pct, 2)
+                    sig_db.mfe        = round(best_pct,  2)
+                    sig_db.hit_stop   = _hit_stop
                     sig_db.hit_target = _hit_target
-                    sig_db.exit_type = exit_type
+                    sig_db.exit_type  = exit_type
+
+                    # Lock outcome_pct at the exit level for stop/target hits so the
+                    # nightly calendar fill (resolve_outcomes) cannot overwrite it with
+                    # a 7-day mark-to-market price. This eliminates phantom wins where
+                    # price dips through the stop and recovers before the 7d measurement.
+                    if exit_type == "stop" and sig_db.outcome_pct is None and sig.stop and entry > 0:
+                        raw = (sig.stop - entry) / entry * 100
+                        sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
+                        sig_db.outcome_at  = datetime.utcnow()
+                    elif exit_type == "target" and sig_db.outcome_pct is None and sig.target and entry > 0:
+                        raw = (sig.target - entry) / entry * 100
+                        sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
+                        sig_db.outcome_at  = datetime.utcnow()
+
                     updated += 1
 
         await db.commit()

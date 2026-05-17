@@ -161,8 +161,10 @@ def risk_metrics(returns: list[float], date_range_days: int = 18) -> dict:
     # Sortino — semi-deviation: RMS of negative returns measured from target (0%)
     # Padding with zeros and calling _std() is wrong: _std() shifts the mean,
     # measuring deviations from a skewed average instead of from the target return.
+    # Divisor is n (full sample), not n-1: we measure against a fixed target (0%),
+    # so no parameter is being estimated — no degree-of-freedom correction needed.
     downside_sum_sq = sum(r ** 2 for r in returns if r < 0)
-    sigma_d = math.sqrt(downside_sum_sq / (n - 1)) if n > 1 else 0.0
+    sigma_d = math.sqrt(downside_sum_sq / n) if n > 0 else 0.0
     sortino  = (mu / sigma_d * ann) if sigma_d > 0 else float("nan")
 
     # Max drawdown (5% position sizing)
@@ -298,7 +300,7 @@ def print_table(header: list[str], rows: list[list[str]]) -> None:
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def analyze_db() -> None:
+async def analyze_db(snapshot_tag: str | None = None) -> None:
     db_gen = get_db()
     db     = await anext(db_gen)
     try:
@@ -331,9 +333,10 @@ async def analyze_db() -> None:
         conf_map    = defaultdict(list)
         exit_map    = defaultdict(list)
         month_map   = defaultdict(list)
-        mae_vals    = []
-        mfe_vals    = []
-        stop_dist_vals = []   # distance from entry to stop (%)
+        mae_vals        = []
+        mfe_vals        = []
+        stop_dist_vals  = []   # distance from entry to stop (%)
+        pct_above_1r_vals = []  # per-trade bool: did outcome exceed 1R?
         hit_stop_count = hit_target_count = 0
         stop_enforced_losses = 0   # trades where hit_stop=True but outcome_pct > 0 (phantom wins)
 
@@ -383,12 +386,13 @@ async def analyze_db() -> None:
                         stop_enforced_losses += 1
                 if r.hit_target:
                     hit_target_count += 1
-                # Stop distance — used to compute Capture Ratio
+                # Stop distance + 1R tracker — computed together to guarantee alignment
                 if r.entry and r.stop and r.entry > 0 and r.stop > 0:
                     try:
                         sd = abs(float(r.entry) - float(r.stop)) / float(r.entry) * 100
                         if sd > 0:
                             stop_dist_vals.append(sd)
+                            pct_above_1r_vals.append(ret / sd > 1.0)
                     except Exception:
                         pass
             except Exception as _row_err:
@@ -656,15 +660,13 @@ async def analyze_db() -> None:
         if stop_dist_vals:
             avg_stop_dist = _mean(stop_dist_vals)
             capture = gm["avg"] / avg_stop_dist if avg_stop_dist > 0 else float("nan")
-            pct_above_1r = sum(1 for s, r in zip(stop_dist_vals, [
-                r.outcome_pct for r in rows
-                if r.entry and r.stop and r.entry > 0 and r.stop > 0 and r.outcome_pct is not None
-            ]) if s > 0 and r / s > 1.0) / len(stop_dist_vals) * 100 if stop_dist_vals else 0.0
+            pct_above_1r = (sum(pct_above_1r_vals) / len(pct_above_1r_vals) * 100) if pct_above_1r_vals else 0.0
             print(f"- **Avg Stop Distance:** {avg_stop_dist:.2f}% (wide ATR stops give room but reduce capture)")
             pct_captured = capture * 100 if capture == capture else 0.0
             print(f"- **Capture Ratio:** {capture:.2f}× — avg_return / avg_stop_distance "
                   f"({pct_captured:.0f}% of risked distance captured on average; "
                   f"distinct from Payoff Ratio which measures win vs loss magnitude)")
+            print(f"- **% Trades > 1R:** {pct_above_1r:.1f}%")
 
         # ── 15. Return distribution quartiles ──────────────────────────────────
         print("\n## 14. Return Distribution\n")
@@ -685,10 +687,209 @@ async def analyze_db() -> None:
             ]
         )
 
+        # ── Snapshot write (only when --snapshot flag provided) ────────────────
+        if snapshot_tag:
+            avg_mae  = _mean(mae_vals)  if mae_vals  else None
+            avg_mfe  = _mean(mfe_vals)  if mfe_vals  else None
+            avg_sd   = _mean(stop_dist_vals) if stop_dist_vals else None
+            capture  = (gm["avg"] / avg_sd) if avg_sd else None
+
+            snap = {
+                "coverage": {
+                    "from": earliest.strftime("%Y-%m-%d") if earliest else None,
+                    "to":   latest.strftime("%Y-%m-%d")   if latest   else None,
+                    "days": date_range_days,
+                },
+                "returns": {
+                    "n_trades":  gm["count"],
+                    "win_rate":  round(gm["wr"],  2),
+                    "avg":       round(gm["avg"],  3),
+                    "avg_win":   round(gm["avg_win"],  3),
+                    "avg_loss":  round(gm["avg_loss"], 3),
+                    "payoff":    round(rm.get("payoff", 0) or 0, 3),
+                    "pf":        round(gm["pf"], 3) if gm["pf"] != float("inf") else None,
+                    "expectancy":round(gm["expectancy"], 3),
+                    "kelly":     round(gm["kelly"], 2),
+                },
+                "risk": {
+                    "sharpe":   round(rm.get("sharpe",  0) or 0, 3),
+                    "sortino":  round(rm.get("sortino", 0) or 0, 3),
+                    "calmar":   round(rm.get("calmar",  0) or 0, 3),
+                    "omega":    round(rm.get("omega",   0) or 0, 3),
+                    "max_dd":   round(rm.get("max_dd",  0) or 0, 3),
+                    "recovery": round(rm.get("recovery",0) or 0, 3),
+                    "ulcer":    round(rm.get("ulcer",   0) or 0, 3),
+                },
+                "tail": {
+                    "var_95":  round(rm.get("var_95",  0) or 0, 3),
+                    "var_99":  round(rm.get("var_99",  0) or 0, 3),
+                    "cvar_95": round(rm.get("cvar_95", 0) or 0, 3),
+                    "cvar_99": round(rm.get("cvar_99", 0) or 0, 3),
+                    "sigma":   round(rm.get("sigma",   0) or 0, 3),
+                },
+                "distribution": {
+                    "skew":            round(rm.get("skew", 0) or 0, 4),
+                    "kurt":            round(rm.get("kurt", 0) or 0, 4),
+                    "t_stat":          round(rm.get("t_stat",  0) or 0, 3),
+                    "p_value":         round(rm.get("p_value", 1) or 1, 6),
+                    "brier":           round(bs, 4) if bs == bs else None,
+                    "max_win_streak":  rm.get("max_win_streak",  0),
+                    "max_loss_streak": rm.get("max_loss_streak", 0),
+                },
+                "trade_path": {
+                    "hit_target_count": hit_target_count,
+                    "hit_stop_count":   hit_stop_count,
+                    "hit_target_pct":   round(hit_target_count / n * 100, 2) if n else 0,
+                    "hit_stop_pct":     round(hit_stop_count   / n * 100, 2) if n else 0,
+                    "phantom_wins":     phantom,
+                    "stop_enforced_wr": round(stop_enforced_wr, 2),
+                    "avg_mae":          round(avg_mae, 3) if avg_mae is not None else None,
+                    "avg_mfe":          round(avg_mfe, 3) if avg_mfe is not None else None,
+                    "mfe_mae_ratio":    round(avg_mfe / abs(avg_mae), 3)
+                                        if avg_mae and avg_mfe else None,
+                    "avg_stop_dist":    round(avg_sd,  3) if avg_sd  is not None else None,
+                    "capture_ratio":    round(capture, 3) if capture is not None else None,
+                    "pct_above_1r":     round((sum(pct_above_1r_vals) / len(pct_above_1r_vals) * 100)
+                                              if pct_above_1r_vals else 0.0, 2),
+                },
+                "by_style": {
+                    style: {
+                        "n": calc_metrics(rets)["count"],
+                        "win_rate": round(calc_metrics(rets)["wr"], 2),
+                        "avg": round(calc_metrics(rets)["avg"], 3),
+                        "sharpe": round(risk_metrics(rets, date_range_days).get("sharpe", 0) or 0, 3),
+                    }
+                    for style, rets in style_map.items()
+                },
+                "by_action": {
+                    action: {
+                        "n": calc_metrics(rets)["count"],
+                        "win_rate": round(calc_metrics(rets)["wr"], 2),
+                        "avg": round(calc_metrics(rets)["avg"], 3),
+                    }
+                    for action, rets in action_map.items()
+                },
+                "by_exit": {
+                    et: {
+                        "n": calc_metrics(rets)["count"],
+                        "win_rate": round(calc_metrics(rets)["wr"], 2),
+                        "avg": round(calc_metrics(rets)["avg"], 3),
+                    }
+                    for et, rets in exit_map.items()
+                },
+                "by_month": {
+                    month: {
+                        "n": calc_metrics(rets)["count"],
+                        "win_rate": round(calc_metrics(rets)["wr"], 2),
+                        "avg": round(calc_metrics(rets)["avg"], 3),
+                        "sharpe": round(risk_metrics(rets, 21).get("sharpe", 0) or 0, 3),
+                    }
+                    for month, rets in sorted(month_map.items())
+                },
+                "by_sector": {
+                    sector: {
+                        "n": calc_metrics(rets)["count"],
+                        "win_rate": round(calc_metrics(rets)["wr"], 2),
+                        "avg": round(calc_metrics(rets)["avg"], 3),
+                    }
+                    for sector, rets in sector_map.items()
+                },
+            }
+            await _save_snapshot(snapshot_tag, snap, gm)
+            print(f"\n✓ Snapshot saved: tag='{snapshot_tag}' · {gm['count']} trades")
+
     except Exception as analysis_err:
         print(f"[error] Analysis failed: {analysis_err}")
         raise
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Snapshot persistence
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _save_snapshot(tag: str, metrics: dict, gm: dict) -> None:
+    """Write a performance snapshot to the performance_snapshots table."""
+    import subprocess
+    from database import AsyncSessionLocal
+    from models import PerformanceSnapshot
+
+    git_sha = None
+    try:
+        git_sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        pass
+
+    from sqlalchemy import delete as _delete
+    async with AsyncSessionLocal() as db:
+        # Delete any existing row with this tag so re-runs during tuning
+        # produce a clean update rather than duplicate rows.
+        await db.execute(_delete(PerformanceSnapshot).where(PerformanceSnapshot.tag == tag))
+        snap = PerformanceSnapshot(
+            tag       = tag,
+            git_sha   = git_sha,
+            metrics   = metrics,
+            n_trades  = gm["count"],
+            win_rate  = round(gm["wr"], 2),
+            sharpe    = round(metrics.get("risk", {}).get("sharpe", 0) or 0, 3),
+        )
+        db.add(snap)
+        await db.commit()
+
+
+def diff_snapshots(a: dict, b: dict) -> dict:
+    """
+    Compute the delta between two snapshot metrics dicts.
+
+    Returns a dict with the same structure but values replaced by
+    {before, after, delta, delta_pct, flag} where flag is True when the
+    change exceeds a significance threshold (5% relative or 2pp absolute).
+    Only compares numeric scalar fields; nested dicts are recursed.
+    """
+    THRESHOLDS = {
+        "win_rate": 2.0,    "avg": 0.5,    "sharpe": 0.3,
+        "sortino":  1.0,    "max_dd": 0.5, "var_95": 0.5,
+        "brier":    0.02,   "pf": 0.2,     "stop_enforced_wr": 2.0,
+        "phantom_wins": 5,
+    }
+
+    def _diff_val(key, va, vb):
+        if not isinstance(va, (int, float)) or not isinstance(vb, (int, float)):
+            return {"before": va, "after": vb}
+        delta = round(vb - va, 4)
+        delta_pct = round(delta / abs(va) * 100, 2) if va != 0 else None
+        threshold = THRESHOLDS.get(key, None)
+        flag = (abs(delta) >= threshold) if threshold else (abs(delta_pct or 0) >= 5)
+        return {"before": va, "after": vb, "delta": delta,
+                "delta_pct": delta_pct, "flag": flag}
+
+    def _diff_dict(da, db_):
+        result = {}
+        all_keys = set(da) | set(db_)
+        for k in all_keys:
+            va, vb = da.get(k), db_.get(k)
+            if isinstance(va, dict) and isinstance(vb, dict):
+                result[k] = _diff_dict(va, vb)
+            else:
+                result[k] = _diff_val(k, va, vb)
+        return result
+
+    return _diff_dict(a, b)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
-    asyncio.run(analyze_db())
+    import argparse
+    parser = argparse.ArgumentParser(description="Signal.Trade performance analytics")
+    parser.add_argument(
+        "--snapshot", metavar="TAG", default=None,
+        help="Save a named snapshot to the DB after printing (e.g. 'v3-sector-gates')",
+    )
+    args = parser.parse_args()
+    asyncio.run(analyze_db(snapshot_tag=args.snapshot))

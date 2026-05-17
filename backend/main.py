@@ -491,6 +491,15 @@ async def _run_weekly_digest():
         except Exception as e_email:
             log.warning(f"[digest] email digest error: {e_email}")
 
+        # ── Auto performance snapshot (weekly baseline) ───────────────────────
+        try:
+            from scripts.calc_tbd_metrics import analyze_db as _metrics_analyze
+            week_label = datetime.now(ET).strftime("weekly-%Y-%m-%d")
+            await _metrics_analyze(snapshot_tag=week_label)
+            log.info(f"[digest] performance snapshot saved: {week_label}")
+        except Exception as e_snap:
+            log.warning(f"[digest] snapshot failed (non-critical): {e_snap}")
+
     except Exception as e:
         print(f"[digest] error: {e}")
 

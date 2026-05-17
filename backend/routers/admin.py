@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from database import get_db
-from models import Signal, SignalDelivery, User
+from models import Signal, SignalDelivery, User, PerformanceSnapshot
 from services.auth_svc import get_current_user
 
 log = logging.getLogger("signal.trade.admin")
@@ -397,3 +397,114 @@ async def delivery_sla(
         "sla_breaches_24h": sla_breaches_24h,
         "total_sent_24h":   total_sent_24h,
     }
+
+
+# ── Performance Snapshots ─────────────────────────────────────────────────────
+
+@router.get("/snapshots")
+async def list_snapshots(
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    owner: User = Depends(_require_owner),
+):
+    """Return the most recent N performance snapshots (summary fields only)."""
+    rows = (await db.execute(
+        select(PerformanceSnapshot)
+        .order_by(PerformanceSnapshot.created_at.desc())
+        .limit(limit)
+    )).scalars().all()
+    return [
+        {
+            "id":         r.id,
+            "tag":        r.tag,
+            "git_sha":    r.git_sha,
+            "n_trades":   r.n_trades,
+            "win_rate":   r.win_rate,
+            "sharpe":     r.sharpe,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/snapshots/{snapshot_id}")
+async def get_snapshot(
+    snapshot_id: int,
+    db: AsyncSession = Depends(get_db),
+    owner: User = Depends(_require_owner),
+):
+    """Return the full metrics dict for one snapshot."""
+    row = (await db.execute(
+        select(PerformanceSnapshot).where(PerformanceSnapshot.id == snapshot_id)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, f"Snapshot {snapshot_id} not found")
+    return {
+        "id":         row.id,
+        "tag":        row.tag,
+        "git_sha":    row.git_sha,
+        "n_trades":   row.n_trades,
+        "win_rate":   row.win_rate,
+        "sharpe":     row.sharpe,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "metrics":    row.metrics,
+    }
+
+
+@router.get("/snapshots/diff/{id_a}/{id_b}")
+async def diff_snapshots_endpoint(
+    id_a: int,
+    id_b: int,
+    db: AsyncSession = Depends(get_db),
+    owner: User = Depends(_require_owner),
+):
+    """
+    Compute the metric delta between snapshot id_a (before) and id_b (after).
+
+    Each field in the response has: {before, after, delta, delta_pct, flag}
+    where flag=True marks changes exceeding significance thresholds.
+    """
+    from scripts.calc_tbd_metrics import diff_snapshots
+
+    rows = (await db.execute(
+        select(PerformanceSnapshot).where(
+            PerformanceSnapshot.id.in_([id_a, id_b])
+        )
+    )).scalars().all()
+
+    by_id = {r.id: r for r in rows}
+    if id_a not in by_id:
+        raise HTTPException(404, f"Snapshot {id_a} not found")
+    if id_b not in by_id:
+        raise HTTPException(404, f"Snapshot {id_b} not found")
+
+    a, b = by_id[id_a], by_id[id_b]
+    delta = diff_snapshots(a.metrics, b.metrics)
+
+    flagged = _find_flagged(delta)
+
+    return {
+        "before": {"id": a.id, "tag": a.tag, "created_at": a.created_at.isoformat() if a.created_at else None},
+        "after":  {"id": b.id, "tag": b.tag, "created_at": b.created_at.isoformat() if b.created_at else None},
+        "delta":  delta,
+        "flagged_metrics": flagged,
+    }
+
+
+def _find_flagged(d: dict, prefix: str = "") -> list[dict]:
+    """Recursively collect fields where flag=True."""
+    flagged = []
+    for k, v in d.items():
+        path = f"{prefix}.{k}" if prefix else k
+        if isinstance(v, dict):
+            if v.get("flag"):
+                flagged.append({
+                    "metric": path,
+                    "before": v.get("before"),
+                    "after":  v.get("after"),
+                    "delta":  v.get("delta"),
+                    "delta_pct": v.get("delta_pct"),
+                })
+            else:
+                flagged.extend(_find_flagged(v, path))
+    return flagged

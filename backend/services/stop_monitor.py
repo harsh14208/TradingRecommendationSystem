@@ -124,15 +124,20 @@ async def check_stop_targets_and_notify():
             if not hit_stop and not hit_target:
                 continue
 
-            # Compute return from entry
+            event = "target" if hit_target else "stop"
+            level = target   if hit_target else stop
+
+            # Compute return at the exit level (stop or target price), not at `current`.
+            # Using the level price ensures outcome_pct reflects what you'd receive if
+            # filled at the order level, not at a potentially worse slippage price.
+            # For a stop hit: level == stop < entry (BUY) → negative return (real loss).
+            # Always overwrite outcome_pct — do NOT use `or` to preserve an earlier
+            # calendar value. A closed position's P&L is locked at exit price, not 7d mark.
             if entry and entry > 0:
-                raw_ret = (current - entry) / entry * 100
+                raw_ret = (level - entry) / entry * 100
                 ret_pct = round(raw_ret if is_buy else -raw_ret, 2)
             else:
                 ret_pct = 0.0
-
-            event = "target" if hit_target else "stop"
-            level = target   if hit_target else stop
 
             # Update DB
             sig_db = (await db.execute(
@@ -144,8 +149,8 @@ async def check_stop_targets_and_notify():
             sig_db.hit_stop    = hit_stop
             sig_db.hit_target  = hit_target
             sig_db.exit_type   = event
-            sig_db.is_active   = False       # deactivate: signal has resolved
-            sig_db.outcome_pct = sig_db.outcome_pct or ret_pct  # fill if blank
+            sig_db.is_active   = False   # position closed — deactivate signal
+            sig_db.outcome_pct = ret_pct  # always lock to exit-level return
             updated += 1
 
             # Fire Telegram notification (async, non-blocking)

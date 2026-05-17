@@ -24,8 +24,8 @@ _DATA_DIR  = Path(__file__).parent.parent / "data"
 _CAL_FILE  = _DATA_DIR / "calibration.json"
 _BIN_SIZE  = 5          # pp width of each confidence bin
 _MIN_N     = 3          # minimum samples before blending activates
-_MAX_BLEND = 0.90       # trust empirical data up to 90% (tightened from 80%)
-_N_FULL    = 20         # samples at which blend reaches MAX_BLEND (lowered from 30)
+_MAX_BLEND = 0.97       # empirical win rate dominates at 97% — top bands are 30pp overconfident
+_N_FULL    = 15         # reach MAX_BLEND with 15 samples (faster given 529-trade dataset)
 
 
 def _blend(n: int) -> float:

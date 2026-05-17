@@ -166,3 +166,21 @@ class PushSubscription(Base):
     p256dh = Column(String(100), nullable=False)
     auth = Column(String(100), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class PerformanceSnapshot(Base):
+    """Immutable point-in-time record of system performance metrics.
+
+    Written by calc_tbd_metrics.py --snapshot <tag> and automatically
+    after each Sunday weekly digest. Used to track model improvements
+    and detect regressions across releases.
+    """
+    __tablename__ = "performance_snapshots"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    tag        = Column(String(120), nullable=False, index=True)   # e.g. "v2-wider-atr-stops"
+    git_sha    = Column(String(40),  nullable=True)                # HEAD at time of snapshot
+    metrics    = Column(JSON,        nullable=False)               # full metrics dict
+    n_trades   = Column(Integer,     nullable=False)               # quick filter without JSON parse
+    win_rate   = Column(Float,       nullable=True)                # quick filter
+    sharpe     = Column(Float,       nullable=True)                # quick filter
+    created_at = Column(DateTime,    server_default=func.now())

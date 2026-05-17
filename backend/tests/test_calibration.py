@@ -6,19 +6,19 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from services.calibration import _blend, apply_calibration
+from services.calibration import _blend, apply_calibration, _MAX_BLEND, _N_FULL
 
 
 def test_blend():
     # Under minimum requirements returns 0
     assert _blend(2) == 0.0
 
-    # Reaches 50% blend at 10 items (min(0.90, 10/20) = 0.50), N_FULL=20, MAX_BLEND=0.90
-    assert _blend(10) == pytest.approx(0.50)
+    # At _N_FULL samples reaches _MAX_BLEND
+    assert _blend(_N_FULL) == pytest.approx(_MAX_BLEND)
 
-    # Caps at 90% weight regardless of high numbers
-    assert _blend(20) == 0.90
-    assert _blend(50) == 0.90
+    # Caps at _MAX_BLEND regardless of higher counts
+    assert _blend(_N_FULL * 2) == pytest.approx(_MAX_BLEND)
+    assert _blend(1000)        == pytest.approx(_MAX_BLEND)
 
 def test_apply_calibration():
     cal_map = {
