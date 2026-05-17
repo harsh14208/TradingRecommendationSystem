@@ -5,8 +5,10 @@ def format_signal(signal: dict) -> str:
     emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(signal["action"], "⚪")
     conf  = f"{signal['confidence']:.0f}%"
     rr    = signal.get("rr", "—")
+    company = signal.get("company", "")
+    name_part = f" ({company})" if company and company != signal["ticker"] else ""
     lines = [
-        f"{emoji} *{signal['action']} {signal['ticker']}* · ${signal['price']:.2f} · {conf} conf · R:R {rr}",
+        f"{emoji} *{signal['action']} {signal['ticker']}*{name_part} · ${signal['price']:.2f} · {conf} conf · R:R {rr}",
         f"_{signal['headline']}_",
     ]
     if signal.get("entry") and signal.get("stop") and signal.get("target"):

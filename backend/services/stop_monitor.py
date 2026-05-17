@@ -53,18 +53,21 @@ async def _send_stop_target_notification(ticker: str, action: str, event: str,
     try:
         from config import get_settings
         from services.telegram_svc import send_telegram_message
+        from services.market_data import COMPANY_NAMES
         settings = get_settings()
         emoji = "✅" if event == "target" else "⛔"
         color_word = "TARGET HIT" if event == "target" else "STOP HIT"
         sign = "+" if ret_pct >= 0 else ""
+        company = COMPANY_NAMES.get(ticker, "")
+        name_part = f" ({company})" if company and company != ticker else ""
         msg = (
-            f"{emoji} <b>{color_word}: {action} {ticker}</b>\n"
+            f"{emoji} <b>{color_word}: {action} {ticker}{name_part}</b>\n"
             f"Price: <b>${price:.2f}</b> → {'above' if event == 'target' else 'below'} "
             f"{'target' if event == 'target' else 'stop'} ${level:.2f}\n"
             f"Return: <b>{sign}{ret_pct:.2f}%</b>\n"
             f"Signal #{signal_id} closed."
         )
-        await send_telegram_message(settings, msg)
+        await send_telegram_message(settings.telegram_chat_id, msg, parse_mode="HTML")
     except Exception as e:
         log.warning(f"[stop_monitor] notification error: {e}")
 
