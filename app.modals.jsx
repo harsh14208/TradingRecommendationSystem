@@ -122,7 +122,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
 
   return (
     <div style={{ position:"fixed", inset:0, zIndex:9998, background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }} onClick={onClose}>
-      <div style={{ width:380, height:"100vh", background:"var(--bg-1)", borderLeft:"1px solid var(--line)", padding:"24px 28px", overflowY:"auto", display:"flex", flexDirection:"column", gap:0 }} onClick={e => e.stopPropagation()}>
+      <div className="account-drawer" style={{ width:"min(380px, 92vw)", height:"100vh", background:"var(--bg-1)", borderLeft:"1px solid var(--line)", padding:"24px 28px", overflowY:"auto", display:"flex", flexDirection:"column", gap:0 }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:24 }}>
           <div style={{ fontWeight:700, fontSize:16 }}>Account</div>
           <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--text-faint)", fontSize:20 }}>×</button>
@@ -536,7 +536,9 @@ function PriceAlertModal({ open, onClose, ticker, currentPrice }) {
 /* ─── Watchlist overlay ─────────────────────────────────────────────────────── */
 const TICKER_RE = /^[A-Z]{1,5}$/;
 
-function WatchlistView({ open, onClose }) {
+// quotes = tickerTape array from app.jsx ({ticker, price, change, changePct})
+// histSignals = resolved sent signals array from app.jsx (for last outcome display)
+function WatchlistView({ open, onClose, quotes, histSignals }) {
   const [tickers, setTickers] = useState([]);
   const [input,   setInput]   = useState("");
   const [loading, setLoading] = useState(false);
@@ -578,6 +580,24 @@ function WatchlistView({ open, onClose }) {
     if (sortMode === "za") return [...tickers].sort((a,b) => b.ticker.localeCompare(a.ticker));
     return [...tickers].sort((a,b) => (a._idx ?? 0) - (b._idx ?? 0));
   }, [tickers, sortMode]);
+
+  // Precompute quote and last-outcome lookups so each row doesn't filter arrays
+  const quoteMap = useMemo(() => {
+    const m = {};
+    for (const q of (quotes || [])) m[q.ticker] = q;
+    return m;
+  }, [quotes]);
+
+  const lastOutcomeMap = useMemo(() => {
+    const m = {};
+    for (const s of (histSignals || [])) {
+      if (s.outcomePct == null && s.outcome14d == null) continue;
+      const prev = m[s.ticker];
+      const ts = s.ts || s.created_at || "";
+      if (!prev || ts > (prev.ts || "")) m[s.ticker] = s;
+    }
+    return m;
+  }, [histSignals]);
 
   const SORT_LABELS = { added:"Added ↓", az:"A → Z", za:"Z → A" };
   const cycleSortMode = () => setSortMode(m => m === "added" ? "az" : m === "az" ? "za" : "added");
@@ -636,32 +656,50 @@ function WatchlistView({ open, onClose }) {
                 Sort: {SORT_LABELS[sortMode]}
               </button>
             </div>
-            {sorted.map((t, idx) => (
-              <div key={t.ticker} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px",
-                background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:8 }}>
-                <div style={{ width:28, textAlign:"center", fontFamily:"var(--font-mono)", fontSize:10,
-                  color:"var(--text-faint)", flexShrink:0 }}>
-                  {sortMode === "added" ? (idx + 1) : null}
-                </div>
-                <div style={{ width:36, height:36, borderRadius:8, background:"var(--bg-3)",
-                  display:"grid", placeItems:"center", fontFamily:"var(--font-mono)",
-                  fontWeight:700, fontSize:10, color:"var(--accent)", flexShrink:0 }}>
-                  {t.ticker.slice(0, 4)}
-                </div>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontFamily:"var(--font-mono)", fontWeight:600, fontSize:13 }}>{t.ticker}</div>
-                  {t.company && t.company !== t.ticker && (
-                    <div style={{ fontSize:11, color:"var(--text-faint)", marginTop:1 }}>{t.company}</div>
+            {sorted.map((t, idx) => {
+              const q    = quoteMap[t.ticker];
+              const last = lastOutcomeMap[t.ticker];
+              const ret  = last ? (last.outcome14d ?? last.outcomePct ?? null) : null;
+              const retColor = ret == null ? "var(--text-faint)" : ret > 0 ? "var(--up)" : "var(--down)";
+              const chgColor = q?.changePct == null ? "var(--text-faint)" : q.changePct >= 0 ? "var(--up)" : "var(--down)";
+              return (
+                <div key={t.ticker} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px",
+                  background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:8 }}>
+                  <div style={{ width:24, textAlign:"center", fontFamily:"var(--font-mono)", fontSize:10,
+                    color:"var(--text-faint)", flexShrink:0 }}>
+                    {sortMode === "added" ? (idx + 1) : null}
+                  </div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontFamily:"var(--font-mono)", fontWeight:700, fontSize:13 }}>{t.ticker}</div>
+                    {t.company && t.company !== t.ticker && (
+                      <div style={{ fontSize:10, color:"var(--text-faint)", marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.company}</div>
+                    )}
+                  </div>
+                  {/* Live price from quotes */}
+                  {q && (
+                    <div style={{ textAlign:"right", flexShrink:0 }}>
+                      <div className="wl-price">${q.price?.toFixed(2) ?? "—"}</div>
+                      <div className="wl-change" style={{ color:chgColor }}>
+                        {q.changePct != null ? `${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(2)}%` : ""}
+                      </div>
+                    </div>
                   )}
+                  {/* Last signal outcome */}
+                  {last && ret != null && (
+                    <div style={{ flexShrink:0, textAlign:"right" }} title={`Last ${last.action} → ${ret >= 0 ? "+" : ""}${ret.toFixed(2)}%`}>
+                      <span style={{ fontFamily:"var(--font-mono)", fontSize:10, fontWeight:700, color:retColor }}>
+                        {last.action} {ret >= 0 ? "+" : ""}{ret.toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                  <button onClick={() => remove(t.ticker)} style={{ background:"none", border:"none", cursor:"pointer",
+                    color:"var(--text-faint)", padding:"4px 6px", borderRadius:4, fontSize:11,
+                    fontFamily:"var(--font-mono)", flexShrink:0 }} title={`Remove ${t.ticker}`}>
+                    ✕
+                  </button>
                 </div>
-                <div style={{ width:8, height:8, borderRadius:"50%", background:"var(--up)", flexShrink:0 }} title="Being monitored"/>
-                <button onClick={() => remove(t.ticker)} style={{ background:"none", border:"none", cursor:"pointer",
-                  color:"var(--text-faint)", padding:"4px 6px", borderRadius:4, fontSize:11,
-                  fontFamily:"var(--font-mono)" }} title={`Remove ${t.ticker}`}>
-                  ✕
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

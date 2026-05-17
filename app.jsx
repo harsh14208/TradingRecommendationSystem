@@ -74,9 +74,11 @@ function App() {
   const [predictive,     setPredictive]     = useState(null);
   const [predLoading,    setPredLoading]    = useState(false);
   const [searchQuery,    setSearchQuery]    = useState("");
-  const [fullDetailOpen, setFullDetailOpen] = useState(false);
+  const [fullDetailOpen, setFullDetailOpen] = useState(false);  // kept for keyboard compat
+  const [detailTab,      setDetailTab]      = useState("why"); // why | position | simulate | similar
   const [chartPeriod,    setChartPeriod]    = useState("3M");
   const [compareVs,      setCompareVs]      = useState(null);
+  const btCacheRef = useRef(null);  // BacktestView 10-min result cache
   const [feedFilter,     setFeedFilter]     = useState("all");
   const [hkOpen,         setHkOpen]         = useState(false);
   const [tourOpen,       setTourOpen]       = useState(false);
@@ -259,6 +261,20 @@ function App() {
   const hiddenCount      = filteredSignals.length - visibleSignals.length;
 
   const active = signals.find(s => s.id === activeId) || filteredSignals[0] || signals[0];
+
+  // Precompute outcome lookup so OutcomeStrip never runs .filter on the full array.
+  // O(n) once on histSignals change; O(1) lookup per signal card render.
+  const outcomeByTicker = useMemo(() => {
+    const m = {};
+    for (const h of histSignals) {
+      if (h.outcomePct == null && h.outcome14d == null) continue;
+      (m[h.ticker] ??= []).push(h);
+    }
+    return m;
+  }, [histSignals]);
+
+  // Reset detail tab when active signal changes so each signal opens fresh at "Why".
+  useEffect(() => { setDetailTab("why"); }, [activeId]);
 
   /* Keyboard shortcuts: ⌘K, d, p, s, ?, Esc, ⌘\, 1-4 */
   useEffect(() => {
@@ -905,10 +921,10 @@ function App() {
                   expanded={s.id === expandedId}
                   onToggle={() => { setActiveId(s.id); setExpandedId(expandedId === s.id ? null : s.id); }}
                   onOpen={() => setActiveId(s.id)}
-                  onFullDetail={() => setFullDetailOpen(true)}
+                  onFullDetail={() => { setActiveId(s.id); setDetailTab("simulate"); }}
                   onSend={() => sendToTelegram(s.id)}
                   onSkip={() => skipSignal(s.id)}
-                  tickerHistory={histSignals}
+                  outcomeByTicker={outcomeByTicker}
                 />
                 {/* Full ad unit every 5 signals for free users */}
                 {(idx + 1) % 5 === 0 && <AdSlot user={currentUser}/>}
@@ -1050,8 +1066,24 @@ function App() {
                 )}
               </div>
 
-              {/* ── Position Size Calculator ── */}
-              {active.entry && active.stop && (
+              {/* ── Detail pane tab strip ── */}
+              <div className="detail-tabs">
+                {[["why","Why"],["position","Position"],["simulate","Simulate"],["similar","Similar"]].map(([id,lbl]) => (
+                  <button key={id} className={`detail-tab${detailTab===id?" active":""}`}
+                    onClick={() => setDetailTab(id)}>{lbl}</button>
+                ))}
+              </div>
+
+              {/* ── Tab: Why (rationale + predictive) ── */}
+              {detailTab === "why" && <>
+                <WhyNow signal={active}/>
+                {(predictive || active.confidence) && (
+                  <PredictiveIntervals signal={active} predictive={predictive}/>
+                )}
+              </>}
+
+              {/* ── Tab: Position (sizing calculator) ── */}
+              {detailTab === "position" && active.entry && active.stop && (
                 <PositionCalc signal={active} onPaperTrade={() => {
                   authFetch("/api/paper/orders", {
                     method:"POST",
@@ -1063,12 +1095,15 @@ function App() {
                 }}/>
               )}
 
-              {/* ── Why Now + Similar Setups ── */}
-              <WhyNow signal={active}/>
-              {(predictive || active.confidence) && (
-                <PredictiveIntervals signal={active} predictive={predictive}/>
+              {/* ── Tab: Simulate (Monte Carlo) ── */}
+              {detailTab === "simulate" && (
+                <SimulatedReturnsPanel signal={active} onClose={() => setDetailTab("why")}/>
               )}
-              <SimilarSignals signal={active} allSignals={histSignals}/>
+
+              {/* ── Tab: Similar setups ── */}
+              {detailTab === "similar" && (
+                <SimilarSignals signal={active} allSignals={histSignals}/>
+              )}
 
               {/* ── Probability of Success panel ── */}
               {(predLoading || predictive) && (
@@ -1349,27 +1384,42 @@ function App() {
           </div>
         )}
 
-        {/* Delivery pane — hidden when Simulated Returns is open */}
-        {fullDetailOpen && active
-          ? <SimulatedReturnsPanel signal={active} onClose={() => setFullDetailOpen(false)}/>
-          : <TelegramPane log={log} online={online} onOpenAccount={() => setAccountOpen(true)}/>
-        }
+        {/* Delivery pane — SimulatedReturnsPanel now lives in the detail tab strip;
+            this pane always shows the Telegram delivery log */}
+        <TelegramPane log={log} online={online} onOpenAccount={() => setAccountOpen(true)}/>
 
         {/* Overlays */}
-        <WatchlistView open={nav==="watchlist"} onClose={() => setNav("feed")}/>
+        <WatchlistView open={nav==="watchlist"} onClose={() => setNav("feed")}
+          quotes={tickerTape} histSignals={histSignals}/>
         <SourcesView open={nav==="sources"} onClose={() => setNav("feed")} sources={sources} toggle={toggleSource}/>
         <RulesView open={nav==="rules"} onClose={() => setNav("feed")} aggr={tweakState.aggressiveness} style={tweakState.style} days={tweakState.days} startTime={tweakState.startTime} endTime={tweakState.endTime} setTweak={setTweak} customConf={tweakState.customConf}/>
-        <MarketOverviewView open={nav==="overview"} onClose={() => setNav("feed")} online={online} />
-
-
+        <MarketOverviewView open={nav==="overview"} onClose={() => setNav("feed")} online={online}/>
         <SectorView open={nav==="sectors"} onClose={() => setNav("feed")}/>
         <CalendarView open={nav==="calendar"} onClose={() => setNav("feed")}/>
         <PaperView open={nav==="paper"} onClose={() => setNav("feed")} online={online}/>
         <HistoryView open={nav==="history"} onClose={() => setNav("feed")} online={online}/>
-        <BacktestView open={nav==="backtest"} onClose={() => setNav("feed")} online={online}/>
+        <BacktestView open={nav==="backtest"} onClose={() => setNav("feed")} online={online}
+          btCache={btCacheRef.current}
+          onBtCache={d => { btCacheRef.current = d; }}/>
         <PricingView open={pricingOpen} onClose={() => setPricingOpen(false)} user={currentUser}/>
         <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} user={currentUser} setUser={setCurrentUser} onUpgrade={() => { setAccountOpen(false); setPricingOpen(true); }}/>
         <PriceAlertModal open={alertOpen} onClose={() => setAlertOpen(false)} ticker={active?.ticker} currentPrice={active?.price}/>
+      </div>
+
+      {/* ── Mobile bottom navigation bar (hidden on desktop via CSS) ── */}
+      <div className="mobile-nav">
+        {[
+          ["feed","feed","Signal Feed"],
+          ["history","clock","History"],
+          ["backtest","bar-chart","Backtest"],
+          ["watchlist","eye","Watchlist"],
+          ["overview","globe","Market"],
+        ].map(([id, icon, label]) => (
+          <div key={id} className={`mobile-nav-item${nav===id?" active":""}`} onClick={() => setNav(id)}>
+            <Icon name={icon} size={18}/>
+            <span>{label}</span>
+          </div>
+        ))}
       </div>
 
       {/* ── Status bar ── */}

@@ -280,6 +280,10 @@ input, select, textarea { font: inherit; color: inherit; }
   transition: background 120ms;
   position: relative;
 }
+/* content-visibility lets the browser skip layout+paint for off-screen signal rows.
+   contain-intrinsic-size gives it a stable placeholder height so scroll doesn't jump.
+   This eliminates the need for full JS virtualization on feeds up to ~200 cards. */
+.signal { content-visibility: auto; contain-intrinsic-size: 0 72px; }
 .signal:hover { background: var(--bg-2); }
 .signal.active { background: var(--bg-3); }
 .signal.active::before {
@@ -619,6 +623,29 @@ input, select, textarea { font: inherit; color: inherit; }
 
 /* ── Hide mobile nav on desktop ─────────────────────────────────────────── */
 .mobile-nav { display: none; }
+
+/* ── Detail pane tab strip ──────────────────────────────────────────────── */
+.detail-tabs {
+  display: flex; gap: 0; border-bottom: 1px solid var(--line);
+  background: var(--bg-1); flex-shrink: 0;
+}
+.detail-tab {
+  padding: 9px 14px; font-size: 10px; font-family: var(--font-mono);
+  font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  background: none; border: none; cursor: pointer;
+  border-bottom: 2px solid transparent; color: var(--text-faint);
+  transition: color 120ms, border-color 120ms; margin-bottom: -1px;
+}
+.detail-tab:hover { color: var(--text); }
+.detail-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── AccountModal slide-in ──────────────────────────────────────────────── */
+@keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.account-drawer { animation: slideInRight 220ms cubic-bezier(0.22,1,0.36,1); }
+
+/* ── Watchlist ticker row price info ────────────────────────────────────── */
+.wl-price { font-family: var(--font-mono); font-size: 12px; font-weight: 700; text-align: right; }
+.wl-change { font-family: var(--font-mono); font-size: 10px; text-align: right; }
 
 /* ── Action subtitle (plain-language BUY/SELL/HOLD label) ──────────────── */
 .action-subtitle {

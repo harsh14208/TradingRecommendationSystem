@@ -184,10 +184,13 @@ function RulesView({ open, onClose, aggr, style, days, startTime, endTime, setTw
 }
 
 /* ─── Outcome Strip (last N resolved outcomes for a ticker) ─────────────────── */
-function OutcomeStrip({ ticker, history }) {
-  const resolved = (history || [])
-    .filter(h => h.ticker === ticker && h.outcomePct != null)
-    .slice(0, 10);
+// OutcomeStrip accepts a precomputed map (outcomeByTicker) instead of the full
+// history array to eliminate O(n*m) filter calls on every render.
+// Falls back to filtering a legacy `history` array if map is not provided.
+function OutcomeStrip({ ticker, outcomeByTicker, history }) {
+  const resolved = outcomeByTicker
+    ? (outcomeByTicker[ticker] || []).slice(0, 10)
+    : (history || []).filter(h => h.ticker === ticker && h.outcomePct != null).slice(0, 10);
   if (resolved.length === 0) return null;
   const wins = resolved.filter(h => h.outcomePct > 0).length;
   return (
@@ -380,7 +383,11 @@ function HistoryView({ open, onClose, online }) {
 }
 
 /* ─── Backtest overlay ──────────────────────────────────────────────────────── */
-function BacktestView({ open, onClose, online }) {
+// btCache / onBtCache: parent-supplied cache so results survive close/reopen.
+// Cache TTL is 10 minutes — avoids 8 expensive GROUP BY queries on every open.
+const BT_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function BacktestView({ open, onClose, online, btCache, onBtCache }) {
   const [tab,       setTab]       = useState("summary");
   const [data,      setData]      = useState(null);
   const [horizons,  setHorizons]  = useState([]);
@@ -395,8 +402,15 @@ function BacktestView({ open, onClose, online }) {
   const [startDate, setStartDate] = useState("");
   const [endDate,   setEndDate]   = useState("");
 
-  const load = (sd, ed) => {
+  const load = (sd, ed, force = false) => {
     if (!online) return;
+    // Use parent cache if fresh and no date filters are active
+    if (!force && !sd && !ed && btCache && (Date.now() - btCache.ts) < BT_CACHE_TTL_MS) {
+      const c = btCache;
+      setData(c.data); setHorizons(c.horizons); setAccuracy(c.accuracy);
+      setTrackRec(c.trackRec); setCorr(c.corr); setCalib(c.calib); setDecay(c.decay);
+      return;
+    }
     setLoading(true);
     const params = new URLSearchParams();
     if (sd) params.set("start_date", sd);
@@ -412,13 +426,14 @@ function BacktestView({ open, onClose, online }) {
       apiFetch(`/api/signals/backtest/calibration${qs}`),
       apiFetch("/api/signals/alpha-decay"),
     ]).then(([d, h, src, tkr, tr, cr, cal, dc]) => {
-      setData(d);
-      setHorizons((h||[]).filter(h => h.n > 0));
-      setAccuracy({ sources: src || [], tickers: tkr || [] });
-      setTrackRec(tr || []);
-      setCorr(cr);
-      setCalib(cal || []);
-      setDecay(dc || {});
+      const next = {
+        ts: Date.now(), data: d, horizons: (h||[]).filter(h => h.n > 0),
+        accuracy: { sources: src || [], tickers: tkr || [] },
+        trackRec: tr || [], corr: cr, calib: cal || [], decay: dc || {},
+      };
+      setData(next.data); setHorizons(next.horizons); setAccuracy(next.accuracy);
+      setTrackRec(next.trackRec); setCorr(next.corr); setCalib(next.calib); setDecay(next.decay);
+      if (!sd && !ed && onBtCache) onBtCache(next);
       setLoading(false);
     }).catch(() => setLoading(false));
   };

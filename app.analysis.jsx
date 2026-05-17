@@ -264,8 +264,17 @@ function SimulatedReturnsPanel({ signal, onClose }) {
   const [simLoading, setSimLoading] = useState(false);
   const workerRef = React.useRef(null);
 
+  // Debounce inputs so the Monte Carlo worker only re-runs 400ms after the user
+  // stops changing values — prevents a new 500-path simulation on every keystroke.
+  const [dbCapital,   setDbCapital]   = useState(capital);
+  const [dbPosSize,   setDbPosSize]   = useState(posSize);
+  const [dbSimTrades, setDbSimTrades] = useState(simTrades);
+  useEffect(() => { const t = setTimeout(() => setDbCapital(capital),   400); return () => clearTimeout(t); }, [capital]);
+  useEffect(() => { const t = setTimeout(() => setDbPosSize(posSize),   400); return () => clearTimeout(t); }, [posSize]);
+  useEffect(() => { const t = setTimeout(() => setDbSimTrades(simTrades), 400); return () => clearTimeout(t); }, [simTrades]);
+
   useEffect(() => {
-    const cap = Math.max(100, Number(capital) || 10000);
+    const cap = Math.max(100, Number(dbCapital) || 10000);
     setSimLoading(true);
     if (workerRef.current) { workerRef.current.terminate(); }
     let w;
@@ -282,28 +291,28 @@ function SimulatedReturnsPanel({ signal, onClose }) {
         setSimLoading(false);
       };
       w.onerror = () => { setSimLoading(false); w.terminate(); workerRef.current = null; };
-      w.postMessage({ startingCapital: cap, riskPct: posSize * riskPct * 100,
-                      trades: simTrades, winRate: winProb, rr: rrNum, paths: 500 });
+      w.postMessage({ startingCapital: cap, riskPct: dbPosSize * riskPct * 100,
+                      trades: dbSimTrades, winRate: winProb, rr: rrNum, paths: 500 });
     } catch (_) {
       const rand = (() => { let s = 42; return () => { s=(s*9301+49297)%233280; return s/233280; }; })();
       let eq = cap; const curve = [cap]; let wins = 0, maxEq = cap, maxDD = 0;
-      for (let i = 0; i < simTrades; i++) {
-        const risk = eq * (posSize / 100) * riskPct, reward = risk * rrNum;
+      for (let i = 0; i < dbSimTrades; i++) {
+        const risk = eq * (dbPosSize / 100) * riskPct, reward = risk * rrNum;
         if (rand() < winProb) { eq += reward; wins++; } else { eq -= risk; }
         eq = Math.max(0, eq); curve.push(eq);
         if (eq > maxEq) maxEq = eq;
         const dd = (maxEq - eq) / maxEq * 100; if (dd > maxDD) maxDD = dd;
       }
-      setSim({ curve, wins, losses: simTrades - wins, finalEq: eq, maxDD, ret: (eq - cap) / cap * 100 });
+      setSim({ curve, wins, losses: dbSimTrades - wins, finalEq: eq, maxDD, ret: (eq - cap) / cap * 100 });
       setSimLoading(false);
     }
     return () => { if (workerRef.current) { workerRef.current.terminate(); workerRef.current = null; } };
-  }, [signal.ticker, capital, posSize, simTrades, winProb, rrNum, riskPct]);
+  }, [signal.ticker, dbCapital, dbPosSize, dbSimTrades, winProb, rrNum, riskPct]);
 
-  const simData = sim || { curve: [Number(capital)||10000], wins: 0, losses: 0,
-                            finalEq: Number(capital)||10000, maxDD: 0, ret: 0 };
+  const simData = sim || { curve: [Number(dbCapital)||10000], wins: 0, losses: 0,
+                            finalEq: Number(dbCapital)||10000, maxDD: 0, ret: 0 };
 
-  const cap = Math.max(100, Number(capital) || 10000);
+  const cap = Math.max(100, Number(dbCapital) || 10000);
   const winRate = simData.wins / simTrades * 100;
   const retColor = simData.ret >= 0 ? "var(--up)" : "var(--down)";
   const dollarRiskPerTrade = cap * (posSize / 100) * riskPct;
