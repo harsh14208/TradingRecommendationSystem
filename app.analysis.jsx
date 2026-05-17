@@ -662,52 +662,115 @@ function UpgradePrompt({ feature, minTier = "basic" }) {
   );
 }
 
-/* ─── MarketOverviewView ───────────────────────────────────────────────────── */
+/* ─── MarketOverviewView ─────────────────────────────────────────────────── */
 function MarketOverviewView({ open, onClose, online }) {
-  const [data, setData] = useState(null);
+  const [ctx, setCtx] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState(null);
 
   useEffect(() => {
-    if (!open || !online) return;
-    setErr(null);
+    if (!open) return;
     setLoading(true);
-    apiFetch("/api/market/overview")
-      .then(d => {
-        if (d && typeof d === 'object' && Object.keys(d).length > 0) setData(d);
-        else setErr("No data");
-      })
-      .catch(() => setErr("offline"))
+    authFetch("/api/market/context")
+      .then(async r => { const d = await r.json(); if (d) setCtx(d); })
+      .catch(() => {})
       .finally(() => setLoading(false));
-  }, [open, online]);
+  }, [open]);
 
-  const MetricCard = ({ title, value, change, changePct, history, unit = "", tipKey }) => {
-    const up = (change || 0) >= 0;
-    const color = up ? "var(--up)" : "var(--down)";
-    const valFmt = v => typeof v === 'number' ? v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : v;
+  const fg     = ctx?.fear_greed  || {};
+  const macro  = ctx?.macro       || {};
+  const breadth= ctx?.breadth     || {};
+  const aaii   = ctx?.aaii        || {};
+  const cot    = ctx?.cot         || {};
+  const pc     = ctx?.put_call    || {};
+  const hmm    = ctx?.hmm_regime  || {};
+
+  // Fear & Greed SVG semicircle gauge
+  const FGGauge = ({ score }) => {
+    const s = score ?? 50;
+    const θ = (180 - (s / 100) * 180) * Math.PI / 180;
+    const nx = 100 + 66 * Math.cos(θ);
+    const ny = 100 - 66 * Math.sin(θ);
+    const getC = v => v <= 25 ? "#ef4444" : v <= 45 ? "#f97316" : v <= 55 ? "#f59e0b" : v <= 75 ? "#84cc16" : "#10b981";
+    const color = getC(s);
+    const pts = [0, 25, 45, 55, 75, 100].map(v => {
+      const a = (180 - (v / 100) * 180) * Math.PI / 180;
+      return { x: 100 + 80 * Math.cos(a), y: 100 - 80 * Math.sin(a) };
+    });
+    const arc = (p1, p2) => `M ${p1.x} ${p1.y} A 80 80 0 0 1 ${p2.x} ${p2.y}`;
+    const segColors = ["#ef4444", "#f97316", "#f59e0b", "#84cc16", "#10b981"];
     return (
-      <div className="src-card" style={{ padding: "16px 18px", gap: 8 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-            {tipKey ? <Tip term={tipKey}>{title}</Tip> : title}
-          </span>
-          {change != null && changePct != null && (
-            <span className="mono" style={{ fontSize: 11, color }}>
-              {change >= 0 ? "+" : ""}{valFmt(change)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
+        <svg viewBox="0 0 200 110" width="160" height="88" style={{ overflow:"visible" }}>
+          {segColors.map((c, i) => (
+            <path key={i} d={arc(pts[i], pts[i+1])} fill="none" stroke={c} strokeWidth="14" strokeLinecap="butt" opacity="0.75"/>
+          ))}
+          <line x1="100" y1="100" x2={nx} y2={ny} stroke="var(--text)" strokeWidth="2.5" strokeLinecap="round"/>
+          <circle cx="100" cy="100" r="5" fill="var(--text)"/>
+        </svg>
+        <div style={{ fontFamily:"var(--font-mono)", fontSize:40, fontWeight:700, color, lineHeight:1, marginTop:-8 }}>{s.toFixed(0)}</div>
+        <div style={{ fontFamily:"var(--font-mono)", fontSize:10, letterSpacing:"0.14em", color }}>{fg.label?.toUpperCase() || "—"}</div>
+        <div style={{ display:"flex", gap:10, marginTop:6 }}>
+          {[["Yest", fg.prev_close], ["1W", fg.prev_1w], ["1M", fg.prev_1m]].map(([l, v]) => v != null && (
+            <span key={l} style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)" }}>
+              {l} <span style={{ color: v > s ? "var(--up)" : v < s ? "var(--down)" : "var(--text-dim)" }}>{v?.toFixed(0)}</span>
             </span>
-          )}
+          ))}
         </div>
-        <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: "var(--text)" }}>
-          {typeof value === 'number' ? valFmt(value) : value}{unit}
-        </div>
-        {history && history.length > 1 && (
-          <div style={{ height: 32, marginTop: 4 }}>
-            <PathSparkline path={history} />
-          </div>
-        )}
       </div>
     );
   };
+
+  // Thermometer bar
+  const ThermBar = ({ label, value, max=100, goodAbove=65, badBelow=40 }) => {
+    const pct = Math.min(100, Math.max(0, value ?? 0));
+    const color = value >= goodAbove ? "var(--up)" : value <= badBelow ? "var(--down)" : "var(--warn)";
+    return (
+      <div style={{ marginBottom:10 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+          <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)" }}>{label}</span>
+          <span style={{ fontFamily:"var(--font-mono)", fontSize:12, fontWeight:700, color }}>{value != null ? `${value.toFixed(1)}%` : "—"}</span>
+        </div>
+        <div style={{ height:6, background:"var(--bg-3)", borderRadius:3, overflow:"hidden" }}>
+          <div style={{ height:"100%", width:`${pct}%`, background:color, borderRadius:3, transition:"width 0.4s" }}/>
+        </div>
+      </div>
+    );
+  };
+
+  // Data card wrapper
+  const Card = ({ title, children, style={} }) => (
+    <div style={{ background:"var(--bg-1)", border:"1px solid var(--line)", borderRadius:10, padding:"16px 18px", ...style }}>
+      <div style={{ fontFamily:"var(--font-mono)", fontSize:10, letterSpacing:"0.12em", textTransform:"uppercase", color:"var(--text-faint)", marginBottom:10 }}>{title}</div>
+      {children}
+    </div>
+  );
+
+  const Num = ({ v, decimals=2, suffix="", color }) => (
+    <span style={{ fontFamily:"var(--font-mono)", fontSize:28, fontWeight:700, color: color || "var(--text)" }}>
+      {v != null ? `${v > 0 ? "+" : ""}${Number(v).toFixed(decimals)}${suffix}` : "—"}
+    </span>
+  );
+
+  const vixColor = macro.vix > 30 ? "var(--down)" : macro.vix > 20 ? "var(--warn)" : macro.vix < 14 ? "var(--up)" : "var(--text)";
+  const vixLabel = macro.vix > 30 ? "DANGER" : macro.vix > 20 ? "ELEVATED" : macro.vix < 14 ? "CALM" : "NORMAL";
+  const spreadColor = (macro.yc_spread ?? 0) < 0 ? "var(--down)" : (macro.yc_spread ?? 0) > 0.5 ? "var(--up)" : "var(--warn)";
+  const macroColor = (macro.macro_score ?? 0) > 5 ? "var(--up)" : (macro.macro_score ?? 0) < -5 ? "var(--down)" : "var(--warn)";
+  const macroLabel = (macro.macro_score ?? 0) > 5 ? "BULLISH MACRO" : (macro.macro_score ?? 0) < -5 ? "BEARISH MACRO" : "NEUTRAL";
+  const rotationColors = { early_bull:"var(--up)", late_bull:"var(--warn)", early_bear:"var(--warn)", late_bear:"var(--down)" };
+  const breadthSignalColor = breadth.signal === "bullish" ? "var(--up)" : breadth.signal === "bearish" ? "var(--down)" : "var(--warn)";
+  const breadthLabel = breadth.signal === "bullish" ? "HEALTHY" : breadth.signal === "bearish" ? "DETERIORATING" : "WEAKENING";
+  const cotNetPct = cot.net_pct ?? 0;
+  const cotColor = cot.signal === "bullish" ? "var(--up)" : cot.signal === "bearish" ? "var(--down)" : "var(--warn)";
+  const aaiiExposure = aaii.bull_pct ?? 50;
+  const aaiiColor = aaiiExposure > 70 ? "var(--down)" : aaiiExposure < 30 ? "var(--up)" : "var(--warn)";
+
+  // Regime banner
+  const regimeBull = hmm.regime === "bull" || (!hmm.regime && (macro.spx_vs_50d ?? 0) >= 0);
+  const transRisk  = hmm.transition_risk ?? 0;
+  const bullProb   = hmm.bull_prob ?? (regimeBull ? 0.7 : 0.3);
+  const bearProb   = hmm.bear_prob ?? (1 - bullProb);
+
+  const signals = (macro.signals || []).filter(s => s.head);
 
   return (
     <div className={`overlay ${open ? "open" : ""}`}>
@@ -716,21 +779,234 @@ function MarketOverviewView({ open, onClose, online }) {
           <div className="crumb">MARKET / OVERVIEW</div>
           <h2>Market dashboard</h2>
         </div>
-        <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={onClose}><Icon name="x" size={14}/> Close</button>
+        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="x" size={14}/> Close</button>
       </div>
-      <div style={{ padding: "20px 28px", overflowY: "auto", maxHeight: "calc(100vh - 100px)" }}>
-        {loading && <div style={{ color: "var(--text-faint)", fontSize: 12 }}>Loading market overview…</div>}
-        {err && <div style={{ color: "var(--text-faint)", fontSize: 12 }}>Market overview data is currently unavailable.</div>}
-        {data && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14 }}>
-            <MetricCard title="S&P 500" value={data.spx?.value} change={data.spx?.change} changePct={data.spx?.change_pct} history={data.spx?.history} />
-            <MetricCard title="NASDAQ 100" value={data.ndx?.value} change={data.ndx?.change} changePct={data.ndx?.change_pct} history={data.ndx?.history} />
-            <MetricCard title="VIX" value={data.vix?.value} change={data.vix?.change} changePct={data.vix?.change_pct} history={data.vix?.history} tipKey="VIX" />
-            <MetricCard title="US 10Y Yield" value={data.yield_10y?.value} change={data.yield_10y?.change} changePct={data.yield_10y?.change_pct} history={data.yield_10y?.history} unit="%" tipKey="YIELD CURVE" />
-            <MetricCard title="DXY" value={data.dxy?.value} change={data.dxy?.change} changePct={data.dxy?.change_pct} history={data.dxy?.history} tipKey="DXY" />
-            <MetricCard title="Market Breadth" value={`${data.breadth?.pct_above_200d?.toFixed(0) || '—'}`} unit="% > 200d" history={data.breadth?.history} tipKey="MARKET BREADTH" />
-            <MetricCard title="Fear & Greed" value={`${data.fear_greed?.score?.toFixed(0) || '—'} (${data.fear_greed?.label || 'N/A'})`} history={data.fear_greed?.history} tipKey="Fear & Greed" />
-            <MetricCard title="CBOE Put/Call" value={data.put_call_ratio?.ratio?.toFixed(2)} history={data.put_call_ratio?.history} tipKey="CBOE P/C" />
-          </div>}
+
+      <div style={{ overflowY:"auto", maxHeight:"calc(100vh - 88px)", padding:"0 0 40px" }}>
+        {loading && <div style={{ padding:"40px 28px", color:"var(--text-faint)", fontSize:12 }}>Loading market data…</div>}
+
+        {ctx && (
+          <>
+            {/* ── Regime Banner ── */}
+            <div style={{ display:"flex", alignItems:"center", gap:20, padding:"12px 28px",
+              background: regimeBull ? "color-mix(in oklch,var(--up) 8%,var(--bg-1))" : "color-mix(in oklch,var(--down) 8%,var(--bg-1))",
+              borderBottom:"1px solid var(--line)" }}>
+              <div style={{ fontFamily:"var(--font-mono)", fontSize:18, fontWeight:700,
+                color: regimeBull ? "var(--up)" : "var(--down)", letterSpacing:"0.06em" }}>
+                {regimeBull ? "▲ BULL MARKET" : "▼ BEAR MARKET"}
+              </div>
+              <div style={{ flex:1, display:"flex", flexDirection:"column", gap:4 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, fontFamily:"var(--font-mono)", fontSize:11 }}>
+                  <span style={{ color:"var(--up)", minWidth:60 }}>Bull {(bullProb*100).toFixed(0)}%</span>
+                  <div style={{ flex:1, height:6, background:"var(--bg-3)", borderRadius:3, overflow:"hidden" }}>
+                    <div style={{ height:"100%", width:`${bullProb*100}%`, background:`linear-gradient(90deg,var(--up),var(--down))`, borderRadius:3 }}/>
+                  </div>
+                  <span style={{ color:"var(--down)", minWidth:60, textAlign:"right" }}>Bear {(bearProb*100).toFixed(0)}%</span>
+                </div>
+              </div>
+              {transRisk > 0.15 && (
+                <div style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--warn)",
+                  padding:"4px 10px", borderRadius:6, background:"color-mix(in oklch,var(--warn) 12%,transparent)",
+                  border:"1px solid color-mix(in oklch,var(--warn) 30%,transparent)" }}>
+                  ⚡ Regime risk {(transRisk*100).toFixed(0)}%
+                </div>
+              )}
+            </div>
+
+            {/* ── Hero gauges row ── */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, padding:"20px 28px 0" }}>
+              {/* Fear & Greed */}
+              <Card title="Fear & Greed Index" style={{ display:"flex", flexDirection:"column", alignItems:"center", textAlign:"center" }}>
+                <FGGauge score={fg.score}/>
+              </Card>
+
+              {/* Market Breadth */}
+              <Card title="Market Breadth">
+                <ThermBar label="% above 50-day SMA" value={breadth.pct_above_50d} goodAbove={60} badBelow={40}/>
+                <ThermBar label="% above 200-day SMA" value={breadth.pct_above_200d} goodAbove={65} badBelow={40}/>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:8 }}>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:11, fontWeight:700, color:breadthSignalColor }}>{breadthLabel}</span>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)", marginLeft:"auto" }}>100 S&P stocks</span>
+                </div>
+              </Card>
+
+              {/* VIX */}
+              <Card title="Volatility (VIX)">
+                <div style={{ display:"flex", alignItems:"baseline", gap:12 }}>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:40, fontWeight:700, color:vixColor, lineHeight:1 }}>
+                    {macro.vix?.toFixed(1) ?? "—"}
+                  </span>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:11, fontWeight:700, color:vixColor,
+                    padding:"3px 8px", borderRadius:5, background:`color-mix(in oklch,${vixColor} 12%,transparent)` }}>
+                    {vixLabel}
+                  </span>
+                </div>
+                {macro.vix3m != null && (
+                  <div style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-dim)", marginTop:8 }}>
+                    VIX3M {macro.vix3m.toFixed(1)} · {" "}
+                    <span style={{ color: macro.vix < macro.vix3m ? "var(--up)" : "var(--down)" }}>
+                      {macro.vix < macro.vix3m ? "Contango (normal)" : "Backwardation (stressed)"}
+                    </span>
+                  </div>
+                )}
+              </Card>
+            </div>
+
+            {/* ── Data cards 2×2 ── */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:14, padding:"14px 28px 0" }}>
+              {/* Yield Curve */}
+              <Card title="Yield Curve">
+                <div style={{ display:"flex", gap:16, alignItems:"baseline", flexWrap:"wrap" }}>
+                  {macro.yield_2y != null && <div style={{ fontFamily:"var(--font-mono)" }}>
+                    <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>2Y</div>
+                    <div style={{ fontSize:20, fontWeight:700 }}>{macro.yield_2y.toFixed(2)}%</div>
+                  </div>}
+                  {macro.yield_10y != null && <div style={{ fontFamily:"var(--font-mono)" }}>
+                    <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>10Y</div>
+                    <div style={{ fontSize:20, fontWeight:700 }}>{macro.yield_10y.toFixed(2)}%</div>
+                  </div>}
+                  {macro.yc_spread != null && <div style={{ fontFamily:"var(--font-mono)" }}>
+                    <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Spread</div>
+                    <div style={{ fontSize:20, fontWeight:700, color:spreadColor }}>{macro.yc_spread > 0 ? "+" : ""}{macro.yc_spread.toFixed(2)}%</div>
+                  </div>}
+                </div>
+                <div style={{ marginTop:8, display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {macro.yc_spread != null && (
+                    <span style={{ fontFamily:"var(--font-mono)", fontSize:10, fontWeight:700, padding:"3px 8px", borderRadius:4,
+                      color:spreadColor, background:`color-mix(in oklch,${spreadColor} 12%,transparent)` }}>
+                      {macro.yc_spread < 0 ? "INVERTED" : macro.yc_spread > 0.5 ? "NORMAL" : "FLAT"}
+                    </span>
+                  )}
+                  {macro.fed_rate != null && (
+                    <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-dim)" }}>Fed {macro.fed_rate.toFixed(2)}%</span>
+                  )}
+                </div>
+              </Card>
+
+              {/* Dollar & Macro Score */}
+              <Card title="Macro Score & Dollar">
+                <div style={{ display:"flex", alignItems:"baseline", gap:12 }}>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:40, fontWeight:700, color:macroColor, lineHeight:1 }}>
+                    {macro.macro_score != null ? `${macro.macro_score > 0 ? "+" : ""}${macro.macro_score}` : "—"}
+                  </span>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:11, fontWeight:700, color:macroColor }}>{macroLabel}</span>
+                </div>
+                <div style={{ marginTop:8, display:"flex", flexWrap:"wrap", gap:8 }}>
+                  {macro.dxy_1m != null && (
+                    <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-dim)" }}>
+                      DXY 1M: <span style={{ color: macro.dxy_1m > 2 ? "var(--warn)" : macro.dxy_1m < -2 ? "var(--up)" : "var(--text-dim)" }}>
+                        {macro.dxy_1m > 0 ? "+" : ""}{macro.dxy_1m.toFixed(1)}%
+                      </span>
+                    </span>
+                  )}
+                  {macro.cpi != null && (
+                    <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-dim)" }}>
+                      CPI: <span style={{ color: macro.cpi > 3 ? "var(--warn)" : "var(--text-dim)" }}>{macro.cpi.toFixed(1)}% YoY</span>
+                    </span>
+                  )}
+                  {macro.sector_rotation && (
+                    <span style={{ fontFamily:"var(--font-mono)", fontSize:10, fontWeight:700, padding:"3px 8px", borderRadius:4,
+                      color: rotationColors[macro.sector_rotation] || "var(--accent)",
+                      background:`color-mix(in oklch,${rotationColors[macro.sector_rotation]||"var(--accent)"} 12%,transparent)` }}>
+                      ● {macro.sector_rotation.replace(/_/g," ").toUpperCase()}
+                    </span>
+                  )}
+                </div>
+              </Card>
+
+              {/* COT */}
+              <Card title="Hedge Fund S&P Positioning (COT)">
+                {cot.lev_long != null ? (
+                  <>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                      {[["Long", cot.lev_long, "var(--up)"], ["Short", cot.lev_short, "var(--down)"]].map(([label, val, color]) => (
+                        <div key={label} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                          <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)", minWidth:36 }}>{label}</span>
+                          <div style={{ flex:1, height:8, background:"var(--bg-3)", borderRadius:4, overflow:"hidden" }}>
+                            <div style={{ height:"100%", width:`${Math.min(100, (val / Math.max(cot.lev_long, cot.lev_short)) * 100)}%`,
+                              background:color, borderRadius:4 }}/>
+                          </div>
+                          <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-dim)", minWidth:52, textAlign:"right" }}>
+                            {(val/1000).toFixed(0)}K
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop:10, display:"flex", gap:10, alignItems:"center" }}>
+                      <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-dim)" }}>
+                        Net <span style={{ color:cotColor, fontWeight:700 }}>{cotNetPct > 0 ? "+" : ""}{cotNetPct.toFixed(1)}%</span>
+                      </span>
+                      {cot.signal && (
+                        <span style={{ fontFamily:"var(--font-mono)", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:4,
+                          color:cotColor, background:`color-mix(in oklch,${cotColor} 12%,transparent)` }}>
+                          ↑ CONTRARIAN {cot.signal.toUpperCase()}
+                        </span>
+                      )}
+                      <span style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--text-faint)", marginLeft:"auto" }}>CFTC weekly</span>
+                    </div>
+                  </>
+                ) : <div style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-faint)" }}>No COT data</div>}
+              </Card>
+
+              {/* NAAIM Sentiment */}
+              <Card title="Manager Equity Exposure (NAAIM)">
+                <div style={{ display:"flex", alignItems:"baseline", gap:12 }}>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:40, fontWeight:700, color:aaiiColor, lineHeight:1 }}>
+                    {aaiiExposure.toFixed(1)}%
+                  </span>
+                </div>
+                {/* Exposure bar with zones */}
+                <div style={{ marginTop:10, position:"relative" }}>
+                  <div style={{ height:10, borderRadius:5, overflow:"hidden",
+                    background:`linear-gradient(90deg, var(--up) 0%, var(--up) 30%, var(--bg-3) 30%, var(--bg-3) 70%, var(--down) 70%, var(--down) 100%)` }}>
+                    {/* Current position marker */}
+                    <div style={{ position:"absolute", top:0, bottom:0, left:`${aaiiExposure}%`, transform:"translateX(-50%)",
+                      width:3, background:"var(--text)", borderRadius:2 }}/>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginTop:4, fontFamily:"var(--font-mono)", fontSize:9, color:"var(--text-faint)" }}>
+                    <span style={{ color:"var(--up)" }}>0% (defensive)</span>
+                    <span>100% (all-in)</span>
+                  </div>
+                </div>
+                <div style={{ marginTop:8, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                  {pc.ratio != null && (
+                    <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-dim)" }}>
+                      P/C Ratio: {pc.ratio.toFixed(2)} — {pc.signal || "Neutral"}
+                    </span>
+                  )}
+                  {aaii.signal && (
+                    <span style={{ fontFamily:"var(--font-mono)", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:4,
+                      color:aaiiColor, background:`color-mix(in oklch,${aaiiColor} 12%,transparent)` }}>
+                      ⚠ CONTRARIAN {aaii.signal.toUpperCase()}
+                    </span>
+                  )}
+                </div>
+              </Card>
+            </div>
+
+            {/* ── Signal Pills ── */}
+            {signals.length > 0 && (
+              <div style={{ padding:"14px 28px 0" }}>
+                <div style={{ fontFamily:"var(--font-mono)", fontSize:10, letterSpacing:"0.12em", textTransform:"uppercase",
+                  color:"var(--text-faint)", marginBottom:8 }}>Active macro signals</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                  {signals.slice(0, 10).map((s, i) => {
+                    const c = s.sentiment === "pos" ? "var(--up)" : s.sentiment === "neg" ? "var(--down)" : "var(--warn)";
+                    return (
+                      <span key={i} title={s.body || s.head} style={{ display:"inline-flex", alignItems:"center", gap:5,
+                        padding:"4px 10px", borderRadius:99, fontFamily:"var(--font-mono)", fontSize:10,
+                        color:c, background:`color-mix(in oklch,${c} 10%,transparent)`,
+                        border:`1px solid color-mix(in oklch,${c} 25%,transparent)`, cursor:"default" }}>
+                        <span style={{ width:5, height:5, borderRadius:"50%", background:c, flexShrink:0 }}/>
+                        {s.head}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -743,120 +1019,271 @@ const SECTOR_NAMES = {
   XLRE:"Real Estate", XLU:"Utilities", XLE:"Energy",
 };
 
+// S&P 500 approximate sector market cap weights (static)
+const SECTOR_WEIGHTS = {
+  XLK:29, XLV:13, XLF:13, XLC:9, XLI:9, XLY:6, XLP:6, XLE:4, XLB:4, XLRE:3, XLU:3
+};
+
+const ROTATION_PHASES = {
+  early_bull: { etfs:["XLY","XLK","XLC"], label:"EARLY BULL", color:"var(--up)" },
+  late_bull:  { etfs:["XLE","XLB","XLF"], label:"LATE BULL",  color:"var(--warn)" },
+  early_bear: { etfs:["XLV","XLRE","XLU"], label:"EARLY BEAR", color:"var(--warn)" },
+  late_bear:  { etfs:["XLP","XLU","XLV"], label:"LATE BEAR",  color:"var(--down)" },
+};
+
 function SectorView({ open, onClose, online }) {
-  const [sectors,  setSectors]  = useState(null);
-  const [detail,   setDetail]   = useState(null);
+  const [sectors, setSectors]   = useState(null);
+  const [flows,   setFlows]     = useState(null);
+  const [detail,  setDetail]    = useState(null);
   const [activeEtf, setActiveEtf] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [err, setErr] = useState(null);
+  const [err, setErr]           = useState(null);
+  const [tf, setTf]             = useState("1m");   // 1d | 1w | 1m | 3m | ytd
+  const [mode, setMode]         = useState("perf"); // perf | flow
+  const [rotation, setRotation] = useState(null);
 
   useEffect(() => {
     if (!open) return;
     setErr(null); setActiveEtf(null);
-    authFetch("/api/market/sectors")
-      .then(async r => {
-        if (r.status === 402) { setErr("upgrade"); return; }
-        const d = await r.json();
-        if (d) setSectors(d);
-      }).catch(() => setErr("offline"));
+    Promise.all([
+      authFetch("/api/market/sectors").then(r => r.json()),
+      authFetch("/api/market/etf-flows").then(r => r.json()).catch(() => null),
+      authFetch("/api/market/context").then(r => r.json()).catch(() => null),
+    ]).then(([sec, fl, ctx]) => {
+      if (sec) setSectors(Array.isArray(sec) ? sec : []);
+      if (fl)  setFlows(fl);
+      if (ctx?.macro?.sector_rotation) setRotation(ctx.macro.sector_rotation);
+    }).catch(() => setErr("offline"));
   }, [open]);
 
-  const drillIn = (etf) => {
+  const drillIn = etf => {
     setActiveEtf(etf);
     if (detail) return;
     setDetailLoading(true);
     authFetch("/api/market/sectors/detail")
-      .then(async r => {
-        const d = await r.json();
-        if (d) setDetail(d);
-      }).catch(() => {})
+      .then(r => r.json()).then(d => { if (d) setDetail(d); }).catch(() => {})
       .finally(() => setDetailLoading(false));
   };
 
-  const fmtR = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-  const rc   = v => v == null ? "var(--text-faint)" : v >= 0 ? "var(--up)" : "var(--down)";
+  const getReturn = s => {
+    if (!s) return null;
+    return tf === "1d" ? s.ret_1d : tf === "1w" ? s.ret_1w : tf === "3m" ? s.ret_3m : tf === "ytd" ? s.ret_ytd : s.ret_1m;
+  };
 
-  const activeStocks = activeEtf && detail
-    ? (detail.sectors || []).find(s => s.etf === activeEtf)?.stocks || []
-    : [];
+  const tileColor = (s) => {
+    if (mode === "flow") {
+      const etf = s?.etf;
+      const flow = flows?.[etf]?.flow_1w ?? 0;
+      if (flow > 200) return "color-mix(in oklch,var(--up) 30%,var(--bg-2))";
+      if (flow > 50)  return "color-mix(in oklch,var(--up) 16%,var(--bg-2))";
+      if (flow < -50) return "color-mix(in oklch,var(--down) 20%,var(--bg-2))";
+      return "var(--bg-2)";
+    }
+    const v = getReturn(s);
+    if (v == null) return "var(--bg-2)";
+    if (v >  5) return "color-mix(in oklch,var(--up) 30%,var(--bg-2))";
+    if (v >  2) return "color-mix(in oklch,var(--up) 16%,var(--bg-2))";
+    if (v < -5) return "color-mix(in oklch,var(--down) 30%,var(--bg-2))";
+    if (v < -2) return "color-mix(in oklch,var(--down) 16%,var(--bg-2))";
+    return "var(--bg-2)";
+  };
+
+  const tileTextColor = v => v == null ? "var(--text-faint)" : v >= 0 ? "var(--up)" : "var(--down)";
+  const fmtR = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+
+  const activeStocks = useMemo(() => {
+    if (!activeEtf || !detail) return [];
+    return (detail.sectors || []).find(s => s.etf === activeEtf)?.stocks || [];
+  }, [activeEtf, detail]);
+
+  const rotPhase = rotation ? ROTATION_PHASES[rotation] : null;
 
   return (
     <div className={`overlay ${open ? "open" : ""}`}>
       <div className="overlay-head">
         <div>
           <div className="crumb">MARKET / SECTOR HEATMAP{activeEtf ? ` / ${activeEtf}` : ""}</div>
-          <h2>{activeEtf ? `${SECTOR_NAMES[activeEtf] || activeEtf} — stocks` : "Sector performance (1-month)"}</h2>
+          <h2>{activeEtf ? `${SECTOR_NAMES[activeEtf] || activeEtf} — stocks` : "Sector heatmap"}</h2>
         </div>
-        <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-          {activeEtf && (
-            <button className="btn ghost" style={{ fontSize:11 }} onClick={() => setActiveEtf(null)}>← Back</button>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginLeft:"auto" }}>
+          {!activeEtf && (
+            <>
+              {/* Timeframe tabs */}
+              <div style={{ display:"flex", background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:6, overflow:"hidden" }}>
+                {[["1d","1D"],["1w","1W"],["1m","1M"],["3m","3M"],["ytd","YTD"]].map(([k,l]) => (
+                  <button key={k} onClick={() => setTf(k)}
+                    style={{ padding:"5px 10px", fontFamily:"var(--font-mono)", fontSize:11,
+                      background: tf===k ? "var(--accent)" : "transparent",
+                      color: tf===k ? "#042116" : "var(--text-dim)", border:"none", cursor:"pointer", fontWeight: tf===k ? 700 : 400 }}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+              {/* Mode toggle */}
+              <div style={{ display:"flex", background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:6, overflow:"hidden" }}>
+                {[["perf","Performance"],["flow","Fund Flows"]].map(([k,l]) => (
+                  <button key={k} onClick={() => setMode(k)}
+                    style={{ padding:"5px 10px", fontFamily:"var(--font-mono)", fontSize:11,
+                      background: mode===k ? "var(--bg-3)" : "transparent",
+                      color: mode===k ? "var(--text)" : "var(--text-faint)", border:"none", cursor:"pointer" }}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
+          {activeEtf && <button className="btn ghost" style={{ fontSize:11 }} onClick={() => setActiveEtf(null)}>← Back</button>}
           <button className="btn ghost" onClick={onClose}><Icon name="x" size={14}/> Close</button>
         </div>
       </div>
-      <div style={{ padding:"20px 28px" }}>
-        {err === "upgrade" && <UpgradePrompt feature="Sector heatmap" minTier="basic"/>}
-        {err === "offline" && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline — try again when connected.</div>}
 
-        {!activeEtf && (
+      <div style={{ overflowY:"auto", maxHeight:"calc(100vh - 88px)", padding:"20px 28px 40px" }}>
+        {err === "upgrade" && <UpgradePrompt feature="Sector heatmap" minTier="basic"/>}
+        {err === "offline" && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline.</div>}
+        {!sectors && !err && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading…</div>}
+
+        {sectors && !activeEtf && (
           <>
-            {!sectors && !err && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading…</div>}
-            {sectors && (
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
-                {sectors.map(s => (
+            {/* Treemap */}
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:24 }}>
+              {(sectors.length > 0 ? sectors : Object.keys(SECTOR_NAMES).map(etf => ({ etf }))).map(s => {
+                const w = SECTOR_WEIGHTS[s.etf] || 3;
+                const v = getReturn(s);
+                const flow = flows?.[s.etf];
+                return (
                   <div key={s.etf} onClick={() => drillIn(s.etf)}
-                    style={{ background:"var(--bg-1)", cursor:"pointer",
-                      border:`1px solid ${(s.ret_1m||0) >= 0 ? "color-mix(in oklch,var(--up) 25%,var(--line))" : "color-mix(in oklch,var(--down) 25%,var(--line))"}`,
-                      borderRadius:10, padding:"16px", transition:"opacity 0.12s" }}
-                    onMouseEnter={e => e.currentTarget.style.opacity="0.82"}
-                    onMouseLeave={e => e.currentTarget.style.opacity="1"}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-                      <span style={{ fontFamily:"var(--font-mono)", fontWeight:700, fontSize:13 }}>{s.etf}</span>
-                      <span style={{ fontFamily:"var(--font-mono)", fontSize:16, fontWeight:700, color:rc(s.ret_1m) }}>{fmtR(s.ret_1m)}</span>
+                    style={{ flexGrow:w, flexBasis:`${w*1.2}%`, minWidth:80, minHeight:90,
+                      background:tileColor(s), border:"1px solid var(--line)",
+                      borderRadius:8, padding:"12px 14px", cursor:"pointer", position:"relative",
+                      transition:"opacity 0.12s, transform 0.12s" }}
+                    onMouseEnter={e => { e.currentTarget.style.opacity="0.85"; e.currentTarget.style.transform="scale(1.02)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.opacity="1"; e.currentTarget.style.transform="scale(1)"; }}>
+                    <div style={{ fontFamily:"var(--font-mono)", fontSize:12, fontWeight:700, color:"var(--text)" }}>{s.etf}</div>
+                    <div style={{ fontSize:10, color:"var(--text-faint)", marginTop:2 }}>{SECTOR_NAMES[s.etf] || s.etf}</div>
+                    <div style={{ fontFamily:"var(--font-mono)", fontSize:18, fontWeight:700, color:tileTextColor(v), marginTop:6, lineHeight:1 }}>
+                      {fmtR(v)}
                     </div>
-                    <div style={{ fontSize:11, color:"var(--text-dim)", marginBottom:6 }}>{SECTOR_NAMES[s.etf] || s.etf}</div>
-                    <div style={{ height:4, borderRadius:2, background:"var(--bg-3)", overflow:"hidden" }}>
-                      <div style={{ height:"100%", width:`${Math.min(100, Math.abs(s.ret_1m||0) * 5)}%`, background:rc(s.ret_1m), borderRadius:2 }}/>
-                    </div>
-                    <div style={{ fontSize:9, color:"var(--text-faint)", fontFamily:"var(--font-mono)", marginTop:8, textAlign:"right" }}>Click to see stocks →</div>
+                    {mode === "flow" && flow?.flow_1w != null && (
+                      <div style={{ position:"absolute", bottom:8, right:10, fontFamily:"var(--font-mono)", fontSize:9,
+                        color: flow.flow_1w > 0 ? "var(--up)" : "var(--down)" }}>
+                        {flow.flow_1w > 0 ? "↑" : "↓"} ${Math.abs(flow.flow_1w).toFixed(0)}M
+                      </div>
+                    )}
                   </div>
-                ))}
+                );
+              })}
+            </div>
+
+            {/* Rotation wheel */}
+            {rotPhase && (
+              <div style={{ background:"var(--bg-1)", border:"1px solid var(--line)", borderRadius:10, padding:"16px 20px" }}>
+                <div style={{ fontFamily:"var(--font-mono)", fontSize:10, letterSpacing:"0.12em", textTransform:"uppercase",
+                  color:"var(--text-faint)", marginBottom:10 }}>Sector rotation cycle</div>
+                <div style={{ display:"flex", alignItems:"center", gap:24 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, width:140 }}>
+                    {Object.entries(ROTATION_PHASES).map(([k, p]) => (
+                      <div key={k} style={{ padding:"6px 8px", borderRadius:5, fontSize:10, fontFamily:"var(--font-mono)", fontWeight:700,
+                        textAlign:"center", background: rotation===k ? `color-mix(in oklch,${p.color} 18%,var(--bg-2))` : "var(--bg-2)",
+                        border: rotation===k ? `1.5px solid ${p.color}` : "1px solid var(--line)",
+                        color: rotation===k ? p.color : "var(--text-faint)" }}>
+                        {p.label}
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div style={{ fontFamily:"var(--font-mono)", fontSize:12, color:"var(--text-dim)", marginBottom:6 }}>
+                      Typically outperforms in <span style={{ color:rotPhase.color, fontWeight:700 }}>{rotPhase.label}</span>:
+                    </div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      {rotPhase.etfs.map(e => (
+                        <span key={e} style={{ fontFamily:"var(--font-mono)", fontSize:11, fontWeight:700, padding:"3px 8px", borderRadius:4,
+                          background:"var(--bg-2)", border:"1px solid var(--line-2)", color:"var(--text)" }}>{e}</span>
+                      ))}
+                    </div>
+                    <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)", marginTop:8 }}>
+                      Historical pattern — not a prediction
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </>
         )}
 
+        {/* Drill-down */}
         {activeEtf && (
-          <div>
+          <>
             {detailLoading && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading stocks…</div>}
             {!detailLoading && activeStocks.length === 0 && (
-              <div style={{ color:"var(--text-faint)", fontSize:12 }}>No stocks found in watchlist for {activeEtf}.</div>
+              <div style={{ color:"var(--text-faint)", fontSize:12 }}>No watchlist stocks found for {activeEtf}.</div>
             )}
-            {activeStocks.length > 0 && (
-              <SortableTable
-                cols={["Ticker","Company","1M Return","Signal","Confidence"]}
-                defaultSort={{ col:2, dir:"desc" }}
-                rows={activeStocks.map(s => [
-                  s.ticker,
-                  s.company || s.ticker,
-                  fmtR(s.ret_1m),
-                  s.action ? <span className={`signal-verb ${s.action}`} style={{ fontSize:10 }}>{s.action}</span> : "—",
-                  s.confidence ? `${s.confidence.toFixed(0)}%` : "—",
-                ])}
-                colors={[null, null, (_,ri) => rc(activeStocks[ri]?.ret_1m), null, null]}/>
-            )}
-          </div>
+            {activeStocks.length > 0 && (() => {
+              const etfRet = sectors?.find(s => s.etf === activeEtf)?.ret_1m;
+              const rc = v => v == null ? "var(--text-faint)" : v >= 0 ? "var(--up)" : "var(--down)";
+              return (
+                <SortableTable
+                  cols={["Ticker","Company","1D","1M","Signal","Confidence","RS vs ETF"]}
+                  defaultSort={{ col:3, dir:"desc" }}
+                  rows={activeStocks.map(s => {
+                    const rs = s.ret_1m != null && etfRet != null ? s.ret_1m - etfRet : null;
+                    return [
+                      <span style={{ fontFamily:"var(--font-mono)", fontWeight:700 }}>{s.ticker}</span>,
+                      s.company || s.ticker,
+                      <span style={{ fontFamily:"var(--font-mono)", color:rc(s.ret_1d) }}>{fmtR(s.ret_1d)}</span>,
+                      <span style={{ fontFamily:"var(--font-mono)", color:rc(s.ret_1m) }}>{fmtR(s.ret_1m)}</span>,
+                      s.action ? <span className={`signal-verb ${s.action}`} style={{ fontSize:10 }}>{s.action}</span> : "—",
+                      s.confidence ? `${s.confidence.toFixed(0)}%` : "—",
+                      <span style={{ fontFamily:"var(--font-mono)", color:rc(rs) }}>{fmtR(rs)}</span>,
+                    ];
+                  })}
+                  colors={[null,null,null,null,null,null,null]}
+                />
+              );
+            })()}
+          </>
         )}
       </div>
     </div>
   );
 }
 
-/* ─── CalendarView ───────────────────────────────────────────────────────────── */
+/* ─── CalendarView ─────────────────────────────────────────────────────────── */
+const CAL_CATEGORIES = ["All","Inflation","Employment","Fed / Rates","Growth","Housing","Surveys"];
+const CAL_CAT_MAP = {
+  cpi:"Inflation", ppi:"Inflation", pce:"Inflation",
+  jobs:"Employment", nfp:"Employment", jolts:"Employment", claims:"Employment", unemployment:"Employment",
+  fomc:"Fed / Rates", fed:"Fed / Rates", rates:"Fed / Rates",
+  gdp:"Growth", retail:"Growth", ism:"Growth", pmi:"Growth", durable:"Growth",
+  housing:"Housing", "home sales":"Housing",
+  sentiment:"Surveys", confidence:"Surveys", michigan:"Surveys",
+};
+
+function eventCategory(e) {
+  const n = (e.name || "").toLowerCase();
+  const l = (e.label || "").toLowerCase();
+  if (e.category) {
+    const c = e.category.toLowerCase();
+    for (const [k, v] of Object.entries(CAL_CAT_MAP)) { if (c.includes(k) || n.includes(k) || l.includes(k)) return v; }
+  }
+  for (const [k, v] of Object.entries(CAL_CAT_MAP)) { if (n.includes(k) || l.includes(k)) return v; }
+  return "Other";
+}
+
+const IMPACT_BLURBS = {
+  CPI:   "Higher than expected → bearish equities, hawkish Fed, bullish USD",
+  PPI:   "Upstream inflation gauge — leads CPI by 1–2 months",
+  NFP:   "Strong jobs → hawkish Fed fears, rate-sensitive sectors sell off",
+  FOMC:  "Rate decision — volatility spike expected at 2pm ET",
+  GDP:   "Above consensus → risk-on; miss → risk-off, defensive rotation",
+  PCE:   "Fed's preferred inflation gauge — moves bonds more than stocks",
+  ISM:   "Above 50 = expansion; below = contraction",
+  Retail:"Consumer spending — key GDP driver; miss = consumer weakness",
+};
+
 function CalendarView({ open, onClose }) {
-  const [events,   setEvents]   = useState(null);
-  const [err,      setErr]      = useState(null);
-  const [expanded, setExpanded] = useState(null);
+  const [events,  setEvents]  = useState(null);
+  const [err,     setErr]     = useState(null);
+  const [cat,     setCat]     = useState("All");
 
   useEffect(() => {
     if (!open) return;
@@ -869,31 +1296,75 @@ function CalendarView({ open, onClose }) {
       }).catch(() => setErr("offline"));
   }, [open]);
 
+  const today = new Date();
+  today.setHours(0,0,0,0);
+
   const daysUntil = dateStr => {
-    try {
-      const diff = Math.round((new Date(dateStr) - new Date()) / 86400000);
-      return diff < 0 ? null : diff;
-    } catch { return null; }
+    try { const d = new Date(dateStr); d.setHours(0,0,0,0); return Math.round((d - today) / 86400000); }
+    catch { return null; }
   };
 
   const impactStyle = imp => {
-    if (imp === "HIGH")   return { bg:"rgba(239,68,68,0.12)",  text:"#ef4444",  label:"HIGH IMPACT" };
-    if (imp === "MEDIUM") return { bg:"rgba(245,158,11,0.12)", text:"#f59e0b",  label:"MED IMPACT"  };
-    return                       { bg:"rgba(148,163,184,0.1)", text:"var(--text-faint)", label:"LOW" };
+    if (imp === "HIGH")   return { dot:"#ef4444", label:"HIGH" };
+    if (imp === "MEDIUM") return { dot:"#f59e0b", label:"MED"  };
+    return { dot:"#5a6070", label:"LOW" };
   };
 
-  const grouped = useMemo(() => {
-    if (!events) return [];
-    const map = new Map();
-    events.forEach(e => {
-      const month = e.date.slice(0, 7);
-      if (!map.has(month)) map.set(month, []);
-      map.get(month).push(e);
+  // Next 7 days strip
+  const next7 = useMemo(() => {
+    return Array.from({ length:7 }, (_, i) => {
+      const d = new Date(today); d.setDate(d.getDate() + i);
+      const dateStr = d.toISOString().slice(0,10);
+      const dayEvents = (events || []).filter(e => e.date === dateStr);
+      return { date:d, dateStr, dayEvents };
     });
-    return [...map.entries()].map(([month, evts]) => ({ month, evts }));
   }, [events]);
 
-  const fmtMonth = m => new Date(m + "-01").toLocaleDateString("en-US", { month:"long", year:"numeric" });
+  const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  // Filter + group events
+  const filtered = useMemo(() => {
+    if (!events) return [];
+    return events.filter(e => {
+      if (cat === "All") return true;
+      return eventCategory(e) === cat;
+    });
+  }, [events, cat]);
+
+  const catCounts = useMemo(() => {
+    if (!events) return {};
+    const counts = {};
+    CAL_CATEGORIES.forEach(c => {
+      counts[c] = c === "All" ? events.length : events.filter(e => eventCategory(e) === c).length;
+    });
+    return counts;
+  }, [events]);
+
+  const grouped = useMemo(() => {
+    const map = new Map();
+    filtered.forEach(e => {
+      if (!map.has(e.date)) map.set(e.date, []);
+      map.get(e.date).push(e);
+    });
+    return [...map.entries()].map(([date, evts]) => ({ date, evts })).sort((a,b) => a.date.localeCompare(b.date));
+  }, [filtered]);
+
+  const groupedByMonth = useMemo(() => {
+    const map = new Map();
+    grouped.forEach(g => {
+      const month = g.date.slice(0,7);
+      if (!map.has(month)) map.set(month, []);
+      map.get(month).push(g);
+    });
+    return [...map.entries()].map(([month, days]) => ({ month, days }));
+  }, [grouped]);
+
+  const fmtDate = dateStr => {
+    try {
+      const d = new Date(dateStr + "T12:00:00");
+      return d.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
+    } catch { return dateStr; }
+  };
 
   return (
     <div className={`overlay ${open ? "open" : ""}`}>
@@ -904,86 +1375,196 @@ function CalendarView({ open, onClose }) {
         </div>
         <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="x" size={14}/> Close</button>
       </div>
-      <div style={{ padding:"20px 28px" }}>
-        {err === "upgrade" && <UpgradePrompt feature="Economic calendar" minTier="basic"/>}
-        {err === "offline" && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline.</div>}
-        {!events && !err && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading…</div>}
-        {events && events.length === 0 && <div style={{ color:"var(--text-faint)", fontSize:12 }}>No upcoming events found.</div>}
 
-        {grouped.map(({ month, evts }) => (
-          <div key={month} style={{ marginBottom:24 }}>
-            <div style={{ fontFamily:"var(--font-mono)", fontSize:10, fontWeight:700, textTransform:"uppercase",
-                          letterSpacing:"0.12em", color:"var(--text-faint)", marginBottom:10,
-                          paddingBottom:6, borderBottom:"1px solid var(--line)" }}>
-              {fmtMonth(month)}
-            </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-              {evts.map((e, i) => {
-                const label  = e.label || "EVENT";
-                const color  = e.color || "var(--text-faint)";
-                const du     = daysUntil(e.date);
-                const imp    = impactStyle(e.impact);
-                const isOpen = expanded === `${month}-${i}`;
-                const isToday   = du === 0;
-                const isImminent = du != null && du <= 3;
+      <div style={{ overflowY:"auto", maxHeight:"calc(100vh - 88px)" }}>
+        {err === "upgrade" && <div style={{ padding:28 }}><UpgradePrompt feature="Economic calendar" minTier="basic"/></div>}
+        {err === "offline" && <div style={{ padding:28, color:"var(--text-faint)", fontSize:12 }}>Backend offline.</div>}
+        {!events && !err && <div style={{ padding:28, color:"var(--text-faint)", fontSize:12 }}>Loading…</div>}
 
-                return (
-                  <div key={i}
-                    style={{ border:`1px solid ${isImminent ? color : "var(--line)"}`,
-                             borderRadius:8, background:"var(--bg-1)", overflow:"hidden",
-                             boxShadow: isToday ? `0 0 0 2px ${color}40` : "none" }}>
-                    <div onClick={() => setExpanded(isOpen ? null : `${month}-${i}`)}
-                      style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 14px", cursor:"pointer" }}>
-                      <div style={{ width:52, height:44, borderRadius:6, flexShrink:0,
-                                    background:`color-mix(in oklch,${color} 14%,transparent)`,
-                                    display:"grid", placeItems:"center" }}>
-                        <span style={{ fontFamily:"var(--font-mono)", fontSize:9, fontWeight:700,
-                                       color, textAlign:"center", lineHeight:1.3, letterSpacing:"0.04em" }}>
-                          {label}
-                        </span>
-                      </div>
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ fontSize:13, fontWeight:600, color:"var(--text)", display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                          {e.name || label}
-                          {isToday && <span style={{ fontFamily:"var(--font-mono)", fontSize:9, fontWeight:700,
-                            background:"var(--warn)", color:"#000", padding:"1px 5px", borderRadius:3 }}>TODAY</span>}
-                        </div>
-                        <div style={{ fontSize:11, color:"var(--text-faint)", fontFamily:"var(--font-mono)", marginTop:3, display:"flex", gap:10 }}>
-                          <span>{e.date}</span>
-                          {e.time && <span style={{ color:"var(--text-dim)" }}>· {e.time}</span>}
-                        </div>
-                      </div>
-                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, flexShrink:0 }}>
-                        {e.impact && (
-                          <span style={{ fontFamily:"var(--font-mono)", fontSize:9, fontWeight:700, padding:"2px 6px",
-                                         borderRadius:3, background:imp.bg, color:imp.text }}>
-                            {imp.label}
+        {events && (
+          <>
+            {/* ── 7-day strip ── */}
+            <div style={{ padding:"16px 28px", borderBottom:"1px solid var(--line)", background:"var(--bg-1)" }}>
+              <div style={{ fontFamily:"var(--font-mono)", fontSize:10, letterSpacing:"0.12em", color:"var(--text-faint)", marginBottom:10 }}>
+                NEXT 7 DAYS
+              </div>
+              <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:4 }}>
+                {next7.map(({ date, dateStr, dayEvents }) => {
+                  const du = daysUntil(dateStr);
+                  const isToday = du === 0;
+                  const highImpact = dayEvents.some(e => e.impact === "HIGH");
+                  return (
+                    <div key={dateStr} style={{ minWidth:80, flexShrink:0, textAlign:"center",
+                      padding:"10px 8px", borderRadius:8,
+                      background: isToday ? "color-mix(in oklch,var(--accent) 12%,var(--bg-2))" : "var(--bg-2)",
+                      border: isToday ? "1.5px solid var(--accent)" : "1px solid var(--line)" }}>
+                      <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color: isToday ? "var(--accent)" : "var(--text-faint)",
+                        letterSpacing:"0.08em" }}>{DAYS[date.getDay()]}</div>
+                      <div style={{ fontFamily:"var(--font-mono)", fontSize:13, fontWeight:700,
+                        color: isToday ? "var(--accent)" : "var(--text)", marginTop:2 }}>{date.getDate()}</div>
+                      {isToday && <div style={{ fontFamily:"var(--font-mono)", fontSize:8, color:"var(--accent)", marginTop:2 }}>TODAY</div>}
+                      <div style={{ marginTop:6, display:"flex", flexDirection:"column", gap:2, alignItems:"center" }}>
+                        {dayEvents.slice(0,3).map((e,i) => (
+                          <span key={i} style={{ fontFamily:"var(--font-mono)", fontSize:8, padding:"1px 5px", borderRadius:3,
+                            background: e.impact === "HIGH" ? "color-mix(in oklch,#ef4444 18%,transparent)" : e.impact === "MEDIUM" ? "color-mix(in oklch,#f59e0b 18%,transparent)" : "var(--bg-3)",
+                            color: e.impact === "HIGH" ? "#ef4444" : e.impact === "MEDIUM" ? "#f59e0b" : "var(--text-faint)",
+                            maxWidth:72, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            {e.label || e.name}
                           </span>
-                        )}
-                        {du != null && (
-                          <span style={{ fontFamily:"var(--font-mono)", fontSize:11,
-                                         color: isImminent ? "var(--warn)" : "var(--text-faint)" }}>
-                            {du === 0 ? "today" : `${du}d`}
-                          </span>
-                        )}
+                        ))}
+                        {dayEvents.length === 0 && <span style={{ fontSize:9, color:"var(--text-faint)" }}>—</span>}
                       </div>
-                      {e.desc && (
-                        <span style={{ color:"var(--text-faint)", fontSize:10, marginLeft:4,
-                                       transform: isOpen ? "rotate(180deg)" : "none", transition:"transform 0.15s" }}>▾</span>
-                      )}
                     </div>
-                    {isOpen && e.desc && (
-                      <div style={{ padding:"0 14px 14px 80px", fontSize:12, color:"var(--text-dim)", lineHeight:1.6,
-                                    borderTop:"1px solid var(--line)", paddingTop:10, marginTop:0 }}>
-                        {e.desc}
-                      </div>
-                    )}
-                  </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ── Category filters ── */}
+            <div style={{ padding:"12px 28px", borderBottom:"1px solid var(--line)", display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" }}>
+              {CAL_CATEGORIES.map(c => {
+                const count = catCounts[c] || 0;
+                const active = cat === c;
+                return (
+                  <button key={c} onClick={() => setCat(c)}
+                    style={{ fontFamily:"var(--font-mono)", fontSize:11, padding:"5px 12px", borderRadius:99,
+                      cursor:"pointer", border:"1px solid var(--line)",
+                      background: active ? "var(--accent)" : "transparent",
+                      color: active ? "#042116" : "var(--text-dim)", fontWeight: active ? 700 : 400 }}>
+                    {c} {count > 0 && <span style={{ opacity:0.7 }}>({count})</span>}
+                  </button>
                 );
               })}
+              <div style={{ marginLeft:"auto", display:"flex", gap:12, fontFamily:"var(--font-mono)", fontSize:10 }}>
+                {[["#ef4444","HIGH"],["#f59e0b","MED"],["var(--text-faint)","LOW"]].map(([c,l]) => (
+                  <span key={l} style={{ display:"flex", alignItems:"center", gap:4, color:"var(--text-faint)" }}>
+                    <span style={{ width:7, height:7, borderRadius:"50%", background:c }}/>
+                    {l}
+                  </span>
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+
+            {/* ── Event list ── */}
+            <div style={{ padding:"0 28px 40px" }}>
+              {grouped.length === 0 && (
+                <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>
+                  No events in this category.
+                </div>
+              )}
+              {groupedByMonth.map(({ month, days }) => (
+                <div key={month}>
+                  {/* Month divider */}
+                  <div style={{ display:"flex", alignItems:"center", gap:12, padding:"20px 0 8px",
+                    fontFamily:"var(--font-mono)", fontSize:10, letterSpacing:"0.14em", textTransform:"uppercase", color:"var(--text-faint)" }}>
+                    <div style={{ flex:1, height:1, background:"var(--line)" }}/>
+                    {new Date(month + "-15").toLocaleDateString("en-US", { month:"long", year:"numeric" }).toUpperCase()}
+                    <div style={{ flex:1, height:1, background:"var(--line)" }}/>
+                  </div>
+
+                  {days.map(({ date, evts }) => {
+                    const du    = daysUntil(date);
+                    const isToday   = du === 0;
+                    const isHigh    = evts.some(e => e.impact === "HIGH");
+                    const isImminent = du != null && du <= 3 && du >= 0;
+                    return (
+                      <div key={date} style={{ marginBottom:14 }}>
+                        {/* Date header */}
+                        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0 6px",
+                          borderLeft: isHigh ? "2px solid var(--warn)" : "2px solid transparent", paddingLeft:10 }}>
+                          <span style={{ fontFamily:"var(--font-mono)", fontSize:11, fontWeight:700, color:"var(--text)" }}>
+                            {fmtDate(date).toUpperCase()}
+                          </span>
+                          {isToday && (
+                            <span style={{ fontFamily:"var(--font-mono)", fontSize:9, fontWeight:700, padding:"2px 6px",
+                              borderRadius:3, background:"var(--up)", color:"#000" }}>TODAY</span>
+                          )}
+                          {isHigh && !isToday && <span style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--warn)" }}>⚡ High impact</span>}
+                          <span style={{ marginLeft:"auto", fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)" }}>
+                            {evts.length} event{evts.length !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+
+                        {/* Event cards */}
+                        {evts.map((e, i) => {
+                          const du2   = daysUntil(e.date);
+                          const imp   = impactStyle(e.impact);
+                          const isImm = du2 != null && du2 <= 3 && du2 >= 0;
+                          const blurb = Object.entries(IMPACT_BLURBS).find(([k]) => (e.label || e.name || "").toUpperCase().includes(k))?.[1];
+                          const fcastNum = parseFloat(e.forecast);
+                          const prevNum  = parseFloat(e.previous);
+                          const improving = !isNaN(fcastNum) && !isNaN(prevNum) && fcastNum < prevNum;
+
+                          return (
+                            <div key={i} style={{ background:"var(--bg-1)", border:`1px solid ${isImm && e.impact==="HIGH" ? "color-mix(in oklch,#ef4444 35%,var(--line))" : "var(--line)"}`,
+                              borderRadius:8, padding:"14px 16px", marginBottom:8,
+                              boxShadow: du2 === 0 ? "0 0 0 2px color-mix(in oklch,var(--accent) 30%,transparent)" : "none" }}>
+                              {/* Top row */}
+                              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                                <span style={{ width:7, height:7, borderRadius:"50%", background:imp.dot, flexShrink:0 }}/>
+                                <span style={{ fontFamily:"var(--font-mono)", fontSize:10, fontWeight:700, padding:"2px 6px",
+                                  borderRadius:3, background:`color-mix(in oklch,${imp.dot} 14%,transparent)`, color:imp.dot }}>
+                                  {imp.label}
+                                </span>
+                                <span style={{ fontFamily:"var(--font-mono)", fontSize:11, fontWeight:700, color:"var(--text)",
+                                  padding:"2px 6px", borderRadius:3, background:"var(--bg-2)" }}>
+                                  {e.label || "EVT"}
+                                </span>
+                                <span style={{ fontSize:13, fontWeight:600, color:"var(--text)" }}>{e.name || e.label}</span>
+                                {e.time && (
+                                  <span style={{ marginLeft:"auto", fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-faint)", flexShrink:0 }}>
+                                    {e.time} ET
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Forecast / previous */}
+                              {(e.forecast || e.previous) && (
+                                <div style={{ display:"flex", gap:20, marginBottom:8 }}>
+                                  {e.forecast && (
+                                    <div>
+                                      <div style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Forecast</div>
+                                      <div style={{ fontFamily:"var(--font-mono)", fontSize:14, fontWeight:700, color:"var(--text)" }}>{e.forecast}</div>
+                                    </div>
+                                  )}
+                                  {e.forecast && e.previous && (
+                                    <div style={{ display:"flex", alignItems:"center", color: improving ? "var(--up)" : "var(--down)", fontSize:16, fontWeight:700 }}>
+                                      {improving ? "↓" : "↑"}
+                                    </div>
+                                  )}
+                                  {e.previous && (
+                                    <div>
+                                      <div style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Previous</div>
+                                      <div style={{ fontFamily:"var(--font-mono)", fontSize:14, color:"var(--text-dim)" }}>{e.previous}</div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Impact blurb */}
+                              {blurb && (
+                                <div style={{ fontSize:11, color:"var(--text-dim)", lineHeight:1.5, marginBottom:8,
+                                  padding:"6px 10px", background:"var(--bg-2)", borderRadius:5 }}>
+                                  {blurb}
+                                </div>
+                              )}
+
+                              {/* Countdown */}
+                              <div style={{ fontFamily:"var(--font-mono)", fontSize:10,
+                                color: du2 === 0 ? "var(--up)" : isImm ? "var(--warn)" : "var(--text-faint)" }}>
+                                ⏱ {du2 === 0 ? "Today" : du2 === 1 ? "Tomorrow" : `In ${du2} days`}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
