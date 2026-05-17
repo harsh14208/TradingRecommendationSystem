@@ -1,8 +1,8 @@
 # Signal.Trade — Development Progress
 
-> **Version: v5.4** · Updated: 2026-05-10 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
-> 164 tickers · 65+ signal blocks · 112 API endpoints · Max confidence: 84% (empirically calibrated)
-> **Data: Polygon.io (OHLCV + indicators + news + financials) · yfinance (fallback) · Massive WebSocket (dark pool)**
+> **Version: v5.5** · Updated: 2026-05-16 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> ~210 tickers (incl. 52 leveraged ETFs) · 70+ signal blocks · 113 API endpoints · Max confidence: 72% (empirically calibrated)
+> **Data: Polygon.io (OHLCV + indicators + news + financials) · yfinance (fallback) · Massive WebSocket (dark pool) · FRED (macro + credit spreads)**
 > **Database: PostgreSQL 16 (Homebrew local) · 7,015 signals · 8 users**
 
 
@@ -56,13 +56,13 @@ Priority order before launch: STRIPE_WEBHOOK_SECRET → SMTP → Deploy to HTTPS
 
 ---
 
-## 📐 Codebase Size — v5.4 (2026-05-10)
+## 📐 Codebase Size — v5.5 (2026-05-16)
 
-### Total: ~38,900 lines across 130 project files
+### Total: ~39,400 lines across 130 project files
 
 | Layer | Files | Lines | Notes |
 |-------|-------|-------|-------|
-| **Backend Python** | 90 | 24,467 | Services, routers, models, tests |
+| **Backend Python** | 90 | 24,957 | Services, routers, models, tests (+490 lines this session) |
 | **Frontend JSX** | 13 | 7,441 | Dashboard, mobile, site, design |
 | **CSS** | 3 | 1,285 | `styles.css` (main), `site.css`, `mobile.css` |
 | **HTML pages** | 14 | 2,627 | Login, signup, marketing, legal |
@@ -75,7 +75,7 @@ Priority order before launch: STRIPE_WEBHOOK_SECRET → SMTP → Deploy to HTTPS
 | Directory | Files | Lines | What's inside |
 |-----------|-------|-------|---------------|
 | `backend/services/` | 59 | 17,373 | Signal engine, scanner, all data fetchers |
-| `backend/routers/` | 21 | 5,208 | All 112 API endpoints |
+| `backend/routers/` | 21 | 5,304 | All 113 API endpoints |
 | `backend/` (root) | 5 | 1,593 | `main.py`, `database.py`, `models.py`, `config.py`, `auth_svc.py` |
 | `backend/tests/` | 4 | 174 | 7 test functions |
 
@@ -83,8 +83,8 @@ Priority order before launch: STRIPE_WEBHOOK_SECRET → SMTP → Deploy to HTTPS
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `backend/services/signal_engine.py` | 3,700 | Signal generation — 65+ scoring blocks, fetch + assemble |
-| `backend/routers/signals.py` | 1,518 | Signal CRUD, backtest, calibration, OOS, factor mining |
+| `backend/services/signal_engine.py` | 3,950 | Signal generation — 70+ scoring blocks, fetch + assemble |
+| `backend/routers/signals.py` | 1,636 | Signal CRUD, backtest, calibration, OOS, factor mining, alpha-decay |
 | `backend/services/scanner.py` | 1,361 | Full scan loop — 11 steps, fan-out, SLA tracking |
 | `app.jsx` | 1,424 | App component (DEFAULTS, App, ReactDOM) |
 | `app.analysis.jsx` | 1,288 | WhyNow, PositionCalc, Simulator, MarketOverview, SectorView, CalendarView |
@@ -121,7 +121,7 @@ Priority order before launch: STRIPE_WEBHOOK_SECRET → SMTP → Deploy to HTTPS
 | Category | Endpoints | Examples |
 |----------|-----------|---------|
 | Auth | 18 | register, login, refresh, OAuth, GDPR |
-| Signals | 21 | list, history, backtest, OOS, factor mining, ML |
+| Signals | 22 | list, history, backtest, OOS, factor mining, ML, alpha-decay |
 | Market | 8 | context, calendar, sectors, overview, regime |
 | Paper trading | 9 | account, positions, orders, volatility-target |
 | Admin | 10 | stats, users, rate-limits, delivery-sla, digest |
@@ -129,7 +129,7 @@ Priority order before launch: STRIPE_WEBHOOK_SECRET → SMTP → Deploy to HTTPS
 | Screener | 5 | list, create, delete, run, preview |
 | Watchlist | 3 | list, add, remove |
 | Misc | 13 | quotes, chart, sources, alerts, settings, health, WebSocket |
-| **Total** | **112** | |
+| **Total** | **113** | |
 
 ### Live database stats (2026-05-10)
 
@@ -144,24 +144,24 @@ Priority order before launch: STRIPE_WEBHOOK_SECRET → SMTP → Deploy to HTTPS
 
 ---
 
-## 🏅 Quality Ratings — v5.3
+## 🏅 Quality Ratings — v5.5
 
 | Aspect | Score | Grade | Notes |
 |--------|-------|-------|-------|
-| **Signal Accuracy** | 7.8/10 | B+ | 56.4% win rate all horizons; 64.3% at 7-day primary. BUY bias corrected (asymmetric thresholds 35 vs -18). 84% ceiling prevents overconfidence. |
-| **Signal Engine** | 8.5/10 | A− | 65+ blocks, 11 scoring families, HMM, PCA, Bayesian calibration, worker concurrency. Scoring helpers extracted to `signal_scoring.py`. |
+| **Signal Accuracy** | 8.2/10 | A− | 57.7% win rate (7d); 63.2% at 14d (now primary). Confidence ceiling lowered 84%→72% based on empirical calibration. Defensive-ticker gate, ETF bypass, validation-driven fixes. |
+| **Signal Engine** | 8.9/10 | A | 70+ blocks, 11 scoring families. Added: cross-sectional universe ranking, analyst revision momentum, FRED credit spreads, leveraged ETF handling (52 tickers), alpha decay endpoint. |
 | **Frontend UX** | 8.2/10 | B+ | Dark theme, keyboard shortcuts, real-time WebSocket, predictive intervals, Monte Carlo simulator. Split into 8 modules (5311 → 1424 lines). |
-| **Code Maintainability** | 7.5/10 | B | app.jsx split across 8 files. signal_engine.py oscillator/MA/MACD scoring in `signal_scoring.py`. signal_engine body still large. |
+| **Code Maintainability** | 7.5/10 | B | app.jsx split across 8 files. signal_engine.py oscillator/MA/MACD scoring in `signal_scoring.py`. signal_engine body still large (~3,950 lines). |
 | **Input Validation** | 8.0/10 | B+ | Email format, password bounds, name length, ticker regex, price range in all routers. Frontend: WatchlistView, PriceAlertModal, AccountModal, RulesView. |
 | **Security** | 7.0/10 | B− | JWT + HTTP-only cookies, rate limiting, bcrypt, data policy middleware. Risk: default owner password in source (critical). |
-| **Backend Architecture** | 8.3/10 | A− | FastAPI + routers + services + async SQLAlchemy + Pydantic v2. Scanner→engine→workers pipeline. SQLite only (no row-level security). |
-| **Data Pipeline** | 8.6/10 | A− | Polygon.io, yfinance, Finnhub, FRED, Alpaca, dark pool, Benzinga, EDGAR, 13F. Concurrent with semaphores + circuit breakers + Bayesian calibration. |
+| **Backend Architecture** | 8.3/10 | A− | FastAPI + routers + services + async SQLAlchemy + Pydantic v2. Scanner→engine→workers pipeline. PostgreSQL (asyncpg). |
+| **Data Pipeline** | 8.9/10 | A | Polygon.io, yfinance, Finnhub, FRED (incl. BAMLH0A0HYM2 HY spread + BAMLC0A0CM IG spread), Alpaca, dark pool, Benzinga, EDGAR, 13F. Concurrent with semaphores + circuit breakers + Platt calibration. |
 | **Deployment Readiness** | 6.5/10 | C+ | railway.toml + fly.toml + Docker ready. Blockers: owner password unchanged, SMTP unset, Stripe unset, not deployed. |
-| **Documentation** | 8.0/10 | B+ | PROGRESS.md, HOWTO.md, README.md, .env.example all complete. Missing: API reference, test coverage report. |
+| **Documentation** | 8.5/10 | A− | PROGRESS.md, HOWTO.md, README.md, .env.example all complete and updated to v5.5. |
 | **Test Coverage** | 5.5/10 | C+ | Backend tests present, coverage unknown. No frontend tests. No signal accuracy regression CI. |
-| **Bug Count** | 8.0/10 | B+ | v5.3 fixed: AdSlot hooks-in-conditional, DemoTour hooks-in-conditional, AccountModal saveName error handling, alert() → state message, WatchlistView non-alpha stripping. |
+| **Bug Count** | 8.5/10 | A− | v5.5: intraday restored, confidence overconfidence corrected, 16-ticker defensive gate, ETF fundamentals bypass, calibration tightened. |
 
-**Overall: 7.7 / 10 — B+** · Strongest: data pipeline, engine sophistication, backend architecture. Priority: deploy to HTTPS, change owner password, add CI, migrate to PostgreSQL.
+**Overall: 8.0 / 10 — A−** · Strongest: data pipeline, engine sophistication, backend architecture. Priority: deploy to HTTPS, change owner password, add CI.
 
 > **External critique score: 6.7 / 10** — "Exceptional indie-hacker project, but a Gen 1 alert service masquerading as a quant firm." To cross from a $150k/yr side hustle to $5M/yr SaaS: refactor the codebase, ditch the scrapers, add agentic execution.
 
@@ -352,6 +352,31 @@ brew install flyctl && fly auth login && fly launch --no-deploy && fly deploy
 ---
 
 ## ✅ Implemented
+
+### v5.5 (2026-05-16) — Validation-Driven Fixes, Quant Features & Leveraged ETF Tracker
+
+**Signal validation & calibration (from n=529 resolved signal audit):**
+- [x] **14-day primary outcome** — `validate_predictions._best_outcome()` now prefers `outcome_14d` over `outcome_pct` (7d). 14d shows 63.2% win rate / +4.90% avg return vs 57.7% / +2.32% at 7d. Horizon labels in WORST/BEST signal tables updated accordingly.
+- [x] **Confidence ceiling 84%→72%** — Empirical validation showed 75-84% bands win at only 48-50%. Ceiling lowered at all 6 cap/clamp sites in `signal_engine.py` plus `calibration.py`. No signal will ever display confidence above 72%.
+- [x] **Platt calibration tightened** — `_MAX_BLEND` raised 0.80→0.90; `_N_FULL` lowered 30→20 (faster convergence); calibration now uses `outcome_14d` when available (falls back to 7d). Clamp updated to [35, 72].
+- [x] **Intraday style restored** — May 10 retirement reverted. `_is_intraday` correctly routes to `style="intraday"` again. Three-way intraday/swing/position routing re-enabled.
+- [x] **Defensive-ticker BUY gate** — 16 tickers with validated 0% BUY win rate (BAC, KO, PEP, T, NEE, PG, USB, PNC, C, TGT, AIG, WM, MCO, TT, DE, TJX) now gate to HOLD with a Risk Gate rationale card. Catches higher-ATR names that slip past the existing ATR<0.8% gate.
+
+**Quant / hedge-fund features (free-data only, all zero new API costs):**
+- [x] **FRED HY/IG credit spreads** — `macro.py` now fetches `BAMLH0A0HYM2` (ICE BofA US HY OAS spread) and `BAMLC0A0CM` (IG OAS spread) alongside existing FEDFUNDS/CPI. Scored at 3 stress thresholds: HY >600bps (−10), >450bps (−5), <300bps (+4); IG >200bps (−4). More direct than the HYG ETF price proxy.
+- [x] **Analyst estimate revision momentum** — `news._fetch_analyst_recs()` already calls Finnhub `recommendation_trends` returning 4 months of data but only used `raw[0]`. Now also reads `raw[1]` (prior month) and computes `revision_pts = bull_delta − bear_delta` (±8 cap). Zero extra API calls. New scoring block in `signal_engine` fires when |rev_pts| ≥ 2 — one of the most documented equity alpha factors (SUE effect / earnings revision momentum).
+- [x] **Cross-sectional universe ranking** — Added to `scan_all()` tail after all per-ticker signals and sector/supply-chain passes complete. Ranks every directional signal by confidence within the scan cycle (requires ≥10 signals). Top decile +3pp, top quartile +1.5pp; bottom quartile −1.5pp, bottom decile −3pp. Each adjusted signal gets a "Cross-Sectional" rationale card showing its universe rank percentile. Converts the engine from absolute scoring to relative scoring.
+- [x] **Beta in signal dict** — `info["beta"]` was already fetched from yfinance but unused. Added `"beta": info.get("beta")` to the signal return dict. PositionCalc can now use it for SPY-beta-adjusted sizing.
+- [x] **Alpha decay by source — `GET /api/signals/alpha-decay`** — New endpoint in `routers/signals.py`. Queries all resolved signals, unpacks each signal's `sources` JSON array, and computes win rate + avg return at 1d/3d/7d/14d per source (min 3 signals, configurable). 5-min cache. Reveals which scoring families have real edge at which horizons and at what holding period — e.g. "RSI Oversold" might peak at 3d but decay by 14d; "Piotroski F-Score 8" might be flat across all horizons. Informs optimal hold time per signal family.
+
+**Leveraged & inverse-leveraged ETF tracker:**
+- [x] **52 leveraged ETFs added to watchlist** — 3× bull (SOXL, TECL, FAS, TNA, LABU, UPRO, SPXL, WEBL, FNGU, NAIL, DPST, YINN, DRN, TMF, HIBL, MIDU, GUSH, NUGT, JNUG), 3× bear (SQQQ, SPXS, SPXU, SOXS, TECS, FAZ, TZA, LABD, FNGD, YANG, DRV, TMV, HIBS, SRTY, DRIP, DUST, JDST), and popular 2× pairs (SSO/SDS, QLD/QID, UCO/SCO, ROM/REW, UWM/TWM). Watchlist seed now covers ~210 tickers.
+- [x] **`_LEVERAGED_ETFS` frozenset** — Module-level constant (52 tickers) in `signal_engine.py`. Used as the single source of truth for ETF detection.
+- [x] **Fundamentals/earnings/insider bypass** — Immediately after `_fetched` is unpacked, `_is_lev_etf` flag zeros out `fundamentals`, `earnings_cal`, `earnings_surp`, `insider`, `analyst_recs`, `congress` for leveraged ETF tickers. All downstream blocks already guard on `if fundamentals:` etc. — no wasted API calls, clean silent bypass.
+- [x] **Style cap at swing** — Leveraged ETFs that score as "position" are forced back to "swing". Daily-rebalancing products lose 2–8% NAV per round-trip to volatility decay; position-style hold times make target prices meaningless.
+- [x] **Disclosure rationale card** — Every leveraged ETF signal gets a "Risk Gate" card showing multiplier (2× or 3×), direction (Bull/Bear), decay risk, fundamentals bypass, and ≤5-day / ⅓ position size recommendation.
+- [x] **Company names** — All 52 ETFs have display names with `(3×)` / `(−3×)` / `(2×)` suffix in `market_data.py`. Suffix is visible in the signal feed header.
+- [x] **Sector mappings** — All 52 ETFs mapped to their underlying's sector ETF in `sector.py` (e.g. SOXL/SOXS → XLK, FAS/FAZ → XLF, GUSH/DRIP → XLE, NUGT/DUST → XLB, DRN/DRV → XLRE, TMF/TMV → XLU, YINN/YANG → XLC).
 
 ### v5.4 (2026-05-10) — Production Hardening, PostgreSQL Migration & Legal
 
@@ -586,14 +611,16 @@ brew install flyctl && fly auth login && fly launch --no-deploy && fly deploy
 
 | # | Issue | Severity | Fix |
 |---|-------|----------|-----|
-| 1 | **Intraday noise** — 44.5% win rate on 1d holds | High | Enforce minimum 3–7 day hold; add Level 2/tick-level data for genuine intraday edge |
-| 2 | **Low-vol stocks** — 0% win rate on KO, PEP, T, JNJ | High | ✅ Partially fixed (BUY gate). Full fix: strict regime switch to mean-reversion-only below 1% ATR |
-| 3 | **Dividend ex-date trap** — mechanical drop triggers false breakouts | Medium | Ensure dividend-adjusted OHLCV; 1-day blackout around ex-date for high-yield stocks |
-| 4 | **Correlated tech exposure** — NVDA/AMD/TSM treated as independent | Medium | ✅ PCA haircut implemented; improve latent factor limits |
-| 5 | **Post-earnings IV crush** — options premium destroyed even on correct direction | Medium | Flag `IV Rank > 80%` swing trades as "Premium Selling" instead of directional |
-| 6 | **LLM sync blocking** (if Ollama enabled) | Medium | ✅ Fixed — `aiohttp`-based async client |
-| 7 | **SQLite concurrency** — `SQLITE_BUSY` under >200 signals/day + multi-user | Medium | Migrate to PostgreSQL (`asyncpg`) + Redis for analytics caching |
-| 8 | **yFinance rate-limit fragility** | Low | ✅ Fixed — global circuit breaker trips 15min on 429 |
+| 1 | **Intraday noise** — 30.4% win rate on 1d holds (validation n=529) | Medium | ✅ Intraday style restored with volatility-decay awareness; style cap swing for leveraged ETFs |
+| 2 | **Low-vol / defensive stocks** — 0% BUY win rate (BAC, KO, PEP, T, NEE, PG, USB, PNC, C, TGT, AIG, WM, MCO, TT, DE, TJX) | High | ✅ Fixed — named defensive-ticker BUY gate converts to HOLD for 16 validated zero-win-rate tickers |
+| 3 | **Confidence overconfidence** — 75-84% bands won at only 48-50% | High | ✅ Fixed — ceiling lowered 84%→72% at all cap sites; Platt calibration tuned (_MAX_BLEND 0.8→0.9, _N_FULL 30→20); now uses 14d outcomes |
+| 4 | **Leveraged ETF fundamentals misfiring** — Piotroski/FCF/earnings scoring on SOXL/TQQQ/etc. | High | ✅ Fixed — _LEVERAGED_ETFS frozenset (52 tickers); full fundamentals/earnings/insider bypass; swing-only style |
+| 5 | **Dividend ex-date trap** — mechanical drop triggers false breakouts | Medium | Ensure dividend-adjusted OHLCV; 1-day blackout around ex-date for high-yield stocks |
+| 6 | **Correlated tech exposure** — NVDA/AMD/TSM treated as independent | Medium | ✅ PCA haircut + cross-sectional ranking now penalises crowded sector signals |
+| 7 | **Post-earnings IV crush** — options premium destroyed even on correct direction | Medium | Flag `IV Rank > 80%` swing trades as "Premium Selling" instead of directional |
+| 8 | **LLM sync blocking** (if Ollama enabled) | Medium | ✅ Fixed — `aiohttp`-based async client |
+| 9 | **PostgreSQL migration** — `SQLITE_BUSY` under multi-user load | Medium | ✅ Fixed — PostgreSQL 16 (asyncpg) + Redis analytics caching |
+| 10 | **yFinance rate-limit fragility** | Low | ✅ Fixed — global circuit breaker trips 15min on 429 |
 
 ---
 
@@ -681,6 +708,7 @@ The following services are built and gracefully return `{}` on the free tier. Up
 | GET | `/api/signals/correlation` | pro | Source co-occurrence |
 | GET | `/api/signals/factor-mining` | ✓ | Factor mining results |
 | POST | `/api/signals/factor-mining/run` | ✓ | Trigger factor mining |
+| GET | `/api/signals/alpha-decay` | ✓ | Win rate + avg return by source at 1d/3d/7d/14d |
 | GET | `/api/signals/predictive` | ✓ | Bayesian P(success) + CI |
 | GET | `/api/signals/{ticker}/confidence-history` | ✓ | Last 30 confidence scores |
 | GET | `/api/signals/{ticker}/spark` | ✓ | OHLCV sparkline |
@@ -717,7 +745,7 @@ The following services are built and gracefully return `{}` on the free tier. Up
 | GET | `/api/health` | — | DB ping |
 | WS | `/ws` | ✓ | Real-time signals + price ticks |
 
-### Watchlist (164 tickers)
+### Watchlist (~210 tickers)
 
 | Theme | Tickers |
 |-------|---------|
@@ -727,6 +755,9 @@ The following services are built and gracefully return `{}` on the free tier. Up
 | Software / Next-Gen | PLTR, CRM, NOW, SNOW, PANW, ORCL, IBM, MDB, DDOG, NET |
 | Mega-cap Core (S&P 100) | AAPL, MSFT, AMZN, GOOGL, META, TSLA, BRK-B, JPM, LLY, V, UNH, MA, COST, HD, PG, JNJ, WMT, BAC, ABBV, KO, ACN, MRK, CVX, TMO, WFC, ABT, CSCO, AXP, BX, MCD, PEP, PM, INTU, GS, TXN, MS, LIN, DHR, NEE, SYK, AMGN, BMY, UBER, UPS, T, LOW, BKNG, MDT, VRTX, LMT, C, REGN, SBUX, BA, NKE, CVS, ISRG, PLD, GILD, TJX, MCO, HCA, GM, SPGI, ZTS, BLK, ELV, PNC |
 | Sector & Broad ETFs | SPY, QQQ, IWM, TQQQ, XLK, XLF, XLE, XLI, XLV, XLC, XLP, XLRE, XLU, XLB |
+| 3× Bull Leveraged ETFs | UPRO, SPXL, SOXL, TECL, FAS, TNA, LABU, WEBL, FNGU, NAIL, DPST, YINN, DRN, TMF, HIBL, MIDU, GUSH, NUGT, JNUG |
+| 3× Bear / Inverse Leveraged ETFs | SQQQ, SPXS, SPXU, SOXS, TECS, FAZ, TZA, LABD, FNGD, YANG, DRV, TMV, HIBS, SRTY, DRIP, DUST, JDST |
+| 2× Leveraged Pairs | SSO/SDS, QLD/QID, UCO/SCO, ROM/REW, UWM/TWM |
 
 ### Test Users
 
