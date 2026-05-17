@@ -751,12 +751,17 @@ function MarketOverviewView({ open, onClose, online }) {
     </span>
   );
 
-  const vixColor = macro.vix > 30 ? "var(--down)" : macro.vix > 20 ? "var(--warn)" : macro.vix < 14 ? "var(--up)" : "var(--text)";
-  const vixLabel = macro.vix > 30 ? "DANGER" : macro.vix > 20 ? "ELEVATED" : macro.vix < 14 ? "CALM" : "NORMAL";
+  // VIX lives in hmm_regime.features, not in macro directly
+  const vix = hmm?.features?.vix ?? null;
+  const vixColor = vix > 30 ? "var(--down)" : vix > 20 ? "var(--warn)" : vix != null && vix < 14 ? "var(--up)" : "var(--text)";
+  const vixLabel = vix > 30 ? "DANGER" : vix > 20 ? "ELEVATED" : vix != null && vix < 14 ? "CALM" : "NORMAL";
+  // yc_spread = 10Y − 2Y (positive = normal curve, negative = inverted)
   const spreadColor = (macro.yc_spread ?? 0) < 0 ? "var(--down)" : (macro.yc_spread ?? 0) > 0.5 ? "var(--up)" : "var(--warn)";
   const macroColor = (macro.macro_score ?? 0) > 5 ? "var(--up)" : (macro.macro_score ?? 0) < -5 ? "var(--down)" : "var(--warn)";
   const macroLabel = (macro.macro_score ?? 0) > 5 ? "BULLISH MACRO" : (macro.macro_score ?? 0) < -5 ? "BEARISH MACRO" : "NEUTRAL";
-  const rotationColors = { early_bull:"var(--up)", late_bull:"var(--warn)", early_bear:"var(--warn)", late_bear:"var(--down)" };
+  // sector_rotation is an object { stage, favoured, avoid, confidence }
+  const rotObj = macro.sector_rotation || {};
+  const rotColor = rotObj.stage === "early" ? "var(--up)" : "var(--warn)";
   const breadthSignalColor = breadth.signal === "bullish" ? "var(--up)" : breadth.signal === "bearish" ? "var(--down)" : "var(--warn)";
   const breadthLabel = breadth.signal === "bullish" ? "HEALTHY" : breadth.signal === "bearish" ? "DETERIORATING" : "WEAKENING";
   const cotNetPct = cot.net_pct ?? 0;
@@ -764,13 +769,14 @@ function MarketOverviewView({ open, onClose, online }) {
   const aaiiExposure = aaii.bull_pct ?? 50;
   const aaiiColor = aaiiExposure > 70 ? "var(--down)" : aaiiExposure < 30 ? "var(--up)" : "var(--warn)";
 
-  // Regime banner
-  const regimeBull = hmm.regime === "bull" || (!hmm.regime && (macro.spx_vs_50d ?? 0) >= 0);
+  // Regime banner — hmm.regime is "bull" or "bear"; fall back to sp500_trend
+  const regimeBull = hmm.regime === "bull" || (!hmm.regime && macro.sp500_trend === "up");
   const transRisk  = hmm.transition_risk ?? 0;
   const bullProb   = hmm.bull_prob ?? (regimeBull ? 0.7 : 0.3);
   const bearProb   = hmm.bear_prob ?? (1 - bullProb);
 
-  const signals = (macro.signals || []).filter(s => s.head);
+  // macro.rationale is the signals array (not macro.signals)
+  const signals = (macro.rationale || []).filter(s => s.head);
 
   return (
     <div className={`overlay ${open ? "open" : ""}`}>
@@ -830,22 +836,21 @@ function MarketOverviewView({ open, onClose, online }) {
                 </div>
               </Card>
 
-              {/* VIX */}
+              {/* VIX — sourced from hmm_regime.features.vix */}
               <Card title="Volatility (VIX)">
                 <div style={{ display:"flex", alignItems:"baseline", gap:12 }}>
                   <span style={{ fontFamily:"var(--font-mono)", fontSize:40, fontWeight:700, color:vixColor, lineHeight:1 }}>
-                    {macro.vix?.toFixed(1) ?? "—"}
+                    {vix != null ? vix.toFixed(1) : "—"}
                   </span>
                   <span style={{ fontFamily:"var(--font-mono)", fontSize:11, fontWeight:700, color:vixColor,
                     padding:"3px 8px", borderRadius:5, background:`color-mix(in oklch,${vixColor} 12%,transparent)` }}>
                     {vixLabel}
                   </span>
                 </div>
-                {macro.vix3m != null && (
+                {vix != null && (
                   <div style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-dim)", marginTop:8 }}>
-                    VIX3M {macro.vix3m.toFixed(1)} · {" "}
-                    <span style={{ color: macro.vix < macro.vix3m ? "var(--up)" : "var(--down)" }}>
-                      {macro.vix < macro.vix3m ? "Contango (normal)" : "Backwardation (stressed)"}
+                    VIX z-score vs 1Y avg: <span style={{ color: (hmm.vix_z ?? 0) < 0 ? "var(--up)" : "var(--warn)" }}>
+                      {hmm.vix_z != null ? `${hmm.vix_z > 0 ? "+" : ""}${hmm.vix_z.toFixed(2)}σ` : "—"}
                     </span>
                   </div>
                 )}
@@ -854,16 +859,16 @@ function MarketOverviewView({ open, onClose, online }) {
 
             {/* ── Data cards 2×2 ── */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:14, padding:"14px 28px 0" }}>
-              {/* Yield Curve */}
+              {/* Yield Curve — API: macro.t10y, macro.t2y, macro.yc_spread, macro.fed_funds */}
               <Card title="Yield Curve">
                 <div style={{ display:"flex", gap:16, alignItems:"baseline", flexWrap:"wrap" }}>
-                  {macro.yield_2y != null && <div style={{ fontFamily:"var(--font-mono)" }}>
-                    <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>2Y</div>
-                    <div style={{ fontSize:20, fontWeight:700 }}>{macro.yield_2y.toFixed(2)}%</div>
-                  </div>}
-                  {macro.yield_10y != null && <div style={{ fontFamily:"var(--font-mono)" }}>
+                  {macro.t10y != null && <div style={{ fontFamily:"var(--font-mono)" }}>
                     <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>10Y</div>
-                    <div style={{ fontSize:20, fontWeight:700 }}>{macro.yield_10y.toFixed(2)}%</div>
+                    <div style={{ fontSize:20, fontWeight:700 }}>{macro.t10y.toFixed(2)}%</div>
+                  </div>}
+                  {macro.t2y != null && <div style={{ fontFamily:"var(--font-mono)" }}>
+                    <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>2Y</div>
+                    <div style={{ fontSize:20, fontWeight:700 }}>{macro.t2y.toFixed(2)}%</div>
                   </div>}
                   {macro.yc_spread != null && <div style={{ fontFamily:"var(--font-mono)" }}>
                     <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Spread</div>
@@ -877,8 +882,8 @@ function MarketOverviewView({ open, onClose, online }) {
                       {macro.yc_spread < 0 ? "INVERTED" : macro.yc_spread > 0.5 ? "NORMAL" : "FLAT"}
                     </span>
                   )}
-                  {macro.fed_rate != null && (
-                    <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-dim)" }}>Fed {macro.fed_rate.toFixed(2)}%</span>
+                  {macro.fed_funds != null && (
+                    <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-dim)" }}>Fed {macro.fed_funds.toFixed(2)}%</span>
                   )}
                 </div>
               </Card>
@@ -904,11 +909,11 @@ function MarketOverviewView({ open, onClose, online }) {
                       CPI: <span style={{ color: macro.cpi > 3 ? "var(--warn)" : "var(--text-dim)" }}>{macro.cpi.toFixed(1)}% YoY</span>
                     </span>
                   )}
-                  {macro.sector_rotation && (
+                  {rotObj.stage && (
                     <span style={{ fontFamily:"var(--font-mono)", fontSize:10, fontWeight:700, padding:"3px 8px", borderRadius:4,
-                      color: rotationColors[macro.sector_rotation] || "var(--accent)",
-                      background:`color-mix(in oklch,${rotationColors[macro.sector_rotation]||"var(--accent)"} 12%,transparent)` }}>
-                      ● {macro.sector_rotation.replace(/_/g," ").toUpperCase()}
+                      color:rotColor, background:`color-mix(in oklch,${rotColor} 12%,transparent)` }}>
+                      ● {rotObj.stage.toUpperCase()} CYCLE
+                      {rotObj.favoured?.length ? ` · Favour: ${rotObj.favoured.slice(0,3).join(" ")}` : ""}
                     </span>
                   )}
                 </div>
@@ -1052,6 +1057,7 @@ function SectorView({ open, onClose, online }) {
     ]).then(([sec, fl, ctx]) => {
       if (sec) setSectors(Array.isArray(sec) ? sec : []);
       if (fl)  setFlows(fl);
+      // sector_rotation is an object { stage, favoured, avoid, confidence }
       if (ctx?.macro?.sector_rotation) setRotation(ctx.macro.sector_rotation);
     }).catch(() => setErr("offline"));
   }, [open]);
@@ -1096,7 +1102,14 @@ function SectorView({ open, onClose, online }) {
     return (detail.sectors || []).find(s => s.etf === activeEtf)?.stocks || [];
   }, [activeEtf, detail]);
 
-  const rotPhase = rotation ? ROTATION_PHASES[rotation] : null;
+  // rotation is now an object; build a compatible rotPhase from it
+  const rotPhase = rotation ? {
+    label: rotation.stage ? rotation.stage.toUpperCase() + " CYCLE" : "—",
+    color: rotation.stage === "early" ? "var(--up)" : "var(--warn)",
+    etfs:  rotation.favoured || [],
+    avoid: rotation.avoid || [],
+    confidence: rotation.confidence,
+  } : null;
 
   return (
     <div className={`overlay ${open ? "open" : ""}`}>
@@ -1180,26 +1193,32 @@ function SectorView({ open, onClose, online }) {
                 <div style={{ fontFamily:"var(--font-mono)", fontSize:10, letterSpacing:"0.12em", textTransform:"uppercase",
                   color:"var(--text-faint)", marginBottom:10 }}>Sector rotation cycle</div>
                 <div style={{ display:"flex", alignItems:"center", gap:24 }}>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, width:140 }}>
-                    {Object.entries(ROTATION_PHASES).map(([k, p]) => (
-                      <div key={k} style={{ padding:"6px 8px", borderRadius:5, fontSize:10, fontFamily:"var(--font-mono)", fontWeight:700,
-                        textAlign:"center", background: rotation===k ? `color-mix(in oklch,${p.color} 18%,var(--bg-2))` : "var(--bg-2)",
-                        border: rotation===k ? `1.5px solid ${p.color}` : "1px solid var(--line)",
-                        color: rotation===k ? p.color : "var(--text-faint)" }}>
-                        {p.label}
-                      </div>
-                    ))}
+                  <div style={{ padding:"10px 16px", borderRadius:8, background:`color-mix(in oklch,${rotPhase.color} 14%,var(--bg-2))`,
+                    border:`1.5px solid ${rotPhase.color}`, fontFamily:"var(--font-mono)", fontSize:13, fontWeight:700, color:rotPhase.color }}>
+                    {rotPhase.label}
+                    {rotPhase.confidence != null && (
+                      <div style={{ fontSize:10, fontWeight:400, color:"var(--text-faint)", marginTop:2 }}>{rotPhase.confidence}% confidence</div>
+                    )}
                   </div>
                   <div>
                     <div style={{ fontFamily:"var(--font-mono)", fontSize:12, color:"var(--text-dim)", marginBottom:6 }}>
-                      Typically outperforms in <span style={{ color:rotPhase.color, fontWeight:700 }}>{rotPhase.label}</span>:
+                      Favour: {rotPhase.etfs.length ? "" : "—"}
                     </div>
-                    <div style={{ display:"flex", gap:8 }}>
+                    <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                       {rotPhase.etfs.map(e => (
                         <span key={e} style={{ fontFamily:"var(--font-mono)", fontSize:11, fontWeight:700, padding:"3px 8px", borderRadius:4,
-                          background:"var(--bg-2)", border:"1px solid var(--line-2)", color:"var(--text)" }}>{e}</span>
+                          background:"color-mix(in oklch,var(--up) 10%,var(--bg-2))", border:"1px solid color-mix(in oklch,var(--up) 30%,var(--line))", color:"var(--up)" }}>{e}</span>
                       ))}
                     </div>
+                    {rotPhase.avoid?.length > 0 && (
+                      <div style={{ marginTop:6, display:"flex", gap:8, flexWrap:"wrap" }}>
+                        <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)" }}>Avoid:</span>
+                        {rotPhase.avoid.map(e => (
+                          <span key={e} style={{ fontFamily:"var(--font-mono)", fontSize:11, padding:"3px 8px", borderRadius:4,
+                            background:"color-mix(in oklch,var(--down) 10%,var(--bg-2))", border:"1px solid color-mix(in oklch,var(--down) 30%,var(--line))", color:"var(--down)" }}>{e}</span>
+                        ))}
+                      </div>
+                    )}
                     <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)", marginTop:8 }}>
                       Historical pattern — not a prediction
                     </div>
@@ -1403,7 +1422,13 @@ function CalendarView({ open, onClose }) {
                       <div style={{ fontFamily:"var(--font-mono)", fontSize:13, fontWeight:700,
                         color: isToday ? "var(--accent)" : "var(--text)", marginTop:2 }}>{date.getDate()}</div>
                       {isToday && <div style={{ fontFamily:"var(--font-mono)", fontSize:8, color:"var(--accent)", marginTop:2 }}>TODAY</div>}
-                      <div style={{ marginTop:6, display:"flex", flexDirection:"column", gap:2, alignItems:"center" }}>
+                      {dayEvents.length > 0 && (
+                        <div style={{ fontFamily:"var(--font-mono)", fontSize:9, fontWeight:700, marginTop:4,
+                          color: highImpact ? "#ef4444" : "var(--text-faint)" }}>
+                          {dayEvents.length} event{dayEvents.length !== 1 ? "s" : ""}
+                        </div>
+                      )}
+                      <div style={{ marginTop:4, display:"flex", flexDirection:"column", gap:2, alignItems:"center" }}>
                         {dayEvents.slice(0,3).map((e,i) => (
                           <span key={i} style={{ fontFamily:"var(--font-mono)", fontSize:8, padding:"1px 5px", borderRadius:3,
                             background: e.impact === "HIGH" ? "color-mix(in oklch,#ef4444 18%,transparent)" : e.impact === "MEDIUM" ? "color-mix(in oklch,#f59e0b 18%,transparent)" : "var(--bg-3)",
@@ -1412,7 +1437,7 @@ function CalendarView({ open, onClose }) {
                             {e.label || e.name}
                           </span>
                         ))}
-                        {dayEvents.length === 0 && <span style={{ fontSize:9, color:"var(--text-faint)" }}>—</span>}
+                        {dayEvents.length === 0 && <span style={{ fontSize:9, color:"var(--text-faint)", marginTop:4 }}>—</span>}
                       </div>
                     </div>
                   );

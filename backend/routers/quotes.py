@@ -255,23 +255,46 @@ async def massive_proxy(payload: dict):
 
 _sector_cache: dict = {"data": None, "ts": 0}
 
+def _ret(closes, days: int) -> float | None:
+    """Return % change over the last `days` trading days, or None if insufficient data."""
+    if closes is None or len(closes) < 2:
+        return None
+    n = min(days, len(closes) - 1)
+    base = float(closes.iloc[-n - 1])
+    if base == 0:
+        return None
+    return round((float(closes.iloc[-1]) / base - 1) * 100, 2)
+
+def _ytd_ret(df) -> float | None:
+    """Return % change from the first trading day of the current calendar year."""
+    if df is None or df.empty:
+        return None
+    from datetime import date
+    jan1 = date.today().replace(month=1, day=1)
+    ytd_df = df[df.index.date >= jan1]  # type: ignore[attr-defined]
+    if ytd_df.empty or len(ytd_df) < 2:
+        return None
+    base = float(ytd_df["Close"].iloc[0])
+    if base == 0:
+        return None
+    return round((float(ytd_df["Close"].iloc[-1]) / base - 1) * 100, 2)
+
 @router.get("/market/sectors")
 async def sector_heatmap():
-    """Return 1-month performance for all SPDR sector ETFs (batch fetched, 1hr cache)."""
+    """Return multi-timeframe performance for all SPDR sector ETFs (batch fetched, 1hr cache)."""
     now = asyncio.get_running_loop().time()
     if _sector_cache["data"] is not None and now - _sector_cache["ts"] < 3600:
         return _sector_cache["data"]
 
     from services.market_data import get_histories_batch
     try:
-        # Add a timeout to prevent this from hanging the server on startup if yfinance is unresponsive
         histories = await asyncio.wait_for(
-            get_histories_batch(SECTOR_ETFS, period="1mo", interval="1d"),
-            timeout=15.0
+            get_histories_batch(SECTOR_ETFS, period="1y", interval="1d"),
+            timeout=20.0
         )
     except asyncio.TimeoutError:
         logging.getLogger(__name__).warning("sector_heatmap: yfinance batch fetch timed out.")
-        return _sector_cache["data"] or [] # Return stale data or empty
+        return _sector_cache["data"] or []
     except Exception as e:
         logging.getLogger(__name__).error(f"sector_heatmap: Error fetching batch histories: {e}")
         return _sector_cache["data"] or []
@@ -284,10 +307,16 @@ async def sector_heatmap():
         closes = df["Close"].astype(float)
         if len(closes) < 2:
             continue
-        ret = round((float(closes.iloc[-1]) / float(closes.iloc[0]) - 1) * 100, 2)
-        out.append({"etf": etf, "ret_1m": ret})
+        out.append({
+            "etf":    etf,
+            "ret_1d": _ret(closes, 1),
+            "ret_1w": _ret(closes, 5),
+            "ret_1m": _ret(closes, 21),
+            "ret_3m": _ret(closes, 63),
+            "ret_ytd": _ytd_ret(df),
+        })
 
-    out.sort(key=lambda x: x["ret_1m"], reverse=True)
+    out.sort(key=lambda x: x["ret_1m"] or 0, reverse=True)
     _sector_cache["data"] = out
     _sector_cache["ts"]   = now
     return out
