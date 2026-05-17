@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Create Account — Signal.Trade</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--bg1:#161b22;--bg2:#1c2128;
+  --line:#21262d;--line2:#30363d;
+  --text:#e6edf3;--dim:#8b949e;--faint:#484f58;
+  --up:#10b981;--down:#ef4444;--warn:#f59e0b;--purple:#7c3aed;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Inter',-apple-system,sans-serif;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:60px 24px 80px}
+
+/* ── Header ── */
+.page-nav{position:fixed;top:0;left:0;right:0;background:rgba(13,17,23,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);height:56px;display:flex;align-items:center;padding:0 32px;z-index:10}
+.nav-logo{font-size:18px;font-weight:800;color:var(--up);text-decoration:none}
+.nav-login{margin-left:auto;font-size:13px;color:var(--dim);text-decoration:none}
+.nav-login:hover{color:var(--text)}
+
+/* ── Progress bar ── */
+.progress-wrap{width:100%;max-width:680px;margin:80px auto 32px;display:flex;gap:0;align-items:center}
+.progress-step{display:flex;align-items:center;gap:8px;font-size:12px;font-family:var(--mono);flex:1}
+.step-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;border:2px solid var(--line);color:var(--faint);background:var(--bg)}
+.step-num.active{border-color:var(--up);color:var(--up)}
+.step-num.done{border-color:var(--up);background:var(--up);color:#fff}
+.step-label{color:var(--faint)}
+.step-label.active{color:var(--text);font-weight:600}
+.step-connector{flex:1;height:1px;background:var(--line);margin:0 12px}
+.step-connector.done{background:var(--up)}
+
+/* ── Plan selection ── */
+.section-title{font-size:24px;font-weight:800;letter-spacing:-0.03em;text-align:center;margin-bottom:8px}
+.section-sub{font-size:14px;color:var(--dim);text-align:center;margin-bottom:32px}
+.plans-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:100%;max-width:800px;margin-bottom:32px}
+@media(max-width:700px){.plans-grid{grid-template-columns:1fr}}
+.plan-card{background:var(--bg1);border:2px solid var(--line);border-radius:12px;padding:22px;cursor:pointer;transition:all .2s;position:relative}
+.plan-card:hover{border-color:var(--line2)}
+.plan-card.selected{border-color:var(--up);background:rgba(16,185,129,.04)}
+.plan-card.selected-pro{border-color:var(--purple);background:rgba(124,58,237,.04)}
+.plan-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--up);color:#fff;font-size:9px;font-weight:700;padding:3px 12px;border-radius:20px;letter-spacing:.08em;white-space:nowrap}
+.plan-name{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:10px}
+.plan-price{font-size:32px;font-weight:800;font-family:var(--mono);letter-spacing:-0.04em}
+.plan-period{font-size:12px;color:var(--dim)}
+.plan-divider{height:1px;background:var(--line);margin:14px 0}
+.plan-feats{display:flex;flex-direction:column;gap:7px}
+.plan-feat{font-size:12px;color:var(--dim);display:flex;gap:7px;align-items:flex-start}
+.check{color:var(--up);flex-shrink:0}
+.cross{color:var(--faint);flex-shrink:0}
+.plan-selector{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);position:absolute;top:16px;right:16px;background:transparent;transition:all .2s}
+.plan-card.selected .plan-selector{border-color:var(--up);background:var(--up)}
+.plan-card.selected-pro .plan-selector{border-color:var(--purple);background:var(--purple)}
+.plan-card.selected .plan-selector::after,.plan-card.selected-pro .plan-selector::after{content:"✓";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#fff;font-size:10px;font-weight:700}
+
+/* ── Form ── */
+.form-wrap{width:100%;max-width:460px}
+.form-section{background:var(--bg1);border:1px solid var(--line);border-radius:14px;padding:28px;margin-bottom:16px}
+.form-section h3{font-size:15px;font-weight:700;margin-bottom:20px;display:flex;align-items:center;gap:8px}
+.form-section h3 span{font-size:11px;font-weight:500;color:var(--dim)}
+label{display:block;font-size:11px;font-weight:600;color:var(--dim);margin-bottom:6px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em}
+input{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:7px;padding:11px 14px;font-size:14px;color:var(--text);outline:none;font-family:var(--sans);transition:border-color .15s;margin-bottom:14px}
+input:focus{border-color:var(--up)}
+input::placeholder{color:var(--faint)}
+.pw-hint{font-size:11px;color:var(--faint);margin-top:-10px;margin-bottom:14px}
+.selected-plan-summary{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;font-size:13px}
+.plan-summary-name{font-weight:700}
+.plan-summary-price{font-family:var(--mono);color:var(--up);font-weight:700}
+.change-plan{font-size:11px;color:var(--dim);cursor:pointer;text-decoration:underline}
+.change-plan:hover{color:var(--text)}
+.error-box{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:7px;padding:10px 14px;font-size:13px;color:#fca5a5;margin-bottom:16px;display:none}
+.submit-btn{width:100%;padding:14px;border:none;border-radius:9px;font-size:16px;font-weight:700;cursor:pointer;font-family:var(--sans);transition:all .15s;display:flex;align-items:center;justify-content:center;gap:8px}
+.submit-btn.free{background:var(--bg2);border:1px solid var(--line2);color:var(--text)}
+.submit-btn.free:hover{border-color:var(--text)}
+.submit-btn.paid{background:var(--up);color:#fff}
+.submit-btn.paid:hover{background:#059669}
+.submit-btn.pro-paid{background:linear-gradient(135deg,var(--purple) 0%,#6d28d9 100%);color:#fff}
+.submit-btn.pro-paid:hover{opacity:.9}
+.submit-btn:disabled{opacity:.5;cursor:not-allowed}
+.terms-note{font-size:11px;color:var(--faint);text-align:center;margin-top:14px;line-height:1.7}
+.terms-note a{color:var(--faint);text-decoration:underline}
+.have-account{text-align:center;font-size:14px;color:var(--dim);margin-top:20px}
+.have-account a{color:var(--up);font-weight:600;text-decoration:none}
+
+/* ── Benefit pills ── */
+.benefits{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:32px;max-width:680px}
+.benefit{font-size:12px;color:var(--dim);background:var(--bg1);border:1px solid var(--line);border-radius:6px;padding:5px 12px;display:flex;align-items:center;gap:5px}
+.benefit .icon{font-size:13px}
+
+/* Screens */
+#step-plan{display:flex;flex-direction:column;align-items:center;width:100%}
+#step-account{display:none;width:100%;max-width:460px;flex-direction:column;align-items:center}
+</style>
+</head>
+<body>
+
+<nav class="page-nav">
+  <a href="/" class="nav-logo">Signal.Trade</a>
+  <a href="/login" class="nav-login">Already have an account? Sign in →</a>
+</nav>
+
+<!-- ── Progress ── -->
+<div class="progress-wrap">
+  <div class="progress-step">
+    <div class="step-num active" id="num-1">1</div>
+    <span class="step-label active" id="lbl-1">Choose plan</span>
+  </div>
+  <div class="step-connector" id="conn-1"></div>
+  <div class="progress-step">
+    <div class="step-num" id="num-2">2</div>
+    <span class="step-label" id="lbl-2">Create account</span>
+  </div>
+  <div class="step-connector" id="conn-2"></div>
+  <div class="progress-step">
+    <div class="step-num" id="num-3">3</div>
+    <span class="step-label" id="lbl-3">Verify email</span>
+  </div>
+</div>
+
+<!-- ── Step 1: Plan selection ── -->
+<div id="step-plan">
+  <h2 class="section-title">Choose your plan</h2>
+  <p class="section-sub">Start free — no card required. Upgrade anytime.</p>
+
+  <div class="plans-grid">
+    <!-- Free -->
+    <div class="plan-card" data-plan="free" onclick="selectPlan('free')">
+      <div class="plan-selector"></div>
+      <div class="plan-name">Free</div>
+      <div class="plan-price">$0</div>
+      <div class="plan-period">forever free</div>
+      <div class="plan-divider"></div>
+      <div class="plan-feats">
+        <div class="plan-feat"><span class="check">✓</span>View signals in dashboard</div>
+        <div class="plan-feat"><span class="check">✓</span>Market context panel</div>
+        <div class="plan-feat"><span class="check">✓</span>Signal history (read-only)</div>
+        <div class="plan-feat"><span class="cross">—</span><span style="color:var(--faint)">Telegram delivery</span></div>
+        <div class="plan-feat"><span class="cross">—</span><span style="color:var(--faint)">Backtesting</span></div>
+      </div>
+    </div>
+
+    <!-- Basic -->
+    <div class="plan-card selected" data-plan="basic" onclick="selectPlan('basic')">
+      <div class="plan-badge">MOST POPULAR</div>
+      <div class="plan-selector"></div>
+      <div class="plan-name" style="color:var(--up)">Basic</div>
+      <div class="plan-price">$29<span class="plan-period">/mo</span></div>
+      <div class="plan-divider"></div>
+      <div class="plan-feats">
+        <div class="plan-feat"><span class="check">✓</span><strong style="color:var(--text)">Everything in Free</strong></div>
+        <div class="plan-feat"><span class="check">✓</span>Telegram + Discord + Web Push delivery</div>
+        <div class="plan-feat"><span class="check">✓</span>Options sweep + dark pool alerts</div>
+        <div class="plan-feat"><span class="check">✓</span>13F institutional flow + Form 4</div>
+        <div class="plan-feat"><span class="check">✓</span>Backtest analytics + Excel export</div>
+        <div class="plan-feat"><span class="check">✓</span>Price alerts + custom watchlist (164 tickers)</div>
+      </div>
+    </div>
+
+    <!-- Pro -->
+    <div class="plan-card" data-plan="pro" onclick="selectPlan('pro')">
+      <div class="plan-selector"></div>
+      <div class="plan-name" style="color:#a78bfa">Pro</div>
+      <div class="plan-price">$79<span class="plan-period">/mo</span></div>
+      <div class="plan-divider"></div>
+      <div class="plan-feats">
+        <div class="plan-feat"><span class="check">✓</span><strong style="color:var(--text)">Everything in Basic</strong></div>
+        <div class="plan-feat"><span class="check">✓</span>Alpaca paper trading + portfolio risk</div>
+        <div class="plan-feat"><span class="check">✓</span>Signal correlation matrix</div>
+        <div class="plan-feat"><span class="check">✓</span>Bayesian predictive intervals</div>
+        <div class="plan-feat"><span class="check">✓</span>Volatility targeting + sector heatmap</div>
+        <div class="plan-feat"><span class="check">✓</span>Simulated backtest + costs</div>
+        <div class="plan-feat"><span class="check">✓</span>Price alerts + weekly digest</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="benefits">
+    <div class="benefit"><span class="icon">🔒</span> Cancel anytime</div>
+    <div class="benefit"><span class="icon">💳</span> Powered by Stripe</div>
+    <div class="benefit"><span class="icon">📱</span> Telegram delivery</div>
+    <div class="benefit"><span class="icon">📊</span> Live track record</div>
+    <div class="benefit"><span class="icon">⚡</span> 60-second scan cycle</div>
+  </div>
+
+  <button class="submit-btn paid" id="continue-btn" onclick="goToAccount()" style="max-width:400px;width:100%">
+    Continue with Basic →
+  </button>
+  <p style="margin-top:14px;font-size:12px;color:var(--faint)">⚠️ Not financial advice · Past performance does not guarantee future results</p>
+</div>
+
+<!-- ── Step 2: Account creation ── -->
+<div id="step-account">
+  <div class="form-wrap">
+    <div class="form-section">
+      <h3>Create your account <span id="plan-label-header"></span></h3>
+
+      <div class="selected-plan-summary" id="plan-summary">
+        <div><div class="plan-summary-name" id="summary-name">Basic</div><div style="font-size:11px;color:var(--faint)">Billed monthly · Cancel anytime</div></div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="plan-summary-price" id="summary-price">$29/mo</span>
+          <span class="change-plan" onclick="goToPlan()">Change</span>
+        </div>
+      </div>
+
+      <div class="error-box" id="error"></div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+        <a id="google-btn" href="#" onclick="googleSignup(event)"
+          style="display:flex;align-items:center;justify-content:center;gap:9px;padding:11px 14px;background:#fff;color:#3c4043;border:1px solid #dadce0;border-radius:8px;font-size:13px;font-weight:600;font-family:var(--sans);text-decoration:none;transition:box-shadow .15s">
+          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path d="M17.64 9.2a10.34 10.34 0 0 0-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62Z" fill="#4285F4"/><path d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.32-1.58-5.02-3.71H.96v2.33A9 9 0 0 0 9 18Z" fill="#34A853"/><path d="M3.98 10.71A5.41 5.41 0 0 1 3.7 9c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.04l3.02-2.33Z" fill="#FBBC05"/><path d="M9 3.58c1.32 0 2.5.45 3.44 1.34l2.58-2.58A9 9 0 0 0 9 0 9 9 0 0 0 .96 4.96L4 7.29C4.68 5.16 6.66 3.58 9 3.58Z" fill="#EA4335"/></svg>
+          Google
+        </a>
+        <a id="discord-btn" href="#" onclick="discordSignup(event)"
+          style="display:flex;align-items:center;justify-content:center;gap:9px;padding:11px 14px;background:#5865F2;color:#fff;border:1px solid #5865F2;border-radius:8px;font-size:13px;font-weight:600;font-family:var(--sans);text-decoration:none;transition:all .15s">
+          <svg width="18" height="14" viewBox="0 0 24 18" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M20.317 1.492a19.823 19.823 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.249a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.249.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 1.492a.07.07 0 0 0-.032.027C.533 6.147-.32 10.667.099 15.131a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.029.078.078 0 0 0 .084-.026c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.098.246.198.373.293a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.029.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 12.331c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.332-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.332-.946 2.418-2.157 2.418z"/></svg>
+          Discord
+        </a>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:12px;margin:0 0 16px"><div style="flex:1;height:1px;background:#21262d"></div><span style="font-size:11px;color:#484f58">or sign up with email</span><div style="flex:1;height:1px;background:#21262d"></div></div>
+
+      <form id="signup-form">
+        <div>
+          <label for="name">Full name <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+          <input id="name" type="text" placeholder="Your name" autocomplete="name"/>
+        </div>
+        <div>
+          <label for="email">Email address</label>
+          <input id="email" type="email" placeholder="you@example.com" required autocomplete="email"/>
+        </div>
+        <div>
+          <label for="password">Password</label>
+          <input id="password" type="password" placeholder="At least 8 characters" required autocomplete="new-password"/>
+          <div class="pw-hint">Use a strong password — we can't recover it if lost.</div>
+        </div>
+        <button type="submit" class="submit-btn paid" id="submit-btn" style="margin-top:4px">
+          <span id="btn-text">Create account</span>
+        </button>
+      </form>
+    </div>
+
+    <div class="terms-note">
+      By creating an account you agree to our <a href="/tos.html">Terms of Service</a> and <a href="/privacy.html">Privacy Policy</a>.<br/>
+      ⚠️ Not financial advice · For informational purposes only · Trading involves risk of loss.
+    </div>
+    <div class="have-account">Already have an account? <a href="/login">Sign in</a></div>
+  </div>
+</div>
+
+<script>
+let selectedPlan = 'basic';
+
+// Pre-select plan from URL param
+const params  = new URLSearchParams(window.location.search);
+const urlPlan = params.get('plan');
+
+// Pass ?ref= + ?plan= through to OAuth providers
+function googleSignup(e) {
+  e.preventDefault();
+  const ref = params.get('ref');
+  window.location.href = '/api/auth/google' + (ref ? `?ref=${encodeURIComponent(ref)}` : '');
+}
+
+function discordSignup(e) {
+  e.preventDefault();
+  const ref = params.get('ref');
+  window.location.href = '/api/auth/discord' + (ref ? `?ref=${encodeURIComponent(ref)}` : '');
+}
+if (urlPlan && ['free','basic','pro'].includes(urlPlan)) {
+  selectedPlan = urlPlan;
+  document.querySelectorAll('.plan-card').forEach(c => c.classList.remove('selected','selected-pro'));
+  const card = document.querySelector(`[data-plan="${urlPlan}"]`);
+  if (card) card.classList.add(urlPlan === 'pro' ? 'selected-pro' : 'selected');
+  updateContinueBtn();
+}
+
+function selectPlan(plan) {
+  selectedPlan = plan;
+  document.querySelectorAll('.plan-card').forEach(c => c.classList.remove('selected','selected-pro'));
+  const card = document.querySelector(`[data-plan="${plan}"]`);
+  if (card) card.classList.add(plan === 'pro' ? 'selected-pro' : 'selected');
+  updateContinueBtn();
+}
+
+function updateContinueBtn() {
+  const btn = document.getElementById('continue-btn');
+  const names = { free:'Free', basic:'Basic', pro:'Pro' };
+  btn.textContent = selectedPlan === 'free' ? 'Continue with Free →' : `Continue with ${names[selectedPlan]} →`;
+  btn.className = 'submit-btn';
+  if (selectedPlan === 'free') btn.classList.add('free');
+  else if (selectedPlan === 'pro') btn.classList.add('pro-paid');
+  else btn.classList.add('paid');
+}
+
+function goToAccount() {
+  // Update step indicators
+  document.getElementById('num-1').classList.remove('active');
+  document.getElementById('num-1').classList.add('done');
+  document.getElementById('num-1').textContent = '✓';
+  document.getElementById('lbl-1').classList.remove('active');
+  document.getElementById('conn-1').classList.add('done');
+  document.getElementById('num-2').classList.add('active');
+  document.getElementById('lbl-2').classList.add('active');
+
+  // Update plan summary
+  const prices = { free:'Free', basic:'$29/mo', pro:'$79/mo' };
+  const names  = { free:'Free', basic:'Basic', pro:'Pro' };
+  document.getElementById('summary-name').textContent = names[selectedPlan];
+  document.getElementById('summary-price').textContent = prices[selectedPlan];
+  if (selectedPlan === 'free') document.getElementById('plan-summary').querySelector('div div:last-child').textContent = 'No charge';
+
+  // Update submit button
+  const sbtn = document.getElementById('submit-btn');
+  if (selectedPlan === 'free') { sbtn.className = 'submit-btn free'; document.getElementById('btn-text').textContent = 'Create free account'; }
+  else if (selectedPlan === 'pro') { sbtn.className = 'submit-btn pro-paid'; document.getElementById('btn-text').textContent = 'Create account & pay with Stripe →'; }
+  else { sbtn.className = 'submit-btn paid'; document.getElementById('btn-text').textContent = 'Create account & pay with Stripe →'; }
+
+  document.getElementById('step-plan').style.display = 'none';
+  document.getElementById('step-account').style.display = 'flex';
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function goToPlan() {
+  document.getElementById('num-1').classList.add('active');
+  document.getElementById('num-1').classList.remove('done');
+  document.getElementById('num-1').textContent = '1';
+  document.getElementById('lbl-1').classList.add('active');
+  document.getElementById('conn-1').classList.remove('done');
+  document.getElementById('num-2').classList.remove('active');
+  document.getElementById('lbl-2').classList.remove('active');
+  document.getElementById('step-account').style.display = 'none';
+  document.getElementById('step-plan').style.display = 'flex';
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+document.getElementById('signup-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submit-btn');
+  const err = document.getElementById('error');
+  err.style.display = 'none';
+  btn.disabled = true;
+  document.getElementById('btn-text').textContent = 'Creating account…';
+
+  const email    = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const name     = document.getElementById('name').value.trim();
+
+  try {
+    // 1. Register account
+    const res  = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, full_name: name }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      err.textContent = data.detail || 'Could not create account. Try a different email.';
+      err.style.display = 'block';
+      btn.disabled = false;
+      document.getElementById('btn-text').textContent = selectedPlan === 'free' ? 'Create free account' : 'Create account & pay with Stripe →';
+      return;
+    }
+
+    // Advance step indicator
+    document.getElementById('num-2').classList.remove('active');
+    document.getElementById('num-2').classList.add('done');
+    document.getElementById('num-2').textContent = '✓';
+    document.getElementById('conn-2').classList.add('done');
+    document.getElementById('num-3').classList.add('active');
+    document.getElementById('lbl-3').classList.add('active');
+
+    // Owner auto-verified → got access_token → go straight in
+    if (data.access_token) {
+      localStorage.setItem('st_auth_token', data.access_token);
+      if (selectedPlan !== 'free') {
+        document.getElementById('btn-text').textContent = 'Redirecting to Stripe…';
+        const checkoutRes = await fetch(`/api/billing/checkout/${selectedPlan}`, {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json', Authorization:`Bearer ${data.access_token}` },
+        });
+        const checkout = await checkoutRes.json();
+        if (checkout.checkout_url) { window.location.href = checkout.checkout_url; return; }
+      }
+      setTimeout(() => window.location.replace('/app'), 600);
+      return;
+    }
+
+    // Normal flow: show "Check your email" screen
+    const signedUpEmail = data.email || email;
+    showCheckEmail(signedUpEmail, selectedPlan);
+
+  } catch {
+    err.textContent = 'Network error — is the server running?';
+    err.style.display = 'block';
+    btn.disabled = false;
+    document.getElementById('btn-text').textContent = selectedPlan === 'free' ? 'Create free account' : 'Create account & pay with Stripe →';
+  }
+});
+
+function showCheckEmail(email, plan) {
+  document.getElementById('step-plan').style.display = 'none';
+  document.getElementById('step-account').style.display = 'none';
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;max-width:460px;width:100%;text-align:center';
+  wrap.innerHTML = `
+    <div style="font-size:56px;margin-bottom:20px">✉️</div>
+    <h2 style="font-size:24px;font-weight:800;letter-spacing:-0.03em;margin-bottom:10px">Check your email</h2>
+    <p style="font-size:14px;color:var(--dim);line-height:1.7;margin-bottom:6px">
+      We sent a verification link to<br/>
+      <strong style="color:var(--text)">${email}</strong>
+    </p>
+    <p style="font-size:13px;color:var(--faint);margin-bottom:28px">Click the link in the email to activate your account. The link expires in 24 hours.</p>
+    <div style="background:var(--bg1);border:1px solid var(--line);border-radius:12px;padding:20px;width:100%;margin-bottom:20px">
+      <div style="font-size:12px;color:var(--dim);margin-bottom:14px">Didn't receive it? Check your spam folder, or</div>
+      <button id="resend-btn" onclick="resendVerification('${email}')"
+        style="width:100%;padding:11px;background:var(--bg2);border:1px solid var(--line2);border-radius:8px;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans)">
+        Resend verification email
+      </button>
+      <div id="resend-msg" style="font-size:12px;color:var(--up);margin-top:10px;display:none"></div>
+    </div>
+    ${plan !== 'free' ? `<p style="font-size:12px;color:var(--faint);margin-bottom:16px">After verifying your email, you'll be able to upgrade to ${plan.charAt(0).toUpperCase()+plan.slice(1)}.</p>` : ''}
+    <a href="/login" style="font-size:14px;color:var(--up);font-weight:600;text-decoration:none">Already verified? Sign in →</a>
+    <p style="font-size:11px;color:var(--faint);margin-top:20px">⚠️ Not financial advice · For informational purposes only</p>
+  `;
+  document.body.appendChild(wrap);
+}
+
+async function resendVerification(email) {
+  const btn = document.getElementById('resend-btn');
+  const msg = document.getElementById('resend-msg');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const res = await fetch('/api/auth/resend-verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+    msg.textContent = data.message || 'Sent!';
+    msg.style.display = 'block';
+    btn.textContent = '✓ Sent — check your inbox';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Resend verification email'; }, 30000);
+  } catch {
+    btn.disabled = false;
+    btn.textContent = 'Resend verification email';
+    msg.textContent = 'Network error — try again.';
+    msg.style.color = 'var(--down)';
+    msg.style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+import importlib
+import os
+import sys
+import pytest
+
+
+def test_database_imports_without_asyncpg(monkeypatch):
+    """Smoke: importing backend.database should not fail when asyncpg isn't installed.
+
+    The repo's test environment may run with SQLite (default), so the module must
+    gracefully avoid importing/using asyncpg at import-time.
+    """
+
+    # Ensure we use SQLite even if CI has DATABASE_URL configured.
+    monkeypatch.setenv("DATABASE_URL", "")
+
+    # Reload module fresh.
+    sys.modules.pop("database", None)
+    sys.modules.pop("backend.database", None)
+
+    # The project uses absolute imports like `from database import ...`
+    # when PYTHONPATH includes backend/.
+    db = importlib.import_module("database")
+
+    assert hasattr(db, "DATABASE_URL")
+    assert db.DATABASE_URL.startswith("sqlite+")
+

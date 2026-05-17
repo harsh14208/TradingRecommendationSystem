@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Signal.Trade — Design Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="/mobile.css"/>
+<style>
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; overflow:hidden; }
+  body{ -webkit-font-smoothing:antialiased; background:#1a1f2e; }
+  .m-app{ border-radius:0; }
+  .design-nav{
+    position:fixed; top:0; left:0; right:0; z-index:200;
+    background:rgba(13,17,23,0.95); backdrop-filter:blur(10px);
+    border-bottom:1px solid rgba(255,255,255,0.08);
+    padding:12px 24px; display:flex; align-items:center; gap:20px;
+    font-family:'JetBrains Mono',monospace; font-size:12px; color:rgba(255,255,255,0.6);
+  }
+  .design-nav .logo{ color:#10b981; font-weight:700; font-size:14px; margin-right:8px; }
+  .design-nav a{ color:rgba(255,255,255,0.4); text-decoration:none; font-size:11px; }
+  .design-nav a:hover{ color:rgba(255,255,255,0.8); }
+  .design-nav .hint{ margin-left:auto; font-size:10px; color:rgba(255,255,255,0.3); }
+</style>
+</head>
+<body>
+<div class="design-nav">
+  <span class="logo">Signal.Trade</span>
+  <span>Design Preview · iOS 26 Liquid Glass</span>
+  <a href="/">Landing</a>
+  <a href="/app">Dashboard</a>
+  <a href="/mobile">Mobile App</a>
+  <a href="/hub">Hub</a>
+  <span class="hint">Scroll · Pinch to zoom · Click label to focus</span>
+</div>
+
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<script type="text/babel" src="/ios-frame.jsx"></script>
+<script type="text/babel" src="/design-canvas.jsx"></script>
+<script type="text/babel" src="/mobile.jsx"></script>
+
+<script type="text/babel">
+const DW = 390, DH = 844;
+
+function DesignPreview() {
+  return (
+    <DesignCanvas style={{ paddingTop:52 }}>
+
+      {/* ── Core screens ── */}
+      <DCSection id="core" title="Core Screens" subtitle="Signal feed, detail view, paper portfolio">
+        <DCArtboard id="feed" label="01 · Live Signal Feed" width={DW} height={DH}>
+          <IOSDevice dark width={DW} height={DH}>
+            <FeedScreen/>
+          </IOSDevice>
+        </DCArtboard>
+        <DCArtboard id="detail" label="02 · Signal Detail" width={DW} height={DH}>
+          <IOSDevice dark width={DW} height={DH}>
+            <DetailScreen/>
+          </IOSDevice>
+        </DCArtboard>
+        <DCArtboard id="portfolio" label="03 · Paper Portfolio" width={DW} height={DH}>
+          <IOSDevice dark width={DW} height={DH}>
+            <PortfolioScreen/>
+          </IOSDevice>
+        </DCArtboard>
+        <DCArtboard id="account" label="04 · Account & Settings" width={DW} height={DH}>
+          <IOSDevice dark width={DW} height={DH}>
+            <AccountScreen/>
+          </IOSDevice>
+        </DCArtboard>
+      </DCSection>
+
+      {/* ── Auxiliary screens ── */}
+      <DCSection id="aux" title="Auxiliary Screens" subtitle="Onboarding, watchlist, activity, paywall">
+        <DCArtboard id="onboard" label="05 · Onboarding" width={DW} height={DH}>
+          <IOSDevice dark width={DW} height={DH}>
+            <OnboardScreen/>
+          </IOSDevice>
+        </DCArtboard>
+        <DCArtboard id="watchlist" label="06 · Watchlist" width={DW} height={DH}>
+          <IOSDevice dark width={DW} height={DH}>
+            <div className="m-app" style={{ background:"#0a0f1a" }}>
+              <WatchlistScreen/>
+              <div className="m-tabs">
+                {[["feed","Signals"],["star","Watchlist"],["chart","Paper"],["book","Record"],["user","Account"]].map(([i,l],idx) => (
+                  <div key={i} className={`m-tab ${idx===1?"on":""}`}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      {idx===1 && <polygon points="12 2 15 9 22 9.5 17 14 18.5 21 12 17.5 5.5 21 7 14 2 9.5 9 9 12 2"/>}
+                      {idx===0 && <><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="14" y2="18"/></>}
+                      {idx===2 && <><line x1="3" y1="20" x2="21" y2="20"/><polyline points="4 16 9 11 13 14 20 6"/></>}
+                      {idx===3 && <><path d="M4 4h12a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4V4z"/><line x1="4" y1="18" x2="20" y2="18"/></>}
+                      {idx===4 && <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>}
+                    </svg>
+                    <span>{l}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </IOSDevice>
+        </DCArtboard>
+        <DCArtboard id="notifs" label="07 · Activity / Notifications" width={DW} height={DH}>
+          <IOSDevice dark width={DW} height={DH}>
+            <div className="m-app" style={{ background:"#0a0f1a" }}>
+              <NotifScreen/>
+              <div className="m-tabs">
+                {[["feed","Signals"],["star","Watchlist"],["chart","Paper"],["book","Record"],["user","Account"]].map(([i,l],idx) => (
+                  <div key={i} className={`m-tab ${idx===4?"on":""}`}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      {idx===4 && <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>}
+                    </svg>
+                    <span>{l}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </IOSDevice>
+        </DCArtboard>
+        <DCArtboard id="paywall" label="08 · Paywall / Upgrade" width={DW} height={DH}>
+          <IOSDevice dark width={DW} height={DH}>
+            <div className="m-app" style={{ background:"#0a0f1a" }}>
+              <PaywallScreen/>
+            </div>
+          </IOSDevice>
+        </DCArtboard>
+      </DCSection>
+
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<DesignPreview/>);
+</script>
+</body>
+</html>

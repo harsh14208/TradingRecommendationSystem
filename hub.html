@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Signal.Trade — Design Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0a0f1a;
+  --bg-1:     #111827;
+  --bg-2:     #1a2235;
+  --border:   rgba(255,255,255,0.08);
+  --accent:   #10b981;
+  --accent-2: #3b82f6;
+  --accent-3: #8b5cf6;
+  --text:     rgba(255,255,255,0.9);
+  --muted:    rgba(255,255,255,0.45);
+  --dim:      rgba(255,255,255,0.22);
+  --mono:     'JetBrains Mono', monospace;
+  --sans:     'Inter', system-ui, sans-serif;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+
+/* ── layout ── */
+.hub {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 64px 24px 80px;
+}
+
+/* ── header ── */
+.hub-header { text-align: center; margin-bottom: 64px; }
+
+.hub-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 32px;
+}
+
+.hub-logo-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.6; transform: scale(0.85); }
+}
+
+.hub-title {
+  font-size: clamp(28px, 5vw, 48px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hub-sub {
+  font-size: 16px;
+  color: var(--muted);
+  font-weight: 400;
+  max-width: 420px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+/* ── grid ── */
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 340px);
+  gap: 24px;
+  max-width: 1080px;
+  width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .hub-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 680px) {
+  .hub-grid { grid-template-columns: 1fr; }
+}
+
+/* ── card ── */
+.hub-card {
+  position: relative;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+}
+
+.hub-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+
+.hub-card.accent-green { --card-accent: var(--accent); }
+.hub-card.accent-blue  { --card-accent: var(--accent-2); }
+.hub-card.accent-purple{ --card-accent: var(--accent-3); }
+
+.hub-card:hover { border-color: var(--card-accent); }
+
+.hub-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--card-accent) 12%, transparent) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.hub-card:hover::before { opacity: 1; }
+
+/* thumbnail */
+.hub-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+
+/* dashboard thumbnail illustration */
+.thumb-dash {
+  width: 88%;
+  height: 80%;
+  display: grid;
+  grid-template-columns: 48px 1fr 220px;
+  gap: 6px;
+}
+
+.thumb-dash-side {
+  background: rgba(255,255,255,0.04);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 6px;
+}
+
+.thumb-dash-icon {
+  width: 20px; height: 20px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.07);
+  margin: 0 auto;
+}
+
+.thumb-dash-icon.on { background: rgba(16,185,129,0.3); }
+
+.thumb-dash-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thumb-dash-topbar {
+  height: 24px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+}
+
+.thumb-dash-cards {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thumb-card {
+  flex: 1;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  border-left: 2px solid transparent;
+}
+
+.thumb-card.buy  { border-color: var(--accent); background: rgba(16,185,129,0.08); }
+.thumb-card.sell { border-color: #ef4444;        background: rgba(239,68,68,0.08); }
+
+.thumb-dash-right {
+  background: rgba(255,255,255,0.04);
+  border-radius: 6px;
+}
+
+/* mobile thumbnail */
+.thumb-phone-wrap {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  height: 100%;
+}
+
+.thumb-phone {
+  width: 72px;
+  flex-shrink: 0;
+  height: 82%;
+  background: var(--bg);
+  border-radius: 10px;
+  border: 1.5px solid rgba(255,255,255,0.12);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.thumb-phone-notch {
+  width: 28px; height: 7px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 4px;
+  margin: 5px auto 4px;
+}
+
+.thumb-phone-row {
+  height: 12px;
+  margin: 2px 5px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+}
+
+.thumb-phone-row.hi { background: rgba(16,185,129,0.25); }
+.thumb-phone-row.sell { background: rgba(239,68,68,0.2); }
+
+.thumb-phone-bar {
+  margin-top: auto;
+  height: 16px;
+  background: rgba(255,255,255,0.04);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 0 4px;
+}
+
+.thumb-phone-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.18);
+}
+
+.thumb-phone-dot.on { background: var(--accent); }
+
+/* marketing thumbnail */
+.thumb-site {
+  width: 88%;
+  height: 80%;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.08);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.thumb-site-nav {
+  height: 18px;
+  background: rgba(255,255,255,0.04);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.thumb-site-dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.12); }
+
+.thumb-site-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+}
+
+.thumb-site-pill {
+  width: 60px; height: 7px;
+  border-radius: 10px;
+  background: rgba(16,185,129,0.4);
+}
+
+.thumb-site-h { width: 100px; height: 10px; border-radius: 3px; background: rgba(255,255,255,0.3); }
+.thumb-site-p { width: 80px; height: 7px; border-radius: 3px; background: rgba(255,255,255,0.1); }
+
+.thumb-site-stats {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.thumb-stat-box {
+  width: 36px; height: 28px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+/* card body */
+.hub-card-body {
+  padding: 24px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hub-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--card-accent);
+  background: color-mix(in srgb, var(--card-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--card-accent) 30%, transparent);
+  border-radius: 100px;
+  padding: 4px 10px;
+  width: fit-content;
+}
+
+.hub-card-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.hub-card-desc {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.6;
+  flex: 1;
+}
+
+.hub-card-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--card-accent);
+  margin-top: 4px;
+  transition: gap 0.2s;
+}
+
+.hub-card:hover .hub-card-cta { gap: 12px; }
+
+.hub-card-cta svg { transition: transform 0.2s; }
+.hub-card:hover .hub-card-cta svg { transform: translateX(2px); }
+
+/* ── divider ── */
+.hub-divider {
+  width: 100%;
+  max-width: 1080px;
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 56px 0 40px;
+}
+
+/* ── quick links ── */
+.hub-links {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 600px;
+  margin-bottom: 56px;
+}
+
+.hub-link {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 14px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.hub-link:hover {
+  color: var(--text);
+  border-color: rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.04);
+}
+
+/* ── footer ── */
+.hub-footer {
+  font-size: 11px;
+  color: var(--dim);
+  font-family: var(--mono);
+  text-align: center;
+  line-height: 1.8;
+}
+</style>
+</head>
+<body>
+<div class="hub">
+
+  <div class="hub-header">
+    <div class="hub-logo">
+      <span class="hub-logo-dot"></span>
+      Signal.Trade
+    </div>
+    <h1 class="hub-title">A personal quant desk,<br/>designed end-to-end.</h1>
+    <p class="hub-sub">Three surfaces. One system. 65+ signal blocks — Polygon.io primary, dark pool reconstruction, Macro HMM, 13F institutional flow. 58.2% 7-day win rate · Sharpe 1.97.</p>
+  </div>
+
+  <div class="hub-grid">
+
+    <!-- Dashboard -->
+    <a class="hub-card accent-green" href="/app">
+      <div class="hub-thumb">
+        <div class="thumb-dash">
+          <div class="thumb-dash-side">
+            <div class="thumb-dash-icon on"></div>
+            <div class="thumb-dash-icon"></div>
+            <div class="thumb-dash-icon"></div>
+            <div class="thumb-dash-icon"></div>
+            <div class="thumb-dash-icon"></div>
+          </div>
+          <div class="thumb-dash-main">
+            <div class="thumb-dash-topbar"></div>
+            <div class="thumb-dash-cards">
+              <div class="thumb-card buy"></div>
+              <div class="thumb-card sell"></div>
+              <div class="thumb-card buy"></div>
+              <div class="thumb-card"></div>
+              <div class="thumb-card sell"></div>
+            </div>
+          </div>
+          <div class="thumb-dash-right"></div>
+        </div>
+      </div>
+      <div class="hub-card-body">
+        <span class="hub-card-badge">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Desktop Dashboard
+        </span>
+        <div class="hub-card-title">Live Signal Feed</div>
+        <div class="hub-card-desc">Full-featured quant terminal. Signal feed, detail pane, backtest, options flow, sector heatmap, paper portfolio, and real-time WebSocket quotes.</div>
+        <div class="hub-card-cta">
+          Open Dashboard
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </div>
+      </div>
+    </a>
+
+    <!-- Mobile Design -->
+    <a class="hub-card accent-blue" href="/design">
+      <div class="hub-thumb">
+        <div class="thumb-phone-wrap" style="justify-content:center">
+          <!-- phone 1 -->
+          <div class="thumb-phone">
+            <div class="thumb-phone-notch"></div>
+            <div class="thumb-phone-row hi"></div>
+            <div class="thumb-phone-row"></div>
+            <div class="thumb-phone-row sell"></div>
+            <div class="thumb-phone-row hi"></div>
+            <div class="thumb-phone-row"></div>
+            <div class="thumb-phone-row sell"></div>
+            <div class="thumb-phone-bar">
+              <div class="thumb-phone-dot on"></div>
+              <div class="thumb-phone-dot"></div>
+              <div class="thumb-phone-dot"></div>
+              <div class="thumb-phone-dot"></div>
+              <div class="thumb-phone-dot"></div>
+            </div>
+          </div>
+          <!-- phone 2 (offset) -->
+          <div class="thumb-phone" style="transform:translateY(8%)">
+            <div class="thumb-phone-notch"></div>
+            <div class="thumb-phone-row"></div>
+            <div class="thumb-phone-row hi"></div>
+            <div class="thumb-phone-row"></div>
+            <div class="thumb-phone-row"></div>
+            <div class="thumb-phone-row sell"></div>
+            <div class="thumb-phone-row hi"></div>
+            <div class="thumb-phone-bar">
+              <div class="thumb-phone-dot"></div>
+              <div class="thumb-phone-dot on"></div>
+              <div class="thumb-phone-dot"></div>
+              <div class="thumb-phone-dot"></div>
+              <div class="thumb-phone-dot"></div>
+            </div>
+          </div>
+          <!-- phone 3 (offset) -->
+          <div class="thumb-phone" style="transform:translateY(-8%);opacity:0.55">
+            <div class="thumb-phone-notch"></div>
+            <div class="thumb-phone-row sell"></div>
+            <div class="thumb-phone-row"></div>
+            <div class="thumb-phone-row hi"></div>
+            <div class="thumb-phone-row"></div>
+            <div class="thumb-phone-row"></div>
+            <div class="thumb-phone-row sell"></div>
+            <div class="thumb-phone-bar">
+              <div class="thumb-phone-dot"></div>
+              <div class="thumb-phone-dot"></div>
+              <div class="thumb-phone-dot on"></div>
+              <div class="thumb-phone-dot"></div>
+              <div class="thumb-phone-dot"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="hub-card-body">
+        <span class="hub-card-badge">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18.01"/></svg>
+          Mobile App
+        </span>
+        <div class="hub-card-title">iOS 26 Liquid Glass</div>
+        <div class="hub-card-desc">All 8 app screens laid out on a pannable Figma-like canvas — Feed, Detail, Portfolio, Account, Watchlist, Notifications, Onboarding, and Paywall.</div>
+        <div class="hub-card-cta">
+          Open Design Canvas
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </div>
+      </div>
+    </a>
+
+    <!-- Marketing Site -->
+    <a class="hub-card accent-purple" href="/">
+      <div class="hub-thumb">
+        <div class="thumb-site">
+          <div class="thumb-site-nav">
+            <div class="thumb-site-dot"></div>
+            <div class="thumb-site-dot"></div>
+            <div class="thumb-site-dot"></div>
+          </div>
+          <div class="thumb-site-body">
+            <div class="thumb-site-pill"></div>
+            <div class="thumb-site-h"></div>
+            <div class="thumb-site-p"></div>
+            <div class="thumb-site-p" style="width:64px"></div>
+            <div class="thumb-site-stats">
+              <div class="thumb-stat-box"></div>
+              <div class="thumb-stat-box"></div>
+              <div class="thumb-stat-box"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="hub-card-body">
+        <span class="hub-card-badge">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10A15.3 15.3 0 0 1 8 12a15.3 15.3 0 0 1 4-10z"/></svg>
+          Marketing Website
+        </span>
+        <div class="hub-card-title">Public Landing Page</div>
+        <div class="hub-card-desc">11-page React SPA — hero, live track record, pricing, FAQ, docs, Telegram setup guide, Terms of Service, Privacy Policy, and auth flows.</div>
+        <div class="hub-card-cta">
+          Open Website
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </div>
+      </div>
+    </a>
+
+  </div>
+
+  <hr class="hub-divider"/>
+
+  <div class="hub-links">
+    <a class="hub-link" href="/mobile">Mobile PWA</a>
+    <a class="hub-link" href="/track-record">Track Record</a>
+    <a class="hub-link" href="/tos">Terms</a>
+    <a class="hub-link" href="/privacy">Privacy</a>
+    <a class="hub-link" href="/login">Log In</a>
+    <a class="hub-link" href="/signup">Sign Up</a>
+    <a class="hub-link" href="/api/docs">API Docs</a>
+  </div>
+
+  <div class="hub-footer">
+    Signal.Trade &nbsp;·&nbsp; Not financial advice &nbsp;·&nbsp; For educational purposes only<br/>
+    All signals are algorithmic and do not constitute investment recommendations.
+  </div>
+
+</div>
+</body>
+</html>

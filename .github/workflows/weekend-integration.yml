@@ -1,0 +1,77 @@
+name: Weekend Integration
+
+on:
+  schedule:
+    - cron: "0 0 * * 0"   # Every Sunday at midnight UTC
+  workflow_dispatch:
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONPATH: "."
+  DATABASE_URL: "sqlite+aiosqlite:///./trading.db"
+
+defaults:
+  run:
+    working-directory: backend/
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-json-report
+
+      - name: Run tests with coverage
+        id: run_tests
+        run: |
+          pytest tests/ \
+            --tb=short \
+            -v \
+            --cov=. \
+            --cov-report=json:coverage.json \
+            --json-report \
+            --json-report-file=test-report.json
+        continue-on-error: true
+
+      - name: Generate integration status report
+        if: always()
+        run: |
+          python scripts/generate_status_report.py test-report.json coverage.json
+
+      - name: Commit and push INTEGRATION_STATUS.md
+        if: always()
+        run: |
+          cd $GITHUB_WORKSPACE
+          git config user.name "github-actions[bot]"
+          git config user.email "actions@github.com"
+          git add INTEGRATION_STATUS.md
+          git diff --cached --quiet || git commit -m "ci: update integration status [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_id }}
+          path: |
+            backend/test-report.json
+            backend/coverage.json
+          retention-days: 30

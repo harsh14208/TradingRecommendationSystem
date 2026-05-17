@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.venv/
+
+# Environment / secrets
+.env
+*.env
+!.env.example
+
+# Database (local dev DB — volume-mounted in Docker)
+backend/trading.db
+backend/trading.db-wal
+backend/trading.db-shm
+
+# Generated outputs (recreated by weekly factor mining job)
+backend/data/factor_weights.json
+
+# Logs
+backend/logs/*.log
+*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node (if any frontend tooling is added later)
+node_modules/
+
+# SQLite databases (all locations)
+*.db
+*.db-wal
+*.db-shm

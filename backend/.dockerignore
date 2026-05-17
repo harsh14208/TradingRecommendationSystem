@@ -1,0 +1,32 @@
+# Don't send these into the Docker build context
+
+# Virtual environment (rebuilt inside image by pip install)
+venv/
+.venv/
+
+# Local SQLite database (volume-mounted at runtime, not baked into image)
+trading.db
+trading.db-wal
+trading.db-shm
+
+# Generated factor weights (written by the weekly job at runtime, not at build time)
+data/factor_weights.json
+
+# Logs (runtime-only)
+logs/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Local secrets (env_file mounts this at runtime via docker-compose)
+.env
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

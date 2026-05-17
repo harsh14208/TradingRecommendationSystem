@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Verify Email — Signal.Trade</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--bg1:#161b22;--bg2:#1c2128;
+  --line:#21262d;--line2:#30363d;
+  --text:#e6edf3;--dim:#8b949e;--faint:#484f58;
+  --up:#10b981;--down:#ef4444;--warn:#f59e0b;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Inter',-apple-system,sans-serif;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px}
+.page-nav{position:fixed;top:0;left:0;right:0;background:rgba(13,17,23,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);height:56px;display:flex;align-items:center;padding:0 32px}
+.nav-logo{font-size:18px;font-weight:800;color:var(--up);text-decoration:none}
+.card{background:var(--bg1);border:1px solid var(--line);border-radius:16px;padding:40px 36px;max-width:440px;width:100%;text-align:center}
+.icon{font-size:52px;margin-bottom:20px}
+h2{font-size:24px;font-weight:800;letter-spacing:-0.03em;margin-bottom:10px}
+p{font-size:14px;color:var(--dim);line-height:1.7;margin-bottom:16px}
+.btn{display:block;width:100%;padding:14px;background:var(--up);color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans);text-decoration:none;text-align:center;margin-top:8px;transition:background .15s}
+.btn:hover{background:#059669}
+.btn.secondary{background:var(--bg2);border:1px solid var(--line2);color:var(--text)}
+.btn.secondary:hover{border-color:var(--text)}
+.error{color:var(--down)}
+.spinner{display:inline-block;width:32px;height:32px;border:3px solid var(--line);border-top-color:var(--up);border-radius:50%;animation:spin .7s linear infinite;margin-bottom:16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<nav class="page-nav">
+  <a href="/" class="nav-logo">Signal.Trade</a>
+</nav>
+
+<div class="card" id="card">
+  <div class="spinner" id="spinner"></div>
+  <h2 id="title">Verifying your email…</h2>
+  <p id="message">Please wait a moment.</p>
+</div>
+
+<script>
+const token = new URLSearchParams(window.location.search).get('token');
+const card    = document.getElementById('card');
+const spinner = document.getElementById('spinner');
+const title   = document.getElementById('title');
+const message = document.getElementById('message');
+
+async function verify() {
+  if (!token) {
+    showError('No verification token found. Check that you copied the full link from your email.');
+    return;
+  }
+  try {
+    const res  = await fetch(`/api/auth/verify-email?token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+
+    if (res.ok && data.access_token) {
+      // Success — store token and go to dashboard
+      localStorage.setItem('st_auth_token', data.access_token);
+      showSuccess(data.user?.email || '');
+      return;
+    }
+    // Already verified or invalid token
+    const msg = (typeof data.detail === 'string' ? data.detail : data.detail?.message) || 'Verification failed.';
+    if (msg.toLowerCase().includes('already verified')) {
+      showAlreadyVerified();
+    } else {
+      showError(msg);
+    }
+  } catch {
+    showError('Network error — please try again or request a new link.');
+  }
+}
+
+function showSuccess(email) {
+  spinner.style.display = 'none';
+  card.innerHTML = `
+    <div class="icon">✅</div>
+    <h2>Email verified!</h2>
+    <p>Your account${email ? ' (' + email + ')' : ''} is now active. You're being redirected to the dashboard…</p>
+    <a href="/app" class="btn">Open Dashboard →</a>
+    <p style="margin-top:14px;font-size:11px;color:var(--faint)">⚠️ Not financial advice · For informational purposes only</p>
+  `;
+  setTimeout(() => window.location.replace('/app'), 1800);
+}
+
+function showAlreadyVerified() {
+  spinner.style.display = 'none';
+  card.innerHTML = `
+    <div class="icon">✅</div>
+    <h2>Already verified</h2>
+    <p>This email address has already been verified. Sign in to access your dashboard.</p>
+    <a href="/login" class="btn">Sign in →</a>
+  `;
+}
+
+function showError(msg) {
+  spinner.style.display = 'none';
+  title.textContent = 'Verification failed';
+  title.classList.add('error');
+  message.innerHTML = msg + '<br/><br/>Request a new verification link:';
+
+  const emailInput = document.createElement('input');
+  emailInput.type = 'email';
+  emailInput.placeholder = 'your@email.com';
+  emailInput.id = 'resend-email';
+  emailInput.style.cssText = 'width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:7px;padding:11px 14px;font-size:14px;color:var(--text);outline:none;margin:12px 0 8px;font-family:var(--sans)';
+
+  const resendBtn = document.createElement('button');
+  resendBtn.textContent = 'Resend verification email';
+  resendBtn.className = 'btn secondary';
+  resendBtn.style.marginTop = '0';
+  resendBtn.onclick = resend;
+
+  const resendMsg = document.createElement('p');
+  resendMsg.id = 'resend-msg';
+  resendMsg.style.marginTop = '10px';
+
+  const signIn = document.createElement('a');
+  signIn.href = '/login';
+  signIn.className = 'btn';
+  signIn.textContent = 'Sign in instead →';
+  signIn.style.marginTop = '12px';
+
+  card.appendChild(emailInput);
+  card.appendChild(resendBtn);
+  card.appendChild(resendMsg);
+  card.appendChild(signIn);
+}
+
+async function resend() {
+  const emailInput = document.getElementById('resend-email');
+  const resendMsg  = document.getElementById('resend-msg');
+  const email = emailInput?.value?.trim();
+  if (!email) { resendMsg.textContent = 'Enter your email first.'; resendMsg.style.color = 'var(--down)'; return; }
+  resendMsg.textContent = 'Sending…';
+  resendMsg.style.color = 'var(--dim)';
+  try {
+    const res  = await fetch('/api/auth/resend-verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+    resendMsg.textContent = data.message || 'Sent!';
+    resendMsg.style.color = 'var(--up)';
+  } catch {
+    resendMsg.textContent = 'Network error — try again.';
+    resendMsg.style.color = 'var(--down)';
+  }
+}
+
+verify();
+</script>
+</body>
+</html>

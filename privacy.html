@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Privacy Policy — Signal.Trade</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;line-height:1.75;padding:0}
+.wrap{max-width:760px;margin:0 auto;padding:60px 24px 100px}
+h1{font-size:32px;font-weight:800;letter-spacing:-0.03em;margin-bottom:8px}
+.meta{font-size:13px;color:#8b949e;margin-bottom:48px;font-family:monospace}
+h2{font-size:18px;font-weight:700;margin:40px 0 12px;color:#fff;border-left:3px solid #10b981;padding-left:14px}
+h3{font-size:15px;font-weight:600;margin:20px 0 8px;color:#c9d1d9}
+p{color:#8b949e;margin-bottom:14px;font-size:15px}
+ul{color:#8b949e;margin:0 0 14px 20px;font-size:15px}
+li{margin-bottom:6px}
+strong{color:#e6edf3}
+a{color:#10b981;text-decoration:none}
+a:hover{text-decoration:underline}
+table{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px}
+th{text-align:left;padding:10px 12px;color:#e6edf3;background:#161b22;border-bottom:2px solid #30363d}
+td{padding:10px 12px;color:#8b949e;border-bottom:1px solid #21262d;vertical-align:top}
+nav{position:sticky;top:0;background:rgba(13,17,23,0.95);backdrop-filter:blur(8px);border-bottom:1px solid #21262d;padding:14px 24px;display:flex;align-items:center;gap:20px}
+nav a{font-size:13px;color:#8b949e}
+nav .logo{font-weight:800;color:#10b981;font-size:16px;margin-right:auto}
+footer{text-align:center;padding:40px 0;font-size:12px;color:#484f58;border-top:1px solid #21262d;margin-top:60px}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:monospace}
+.badge.gdpr{background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb44}
+.badge.ccpa{background:#7c3aed22;color:#a78bfa;border:1px solid #7c3aed44}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="logo">Signal.Trade</span>
+  <a href="/">Dashboard</a>
+  <a href="/tos.html">Terms of Service</a>
+</nav>
+
+<div class="wrap">
+  <h1>Privacy Policy</h1>
+  <div class="meta">Last updated: May 9, 2026 &nbsp;·&nbsp; Effective immediately &nbsp;·&nbsp; <span class="badge gdpr">GDPR</span> &nbsp;<span class="badge ccpa">CCPA</span></div>
+
+  <p>This Privacy Policy explains how Signal.Trade ("we", "us", "our") collects, uses, and protects your personal information when you use the Service. We are committed to protecting your privacy and handling your data transparently.</p>
+
+  <h2>1. Data We Collect</h2>
+
+  <table>
+    <tr>
+      <th>Category</th>
+      <th>Data</th>
+      <th>Why we collect it</th>
+      <th>Retention</th>
+    </tr>
+    <tr>
+      <td><strong>Account</strong></td>
+      <td>Email address, full name (optional), hashed password</td>
+      <td>Authentication and account management</td>
+      <td>Until you delete your account + 30 days</td>
+    </tr>
+    <tr>
+      <td><strong>Telegram</strong></td>
+      <td>Telegram chat ID (if you link your account)</td>
+      <td>Signal delivery to your Telegram</td>
+      <td>Until you unlink or delete account</td>
+    </tr>
+    <tr>
+      <td><strong>Subscription</strong></td>
+      <td>Stripe customer ID, subscription tier, subscription status, billing period end date</td>
+      <td>Billing, feature gating, receipts</td>
+      <td>Until account deletion (Stripe retains payment records per their policy)</td>
+    </tr>
+    <tr>
+      <td><strong>Usage</strong></td>
+      <td>Signal delivery timestamps, last seen date</td>
+      <td>Service operation, delivery tracking</td>
+      <td>90 days rolling</td>
+    </tr>
+    <tr>
+      <td><strong>Trade journal</strong></td>
+      <td>Notes you manually write on signals</td>
+      <td>Storing your own notes for you</td>
+      <td>Until you delete the note or your account</td>
+    </tr>
+    <tr>
+      <td><strong>Server logs</strong></td>
+      <td>IP address, request path, timestamp (standard web server logs)</td>
+      <td>Security, debugging, abuse prevention</td>
+      <td>30 days</td>
+    </tr>
+  </table>
+
+  <p>We do <strong>not</strong> collect: payment card details (handled entirely by Stripe), portfolio holdings, brokerage account info, or browsing history outside the Service.</p>
+
+  <h2>2. How We Use Your Data</h2>
+  <ul>
+    <li><strong>Providing the Service</strong> — authenticating you, delivering signals, storing your preferences.</li>
+    <li><strong>Billing</strong> — creating Stripe checkout sessions, processing subscription events via Stripe webhooks.</li>
+    <li><strong>Transactional email</strong> — welcome, receipt, payment failure, and cancellation notices. We do not send marketing email without your explicit opt-in.</li>
+    <li><strong>Telegram delivery</strong> — forwarding signal notifications to your linked Telegram chat ID.</li>
+    <li><strong>Security</strong> — detecting and preventing unauthorised access, fraud, and abuse.</li>
+    <li><strong>Service improvement</strong> — analysing aggregate, anonymised signal accuracy data to improve the algorithm. We do not identify individuals in this analysis.</li>
+  </ul>
+  <p>We do <strong>not</strong> sell your personal data to third parties. We do not use your data for advertising or share it with data brokers.</p>
+
+  <h2>3. Data Sharing</h2>
+  <p>We share data only with the following processors, and only to the extent necessary:</p>
+  <ul>
+    <li><strong>Stripe</strong> — payment processing. <a href="https://stripe.com/privacy" target="_blank">Stripe Privacy Policy</a>. Stripe is PCI-DSS Level 1 certified.</li>
+    <li><strong>Telegram</strong> — signal delivery. When you link your Telegram, your chat ID is sent to the Telegram Bot API to deliver messages. <a href="https://telegram.org/privacy" target="_blank">Telegram Privacy Policy</a>.</li>
+    <li><strong>Email provider (SMTP)</strong> — transactional emails. Only your email address is shared, only to send transactional messages you explicitly triggered.</li>
+    <li><strong>Hosting provider</strong> — the server infrastructure that runs Signal.Trade. They have access to encrypted data at rest but are contractually prohibited from using it.</li>
+  </ul>
+  <p>We may disclose your information if required by law, court order, or to protect our legal rights.</p>
+
+  <h2>4. Data Security</h2>
+  <ul>
+    <li>Passwords are hashed with bcrypt (cost factor 12) — we cannot recover your plaintext password.</li>
+    <li>Authentication tokens use HS256 JWT signed with a 256-bit secret.</li>
+    <li>Refresh tokens are stored as SHA-256 hashes — we cannot recover the raw token.</li>
+    <li>All data is transmitted over HTTPS (TLS 1.2+) in production.</li>
+    <li>Database is not publicly accessible; it is behind the application server.</li>
+  </ul>
+  <p>No system is completely secure. If you believe your account has been compromised, change your password immediately and contact us.</p>
+
+  <h2>5. Your Rights (GDPR — EEA / UK Users)</h2>
+  <p>If you are in the European Economic Area or United Kingdom, you have the following rights under the General Data Protection Regulation:</p>
+  <ul>
+    <li><strong>Access</strong> — request a copy of all personal data we hold about you.</li>
+    <li><strong>Rectification</strong> — correct inaccurate or incomplete data.</li>
+    <li><strong>Erasure ("Right to be Forgotten")</strong> — request deletion of your personal data. We will comply within 30 days, subject to legal retention requirements.</li>
+    <li><strong>Portability</strong> — receive your data in a machine-readable format (JSON export).</li>
+    <li><strong>Objection / Restriction</strong> — object to or restrict processing of your data.</li>
+    <li><strong>Withdraw consent</strong> — where processing is based on consent, you may withdraw it at any time without affecting lawfulness of prior processing.</li>
+  </ul>
+  <p>Legal basis for processing: <strong>Contract</strong> (account, billing, signal delivery), <strong>Legitimate interests</strong> (security, fraud prevention), <strong>Legal obligation</strong> (records required by law).</p>
+  <p>To exercise your rights, contact: <a href="mailto:harsh13858@gmail.com">harsh13858@gmail.com</a>. We will respond within 30 days.</p>
+
+  <h2>6. Your Rights (CCPA — California Residents)</h2>
+  <p>Under the California Consumer Privacy Act (CCPA) and its amendments (CPRA), California residents have the right to:</p>
+  <ul>
+    <li>Know what personal information is collected and how it is used.</li>
+    <li>Delete personal information we have collected.</li>
+    <li>Opt out of the sale of personal information. <strong>We do not sell personal information.</strong></li>
+    <li>Non-discrimination for exercising CCPA rights.</li>
+  </ul>
+  <p>To submit a request: <a href="mailto:harsh13858@gmail.com">harsh13858@gmail.com</a>. We will verify your identity and respond within 45 days.</p>
+
+  <h2>7. Cookies and Local Storage</h2>
+  <p>Signal.Trade uses:</p>
+  <ul>
+    <li><strong>localStorage</strong> — stores your auth token, layout preferences, price alerts, and disclaimer acknowledgment locally in your browser. This data never leaves your device.</li>
+    <li><strong>HTTP-only cookies</strong> — refresh tokens are stored in an HTTP-only, SameSite=Lax cookie to prevent XSS access. These are session-management cookies, not tracking cookies.</li>
+  </ul>
+  <p>We do not use third-party analytics cookies, advertising cookies, or tracking pixels.</p>
+
+  <h2>8. Data Retention</h2>
+  <p>When you delete your account, we permanently delete your email, password hash, Telegram chat ID, and subscription metadata within 30 days. Signal history (without PII) may be retained in anonymised aggregate form for algorithm improvement. Server logs are purged after 30 days.</p>
+
+  <h2>9. Children's Privacy</h2>
+  <p>The Service is not directed at children under 18. We do not knowingly collect personal information from minors. If you believe a minor has created an account, contact us and we will delete it immediately.</p>
+
+  <h2>10. International Transfers</h2>
+  <p>Your data may be processed in countries outside your own (e.g. the US where Stripe and many hosting providers operate). We ensure appropriate safeguards are in place, including Standard Contractual Clauses where required under GDPR.</p>
+
+  <h2>11. Changes to This Policy</h2>
+  <p>We may update this Privacy Policy from time to time. We will notify you of material changes via email and update the "Last updated" date above. Continued use of the Service constitutes acceptance.</p>
+
+  <h2>12. Contact & Data Controller</h2>
+  <p>For privacy requests, data deletion, or questions about this policy:<br>
+  <strong>Email:</strong> <a href="mailto:harsh13858@gmail.com">harsh13858@gmail.com</a><br>
+  We aim to respond to all privacy requests within 30 days.</p>
+</div>
+
+<footer>
+  Signal.Trade &nbsp;·&nbsp; <a href="/tos.html">Terms of Service</a> &nbsp;·&nbsp; <a href="/privacy.html">Privacy Policy</a> &nbsp;·&nbsp; Not financial advice
+</footer>
+
+</body>
+</html>

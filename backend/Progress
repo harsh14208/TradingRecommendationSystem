@@ -1,0 +1,305 @@
+Trading Recommendation System — Full Build Summary
+====================================================
+
+Implemented Features Checklist
+--------------------------------
+[x] Earnings estimate revision momentum (analyst target cache + revision scoring)
+[x] GEX at key strikes (Black-Scholes gamma exposure in options.py)
+[x] Google Trends (pytrends, 6h cache, retail FOMO signal)
+[x] Quiverquant congressional trades (90-day window, ±8 score)
+[x] Sector rotation model (4-stage cycle: early/mid/late/recession)
+[x] Per-signal accuracy tracking (/api/accuracy/sources, /api/accuracy/tickers)
+[x] Stripe trial period (7-day free trial on all paid plans)
+[x] Coupon / promo code support (allow_promotion_codes=True)
+[x] Rate limiting on auth endpoints (slowapi, 10/min on login+register)
+[x] Webhook idempotency (_processed_events set, bounded to 10k)
+[x] Password reset flow (/api/auth/forgot-password, /api/auth/reset-password)
+[x] ETF signals (QQQ, SPY, IWM, GLD, XLK, XLF, XLE added to default scanner)
+
+
+Project Structure
+
+TradingRecommendationSystem/
+├── Trading Recommendation System.html   ← main app (app.jsx inlined)
+├── app.jsx                               ← React frontend
+├── styles.css                            ← all UI styles
+├── data.js                               ← mock fallback data
+└── backend/
+    ├── main.py                           ← FastAPI app entry point (+ slowapi rate limiter)
+    ├── config.py                         ← env settings (pydantic)
+    ├── database.py                       ← SQLAlchemy async SQLite
+    ├── models.py                         ← 5 DB tables
+    ├── requirements.txt
+    ├── .env                              ← live credentials (Twilio, Finnhub, FRED)
+    ├── .env.example                      ← template
+    ├── logs/
+    │   └── server.log                    ← launchd service output
+    ├── services/
+    │   ├── market_data.py                ← yfinance 1.x + curl_cffi batch downloads
+    │   ├── news.py                       ← Finnhub news + sentiment
+    │   ├── technicals.py                 ← 15+ indicators (pure pandas, no ta-lib)
+    │   ├── signal_engine.py              ← core BUY/SELL/HOLD engine (28+ signal sources)
+    │   ├── fear_greed.py                 ← CNN Fear & Greed Index
+    │   ├── edgar.py                      ← SEC Form 4 insider trades
+    │   ├── macro.py                      ← VIX, 10Y yield, S&P trend, FRED, sector rotation
+    │   ├── options.py                    ← Options flow + GEX (Black-Scholes gamma)
+    │   ├── google_trends.py              ← Google Trends retail FOMO signal (pytrends)
+    │   ├── quiverquant.py                ← Congressional trading signals (Quiverquant)
+    │   ├── whatsapp_svc.py               ← Twilio send + formatter
+    │   └── scanner.py                    ← scan orchestrator + auto-send logic
+    └── routers/
+        ├── accuracy.py                   ← Win rate by source + ticker (/api/accuracy/*)
+        ├── signals.py                    ← CRUD + send/skip/review
+        ├── quotes.py                     ← ticker tape + chart OHLCV
+        ├── sources.py                    ← toggle data sources
+        ├── settings_router.py            ← persist user settings
+        ├── whatsapp_router.py            ← messages + send log
+        ├── market.py                     ← F&G + macro context
+        ├── billing.py                    ← Stripe checkout + trial + webhook (idempotent)
+        ├── auth.py                       ← Auth + rate limiting + password reset
+        └── websocket_router.py           ← live push via WebSocket
+
+
+Always-On Service (launchd)
+-----------------------------
+The backend runs as a macOS launchd service — starts on login, restarts on crash.
+
+Plist:   ~/Library/LaunchAgents/com.signaltrade.backend.plist
+Logs:    ~/TradingRecommendationSystem/backend/logs/server.log
+App:     http://localhost:8000
+
+Commands:
+  launchctl list | grep signaltrade                        # check status
+  tail -f ~/TradingRecommendationSystem/backend/logs/server.log  # live logs
+  launchctl unload ~/Library/LaunchAgents/com.signaltrade.backend.plist  # stop
+  launchctl load   ~/Library/LaunchAgents/com.signaltrade.backend.plist  # start
+  lsof -ti :8000 | xargs kill -9                          # force-kill stale port
+
+
+Data Sources (all live, no mocks)
+-----------------------------------
+Source              Data                                        Key
+yfinance 1.x        Real-time quotes, OHLCV, fundamentals,     None
++ curl_cffi         short interest, beta — Chrome-impersonated
+                    session avoids Yahoo Finance 429 rate limits
+Finnhub             Company news + sentiment scoring            Free (set)
+pandas math         15+ technical indicators (no ta-lib)        None
+SEC EDGAR           Form 4 insider buy/sell transactions        None
+CNN Fear & Greed    Market sentiment index 0–100               None
+yfinance macro      VIX ^VIX, 10Y yield ^TNX, S&P 500,        None
+                    SPY 1-month return, sector rotation model
+FRED API            Fed Funds Rate, CPI                        Free (set)
+Twilio              WhatsApp signal delivery                    Paid (set)
+pytrends            Google Trends search interest (retail FOMO) None
+Quiverquant         Congressional trading data (90-day window)  None (free tier)
+yfinance options    Options chain + GEX (Black-Scholes gamma)   None
+Stripe              Checkout, subscriptions (7d trial, coupons) Paid (set)
+
+
+Signal Roadmap — Already Implemented
+--------------------------------------
+Source                      Signal                              Score
+Technical (15+ indicators)  RSI/Stoch/WR/CCI/MACD/EMA/SMA/    ±5 to ±25
+                            OBV/ADX/BB/52wk/candles/pivots
+News (Finnhub)              Sentiment from company news         ±20
+EDGAR                       SEC Form 4 insider net flow         ±15
+Fear & Greed                Contrarian market sentiment         ±15
+Macro                       VIX, yield curve, HYG, DXY, Cu/Au  ±20
+Sector RS                   Relative strength vs sector ETF     ±12
+Short interest              Squeeze setup / bearish signal      ±10
+Options                     P/C ratio, sweeps, IV rank, skew    ±12
+Options GEX                 Black-Scholes gamma exposure        ±3
+Fundamentals                P/E, revenue growth, FCF margin     ±10
+Analyst                     Consensus target revision momentum  ±8
+Social                      Reddit/Twitter/Google sentiment     ±6
+Congressional (Quiver)      Net buys/sells past 90 days        ±8
+Google Trends               Retail search surge (FOMO)         ±6
+Sector Rotation             Cycle stage tailwind/headwind       ±6
+AAII Sentiment              Bull/bear spread contrarian signal  ±8
+COT                         Commitment of Traders positioning   ±8
+13F Institutional           Quarterly hedge fund flow changes   ±10
+Adaptive Confidence         Historical win rate adjustment      ±8
+
+
+Technical Indicators Computed (technicals.py)
+----------------------------------------------
+Indicator               Period    Notes
+RSI                     14        Wilder EMA smoothing
+MACD                    12/26/9   Histogram + prev bar for crossover
+SMA                     20/50/200 Long-term trend structure
+EMA                     8/21      Short-term momentum; crossover detection
+ATR                     14        Used for stop/target sizing
+Bollinger Bands         20, 2σ    Upper/lower touch signals
+Stochastic %K/%D        14/3      Crossover in oversold/overbought zones
+Williams %R             14        Overbought/oversold vs 14-day range
+OBV                     —         Trend + 5-bar slope; vs 20-MA
+ADX + ±DI               14        Trend strength; direction confirmation
+CCI                     20        Extreme deviation from mean price
+ROC                     10        10-day rate of change
+52-Week High/Low        252 bars  Breakout zone / deep-value zone
+Candlestick Patterns    1-2 bars  Hammer, Shooting Star, Bullish/Bearish Engulfing, Doji
+Classic Pivot Points    Prev bar  P, R1, R2, S1, S2
+Volume ratio            20-day    Confirms direction of move
+
+
+Signal Engine Logic (signal_engine.py)
+----------------------------------------
+Every 60 seconds, for each ticker, 28+ signal sources contribute to a composite score:
+
+Score = 0
+─── Oscillators ──────────────────────────────────────
++ RSI oversold/overbought                (±25)
++ Stochastic %K/%D cross + zone          (±15 cross / ±8 zone)
++ Williams %R oversold/overbought        (±10)
++ CCI extreme deviation                  (±10 / ±5 moderate)
+─── Momentum / Trend ─────────────────────────────────
++ MACD crossover / histogram expansion   (±22 / ±10)
++ EMA 8/21 crossover / alignment         (±12 cross / ±5 align)
++ Price vs SMA 50 / 200                  (±15 + ±8)
++ Golden Cross / Death Cross             (±12)
+─── Volume ───────────────────────────────────────────
++ OBV trend + slope confirmation         (±10 / ±4)
++ High volume confirmation               (±8)
+─── Structure ────────────────────────────────────────
++ ADX trend strength (>25 = amplify)     (±8)
++ Bollinger Band touch                   (±10)
++ 52-Week High/Low proximity             (+10 breakout / +8 deep value)
++ Candlestick pattern                    (±12 reversal / ±5 doji)
++ Pivot S1/R1 level                      (±8)
+─── Alternative / Fundamental ───────────────────────
++ Finnhub news sentiment                 (±20)
++ SEC EDGAR insider net flow             (±15)
++ Short interest / squeeze setup         (±10 squeeze / ±5 bearish)
++ Analyst target revision momentum       (±8)
++ Congressional trading (Quiverquant)    (±8)
++ Google Trends retail search surge      (±6)
+─── Options ──────────────────────────────────────────
++ P/C ratio, sweeps, OTM activity        (±12)
++ IV rank, 25d skew                      (±5)
++ Gamma Exposure (GEX)                   (±3)
+─── Market-Wide Context ──────────────────────────────
++ Fear & Greed (contrarian)              (±15)
++ Relative Strength vs S&P 500 (1M)     (±12)
++ Macro: VIX, yield curve, HYG, DXY     (±20)
++ Sector rotation cycle stage            (±6)
++ AAII sentiment (contrarian)            (±8)
++ COT positioning                        (±8)
++ 13F institutional flow                 (±10)
+──────────────────────────────────────────────────────
+Confidence = 35% + |score| × 0.40   (max 100%)
+Action     = BUY (score > 22) / SELL (score < -22) / HOLD
+Style      = intraday (RSI dominant) / swing (MACD) / position (SMA)
+Entry      = current price
+Stop       = entry ± 2×ATR
+Target     = entry ± 3×ATR  →  R:R ≈ 1.5
+
+
+WhatsApp Auto-Send (scanner.py)
+---------------------------------
+New BUY/SELL signals are automatically sent to WhatsApp when confidence ≥ threshold.
+HOLD signals and refreshed (duplicate) signals are never auto-sent.
+
+Config in .env:
+  AUTO_SEND_WHATSAPP=true
+  WHATSAPP_MIN_CONFIDENCE=70     # raise to reduce noise, lower to catch more signals
+
+Flow:
+  scan → new signal found → confidence ≥ 70%? → send via Twilio → log to DB
+                                              ↓ no
+                                         log as skipped
+
+Twilio sandbox setup (one-time):
+  FROM: whatsapp:+14155238886    (Twilio sandbox number)
+  TO:   whatsapp:+<your number>  (must have texted "join <keyword>" to sandbox first)
+
+
+API Endpoints (20 total)
+--------------------------
+Method      Path                        What it does
+GET         /api/signals                Active signals sorted by confidence
+POST        /api/signals/{id}/send      Send to WhatsApp via Twilio
+POST        /api/signals/{id}/skip      Mark skipped
+POST        /api/signals/{id}/review    Archive signal
+POST        /api/signals/scan           Trigger manual scan
+GET         /api/signals/history        All past signals
+GET         /api/quotes                 Live ticker tape
+GET         /api/chart/{ticker}?period= Real OHLCV (1D/5D/1M/3M/1Y)
+GET/PUT     /api/settings               Persist user preferences
+GET/PUT     /api/sources/{id}           Toggle data sources
+GET         /api/whatsapp/messages      Chat history
+GET         /api/whatsapp/log           Send log
+GET         /api/market/context         F&G + macro snapshot
+WS          /ws                         Live push: new signals, price updates, F&G
+
+
+Frontend — What's Wired
+-------------------------
+Button / Element        Now does
+Send to WhatsApp        Calls Twilio, logs to DB, updates chat
+Skip                    Removes signal from feed, marks in DB
+Mark reviewed           Archives signal, advances to next
+Refresh (⟳)            Triggers live re-scan
+Chart tabs (1D–1Y)      Fetches real OHLCV per period
+Source toggles          Persists on/off to DB
+Tweaks panel            Settings auto-saved to DB, survive reloads
+Style / day / time      Persist + affect signal filtering
+Fear & Greed chip       Live score + label, color-coded
+VIX / 10Y / SPX bar     Live macro indicators
+WebSocket               Auto-refreshes signals + prices every 60s
+
+
+Changelog
+----------
+v1 — Initial build
+  • Full FastAPI backend, SQLite persistence, WebSocket live push
+  • yfinance + Finnhub + SEC EDGAR + CNN F&G + FRED + Twilio
+  • 10 signal sources: RSI, MACD, SMA, Golden/Death cross, BB, Volume,
+    News sentiment, Insider flow, Fear & Greed, Macro
+
+v2 — Signal engine expansion
+  • technicals.py: added Stochastic %K/%D, Williams %R, EMA 8/21,
+    OBV + trend, ADX + ±DI, CCI(20), ROC(10), 52-week H/L,
+    candlestick patterns, classic pivot points
+  • signal_engine.py: 11 new scoring blocks — Stochastic, Williams %R,
+    EMA 8/21, CCI, OBV, ADX, 52-week proximity, candlesticks, pivots,
+    short interest squeeze, relative strength vs S&P 500
+  • market_data.py: short_float_pct, short_ratio, beta from yfinance
+  • macro.py: SPY 1-month return for relative-strength comparison
+  • Total signal sources: 10 → 21
+
+v3 — Reliability + auto-send
+  • Fixed SSL cert errors (certifi bundle for aiohttp in edgar/fear_greed/macro)
+  • Upgraded yfinance 0.2.43 → 1.3.0 (fixed crumb/cookie auth)
+  • Switched to curl_cffi Chrome-impersonating session — eliminates Yahoo 429s
+  • Batch downloads: yf.download(all_tickers) = 1 HTTP request instead of 8
+  • Sequential .info fetches with 0.8s gap to avoid rate limits
+  • Retry logic: 3 attempts with exponential backoff (4s/8s/16s)
+  • Fixed double-scan at startup (periodic loop now sleeps before first iteration)
+  • Added greenlet dependency for SQLAlchemy async on Python 3.14
+  • WhatsApp auto-send: new BUY/SELL signals ≥ 70% confidence sent automatically
+  • Fixed .env missing (was only .env.example) — Twilio credentials now loaded
+  • Fixed Twilio FROM number (sandbox = whatsapp:+14155238886)
+  • launchd service: server starts on login, restarts on crash, logs to file
+
+v4 — Signal expansion + product hardening
+  • Earnings estimate revision momentum: analyst target cache tracks changes over time;
+    +8 for revision up + coverage growth, +5 revision up only, -6 revision down
+  • Gamma Exposure (GEX): Black-Scholes gamma computed across first expiry chain;
+    positive GEX = price gravity (informational), negative GEX = trend amplification (-3)
+  • Google Trends (pytrends): retail search surge +100% → +6 score; collapse -50% → -3;
+    6-hour cache per ticker, ThreadPoolExecutor to avoid thread-safety issues
+  • Quiverquant congressional trades: 90-day window, net ≥3 buys → +8, net ≤-3 → -8;
+    24-hour cache, free tier (no API key)
+  • Sector rotation model: 4-stage cycle (early/mid/late/recession) from VIX + yield
+    curve + HYG + S&P trend; favoured ETFs get +6, avoid ETFs get -5
+  • Sector rotation bias block wired into signal_engine per ticker
+  • Accuracy tracking: /api/accuracy/sources (win rate per signal source) and
+    /api/accuracy/tickers (win rate per ticker) — auth required
+  • Stripe 7-day trial: trial_period_days=7 on all checkout sessions
+  • Stripe promo codes: allow_promotion_codes=True on checkout
+  • Rate limiting: slowapi 10/minute on /api/auth/login and /api/auth/register
+  • Webhook idempotency: _processed_events set prevents double-processing Stripe events
+  • Password reset flow: /api/auth/forgot-password → email link → /api/auth/reset-password;
+    1-hour token expiry, enumeration-safe (always 200)
+  • ETF scanner expansion: QQQ, SPY, IWM, GLD, XLK, XLF, XLE added to default watchlist
+  • Signal sources: 21 → 28+

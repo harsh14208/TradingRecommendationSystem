@@ -1,0 +1,14 @@
+{
+  "name": "Signal.Trade",
+  "short_name": "Signal",
+  "description": "AI-powered trading signal recommendations",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#10b981",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='24' fill='%230d1117'/><circle cx='96' cy='96' r='20' fill='%2310b981'/><path d='M40 96h30M122 96h30M96 40v30M96 122v30' stroke='%2310b981' stroke-width='8' stroke-linecap='round'/></svg>", "sizes": "192x192", "type": "image/svg+xml" },
+    { "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='64' fill='%230d1117'/><circle cx='256' cy='256' r='52' fill='%2310b981'/><path d='M100 256h80M332 256h80M256 100v80M256 332v80' stroke='%2310b981' stroke-width='20' stroke-linecap='round'/></svg>", "sizes": "512x512", "type": "image/svg+xml" }
+  ]
+}
