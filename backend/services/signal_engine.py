@@ -522,6 +522,42 @@ def _assemble_signal(
                 "sentiment": "neg",
                 "meta": f"mktcap=${_mktcap/1e9:.1f}B | tier=small"})
 
+    # ── Financial-stress + VIX regime hard-gate ─────────────────────────
+    # When the St. Louis Financial Stress Index (STLFSI4) and spot VIX are both
+    # elevated simultaneously, equity markets are in a high-correlation panic
+    # regime where individual-stock technical signals become unreliable — everything
+    # moves together, fundamentals don't matter, and BUY signals systematically fail.
+    # Hard-gate to HOLD; SELL signals remain valid (trend is your friend in stress).
+    _stlfsi_gate = (_macro_now.get("stlfsi") if _macro_now else None)
+    if (action == "BUY"
+            and _stlfsi_gate is not None and _stlfsi_gate > 1.5
+            and vix is not None and vix > 30):
+        action = "HOLD"
+        sources.add("Risk Gate")
+        rationale.append({"src": "Risk Gate",
+            "head": f"Stress Regime Gate — BUY Blocked (STLFSI4 {_stlfsi_gate:+.2f}, VIX {vix:.0f})",
+            "body": (f"St. Louis Financial Stress Index at {_stlfsi_gate:+.2f} (crisis >1.5) with "
+                     f"VIX at {vix:.0f} — systemic stress regime active. In high-stress environments "
+                     "equity correlations spike toward 1.0, individual-stock signals have near-zero "
+                     "predictive power, and BUY signals fail at high rates. All BUY signals gated "
+                     "to HOLD until STLFSI4 drops below 1.0."),
+            "sentiment": "neg",
+            "meta": f"STLFSI4={_stlfsi_gate:+.2f} | VIX={vix:.0f} | hard_gate=stress_regime"})
+    elif (action == "BUY"
+            and _stlfsi_gate is not None and _stlfsi_gate > 1.0
+            and vix is not None and vix > 25
+            and score < 50):
+        # Elevated stress (not crisis): require stronger conviction before allowing BUY.
+        action = "HOLD"
+        sources.add("Risk Gate")
+        rationale.append({"src": "Risk Gate",
+            "head": f"Elevated Stress Gate — Marginal BUY Blocked (Score {score:.0f} < 50, STLFSI4 {_stlfsi_gate:+.2f})",
+            "body": (f"STLFSI4 at {_stlfsi_gate:+.2f} (elevated, threshold 1.0) with VIX at {vix:.0f}. "
+                     "Marginal BUY signals fail at elevated rates in stress regimes. "
+                     "Requiring score ≥50 for BUY until financial stress normalises."),
+            "sentiment": "neg",
+            "meta": f"STLFSI4={_stlfsi_gate:+.2f} | VIX={vix:.0f} | score={score:.1f} < 50"})
+
     # ── Bear + high-VIX hard BUY gate ───────────────────────────────────
     # The regime multiplier (×0.82) lowers the score but the BUY threshold
     # stays at ±35, so marginal signals still cross into BUY. In a confirmed

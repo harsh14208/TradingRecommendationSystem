@@ -26,6 +26,11 @@ from models import Signal
 DB_URL = "sqlite+aiosqlite:///./trading.db"
 BANDS  = [(0, 50), (50, 55), (55, 60), (60, 65), (65, 70), (70, 75), (75, 80), (80, 85), (85, 101)]
 
+# Round-trip transaction cost estimate: bid-ask spread + entry/exit slippage.
+# Conservative for liquid large-caps; higher for small/mid-caps.
+# Any signal with outcome < FRICTION_PCT is a real-world loss even if mark-to-market positive.
+FRICTION_PCT = 0.50   # 0.50% round-trip (0.25% each leg)
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -50,6 +55,44 @@ def _best_outcome(sig: Signal) -> float | None:
         if v is not None:
             return v
     return None
+
+
+def _is_win(sig: Signal) -> bool:
+    """
+    Determine win/loss using the best available data in priority order:
+
+    1. If MAE/MFE + exit_type are populated (from resolve_mae_mfe):
+       - exit_type='target' → win regardless of calendar return
+       - exit_type='stop'   → loss regardless of calendar return
+       - exit_type='time'   → use friction-adjusted calendar return
+       - exit_type='pending'→ use friction-adjusted calendar return
+    2. Fallback: friction-adjusted _best_outcome > FRICTION_PCT
+
+    This gives a more realistic picture than raw mark-to-market at day N.
+    """
+    exit_type = getattr(sig, "exit_type", None)
+    if exit_type == "target":
+        return True
+    if exit_type == "stop":
+        return False
+    # time / pending / no exit data → friction-adjusted calendar return
+    ret = _best_outcome(sig)
+    if ret is None:
+        return False
+    return ret > FRICTION_PCT
+
+
+def _effective_n(signals: list) -> int:
+    """
+    Count unique ticker-date pairs (effective independent bets).
+    Multiple signals on the same ticker on the same calendar day are
+    one market view counted multiple times — not independent observations.
+    """
+    seen: set[tuple] = set()
+    for s in signals:
+        date = s.created_at.date() if s.created_at else None
+        seen.add((s.ticker, date))
+    return len(seen)
 
 
 def _fetch_prices(tickers: list[str]) -> dict[str, float]:
@@ -268,89 +311,116 @@ async def calibration_report():
     await engine.dispose()
 
     resolved = [s for s in rows if _best_outcome(s) is not None and s.action in ("BUY", "SELL")]
+    eff_n    = _effective_n(resolved)   # unique ticker-date pairs
+
     print(f"\n{'='*62}")
     print(f"  PREDICTION VALIDATION REPORT")
-    print(f"  Resolved signals: {len(resolved)} / {sum(1 for s in rows if s.action in ('BUY','SELL'))} sent BUY+SELL")
+    print(f"  Resolved signals : {len(resolved)} / {sum(1 for s in rows if s.action in ('BUY','SELL'))} sent BUY+SELL")
+    print(f"  Effective unique : {eff_n}  (unique ticker-date pairs — real independent bets)")
+    print(f"  Duplication rate : {(len(resolved)-eff_n)/len(resolved)*100:.1f}% of rows are same-ticker same-day repeats" if len(resolved) > eff_n else "  No same-ticker same-day duplicates.")
     print(f"{'='*62}")
 
     if not resolved:
         print("No resolved signals to analyse.")
         return
 
-    # ── overall ───────────────────────────────────────────────────────────────
-    wins  = sum(1 for s in resolved if _best_outcome(s) > 0)
-    total = len(resolved)
-    avg_ret = sum(_best_outcome(s) for s in resolved) / total
+    # ── overall — raw (mark-to-market) ────────────────────────────────────────
+    total    = len(resolved)
+    wins_raw = sum(1 for s in resolved if _best_outcome(s) > 0)
+    avg_ret  = sum(_best_outcome(s) for s in resolved) / total
     avg_conf = sum(s.confidence for s in resolved) / total
-    brier = sum(
+    brier    = sum(
         ((s.confidence / 100) - (1 if _best_outcome(s) > 0 else 0)) ** 2
         for s in resolved
     ) / total
 
-    print(f"\n  OVERALL")
-    print(f"  {'Signals':<22} {total}")
-    print(f"  {'Win rate':<22} {wins/total*100:.1f}%")
-    print(f"  {'Avg confidence':<22} {avg_conf:.1f}%")
-    print(f"  {'Avg return':<22} {avg_ret:+.2f}%")
-    print(f"  {'Brier score':<22} {brier:.4f}  (0=perfect, 0.25=random, lower=better)")
+    # ── overall — friction-adjusted (realistic P&L) ────────────────────────────
+    wins_adj = sum(1 for s in resolved if _is_win(s))
+    n_with_exit = sum(1 for s in resolved if getattr(s, "exit_type", None) not in (None, "pending"))
+    n_target_hit = sum(1 for s in resolved if getattr(s, "exit_type", None) == "target")
+    n_stop_hit   = sum(1 for s in resolved if getattr(s, "exit_type", None) == "stop")
 
-    gap = avg_conf - wins / total * 100
+    print(f"\n  OVERALL (RAW — mark-to-market at fixed horizon)")
+    print(f"  {'Signals':<26} {total}  (effective: {eff_n} ticker-days)")
+    print(f"  {'Win rate (raw)':<26} {wins_raw/total*100:.1f}%")
+    print(f"  {'Avg confidence':<26} {avg_conf:.1f}%")
+    print(f"  {'Avg return':<26} {avg_ret:+.2f}%")
+    print(f"  {'Brier score':<26} {brier:.4f}  (0=perfect, 0.25=random, lower=better)")
+
+    gap = avg_conf - wins_raw / total * 100
     direction = "OVERCONFIDENT" if gap > 0 else "UNDERCONFIDENT"
-    print(f"  {'Confidence gap':<22} {gap:+.1f}pp  ({direction})")
+    print(f"  {'Confidence gap':<26} {gap:+.1f}pp  ({direction})")
+
+    print(f"\n  OVERALL (FRICTION-ADJUSTED — {FRICTION_PCT:.2f}% round-trip cost)")
+    print(f"  {'Win rate (after costs)':<26} {wins_adj/total*100:.1f}%")
+    print(f"  {'Avg return (after costs)':<26} {avg_ret - FRICTION_PCT:+.2f}%")
+    brier_adj = sum(
+        ((s.confidence / 100) - (1 if _is_win(s) else 0)) ** 2
+        for s in resolved
+    ) / total
+    print(f"  {'Brier score (adj)':<26} {brier_adj:.4f}")
+    if n_with_exit > 0:
+        print(f"\n  EXIT TYPE BREAKDOWN  ({n_with_exit}/{total} signals with stop/target data)")
+        print(f"  {'Target hit':<26} {n_target_hit}  ({n_target_hit/n_with_exit*100:.0f}% of resolved)")
+        print(f"  {'Stop hit':<26} {n_stop_hit}  ({n_stop_hit/n_with_exit*100:.0f}% of resolved)")
+        print(f"  {'Time/pending':<26} {n_with_exit - n_target_hit - n_stop_hit}")
+
+    gap_adj = avg_conf - wins_adj / total * 100
+    direction_adj = "OVERCONFIDENT" if gap_adj > 0 else "UNDERCONFIDENT"
+    print(f"  {'Confidence gap (adj)':<26} {gap_adj:+.1f}pp  ({direction_adj})")
 
     # ── by action ─────────────────────────────────────────────────────────────
-    print(f"\n  BY ACTION")
-    print(f"  {'Action':<8} {'N':>5} {'Win%':>7} {'Avg Conf':>10} {'Avg Ret':>9} {'Gap':>8}")
-    print(f"  {'-'*52}")
+    print(f"\n  BY ACTION  (raw win% | friction-adj win%)")
+    print(f"  {'Action':<8} {'N':>5} {'Win%(raw)':>10} {'Win%(adj)':>10} {'Avg Ret':>9} {'Avg Conf':>10}")
+    print(f"  {'-'*58}")
     for action in ("BUY", "SELL"):
         sigs = [s for s in resolved if s.action == action]
         if not sigs:
             continue
-        w = sum(1 for s in sigs if _best_outcome(s) > 0)
+        w_raw = sum(1 for s in sigs if _best_outcome(s) > 0)
+        w_adj = sum(1 for s in sigs if _is_win(s))
         n = len(sigs)
-        wr = w / n * 100
         ac = sum(s.confidence for s in sigs) / n
         ar = sum(_best_outcome(s) for s in sigs) / n
-        g  = ac - wr
-        flag = " ⚠" if abs(g) > 10 else ""
-        print(f"  {action:<8} {n:>5} {wr:>6.1f}% {ac:>9.1f}% {ar:>+8.2f}% {g:>+7.1f}pp{flag}")
+        flag = " ⚠" if w_raw/n*100 - w_adj/n*100 > 5 else ""
+        print(f"  {action:<8} {n:>5} {w_raw/n*100:>9.1f}% {w_adj/n*100:>9.1f}% {ar:>+8.2f}% {ac:>9.1f}%{flag}")
 
     # ── by style ──────────────────────────────────────────────────────────────
-    print(f"\n  BY TRADE STYLE")
-    print(f"  {'Style':<12} {'N':>5} {'Win%':>7} {'Avg Conf':>10} {'Avg Ret':>9} {'Gap':>8}")
-    print(f"  {'-'*55}")
+    print(f"\n  BY TRADE STYLE  (raw win% | friction-adj win%)")
+    print(f"  {'Style':<12} {'N':>5} {'Win%(raw)':>10} {'Win%(adj)':>10} {'Avg Ret':>9} {'Avg Conf':>10}")
+    print(f"  {'-'*61}")
     for style in ("intraday", "swing", "position"):
         sigs = [s for s in resolved if (s.style or "swing") == style]
         if not sigs:
             continue
-        w = sum(1 for s in sigs if _best_outcome(s) > 0)
+        w_raw = sum(1 for s in sigs if _best_outcome(s) > 0)
+        w_adj = sum(1 for s in sigs if _is_win(s))
         n = len(sigs)
-        wr = w / n * 100
         ac = sum(s.confidence for s in sigs) / n
         ar = sum(_best_outcome(s) for s in sigs) / n
-        g  = ac - wr
-        flag = " ⚠" if abs(g) > 10 else ""
-        print(f"  {style:<12} {n:>5} {wr:>6.1f}% {ac:>9.1f}% {ar:>+8.2f}% {g:>+7.1f}pp{flag}")
+        cost_drag = w_raw/n*100 - w_adj/n*100
+        flag = f" ({cost_drag:+.1f}pp friction drag)" if cost_drag > 3 else ""
+        print(f"  {style:<12} {n:>5} {w_raw/n*100:>9.1f}% {w_adj/n*100:>9.1f}% {ar:>+8.2f}% {ac:>9.1f}%{flag}")
 
     # ── confidence band calibration ───────────────────────────────────────────
-    print(f"\n  CONFIDENCE BAND CALIBRATION")
-    print(f"  {'Band':<12} {'N':>5} {'Win%':>7} {'Avg Conf':>10} {'Avg Ret':>9} {'Gap':>8}  {'Calibrated?'}")
-    print(f"  {'-'*72}")
+    print(f"\n  CONFIDENCE BAND CALIBRATION  (friction-adjusted win%)")
+    print(f"  {'Band':<12} {'N':>5} {'Win%(adj)':>10} {'Avg Conf':>10} {'Avg Ret':>9} {'Gap':>8}  {'Calibrated?'}")
+    print(f"  {'-'*75}")
     for lo, hi in BANDS:
         sigs = [s for s in resolved if lo <= s.confidence < hi]
         if not sigs:
             continue
-        w  = sum(1 for s in sigs if _best_outcome(s) > 0)
+        w  = sum(1 for s in sigs if _is_win(s))
         n  = len(sigs)
         wr = w / n * 100
         ac = sum(s.confidence for s in sigs) / n
         ar = sum(_best_outcome(s) for s in sigs) / n
         g  = ac - wr
         ok = "OK" if abs(g) <= 10 else ("OVER ⚠" if g > 0 else "UNDER ⚠")
-        print(f"  {lo}-{hi}%{'':<6} {n:>5} {wr:>6.1f}% {ac:>9.1f}% {ar:>+8.2f}% {g:>+7.1f}pp  {ok}")
+        print(f"  {lo}-{hi}%{'':<6} {n:>5} {wr:>9.1f}% {ac:>9.1f}% {ar:>+8.2f}% {g:>+7.1f}pp  {ok}")
 
     # ── per-ticker performance ────────────────────────────────────────────────
-    ticker_stats: dict[str, dict] = defaultdict(lambda: {"w": 0, "n": 0, "ret": 0.0, "conf": 0.0})
+    ticker_stats: dict[str, dict] = defaultdict(lambda: {"w": 0, "w_adj": 0, "n": 0, "ret": 0.0, "conf": 0.0})
     for s in resolved:
         ts = ticker_stats[s.ticker]
         ts["n"] += 1
@@ -359,23 +429,26 @@ async def calibration_report():
         ts["ret"] += ret
         if ret > 0:
             ts["w"] += 1
+        if _is_win(s):
+            ts["w_adj"] += 1
 
-    print(f"\n  PER-TICKER (min 3 signals)")
-    print(f"  {'Ticker':<8} {'N':>4} {'Win%':>7} {'Avg Conf':>10} {'Avg Ret':>9} {'Gap':>8}")
-    print(f"  {'-'*55}")
+    print(f"\n  PER-TICKER (min 3 signals, sorted by friction-adj win%)")
+    print(f"  {'Ticker':<8} {'N':>4} {'Win%raw':>8} {'Win%adj':>8} {'Avg Ret':>9} {'Gap':>8}")
+    print(f"  {'-'*58}")
     rows_out = sorted(
         [(t, d) for t, d in ticker_stats.items() if d["n"] >= 3],
-        key=lambda x: x[1]["w"] / x[1]["n"],
+        key=lambda x: x[1]["w_adj"] / x[1]["n"],
         reverse=True,
     )
     for t, d in rows_out:
-        n  = d["n"]
-        wr = d["w"] / n * 100
-        ac = d["conf"] / n
-        ar = d["ret"] / n
-        g  = ac - wr
-        flag = " ⚠" if abs(g) > 15 else ""
-        print(f"  {t:<8} {n:>4} {wr:>6.1f}% {ac:>9.1f}% {ar:>+8.2f}% {g:>+7.1f}pp{flag}")
+        n      = d["n"]
+        wr_raw = d["w"]     / n * 100
+        wr_adj = d["w_adj"] / n * 100
+        ac     = d["conf"]  / n
+        ar     = d["ret"]   / n
+        g      = ac - wr_adj
+        flag   = " ⚠" if abs(g) > 15 else ""
+        print(f"  {t:<8} {n:>4} {wr_raw:>7.1f}% {wr_adj:>7.1f}% {ar:>+8.2f}% {g:>+7.1f}pp{flag}")
 
     # ── horizon comparison ────────────────────────────────────────────────────
     print(f"\n  WIN RATE BY OUTCOME HORIZON (signals that have each)")

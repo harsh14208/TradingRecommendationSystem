@@ -253,6 +253,35 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
               f"conf {sig_dict['confidence']:.0f}% < {settings.min_confidence:.0f}%")
         return
 
+    # ── Style-based confidence floor ────────────────────────────────────────
+    # Validated win rates by style: position 61.4%, swing 38.2%, intraday 30.4%.
+    # Swing and intraday signals need higher confidence bars to be worth sending;
+    # applying the global min_confidence to all styles is too permissive.
+    _style = sig_dict.get("style", "swing")
+    _style_floors = {"intraday": 68.0, "swing": 63.0, "position": 0.0}
+    _style_floor  = _style_floors.get(_style, 63.0)
+    if sig_dict["confidence"] < _style_floor:
+        log.info(f" {sig_dict['ticker']} skipped ({label}) "
+              f"{_style} conf {sig_dict['confidence']:.0f}% < style floor {_style_floor:.0f}%")
+        return
+
+    # ── Source independence gate ─────────────────────────────────────────────
+    # A high-confidence signal driven entirely by correlated technical indicators
+    # has much lower real-world win rates than one where multiple independent data
+    # pipelines agree. Require at least 2 non-technical source categories for
+    # position signals (and at least 1 for swing/intraday) before sending.
+    # This prevents "everything is oversold on a crash day" from auto-sending.
+    _sources_set  = set(sig_dict.get("sources") or [])
+    _non_ta = _sources_set - {
+        "Technical", "Technicals", "Risk Gate", "Backtest",
+        "Cross-Sectional", "Orthogonalization", "Signal Cluster",
+    }
+    _min_non_ta = 2 if _style == "position" else 1
+    if len(_non_ta) < _min_non_ta:
+        log.info(f" {sig_dict['ticker']} skipped ({label}) "
+              f"only {len(_non_ta)} non-TA sources for {_style} (need {_min_non_ta}): {_non_ta}")
+        return
+
     # ── Minimum profit filter ───────────────────────────────────────────────
     entry  = sig_dict.get("entry")
     target = sig_dict.get("target")
@@ -291,8 +320,25 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
         return
 
     # ── Cooldown: 24h normally, 30 min on direction-flip (force_resend) ────
+    # ── Hard cap: max 1 send per ticker per trading day ─────────────────────
+    # Multiple same-ticker sends within one session count as one market view but
+    # inflate the "sent signals" count and the win-rate denominator. Cap at 1
+    # regardless of direction flip or confidence changes within the same day.
+    _today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    _today_sent  = (await db.execute(
+        select(Signal)
+        .where(Signal.ticker  == sig_dict["ticker"])
+        .where(Signal.is_sent == True)
+        .where(Signal.sent_at >= _today_start)
+        .limit(1)
+    )).scalar_one_or_none()
+    if _today_sent:
+        log.info(f" {sig_dict['ticker']} skipped — already sent today (1/day cap)")
+        return
+
     if force_resend:
-        # Direction flip: only enforce a short anti-spam window
+        # Direction flip: only enforce a short anti-spam window (the daily cap above
+        # already prevents same-day repeats; this guards cross-day rapid flips)
         cutoff = datetime.utcnow() - timedelta(minutes=30)
         result = await db.execute(
             select(Signal)
