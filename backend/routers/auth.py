@@ -126,8 +126,7 @@ async def _create_tokens(user: User, db: AsyncSession, response: Response) -> di
     s = get_settings()
     access = create_access_token(user.id, user.subscription_tier, user.is_owner)
     raw_refresh, hashed_refresh = generate_refresh_token()
-    from datetime import timezone
-    expire = datetime.now(timezone.utc) + timedelta(days=s.refresh_token_expire_days)
+    expire = datetime.utcnow() + timedelta(days=s.refresh_token_expire_days)
     db.add(RefreshToken(user_id=user.id, token_hash=hashed_refresh, expires_at=expire))
     await db.commit()
     _set_refresh_cookie(response, raw_refresh)
@@ -205,8 +204,7 @@ async def login(request: Request, body: LoginIn, response: Response, db: AsyncSe
     if not user.email_verified:
         raise HTTPException(403, detail={"code": "email_unverified", "message": "Please verify your email before logging in. Check your inbox or request a new link."})
 
-    from datetime import timezone
-    user.last_seen_at = datetime.now(timezone.utc)
+    user.last_seen_at = datetime.utcnow()
     await db.commit()
 
     log.info(f"[auth] login {user.email}")
@@ -225,8 +223,7 @@ async def refresh_cookie(request: Request, response: Response, db: AsyncSession 
     if not raw:
         raise HTTPException(401, "No refresh token.")
     hashed = hashlib.sha256(raw.encode()).hexdigest()
-    from datetime import timezone
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     token_row = (await db.execute(
         select(RefreshToken).where(
             RefreshToken.token_hash == hashed,

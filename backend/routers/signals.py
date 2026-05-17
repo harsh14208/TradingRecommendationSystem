@@ -178,9 +178,8 @@ async def send_signal(
     success, _raw_detail = await send_telegram_message(chat_id, format_signal(sig_dict))
     detail = "" if success else _raw_detail
 
-    from datetime import timezone as _utctz
     _ET = pytz.timezone("America/New_York")
-    now    = datetime.now(_utctz.utc)
+    now    = datetime.utcnow()
     now_et = datetime.now(_ET)
     emoji  = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(sig.action, "⚪")
     status = "sent" if success else "fail"
@@ -1266,8 +1265,7 @@ async def backfill_outcomes(db: AsyncSession = Depends(get_db), _user: User = De
 
     updated = 0
     errors = []
-    from datetime import timezone as _tz
-    now = datetime.now(_tz.utc)
+    now = datetime.utcnow()
 
     for ticker, sigs in by_ticker.items():
         try:
