@@ -289,25 +289,10 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     localStorage.setItem('st_auth_token', data.access_token);
     window.location.replace(next);
   } catch (ex) {
-    // Connection refused or timeout — re-check server health and show actionable error
     _setServerStatus(false);
     _scheduleRetry();
-    err.innerHTML = `
-      <strong>Cannot connect to server.</strong><br/>
-      Make sure the backend is running:<br/>
-      <code style="display:inline-block;margin-top:6px;padding:4px 8px;background:rgba(255,255,255,.05);border-radius:4px;font-size:11px">
-        cd backend &amp;&amp; uvicorn main:app --port 8000
-      </code><br/>
-      <button id="retry-btn" style="margin-top:10px;background:none;border:1px solid rgba(239,68,68,.4);color:#fca5a5;padding:5px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit">
-        Retry
-      </button>`;
+    err.textContent = 'Unable to reach the server. Please try again in a moment.';
     err.style.display = 'block';
-    document.getElementById('retry-btn')?.addEventListener('click', () => {
-      err.style.display = 'none';
-      btn.disabled = false;
-      btn.textContent = 'Sign In';
-      _checkServer();
-    });
     btn.disabled = false;
     btn.textContent = 'Sign In';
   }
