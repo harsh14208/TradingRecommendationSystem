@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import certifi
+import pytz
 
 logging.basicConfig(
     level=logging.INFO,
@@ -112,7 +113,6 @@ async def _periodic_scan():
 
 async def _nightly_signal_cleanup():
     """Deactivate signals that have passed their expires_at timestamp. Runs at 4:15am ET daily."""
-    import pytz
     ET = pytz.timezone("America/New_York")
     while True:
         now_et = datetime.now(ET)
@@ -171,7 +171,6 @@ async def _nightly_reflection_learning():
     failed, and stores the lesson in the vector store so future scans can avoid
     the same mistake.  Gracefully skips if LLM is unavailable.
     """
-    import pytz
     ET = pytz.timezone("America/New_York")
     while True:
         now_et = datetime.now(ET)
@@ -242,7 +241,6 @@ async def _nightly_reflection_learning():
 
 async def _weekly_ml_retrain():
     """Retrain XGBoost model Sunday 11:00am ET — runs after factor mining."""
-    import pytz
     ET = pytz.timezone("America/New_York")
     await asyncio.sleep(3600)  # offset: start checking 1 hour after boot
     while True:
@@ -269,7 +267,6 @@ async def _weekly_ml_retrain():
 
 async def _weekly_factor_mining():
     """Re-mine factor weights every Sunday after the weekly digest runs."""
-    import pytz
     ET = pytz.timezone("America/New_York")
     # Stagger 2 hours after the digest (10am ET Sunday)
     await asyncio.sleep(7200)  # let the app warm up first
@@ -297,7 +294,6 @@ async def _weekly_factor_mining():
 
 
 async def _run_weekly_digest():
-    import pytz
     ET = pytz.timezone("America/New_York")
     try:
         from database import AsyncSessionLocal
@@ -444,7 +440,6 @@ async def _run_weekly_digest():
 
 async def _weekly_digest():
     """Send a Sunday morning Telegram summary of the week's signals and win rate."""
-    import pytz
     ET = pytz.timezone("America/New_York")
     while True:
         now_et = datetime.now(ET)
@@ -605,7 +600,6 @@ async def _weekly_ticker_screener():
     Sunday 10am ET — suggest 5-10 new tickers based on sector momentum,
     ETF flows, and Polygon reference data. Writes suggestions to app_settings.
     """
-    import pytz
     ET = pytz.timezone("America/New_York")
     while True:
         now_et = datetime.now(ET)

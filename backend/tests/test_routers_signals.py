@@ -229,7 +229,7 @@ def test_signals_send_success_sets_sent_and_commits():
 
     # Patch telegram settings + HTTP client to avoid network calls
     with patch("routers.signals.get_settings") as m_settings, \
-         patch("aiohttp.ClientSession") as m_session:
+         patch("services.telegram_svc.aiohttp.ClientSession") as m_session:
         m_settings.return_value = MagicMock(
             telegram_bot_token="BOT",
             telegram_chat_id="OWNER_CHAT"

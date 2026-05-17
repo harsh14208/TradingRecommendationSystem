@@ -3,6 +3,10 @@ from datetime import datetime, timedelta
 import math
 import time as _time
 
+import aiohttp
+import ssl
+import certifi
+import pytz
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, or_, select
@@ -30,6 +34,12 @@ def _cache_get(key: str):
     return None
 
 def _cache_set(key: str, data):
+    # Evict expired entries when cache grows large
+    if len(_analytics_cache) > 200:
+        now = _time.time()
+        expired = [k for k, v in _analytics_cache.items() if now - v["ts"] >= _ANALYTICS_TTL]
+        for k in expired:
+            del _analytics_cache[k]
     _analytics_cache[key] = {"data": data, "ts": _time.time()}
 
 
@@ -164,27 +174,12 @@ async def send_signal(
 
     sig_dict = _to_dict(sig)
 
-    # Send directly to the requesting user's chat — not the owner's
-    import aiohttp, ssl, certifi
-    ctx = ssl.create_default_context(cafile=certifi.where())
-    url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
-    success, detail = False, ""
-    try:
-        async with aiohttp.ClientSession() as session:
-            resp = await session.post(
-                url,
-                json={"chat_id": chat_id, "text": format_signal(sig_dict), "parse_mode": "Markdown"},
-                ssl=ctx,
-            )
-            data = await resp.json()
-            success = data.get("ok", False)
-            detail  = "" if success else data.get("description", "Telegram delivery failed.")
-    except Exception as e:
-        detail = str(e)
+    from services.telegram_svc import send_telegram_message
+    success, _raw_detail = await send_telegram_message(chat_id, format_signal(sig_dict))
+    detail = "" if success else _raw_detail
 
-    import pytz as _pytz
     from datetime import timezone as _utctz
-    _ET = _pytz.timezone("America/New_York")
+    _ET = pytz.timezone("America/New_York")
     now    = datetime.now(_utctz.utc)
     now_et = datetime.now(_ET)
     emoji  = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(sig.action, "⚪")
@@ -1516,7 +1511,6 @@ async def export_signal_history(
             round(sig.target,2) if sig.target else None,
             sig.rr,
             round(sig.outcome_pct, 2) if sig.outcome_pct is not None else None,
-            round(sig.outcome_7d,  2) if hasattr(sig, "outcome_7d") and sig.outcome_7d is not None else
             round(sig.outcome_pct, 2) if sig.outcome_pct is not None else None,
             sig.style,
             sig.created_at.strftime("%Y-%m-%d %H:%M") if sig.created_at else None,

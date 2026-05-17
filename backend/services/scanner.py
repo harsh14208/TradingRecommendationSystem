@@ -1,8 +1,12 @@
 import asyncio
 import logging
+import ssl
+import certifi
 from datetime import datetime, timedelta, time as dtime
 
 import pytz
+
+_SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 
 log = logging.getLogger("scanner")
 
@@ -48,11 +52,9 @@ async def _alert_sla_breach(ticker: str, action: str, latency_s: float, settings
            f"(target ≤5min). Check scanner health.")
     try:
         url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
-        import aiohttp, ssl, certifi
-        ctx = ssl.create_default_context(cafile=certifi.where())
         async with aiohttp.ClientSession() as sess:
             await sess.post(url, json={"chat_id": settings.telegram_chat_id,
-                                       "text": msg}, ssl=ctx,
+                                       "text": msg}, ssl=_SSL_CTX,
                             timeout=aiohttp.ClientTimeout(total=5))
     except Exception:
         pass
@@ -221,17 +223,6 @@ async def _update_outcomes(quotes: list[dict]):
                 sig.outcome_at  = now
             if age_days >= 14 and sig.outcome_14d is None:
                 sig.outcome_14d = _pct(current, sig.entry, sig.action)
-        # Legacy path kept for compatibility — signals that fall through above
-        old_cutoff = now - timedelta(days=7)
-        for sig in rows:
-            current = price_map.get(sig.ticker)
-            if current and sig.entry and sig.entry > 0 and sig.outcome_pct is None:
-                if sig.created_at and sig.created_at <= old_cutoff:
-                    if sig.action == "BUY":
-                        sig.outcome_pct = round((current - sig.entry) / sig.entry * 100, 2)
-                    elif sig.action == "SELL":
-                        sig.outcome_pct = round((sig.entry - current) / sig.entry * 100, 2)
-                    sig.outcome_at = datetime.utcnow()
         await db.commit()
 
 
@@ -242,7 +233,6 @@ _CONF_CHANGE_THRESHOLD = 15.0  # percentage points
 
 def _today_start_utc() -> datetime:
     """Return today's 00:00:00 ET expressed in UTC (naive)."""
-    import pytz
     ET   = pytz.timezone("America/New_York")
     now  = datetime.now(ET)
     midnight_et = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -370,14 +360,12 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
     _broadcast_id = settings.telegram_broadcast_channel_id
     if _broadcast_id:
         try:
-            import aiohttp as _aio, ssl as _ssl, certifi as _certifi
-            _ctx = _ssl.create_default_context(cafile=_certifi.where())
             _url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
             _msg = format_signal(sig_dict)
-            async with _aio.ClientSession() as _sess:
+            async with aiohttp.ClientSession() as _sess:
                 _r = await _sess.post(_url, json={"chat_id": _broadcast_id,
                                                    "text": _msg, "parse_mode": "Markdown"},
-                                      ssl=_ctx, timeout=_aio.ClientTimeout(total=8))
+                                      ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=8))
                 _d = await _r.json()
                 any_sent = bool(_d.get("ok"))
                 if any_sent:
@@ -463,7 +451,7 @@ async def _send_webhook_outbound(sig_dict: dict, db) -> None:
     Lets power users route signals to their own order management systems (e.g. TradingView bots).
     """
     try:
-        import hashlib, hmac, json, ssl as _ssl, certifi as _certifi, aiohttp as _aiohttp
+        import hashlib, hmac, json
         from models import User
         from sqlalchemy import select as _sel
         users_with_webhook = (await db.execute(
@@ -477,9 +465,8 @@ async def _send_webhook_outbound(sig_dict: dict, db) -> None:
         payload = json.dumps(sig_dict, default=str).encode()
         secret  = (get_settings().jwt_secret or "").encode()
         sig_hdr = "sha256=" + hmac.new(secret, payload, hashlib.sha256).hexdigest()
-        _ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
 
-        async with _aiohttp.ClientSession() as sess:
+        async with aiohttp.ClientSession() as sess:
             for row in users_with_webhook:
                 url = row[0]
                 try:
@@ -487,7 +474,7 @@ async def _send_webhook_outbound(sig_dict: dict, db) -> None:
                         url, data=payload,
                         headers={"Content-Type": "application/json",
                                  "X-Signal-Trade-Signature": sig_hdr},
-                        ssl=_ssl_ctx, timeout=_aiohttp.ClientTimeout(total=5)
+                        ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=5)
                     ) as r:
                         log.debug(f"[webhook] user={row[1]} → {url} status={r.status}")
                 except Exception as we:
@@ -690,20 +677,17 @@ async def _maybe_paper_trade(
         log.info(f" ✗ {ticker} {action} failed: {e}")
 
 
-_scan_fail_count = 0  # consecutive failure counter for alert throttling
 
 async def _alert_telegram(text: str):
     """Send a plain alert message via Telegram (best-effort, never raises)."""
     try:
-        import aiohttp, ssl, certifi
         s = get_settings()
         if not s.telegram_bot_token or not s.telegram_chat_id:
             return
-        ctx = ssl.create_default_context(cafile=certifi.where())
         url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
         async with aiohttp.ClientSession() as sess:
             await sess.post(url, json={"chat_id": s.telegram_chat_id, "text": text},
-                            ssl=ctx, timeout=aiohttp.ClientTimeout(total=6))
+                            ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=6))
     except Exception:
         pass
 
@@ -785,6 +769,15 @@ async def run_scan(broadcast_fn=None):
     """
     settings = get_settings()
     tickers  = await _get_scan_tickers(settings)
+
+    # Clear stale data-quality counters at the start of each cycle
+    global _data_quality
+    _data_quality = {t: _data_quality.get(t, 0) for t in tickers}  # prune removed tickers
+
+    # Evict tickers no longer in the watchlist to prevent unbounded growth
+    global _diff_state
+    _diff_state = {t: _diff_state[t] for t in tickers if t in _diff_state}
+
     stale_cutoff = datetime.utcnow() - timedelta(hours=8)
 
     # ── Step 1: market-wide context + adaptive weights ───────────────────
@@ -1231,11 +1224,10 @@ async def run_scan(broadcast_fn=None):
             _now_et  = datetime.now(_ET)
             _style   = sig.get("style", "swing")
             if _style == "intraday":
-                import pytz as _tz
                 _close_et = _now_et.replace(hour=16, minute=5, second=0, microsecond=0)
                 if _now_et >= _close_et:
                     _close_et += timedelta(days=1)
-                _expires = _close_et.astimezone(_tz.utc).replace(tzinfo=None)
+                _expires = _close_et.astimezone(pytz.utc).replace(tzinfo=None)
             elif _style == "position":
                 _expires = datetime.utcnow() + timedelta(days=30)
             else:  # swing
@@ -1341,8 +1333,6 @@ async def run_scan(broadcast_fn=None):
         if market_ctx:
             await broadcast_fn({"type": "market_context", "data": market_ctx})
 
-    global _scan_fail_count
-    _scan_fail_count = 0  # reset on success
     log.info(f" {datetime.now().strftime('%H:%M:%S')} — "
           f"scanned {len(tickers)} tickers, {len(new_signals)} new, "
           f"{len(signals) - len(new_signals)} refreshed "
