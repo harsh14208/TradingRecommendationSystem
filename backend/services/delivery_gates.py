@@ -21,7 +21,7 @@ log = logging.getLogger("scanner")
 # Empirical profit factors — disable styles below breakeven.
 # Intraday PF 0.73x (disabled), Swing PF 1.41x (elevated floor).
 STYLE_CONF_FLOORS: dict[str, float] = {
-    "intraday": 999.0,   # effectively disabled — max confidence is 72%
+    "intraday": 68.0,    # high floor while signal quality is being improved
     "swing":    70.0,    # elevated until swing sub-model is retrained
     "position": 0.0,     # no additional floor — driven by global min_confidence
 }

@@ -91,7 +91,7 @@
 | **Swing** | 55 | 45.5% | +0.81% | 1.41x | 3.37 | 2.59% |
 | **Intraday** | 23 | 34.8% | -0.65% | 0.73x | -2.12 | 1.27% |
 
-> **Active delivery policy:** Intraday signals are currently **disabled** (PF 0.73x, avg -0.65%). Swing signals require ≥70% confidence. Both gates active since 2026-05-17.
+> **Active delivery policy:** Intraday signals require ≥68% confidence (signal quality improvement in progress). Swing signals require ≥70% confidence.
 
 ### By Action
 
@@ -213,7 +213,7 @@
 
 | Gate | Status | Condition |
 |---|---|---|
-| Intraday signals | **DISABLED** | PF 0.73x — negative expected value |
+| Intraday signals | **≥68% conf** | Signal quality work in progress |
 | Swing floor | **≥70% conf** | Elevated from 63% pending recalibration |
 | XLF / XLP / XLU | **BLOCKED** | PF < 0.40x — awaiting sector retraining |
 | Pre-earnings blackout | Active | ≤2 trading days to earnings |
