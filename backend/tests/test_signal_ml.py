@@ -25,7 +25,7 @@ def test_extract_features():
     
     features = _extract_features(sig)
     
-    assert len(features) == 20
+    assert len(features) == 19   # confidence_bin removed (was redundant with confidence)
     assert features[0] == 75.0  # confidence
     assert features[1] == 0.5   # sentiment
     assert features[2] == 2     # n_sources
@@ -45,7 +45,6 @@ def test_extract_features():
     assert features[16] == 5.0  # stop_pct (100-95)/100*100
     assert features[17] == 10.0 # target_pct (110-100)/100*100
     assert features[18] == math.log10(100.0) # price_log
-    assert features[19] == 75   # confidence_bin
 
 def test_adjust_confidence():
     sig = {"confidence": 60.0}
@@ -63,8 +62,8 @@ def test_adjust_confidence():
         # base_win_prob = 60 / 100 * 0.85 = 0.51
         # win_prob = 0.8
         # ratio = 0.8 / 0.51 = 1.568 (which gets clamped to 1.25 limit)
-        # 60 * 1.25 = 75.0
-        assert adj == 75.0
+        # 60 * 1.25 = 75.0, capped by the empirical 72% ceiling
+        assert adj == 72.0
 
 def test_adjust_confidence_none_model():
     sig = {"confidence": 60.0}

@@ -21,6 +21,7 @@ log = logging.getLogger("signal.ml")
 _DATA_DIR  = Path(__file__).parent.parent / "data"
 _MODEL_FILE   = _DATA_DIR / "signal_ml_model.json"
 _FEATURE_FILE = _DATA_DIR / "signal_ml_features.json"
+_MAX_CONFIDENCE = 72.0
 
 # Minimum resolved signals before we attempt training
 _MIN_SAMPLES = 50
@@ -107,8 +108,6 @@ def _extract_features(sig: dict) -> list[float]:
     target_pct = abs(target - entry) / entry * 100 if entry > 0 and target > 0 else 0.0
     price_log  = math.log10(price) if price > 0 else 0.0
 
-    confidence_bin = int(math.floor(confidence / 5)) * 5
-
     return [
         confidence,        # 1
         sentiment,         # 2
@@ -129,7 +128,9 @@ def _extract_features(sig: dict) -> list[float]:
         stop_pct,          # 17
         target_pct,        # 18
         price_log,         # 19
-        confidence_bin,    # 20
+        # confidence_bin removed: it was a binned duplicate of confidence (feature 1)
+        # and was amplifying the high-confidence→low-win-rate inversion by giving
+        # the model two correlated channels to overfit on the top confidence band.
     ]
 
 
@@ -153,13 +154,12 @@ _FEATURE_NAMES = [
     "stop_pct",
     "target_pct",
     "price_log",
-    "confidence_bin",
 ]
 
 
 # ── Training ──────────────────────────────────────────────────────────────────
 
-def train_model(db_path: str = "trading.db") -> Optional[dict]:
+def train_model() -> Optional[dict]:
     """
     Train an XGBoost binary classifier on resolved signals from the DB.
 
@@ -186,7 +186,7 @@ def train_model(db_path: str = "trading.db") -> Optional[dict]:
 
     # ── Load resolved signals from DB ─────────────────────────────────────────
     try:
-        rows = _load_resolved_signals_sync(db_path)
+        rows = _load_resolved_signals_sync()
     except Exception as e:
         log.warning(f"[signal_ml] DB read failed: {e}")
         return None
@@ -232,12 +232,15 @@ def train_model(db_path: str = "trading.db") -> Optional[dict]:
     # ── Train XGBoost ──────────────────────────────────────────────────────────
     try:
         model = xgb.XGBClassifier(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            min_child_weight=3,
+            n_estimators=200,
+            max_depth=3,        # shallower — prevents memorising confidence bands
+            learning_rate=0.05, # slower shrinkage with more trees
+            min_child_weight=5, # require more samples per leaf
             subsample=0.8,
-            colsample_bytree=0.8,
+            colsample_bytree=0.7,
+            gamma=0.3,          # min split-loss gain — prunes low-value splits
+            reg_alpha=0.1,      # L1: drives weak feature weights to zero
+            reg_lambda=2.0,     # L2: shrinks all weights, reduces overfit
             use_label_encoder=False,
             eval_metric="logloss",
             random_state=42,
@@ -325,24 +328,10 @@ def train_model(db_path: str = "trading.db") -> Optional[dict]:
 
 # ── DB access (synchronous, for use inside asyncio.to_thread) ──────────────────
 
-def _load_resolved_signals_sync(db_path: str) -> list[dict]:
-    """
-    Load all resolved BUY/SELL signals using the async SQLAlchemy session
-    (called via asyncio.to_thread so blocking the event loop is safe here).
-
-    Falls back to direct sqlite3 if the async session is not available.
-    """
-    # Prefer the project's AsyncSessionLocal via a synchronous wrapper
-    try:
-        import asyncio as _asyncio
-        return _asyncio.run(_load_resolved_signals_async())
-    except RuntimeError:
-        # Already inside an event loop — use sqlite3 directly
-        pass
-    except Exception as e:
-        log.debug(f"[signal_ml] async load failed ({e}), falling back to sqlite3")
-
-    return _load_resolved_signals_sqlite(db_path)
+def _load_resolved_signals_sync() -> list[dict]:
+    """Load resolved signals via a fresh asyncio event loop (safe inside asyncio.to_thread)."""
+    import asyncio as _asyncio
+    return _asyncio.run(_load_resolved_signals_async())
 
 
 async def _load_resolved_signals_async() -> list[dict]:
@@ -395,68 +384,6 @@ async def _load_resolved_signals_async() -> list[dict]:
         }
         for r in rows
     ]
-
-
-def _load_resolved_signals_sqlite(db_path: str) -> list[dict]:
-    """Direct sqlite3 fallback — used when called from a plain thread."""
-    import sqlite3
-
-    if not os.path.exists(db_path):
-        # Try relative to backend dir
-        backend_dir = Path(__file__).parent.parent
-        candidate = backend_dir / db_path
-        if candidate.exists():
-            db_path = str(candidate)
-        else:
-            raise FileNotFoundError(f"DB not found: {db_path}")
-
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        cur = conn.execute(
-            """
-            SELECT ticker, action, confidence, sentiment, sources, rationale,
-                   outcome_pct, style, session, rr, entry, stop, target, price, created_at
-            FROM signals
-            WHERE outcome_pct IS NOT NULL
-              AND action IN ('BUY','SELL')
-            ORDER BY created_at
-            """
-        )
-        rows = cur.fetchall()
-    finally:
-        conn.close()
-
-    result = []
-    for r in rows:
-        sources   = r["sources"]   or "[]"
-        rationale = r["rationale"] or "[]"
-        try:
-            sources   = json.loads(sources)   if isinstance(sources, str)   else sources
-        except Exception:
-            sources = []
-        try:
-            rationale = json.loads(rationale) if isinstance(rationale, str) else rationale
-        except Exception:
-            rationale = []
-        result.append({
-            "ticker":      r["ticker"],
-            "action":      r["action"],
-            "confidence":  r["confidence"],
-            "sentiment":   r["sentiment"],
-            "sources":     sources,
-            "rationale":   rationale,
-            "outcome_pct": r["outcome_pct"],
-            "style":       r["style"],
-            "session":     r["session"],
-            "rr":          r["rr"],
-            "entry":       r["entry"],
-            "stop":        r["stop"],
-            "target":      r["target"],
-            "price":       r["price"],
-            "created_at":  r["created_at"] or "",
-        })
-    return result
 
 
 # ── Model loading ──────────────────────────────────────────────────────────────
@@ -520,7 +447,7 @@ def adjust_confidence(sig_dict: dict, model) -> float:
       win_prob      = model.predict_proba(features)[0][1]
       base_win_prob = sig_dict['confidence'] / 100 * 0.85   (empirical scaling)
       ratio         = clamp(win_prob / max(base_win_prob, 0.01), 0.75, 1.25)
-      return        = round(min(84.0, sig_dict['confidence'] * ratio), 1)
+      return        = round(min(72.0, sig_dict['confidence'] * ratio), 1)
 
     Falls back to the original confidence on any error or if model is None.
     """
@@ -544,7 +471,7 @@ def adjust_confidence(sig_dict: dict, model) -> float:
         # Clamp adjustment to ±25%
         ratio = max(0.75, min(1.25, ratio))
 
-        adjusted = round(min(84.0, base_confidence * ratio), 1)
+        adjusted = round(min(_MAX_CONFIDENCE, base_confidence * ratio), 1)
         return adjusted
 
     except Exception as e:

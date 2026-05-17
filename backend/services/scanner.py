@@ -3,6 +3,7 @@ import logging
 import ssl
 import certifi
 from datetime import datetime, timedelta, time as dtime
+from time import monotonic
 
 import pytz
 
@@ -245,131 +246,19 @@ def _today_start_utc() -> datetime:
 
 
 async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
-                      force_resend: bool = False):
+                      force_resend: bool = False, scan_started_at: datetime | None = None):
     """Send a Telegram notification for a signal if it qualifies. Mutates db_row on success.
 
     force_resend=True bypasses the 24h cooldown (used when the signal direction flipped)
     but still enforces a 30-minute anti-spam guard.
+    scan_started_at is used for SLA tracking — latency is measured from cycle start,
+    not from signal created_at (which can be hours old for refreshed-but-unsent signals).
     """
-    if sig_dict["action"] not in ("BUY", "SELL"):
+    from services.delivery_gates import check_delivery_gates
+    skip_reason, sig_dict = await check_delivery_gates(sig_dict, db, settings)
+    if skip_reason:
+        log.info(f" {sig_dict['ticker']} skipped ({label}) — {skip_reason}")
         return
-    if sig_dict["confidence"] < settings.min_confidence:
-        log.info(f" {sig_dict['ticker']} skipped ({label}) "
-              f"conf {sig_dict['confidence']:.0f}% < {settings.min_confidence:.0f}%")
-        return
-
-    # ── Style-based confidence floor ────────────────────────────────────────
-    # Validated win rates by style: position 61.4%, swing 38.2%, intraday 30.4%.
-    # Swing and intraday signals need higher confidence bars to be worth sending;
-    # applying the global min_confidence to all styles is too permissive.
-    _style = sig_dict.get("style", "swing")
-    _style_floors = {"intraday": 68.0, "swing": 63.0, "position": 0.0}
-    _style_floor  = _style_floors.get(_style, 63.0)
-    if sig_dict["confidence"] < _style_floor:
-        log.info(f" {sig_dict['ticker']} skipped ({label}) "
-              f"{_style} conf {sig_dict['confidence']:.0f}% < style floor {_style_floor:.0f}%")
-        return
-
-    # ── Pre-earnings hard blackout (2 trading days) ─────────────────────────
-    # Sending directional signals within 2 days of earnings exposes users to:
-    # (1) IV crush destroying options premium even on correct direction,
-    # (2) gap-through-stop risk, (3) analyst pre-positioning distortions.
-    # The post-earnings cooldown (days 0–2) gates after; this gates before.
-    _dte = sig_dict.get("daysToEarnings")
-    if _dte is not None and 0 < _dte <= 2:
-        log.info(f" {sig_dict['ticker']} skipped ({label}) "
-              f"— {_dte}d to earnings (pre-earnings hard blackout)")
-        return
-
-    # ── Sector concentration limit (max 2 BUY sends per sector per 24h) ─────
-    # Sending NVDA + AMD + SOXL + MU in one scan is one correlated bet ×4.
-    # Cap at 2 signals per SPDR sector ETF per rolling 24h window.
-    _sector = sig_dict.get("sectorEtf")
-    if _sector and sig_dict["action"] == "BUY":
-        _sector_cutoff = datetime.utcnow() - timedelta(hours=24)
-        _sector_count = (await db.execute(
-            select(func.count()).select_from(Signal)
-            .where(Signal.sector_etf == _sector)
-            .where(Signal.action     == "BUY")
-            .where(Signal.is_sent    == True)
-            .where(Signal.sent_at    >= _sector_cutoff)
-        )).scalar_one()
-        if _sector_count >= 2:
-            log.info(f" {sig_dict['ticker']} skipped ({label}) "
-                  f"— sector {_sector} already has {_sector_count} BUY sends in 24h (max 2)")
-            return
-
-    # ── Ticker-adaptive confidence floor ────────────────────────────────────
-    # Global threshold is too blunt: AMD (100% win rate) deserves a lower bar;
-    # tickers with <45% win rate need a higher bar to be worth sending.
-    # Reads from adaptive_weights pre-computed each scan cycle.
-    try:
-        from database import AsyncSessionLocal
-        from models import AppSettings
-        async with AsyncSessionLocal() as _adb:
-            _srow = (await _adb.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
-        _app_data = (_srow.data or {}) if _srow else {}
-        _ticker_wrs = _app_data.get("adaptive_weights", {}).get("ticker_win_rates", {})
-        _twr = _ticker_wrs.get(sig_dict["ticker"])
-        if _twr is not None:
-            if _twr < 0.45 and sig_dict["confidence"] < 68.0:
-                log.info(f" {sig_dict['ticker']} skipped ({label}) "
-                      f"— hist win rate {_twr*100:.0f}% requires ≥68% conf (got {sig_dict['confidence']:.0f}%)")
-                return
-            if _twr >= 0.75 and sig_dict["confidence"] < 52.0:
-                log.info(f" {sig_dict['ticker']} high-win skip — conf {sig_dict['confidence']:.0f}% < 52% floor even for {_twr*100:.0f}% WR")
-                return
-    except Exception:
-        pass
-
-    # ── Source independence gate ─────────────────────────────────────────────
-    # A high-confidence signal driven entirely by correlated technical indicators
-    # has much lower real-world win rates than one where multiple independent data
-    # pipelines agree. Require at least 2 non-technical source categories for
-    # position signals (and at least 1 for swing/intraday) before sending.
-    # This prevents "everything is oversold on a crash day" from auto-sending.
-    _sources_set  = set(sig_dict.get("sources") or [])
-    _non_ta = _sources_set - {
-        "Technical", "Technicals", "Risk Gate", "Backtest",
-        "Cross-Sectional", "Orthogonalization", "Signal Cluster",
-    }
-    _min_non_ta = 2 if _style == "position" else 1
-    if len(_non_ta) < _min_non_ta:
-        log.info(f" {sig_dict['ticker']} skipped ({label}) "
-              f"only {len(_non_ta)} non-TA sources for {_style} (need {_min_non_ta}): {_non_ta}")
-        return
-
-    # ── Minimum profit filter ───────────────────────────────────────────────
-    entry  = sig_dict.get("entry")
-    target = sig_dict.get("target")
-    if entry and target and entry > 0:
-        profit_pct = abs(target - entry) / entry * 100
-        if profit_pct < 2.0:
-            log.info(f" {sig_dict['ticker']} skipped ({label}) "
-                  f"profit {profit_pct:.1f}% < 2.0% min")
-            return
-
-    # ── Market Holiday Pre-Signal Warning — -5pp confidence haircut ────────
-    # 2 trading days before a 3-day weekend: lower liquidity, wider spreads, gap risk.
-    try:
-        from services.market_calendar import get_upcoming_holidays, is_pre_long_weekend
-        _holidays = await get_upcoming_holidays()
-        _is_long_wknd, _holiday_name = is_pre_long_weekend(_holidays)
-        if _is_long_wknd:
-            sig_dict = dict(sig_dict)  # shallow copy to avoid mutating original
-            sig_dict["confidence"] = round(max(35.0, sig_dict["confidence"] - 5.0), 1)
-            sig_dict.setdefault("rationale", [])
-            sig_dict["rationale"] = list(sig_dict["rationale"]) + [{
-                "src": "Risk Gate",
-                "head": f"Pre-{_holiday_name} Haircut (−5pp)",
-                "body": (f"Signal is 2 trading days before {_holiday_name} (3-day weekend). "
-                         "Lower liquidity, wider bid-ask spreads, and gap risk at open after "
-                         "the holiday reduce expected return. Confidence reduced by 5pp."),
-                "sentiment": "neg",
-                "meta": f"holiday={_holiday_name} haircut=-5pp",
-            }]
-    except Exception:
-        pass
 
     # ── Time-of-day filter ──────────────────────────────────────────────────
     if not _market_hours_ok():
@@ -496,14 +385,16 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
         db_row.is_sent = True
         db_row.sent_at = now
         # ── Delivery SLA tracking ────────────────────────────────────────────────
-        if db_row.created_at:
-            latency_s = (now - db_row.created_at).total_seconds()
-            if latency_s > 300:  # > 5 minutes
+        # Measure from scan cycle start (not created_at): refreshed-but-unsent signals
+        # carry created_at from hours ago, which would produce false SLA breaches.
+        sla_baseline = scan_started_at or db_row.created_at
+        if sla_baseline:
+            latency_s = (now - sla_baseline).total_seconds()
+            if latency_s > 300:  # > 5 minutes from this scan cycle's start
                 log.warning(
                     f"[sla] {sig_dict['ticker']} delivery latency {latency_s:.0f}s "
-                    f"(created {db_row.created_at.isoformat()}, sent {now.isoformat()})"
+                    f"(scan started {sla_baseline.isoformat()}, sent {now.isoformat()})"
                 )
-                # Fire-and-forget Telegram alert to owner
                 try:
                     asyncio.ensure_future(_alert_sla_breach(
                         sig_dict['ticker'], sig_dict['action'], latency_s, settings
@@ -798,6 +689,90 @@ async def _alert_telegram(text: str):
 _last_analytics_compute: float = 0.0
 _ANALYTICS_COMPUTE_INTERVAL = 300  # re-compute at most every 5 minutes
 
+_scan_lock = asyncio.Lock()
+_scan_status: dict = {
+    "state": "idle",
+    "running": False,
+    "last_started_at": None,
+    "last_finished_at": None,
+    "last_success_at": None,
+    "last_error": None,
+    "last_duration_s": None,
+    "last_stage": None,
+    "last_stage_at": None,
+    "runs": 0,
+    "successes": 0,
+    "failures": 0,
+    "skipped_overlaps": 0,
+}
+
+
+def _utc_iso() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _mark_scan_stage(stage: str) -> None:
+    _scan_status["last_stage"] = stage
+    _scan_status["last_stage_at"] = _utc_iso()
+
+
+def get_scan_status() -> dict:
+    """Return a copy of the latest scan lifecycle status for health/admin APIs."""
+    return dict(_scan_status)
+
+
+async def run_scan(broadcast_fn=None):
+    """Single-flight scan wrapper with status tracking and Redis-aware lock."""
+    if _scan_lock.locked():
+        _scan_status["skipped_overlaps"] += 1
+        _scan_status["state"] = "skipped_overlap"
+        return None
+
+    lock_token = None
+    try:
+        from services.redis_cache import cache_acquire_lock
+        lock_token = await cache_acquire_lock("lock:scanner:run", ttl=900)
+        if not lock_token:
+            _scan_status["skipped_overlaps"] += 1
+            _scan_status["state"] = "skipped_distributed_overlap"
+            return None
+    except Exception:
+        lock_token = None
+
+    async with _scan_lock:
+        started = monotonic()
+        _scan_status.update({
+            "state": "running",
+            "running": True,
+            "last_started_at": _utc_iso(),
+            "last_finished_at": None,
+            "last_error": None,
+            "last_duration_s": None,
+        })
+        _scan_status["runs"] += 1
+        _mark_scan_stage("start")
+        try:
+            result = await _run_scan_impl(broadcast_fn=broadcast_fn)
+            _scan_status["successes"] += 1
+            _scan_status["last_success_at"] = _utc_iso()
+            _scan_status["state"] = "success"
+            return result
+        except Exception as e:
+            _scan_status["failures"] += 1
+            _scan_status["last_error"] = f"{type(e).__name__}: {e}"
+            _scan_status["state"] = "failed"
+            raise
+        finally:
+            _scan_status["running"] = False
+            _scan_status["last_finished_at"] = _utc_iso()
+            _scan_status["last_duration_s"] = round(monotonic() - started, 3)
+            if lock_token:
+                try:
+                    from services.redis_cache import cache_release_lock
+                    await cache_release_lock("lock:scanner:run", lock_token)
+                except Exception:
+                    pass
+
 
 async def _precompute_analytics() -> None:
     """
@@ -857,7 +832,7 @@ async def _precompute_analytics() -> None:
         log.debug(f"[analytics] pre-compute failed (non-critical): {e}")
 
 
-async def run_scan(broadcast_fn=None):
+async def _run_scan_impl(broadcast_fn=None):
     """
     Full scan cycle:
       1. Fetch market-wide context (F&G + Macro) once.
@@ -865,13 +840,16 @@ async def run_scan(broadcast_fn=None):
       3. Pre-filter: skip .info re-fetch for stable tickers (< 1% move, recent signal).
       4. Fetch ticker .info sequentially (rate-limited).
       5. Generate signals (news + EDGAR fetched concurrently per ticker).
+
       6. Persist to SQLite.
       7. Auto-send qualifying signals (time-of-day + cooldown checks).
       8. Update outcomes for old sent signals.
       9. Broadcast via WebSocket.
     """
+    scan_cycle_started_at = datetime.utcnow()  # used for SLA measurement
     settings = get_settings()
     tickers  = await _get_scan_tickers(settings)
+    _mark_scan_stage("load_tickers")
 
     # Clear stale data-quality counters at the start of each cycle
     global _data_quality
@@ -884,6 +862,7 @@ async def run_scan(broadcast_fn=None):
     stale_cutoff = datetime.utcnow() - timedelta(hours=8)
 
     # ── Step 1: market-wide context + adaptive weights ───────────────────
+    _mark_scan_stage("market_context")
     try:
         fg, macro, pc, breadth, aaii, cot = await asyncio.gather(
             get_fear_greed(), get_macro_context(), get_put_call_ratio(), get_market_breadth(),
@@ -1109,6 +1088,7 @@ async def run_scan(broadcast_fn=None):
         log.debug(f" news batch prefetch failed (non-critical): {e}")
 
     # ── Step 2: batch history ────────────────────────────────────────────
+    _mark_scan_stage("history_batch")
     try:
         histories = await get_histories_batch(tickers, period="1y", interval="1d")
         log.info(f" history batch: {len(histories)}/{len(tickers)} tickers loaded")
@@ -1130,6 +1110,7 @@ async def run_scan(broadcast_fn=None):
             pass
 
     # ── Step 3: quotes batch for pre-filtering + outcome tracking ────────
+    _mark_scan_stage("quotes_batch")
     try:
         quotes = await get_quotes_batch(tickers)
         quote_map = {q["t"]: q for q in quotes}
@@ -1138,6 +1119,7 @@ async def run_scan(broadcast_fn=None):
         quotes, quote_map = [], {}
 
     # ── Step 4: pre-filtered .info fetch ─────────────────────────────────
+    _mark_scan_stage("info_fetch")
     # Skip .info for tickers where price moved < threshold AND a recent active
     # signal already exists — saves significant time on quiet days.
     try:
@@ -1237,6 +1219,7 @@ async def run_scan(broadcast_fn=None):
             _diff_state[t] = {"price": q["p"], "ts": datetime.utcnow()}
 
     # ── Step 5: generate signals ─────────────────────────────────────────
+    _mark_scan_stage("signal_generation")
     try:
         signals = await scan_all(
             active_tickers,
@@ -1246,13 +1229,14 @@ async def run_scan(broadcast_fn=None):
         )
     except Exception as e:
         log.info(f" scan_all failed: {e}")
-        return
+        raise RuntimeError(f"scan_all failed: {e}") from e
 
     # new_signals entries are 3-tuples: (sig_dict, db_row, force_resend)
     new_signals:      list[tuple[dict, Signal, bool]] = []
     refreshed_unsent: list[tuple[dict, Signal, bool]] = []
 
     # ── Step 6: persist (smart daily deduplication) ──────────────────────
+    _mark_scan_stage("persistence")
     # Rules (per trading day, midnight ET boundary):
     #   • Same ticker, same direction, conf delta < 15pp → silent refresh
     #     (update price/confidence in place, no new row, no Telegram re-send)
@@ -1368,6 +1352,7 @@ async def run_scan(broadcast_fn=None):
         await db.commit()
 
     # ── Step 7: auto-send + auto paper trade ────────────────────────────
+    _mark_scan_stage("delivery")
     db_settings = await _load_db_settings()
 
     # Pre-load open positions once so _maybe_paper_trade can deduplicate cheaply
@@ -1396,7 +1381,8 @@ async def run_scan(broadcast_fn=None):
 
             for sig, row, label, force in candidates:
                 merged = await db.merge(row)
-                await _maybe_send(sig, merged, settings, db, label, force_resend=force)
+                await _maybe_send(sig, merged, settings, db, label, force_resend=force,
+                                  scan_started_at=scan_cycle_started_at)
                 await _maybe_paper_trade(sig, positions_map, settings, db_settings)
 
             await db.commit()
@@ -1410,6 +1396,7 @@ async def run_scan(broadcast_fn=None):
                 await _maybe_paper_trade(sig, positions_map, settings, db_settings)
 
     # ── Step 8: update outcomes ──────────────────────────────────────────
+    _mark_scan_stage("outcomes")
     try:
         await _update_outcomes(quotes)
     except Exception as e:
@@ -1426,6 +1413,7 @@ async def run_scan(broadcast_fn=None):
         log.debug(f" price alert eval failed (non-critical): {e}")
 
     # ── Step 10: broadcast ───────────────────────────────────────────────
+    _mark_scan_stage("broadcast")
     if broadcast_fn:
         for sig, _, _force in new_signals:
             await broadcast_fn({"type": "new_signal", "signal": sig})
@@ -1442,6 +1430,7 @@ async def run_scan(broadcast_fn=None):
           f"({len(refreshed_unsent)} unsent queued)")
 
     # ── Step 11: analytics pre-computation ──────────────────────────────
+    _mark_scan_stage("analytics")
     # Compute backtest summary in background after each scan so heavy GROUP BY
     # queries aren't triggered on every /api/signals/backtest request.
     # Fire-and-forget — never blocks the scan cycle.

@@ -13,7 +13,25 @@ _ssl_ctx: ssl.SSLContext = ssl.create_default_context(cafile=certifi.where())
 CACHE_TTL = 3600  # refresh once per hour
 _CACHE_KEY = "fear_greed:data"
 
-URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+URL         = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+_REFERER    = "https://www.cnn.com/markets/fear-and-greed"
+_HEADERS    = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept":          "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer":         _REFERER,
+    "Origin":          "https://www.cnn.com",
+    "DNT":             "1",
+    "Connection":      "keep-alive",
+    "Sec-Fetch-Dest":  "empty",
+    "Sec-Fetch-Mode":  "cors",
+    "Sec-Fetch-Site":  "same-site",
+}
 
 # (lo, hi) → (label, sentiment for rationale, confidence_bias)
 _BANDS = [
@@ -59,11 +77,12 @@ async def get_fear_greed() -> Optional[dict]:
         async with aiohttp.ClientSession(connector=connector) as session:
             async with session.get(
                 URL,
-                headers={"User-Agent": "Mozilla/5.0"},
+                headers=_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status != 200:
-                    return _cache["data"] if _cache.get("data") is not None else _neutral_result()  # serve stale on error
+                    print(f"[fear_greed] HTTP {resp.status} from CNN API")
+                    return _cache["data"] if _cache.get("data") is not None else _neutral_result()
                 raw = await resp.json(content_type=None)
 
         fg = raw.get("fear_and_greed", raw)

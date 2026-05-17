@@ -20,10 +20,14 @@ env/
 *.env
 !.env.example
 
-# Database (local dev DB — volume-mounted in Docker)
-backend/trading.db
-backend/trading.db-wal
-backend/trading.db-shm
+# SQLite databases (test suite and any accidental local copies)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+**/data/trading.db
+trading.db
+trading.db-wal
+trading.db-shm
 
 # Generated outputs (recreated by weekly factor mining job)
 backend/data/factor_weights.json

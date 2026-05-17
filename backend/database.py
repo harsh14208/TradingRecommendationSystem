@@ -14,28 +14,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# ── Database URL — SQLite default, PostgreSQL when DATABASE_URL is set ───────
-# Set DATABASE_URL=postgresql+asyncpg://user:pass@host/dbname in .env for Postgres.
-# SQLite is the default for local dev; asyncpg required for production Postgres.
+# ── Database URL — PostgreSQL in production, SQLite for tests/local dev ──────
+# Set DATABASE_URL=postgresql+asyncpg://user:pass@host/dbname in .env.
 _DB_URL = os.getenv("DATABASE_URL", "")
 if _DB_URL.startswith("postgresql://"):
-    # asyncpg requires the postgresql+asyncpg:// scheme
     _DB_URL = _DB_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# Store SQLite inside ./data/ so it falls on the Fly.io persistent volume
-# (/app/data is mounted; /app/trading.db would be wiped on every deploy).
-# Existing installations with ./trading.db are auto-migrated on first start.
-_SQLITE_DIR  = Path("data")
-_SQLITE_NEW  = _SQLITE_DIR / "trading.db"
-_SQLITE_OLD  = Path("trading.db")
-if not _DB_URL and not _SQLITE_NEW.exists() and _SQLITE_OLD.exists():
-    import shutil
-    _SQLITE_DIR.mkdir(exist_ok=True)
-    shutil.copy2(_SQLITE_OLD, _SQLITE_NEW)
-    logger.info("[db] Migrated trading.db → data/trading.db")
-_SQLITE_DIR.mkdir(exist_ok=True)
-
-DATABASE_URL = _DB_URL or f"sqlite+aiosqlite:///{_SQLITE_NEW}"
+# SQLite fallback is intentionally kept for the test suite (conftest.py sets
+# DATABASE_URL=sqlite+aiosqlite:///./test_db.sqlite). Production always uses
+# DATABASE_URL from the environment.
+DATABASE_URL = _DB_URL or "sqlite+aiosqlite:///./data/trading.db"
 _IS_POSTGRES = DATABASE_URL.startswith("postgresql")
 
 # SQLite WAL mode configuration for better concurrency
@@ -102,8 +90,8 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         if _IS_POSTGRES:
-            return  # Postgres handles schema via create_all; ALTER TABLE not needed
-        # ── Additive column migrations (SQLite only — safe to run on every startup) ──
+            return  # PostgreSQL schema is fully managed by create_all
+        # SQLite-only additive migrations — used by the test suite
         _migrations = [
             "ALTER TABLE users ADD COLUMN min_confidence_override REAL",
             "ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL",

@@ -94,19 +94,32 @@ def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
     return "HOLD", max(40.0, min(55.0, confidence))
 
 
-def _levels(price: float, atr: float, action: str):
+def _levels(price: float, atr: float, action: str, style: str = "swing"):
     if action == "HOLD" or atr == 0:
         return None, None, None, "—"
     entry = price
-    # Dynamic ATR multipliers based on ATR-to-price ratio (volatility proxy).
-    # High vol → tighter stops to limit $ loss; low vol → wider stops to avoid noise shakeout.
     atr_pct = atr / price if price > 0 else 0.02
-    if atr_pct > 0.025:    # high volatility  (ATR > 2.5% of price)
-        stop_mult, tgt_mult = 2.0, 2.5
-    elif atr_pct < 0.010:  # low volatility   (ATR < 1.0% of price)
-        stop_mult, tgt_mult = 3.0, 4.0
-    else:                  # normal volatility
-        stop_mult, tgt_mult = 2.0, 3.0
+
+    # Stop multipliers are style-specific.
+    # Empirical data: 45.7% stop-hit rate with previous 2×ATR stops — too tight.
+    # Position trades hold days-to-weeks and need room for intraday noise.
+    if style == "position":
+        if atr_pct > 0.025:   # high vol
+            stop_mult, tgt_mult = 2.5, 3.5
+        elif atr_pct < 0.010: # low vol
+            stop_mult, tgt_mult = 3.5, 5.0
+        else:                  # normal vol
+            stop_mult, tgt_mult = 3.0, 4.5
+    elif style == "intraday":
+        stop_mult, tgt_mult = 1.5, 2.0   # tight — short hold time
+    else:  # swing
+        if atr_pct > 0.025:
+            stop_mult, tgt_mult = 2.0, 2.5
+        elif atr_pct < 0.010:
+            stop_mult, tgt_mult = 3.0, 4.0
+        else:
+            stop_mult, tgt_mult = 2.0, 3.0
+
     stop   = round(entry - stop_mult * atr, 2) if action == "BUY" else round(entry + stop_mult * atr, 2)
     target = round(entry + tgt_mult  * atr, 2) if action == "BUY" else round(entry - tgt_mult  * atr, 2)
     risk   = abs(entry - stop)
@@ -785,7 +798,7 @@ def _assemble_signal(
     if _is_lev_etf and style == "position":
         style = "swing"
 
-    entry, stop, target, rr = _levels(price, atr, action)
+    entry, stop, target, rr = _levels(price, atr, action, style)
 
     # ── Risk-Free Rate Yield Dampener ────────────────────────────────────
     # Every equity trade competes against the risk-free rate. If the signal's

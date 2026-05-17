@@ -59,7 +59,7 @@ from routers.telegram_webhook import router as telegram_webhook_router
 from routers.watchlist_router import router as watchlist_router
 from routers.websocket_router import manager, router as ws_router
 from routers.delivery_router import router as delivery_router
-from services.scanner import run_scan, _alert_telegram
+from services.scanner import get_scan_status, run_scan, _alert_telegram
 from services.auth_svc import get_current_user
 from models import User
 from services import alpaca_ws
@@ -309,7 +309,7 @@ async def _weekly_ml_retrain():
         await asyncio.sleep((next_run - now_et).total_seconds())
         try:
             from services.signal_ml import train_model
-            result = await asyncio.to_thread(train_model, "trading.db")
+            result = await asyncio.to_thread(train_model)
             if result:
                 log.info(
                     f"[ml] retrain OK: OOS AUC={result.get('oos_auc') or '?'}  "
@@ -873,10 +873,22 @@ async def health_check():
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
         from datetime import timezone as _tz
-        return {"status": "ok", "db": "connected", "ts": datetime.now(_tz.utc).isoformat()}
+        scan = get_scan_status()
+        return {
+            "status": "ok",
+            "db": "connected",
+            "scan": scan,
+            "ts": datetime.now(_tz.utc).isoformat(),
+        }
     except Exception as e:
         from fastapi import HTTPException
         raise HTTPException(status_code=503, detail=f"DB unavailable: {e}")
+
+
+@app.get("/api/scan/status", tags=["meta"])
+async def scan_status(user: User = Depends(get_current_user)):
+    """Return scanner lifecycle status for authenticated users."""
+    return get_scan_status()
 
 @app.post("/api/admin/trigger-weekly-digest", tags=["admin"])
 async def admin_trigger_weekly_digest(

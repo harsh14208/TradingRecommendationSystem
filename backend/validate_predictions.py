@@ -23,7 +23,17 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, ".")
 from models import Signal
 
-DB_URL = "sqlite+aiosqlite:///./trading.db"
+import os as _os
+from pathlib import Path as _Path
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(_Path(__file__).parent / ".env", override=False)
+except ImportError:
+    pass
+_raw = _os.getenv("DATABASE_URL", "")
+if _raw.startswith("postgresql://"):
+    _raw = _raw.replace("postgresql://", "postgresql+asyncpg://", 1)
+DB_URL = _raw or "sqlite+aiosqlite:///./data/trading.db"
 BANDS  = [(0, 50), (50, 55), (55, 60), (60, 65), (65, 70), (70, 75), (75, 80), (80, 85), (85, 101)]
 
 # Round-trip transaction cost estimate: bid-ask spread + entry/exit slippage.
@@ -188,7 +198,8 @@ def _fetch_ohlcv(ticker: str, days: int = 20) -> list[tuple[float, float]]:
     """Return list of (high, low) for the last `days` trading days."""
     try:
         import yfinance as yf
-        df = yf.download(ticker, period=f"{days}d", progress=False, auto_adjust=True)
+        # Use Ticker.history — consistent non-MultiIndex columns across yfinance versions
+        df = yf.Ticker(ticker).history(period=f"{days}d", auto_adjust=True)
         if df is None or df.empty:
             return []
         return [(float(row["High"]), float(row["Low"])) for _, row in df.iterrows()]

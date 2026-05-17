@@ -81,7 +81,7 @@ async def ml_train(request: Request, owner: User = Depends(_require_owner)):
 
     try:
         from services.signal_ml import train_model
-        result = await asyncio.to_thread(train_model, "trading.db")
+        result = await asyncio.to_thread(train_model)
     except Exception as e:
         log.warning(f"[ml] train endpoint error: {e}")
         raise HTTPException(status_code=500, detail=f"Training failed: {e}")
