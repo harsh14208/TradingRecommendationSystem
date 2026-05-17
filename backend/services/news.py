@@ -126,6 +126,32 @@ def _fetch_analyst_recs(ticker: str) -> dict:
             result["bull_delta"]      = bull_delta
             result["bear_delta"]      = bear_delta
 
+        # ── 12-1 month momentum factor from Finnhub basic_financials ─────────
+        # Uses pre-computed price returns (free endpoint, same API key).
+        # 26-week return minus 4-week return approximates the documented
+        # 12-month minus 1-month cross-sectional momentum factor (skip recent month
+        # to avoid short-term reversal). Strong positive momentum persists.
+        try:
+            _track_call()
+            _bf = client.company_basic_financials(ticker, "all")
+            _m  = (_bf or {}).get("metric", {})
+            _r13 = _m.get("13WeekPriceReturnDaily")   # ~3-month return
+            _r26 = _m.get("26WeekPriceReturnDaily")   # ~6-month return
+            _r52 = _m.get("52WeekHigh")
+            _l52 = _m.get("52WeekLow")
+            if _r13 is not None and _r26 is not None:
+                # Momentum ≈ 26w return minus short-term 4w noise (approximated as r13/3)
+                _mom = round(float(_r26) - float(_r13) / 3.0, 2)
+                result["momentum_factor"] = _mom
+                result["return_26w"]      = round(float(_r26), 2)
+                result["return_13w"]      = round(float(_r13), 2)
+            if _r52 is not None:
+                result["fh_52w_high"] = float(_r52)
+            if _l52 is not None:
+                result["fh_52w_low"]  = float(_l52)
+        except Exception:
+            pass
+
         _rec_cache[ticker] = (result, time.time())
         return result
     except Exception:

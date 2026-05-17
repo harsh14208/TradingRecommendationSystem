@@ -142,9 +142,34 @@ def _fetch_earnings_surprise(ticker: str) -> dict:
             "beats_last_4q":   beats,
             "misses_last_4q":  misses,
             "consec_beats":    consec,
-            "avg_surprise_pct": avg_surprise,   # positive = avg beat %, negative = avg miss %
-            "last_surprise_pct": last_surprise, # most recent quarter surprise %
+            "avg_surprise_pct":  avg_surprise,
+            "last_surprise_pct": last_surprise,
         }
+
+        # ── Finnhub EPS surprise acceleration ────────────────────────────────
+        # Compares Q1 (most recent) vs Q4 (oldest) surprise magnitude.
+        # Accelerating beats = management execution improving = alpha signal.
+        # Uses the same Finnhub key already configured; zero extra auth cost.
+        try:
+            import finnhub
+            from config import get_settings
+            _key = get_settings().finnhub_api_key
+            if _key:
+                _client = finnhub.Client(api_key=_key)
+                _fh_eps = _client.company_earnings(ticker, limit=4) or []
+                if len(_fh_eps) >= 2:
+                    _surp_list = [
+                        q.get("surprisePercent", 0) for q in _fh_eps
+                        if q.get("surprisePercent") is not None
+                    ]
+                    if len(_surp_list) >= 2:
+                        # Index 0 = most recent, last index = oldest
+                        acceleration = round(_surp_list[0] - _surp_list[-1], 2)
+                        result["surprise_acceleration"] = acceleration
+                        result["quarterly_surprises"]   = [round(s, 2) for s in _surp_list]
+        except Exception:
+            pass  # Finnhub unavailable — yfinance data still valid
+
         _surp_cache[ticker] = (result, _time.time())
         return result
     except Exception as e:

@@ -139,6 +139,122 @@ async def resolve_outcomes() -> int:
     return updated
 
 
+# ── step 1b: MAE / MFE / stop-target hit tracking ────────────────────────────
+
+def _fetch_ohlcv(ticker: str, days: int = 20) -> list[tuple[float, float]]:
+    """Return list of (high, low) for the last `days` trading days."""
+    try:
+        import yfinance as yf
+        df = yf.download(ticker, period=f"{days}d", progress=False, auto_adjust=True)
+        if df is None or df.empty:
+            return []
+        return [(float(row["High"]), float(row["Low"])) for _, row in df.iterrows()]
+    except Exception:
+        return []
+
+
+async def resolve_mae_mfe() -> int:
+    """
+    For every sent signal that has an entry + stop + target but no MAE/MFE yet,
+    fetch OHLCV since the signal date and compute:
+      - hit_stop:   did the low ever breach the stop level (BUY) or high breach stop (SELL)?
+      - hit_target: did the high ever breach the target (BUY) or low breach target (SELL)?
+      - mae:        Maximum Adverse Excursion — worst % move against the position
+      - mfe:        Maximum Favorable Excursion — best % move in favour of position
+      - exit_type:  'target' | 'stop' | 'time' | 'pending'
+    """
+    engine  = create_async_engine(DB_URL, echo=False)
+    Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with Session() as db:
+        rows = (await db.execute(
+            select(Signal).where(
+                Signal.is_sent == True,
+                Signal.entry.isnot(None),
+                Signal.stop.isnot(None),
+                Signal.target.isnot(None),
+                Signal.mae.is_(None),   # not yet computed
+            )
+        )).scalars().all()
+
+    # Only process signals old enough to have at least 1 day of OHLCV
+    eligible = [s for s in rows if _age_days(s) >= 1 and s.entry and s.entry > 0]
+    if not eligible:
+        print("  No signals pending MAE/MFE computation.")
+        return 0
+
+    # Group by ticker to batch OHLCV fetches
+    by_ticker: dict[str, list] = {}
+    for s in eligible:
+        by_ticker.setdefault(s.ticker, []).append(s)
+
+    updated = 0
+    async with Session() as db:
+        for ticker, sigs in by_ticker.items():
+            bars = _fetch_ohlcv(ticker, days=30)
+            if not bars:
+                continue
+            for sig in sigs:
+                entry  = sig.entry
+                stop   = sig.stop
+                target = sig.target
+                is_buy = sig.action == "BUY"
+
+                # Slice bars to those after signal creation
+                age     = int(_age_days(sig))
+                n_bars  = min(age, len(bars))
+                window  = bars[-n_bars:] if n_bars > 0 else bars
+
+                worst_pct = 0.0   # adverse excursion (most negative)
+                best_pct  = 0.0   # favorable excursion (most positive)
+                _hit_stop   = False
+                _hit_target = False
+
+                for high, low in window:
+                    if is_buy:
+                        adv = (high - entry) / entry * 100   # upside = favorable
+                        adrs = (low  - entry) / entry * 100   # downside = adverse
+                    else:
+                        adv = (entry - low)  / entry * 100   # downside = favorable for SELL
+                        adrs = (entry - high) / entry * 100  # upside = adverse for SELL
+
+                    best_pct  = max(best_pct,  adv)
+                    worst_pct = min(worst_pct, adrs)
+
+                    # Check stop/target hit
+                    if is_buy:
+                        if stop  and low  <= stop:   _hit_stop   = True
+                        if target and high >= target: _hit_target = True
+                    else:
+                        if stop  and high >= stop:   _hit_stop   = True
+                        if target and low  <= target: _hit_target = True
+
+                # Determine exit type (chronological priority)
+                if _hit_target:
+                    exit_type = "target"
+                elif _hit_stop:
+                    exit_type = "stop"
+                elif age >= 14:
+                    exit_type = "time"
+                else:
+                    exit_type = "pending"
+
+                sig_db = (await db.execute(select(Signal).where(Signal.id == sig.id))).scalar_one_or_none()
+                if sig_db:
+                    sig_db.mae       = round(worst_pct, 2)
+                    sig_db.mfe       = round(best_pct,  2)
+                    sig_db.hit_stop  = _hit_stop
+                    sig_db.hit_target = _hit_target
+                    sig_db.exit_type = exit_type
+                    updated += 1
+
+        await db.commit()
+
+    await engine.dispose()
+    print(f"  MAE/MFE computed for {updated} signals.")
+    return updated
+
+
 # ── step 2: calibration report ───────────────────────────────────────────────
 
 async def calibration_report():
@@ -297,6 +413,40 @@ async def calibration_report():
         dt = s.created_at.strftime("%Y-%m-%d") if s.created_at else "?"
         print(f"  {s.ticker:<7} {s.action:<6} {s.confidence:>5.1f}% {ret:>+7.2f}%  {dt}  ({h})")
 
+    # ── MAE / MFE / stop-target summary ─────────────────────────────────────
+    mae_sigs = [s for s in rows if s.action in ("BUY","SELL") and getattr(s, "mae", None) is not None]
+    if mae_sigs:
+        n_mae = len(mae_sigs)
+        n_stop   = sum(1 for s in mae_sigs if s.hit_stop)
+        n_target = sum(1 for s in mae_sigs if s.hit_target)
+        n_time   = sum(1 for s in mae_sigs if s.exit_type == "time")
+        avg_mae  = sum(s.mae for s in mae_sigs) / n_mae
+        avg_mfe  = sum(s.mfe for s in mae_sigs) / n_mae
+        mfe_mae_ratio = avg_mfe / abs(avg_mae) if avg_mae != 0 else float("inf")
+
+        print(f"\n  MAE / MFE TRADE-PATH ANALYTICS (n={n_mae})")
+        print(f"  {'Metric':<30} {'Value'}")
+        print(f"  {'-'*45}")
+        print(f"  {'Signals w/ stop hit':<30} {n_stop} ({n_stop/n_mae*100:.1f}%)")
+        print(f"  {'Signals w/ target hit':<30} {n_target} ({n_target/n_mae*100:.1f}%)")
+        print(f"  {'Signals exited by time':<30} {n_time} ({n_time/n_mae*100:.1f}%)")
+        print(f"  {'Avg MAE (worst drawdown)':<30} {avg_mae:+.2f}%")
+        print(f"  {'Avg MFE (best excursion)':<30} {avg_mfe:+.2f}%")
+        print(f"  {'MFE/MAE ratio':<30} {mfe_mae_ratio:.2f}×  (>1 = signals move right first)")
+
+        if mfe_mae_ratio < 1.0:
+            print(f"\n  ⚠  MFE/MAE < 1.0: signals move AGAINST position before recovering.")
+            print(f"     Entries may be too early — consider waiting for confirmation.")
+        elif mfe_mae_ratio > 2.5:
+            print(f"\n  ✓  MFE/MAE > 2.5: signals strongly move right before any adverse excursion.")
+            print(f"     Entry timing is good; ensure stops aren't too tight.")
+
+        if n_stop / n_mae > 0.40:
+            print(f"\n  ⚠  Stop hit rate {n_stop/n_mae*100:.0f}% > 40%. Stops may be too tight")
+            print(f"     or entries are too aggressive. Consider ATR×3 stops.")
+        if n_target / n_mae > 0.50:
+            print(f"\n  ✓  Target hit rate {n_target/n_mae*100:.0f}% > 50%. Target placement is realistic.")
+
     print(f"\n{'='*62}\n")
 
 
@@ -305,6 +455,8 @@ async def calibration_report():
 async def main():
     print("\nStep 1 — Resolving pending outcomes…")
     updated = await resolve_outcomes()
+    print(f"\nStep 1b — Computing MAE/MFE / stop-target tracking…")
+    await resolve_mae_mfe()
     print(f"\nStep 2 — Running calibration report…")
     await calibration_report()
 

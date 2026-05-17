@@ -391,6 +391,24 @@ def _assemble_signal(
             "sentiment": "neg",
             "meta": f"RVOL {vol_ratio:.1f}× < 1.2"})
 
+    # ── Dollar-volume minimum gate ────────────────────────────────────────
+    # A signal on a thinly-traded stock ($price × volume < $5M/day) is unreliable:
+    # bid-ask spreads dominate, institutional algorithms don't participate, and
+    # a single large order moves price. Reduce confidence rather than hard-gate
+    # so the signal still appears with a clear warning.
+    _dollar_vol = price * (tech.get("volume") or 0) if price else 0
+    if action in ("BUY", "SELL") and _dollar_vol > 0 and _dollar_vol < 5_000_000:
+        _dv_pen = 8 if _dollar_vol < 1_000_000 else 4
+        confidence = round(max(35.0, confidence - _dv_pen), 1)
+        sources.add("Risk Gate")
+        rationale.append({"src": "Risk Gate",
+            "head": f"Thin Dollar Volume — ${_dollar_vol/1e6:.1f}M/day ({_dv_pen}pp confidence haircut)",
+            "body": (f"Daily dollar volume of ${_dollar_vol/1e6:.1f}M is below the $5M threshold. "
+                     "Thin liquidity means bid-ask spread costs erode signal edge, and large orders "
+                     "move price against the position. Use a smaller position size."),
+            "sentiment": "neg",
+            "meta": f"dollar_vol=${_dollar_vol/1e6:.1f}M | penalty={_dv_pen}pp"})
+
     # Annotate the low-ATR regime switch if it was active this signal
     if _is_low_atr:
         sources.add("Risk Gate")
@@ -477,6 +495,32 @@ def _assemble_signal(
             ),
             "sentiment": "neg",
             "meta": f"type=leveraged_etf | mult={_mult} | dir={'bull' if _lev_bull else 'bear'}"})
+
+    # ── Market-cap tier modifier ──────────────────────────────────────────
+    # Mega-caps ($500B+) have wall-to-wall analyst coverage, crowded positioning,
+    # and slower momentum decay — momentum signals are less differentiated.
+    # Small-caps (<$2B) add a volatility premium notice to the rationale.
+    _mktcap = info.get("market_cap")
+    if _mktcap and action in ("BUY", "SELL") and not _is_lev_etf:
+        if _mktcap >= 500_000_000_000:          # mega-cap ≥ $500B
+            confidence = round(max(35.0, confidence - 2), 1)
+            sources.add("Risk Gate")
+            rationale.append({"src": "Risk Gate",
+                "head": f"Mega-Cap Crowding Haircut (${_mktcap/1e12:.1f}T)",
+                "body": (f"Market cap of ${_mktcap/1e12:.1f}T means this stock has wall-to-wall analyst "
+                         "coverage, crowded institutional positioning, and slower-decaying momentum. "
+                         "Edge is smaller vs mid/small cap — confidence haircut applied."),
+                "sentiment": "neg",
+                "meta": f"mktcap=${_mktcap/1e9:.0f}B | tier=mega | adj=-2pp"})
+        elif _mktcap < 2_000_000_000:           # small-cap < $2B
+            sources.add("Risk Gate")
+            rationale.append({"src": "Risk Gate",
+                "head": f"Small-Cap Volatility Notice (${_mktcap/1e9:.1f}B)",
+                "body": (f"Market cap of ${_mktcap/1e9:.1f}B — small-cap territory. Higher volatility, "
+                         "wider bid-ask spreads, and lower liquidity amplify both gains and losses. "
+                         "Size position accordingly (suggest ½ of normal allocation)."),
+                "sentiment": "neg",
+                "meta": f"mktcap=${_mktcap/1e9:.1f}B | tier=small"})
 
     # ── Bear + high-VIX hard BUY gate ───────────────────────────────────
     # The regime multiplier (×0.82) lowers the score but the BUY threshold
@@ -1328,6 +1372,80 @@ async def generate_signal(
                     "body": f"{short_float:.1f}% of float is short — high institutional conviction in bearish thesis.",
                     "sentiment": "neg", "meta": f"Short Float {short_float:.1f}%"})
 
+        # ── 52-Week Range Position ───────────────────────────────────────────
+        # George & Hwang (2004): stocks within 5% of their 52wk high outperform
+        # by 6-8% annually. Near-high = continuation; near-low = danger zone.
+        # Uses info["week_52_high"] / info["week_52_low"] extracted from yfinance.
+        _wk52h = info.get("week_52_high")
+        _wk52l = info.get("week_52_low")
+        if _wk52h and _wk52l and price and (_wk52h - _wk52l) > 0 and not _is_lev_etf:
+            _rng = _wk52h - _wk52l
+            _pos = (price - _wk52l) / _rng  # 0.0 = at 52wk low, 1.0 = at 52wk high
+            _pos_pct = round(_pos * 100, 1)
+            sources.add("Technicals")
+            if _pos >= 0.90:
+                score += 4
+                rationale.append({"src": "Technicals",
+                    "head": f"Near 52-Week High — {_pos_pct:.0f}th Percentile of Range",
+                    "body": (f"Price is in the top {100-_pos_pct:.0f}% of its 52-week range "
+                             f"(${_wk52l:.2f}–${_wk52h:.2f}). Near-52wk-high stocks outperform by "
+                             "6-8% annually in academic studies — momentum continuation signal."),
+                    "sentiment": "pos", "meta": f"52w_pos={_pos_pct:.1f}%"})
+            elif _pos >= 0.75:
+                score += 2
+                rationale.append({"src": "Technicals",
+                    "head": f"Upper Quartile of 52-Week Range — {_pos_pct:.0f}th Percentile",
+                    "body": f"Price in upper 25% of 52-week range — mild momentum confirmation.",
+                    "sentiment": "pos", "meta": f"52w_pos={_pos_pct:.1f}%"})
+            elif _pos <= 0.10:
+                score -= 4
+                rationale.append({"src": "Technicals",
+                    "head": f"Near 52-Week Low — {_pos_pct:.0f}th Percentile of Range",
+                    "body": (f"Price in the bottom {_pos_pct:.0f}% of its 52-week range. "
+                             "Near-52wk-low stocks systematically underperform — value trap risk. "
+                             "Require much stronger fundamental catalyst before buying."),
+                    "sentiment": "neg", "meta": f"52w_pos={_pos_pct:.1f}%"})
+            elif _pos <= 0.25:
+                score -= 2
+                rationale.append({"src": "Technicals",
+                    "head": f"Lower Quartile of 52-Week Range — {_pos_pct:.0f}th Percentile",
+                    "body": f"Price in bottom 25% of 52-week range — mild downtrend confirmation.",
+                    "sentiment": "neg", "meta": f"52w_pos={_pos_pct:.1f}%"})
+
+        # ── Institutional & Insider Ownership ────────────────────────────────
+        # High insider ownership = management conviction (skin-in-the-game).
+        # High institutional ownership validates the thesis but also signals
+        # crowded positioning risk. Uses yfinance free fields.
+        _inst_own  = info.get("held_pct_inst")     # e.g. 0.657 = 65.7%
+        _insid_own = info.get("held_pct_insiders")  # e.g. 0.016 = 1.6%
+        if _insid_own is not None and not _is_lev_etf:
+            if _insid_own > 0.15:   # >15% insider ownership
+                score += 3
+                sources.add("Fundamentals")
+                rationale.append({"src": "Fundamentals",
+                    "head": f"High Insider Ownership — {_insid_own*100:.1f}%",
+                    "body": (f"Insiders hold {_insid_own*100:.1f}% of shares — strong skin-in-the-game "
+                             "alignment. High insider ownership is a quality signal: management is "
+                             "directly incentivised by share price performance."),
+                    "sentiment": "pos", "meta": f"insider_own={_insid_own*100:.1f}%"})
+            elif _insid_own < 0.005 and action == "BUY":  # <0.5% insider ownership
+                score -= 1
+                rationale.append({"src": "Fundamentals",
+                    "head": f"Very Low Insider Ownership — {_insid_own*100:.2f}%",
+                    "body": (f"Insiders hold only {_insid_own*100:.2f}% — management has minimal "
+                             "direct financial stake. Slightly reduces conviction on BUY signals."),
+                    "sentiment": "neg", "meta": f"insider_own={_insid_own*100:.2f}%"})
+        if _inst_own is not None and not _is_lev_etf:
+            if _inst_own > 0.80:    # >80% = very crowded institutional trade
+                sources.add("Fundamentals")
+                rationale.append({"src": "Fundamentals",
+                    "head": f"Crowded Institutional Trade — {_inst_own*100:.1f}% Held",
+                    "body": (f"{_inst_own*100:.1f}% of shares are held by institutions — heavily crowded. "
+                             "While this validates the thesis, crowded trades are vulnerable to "
+                             "rapid de-risking when sentiment shifts."),
+                    "sentiment": "neg" if action == "BUY" else "pos",
+                    "meta": f"inst_own={_inst_own*100:.1f}%"})
+
         # ── News sentiment (Benzinga RT + Finnhub + Reuters/Finviz) ─────────
         # Priority: Massive Benzinga (pre-scored, <2min latency) first.
         # Fall back to Finnhub + RSS scrapers. Dedup on headline word overlap.
@@ -1836,6 +1954,51 @@ async def generate_signal(
                     "body": f"Company missed analyst EPS estimates in {misses_4q} of the last 4 quarters.{surp_str} Guidance and execution are unreliable.",
                     "sentiment": "neg",
                     "meta": f"Misses: {misses_4q} of last 4Q"})
+
+        # ── EPS Surprise Acceleration ─────────────────────────────────────────
+        # Compares most-recent quarter surprise% to oldest (of last 4 quarters).
+        # Accelerating beats signal improving execution; decelerating may signal
+        # kitchen-sink risk even if the company is technically still beating.
+        # Data from Finnhub company_earnings() (free, added to earnings_surp dict).
+        _surp_accel = (earnings_surp or {}).get("surprise_acceleration")
+        _surp_qtrs  = (earnings_surp or {}).get("quarterly_surprises", [])
+        if _surp_accel is not None and not _is_lev_etf:
+            sources.add("Earnings")
+            _qtrs_str = " → ".join(f"{s:+.1f}%" for s in _surp_qtrs) if _surp_qtrs else ""
+            if _surp_accel >= 5:
+                score += 5
+                rationale.append({"src": "Earnings",
+                    "head": f"EPS Beat Acceleration (+{_surp_accel:.1f}pp trend)",
+                    "body": (f"EPS surprise trajectory: {_qtrs_str}. "
+                             f"Beat magnitude accelerated by {_surp_accel:.1f}pp over 4 quarters. "
+                             "Accelerating beats signal improving execution and guidance credibility — "
+                             "analysts are systematically underestimating this company."),
+                    "sentiment": "pos",
+                    "meta": f"surp_acceleration={_surp_accel:+.1f}pp | quarters={_qtrs_str}"})
+            elif _surp_accel >= 2:
+                score += 2
+                rationale.append({"src": "Earnings",
+                    "head": f"EPS Beat Momentum (+{_surp_accel:.1f}pp)",
+                    "body": f"EPS surprises mildly accelerating: {_qtrs_str}. Modest positive momentum.",
+                    "sentiment": "pos",
+                    "meta": f"surp_acceleration={_surp_accel:+.1f}pp"})
+            elif _surp_accel <= -5:
+                score -= 5
+                rationale.append({"src": "Earnings",
+                    "head": f"EPS Beat Deceleration ({_surp_accel:.1f}pp trend)",
+                    "body": (f"EPS surprise trajectory: {_qtrs_str}. "
+                             f"Beat magnitude shrank by {abs(_surp_accel):.1f}pp over 4 quarters — "
+                             "deceleration risk. Even if the company is still beating, shrinking margins "
+                             "of surprise often precede an outright miss."),
+                    "sentiment": "neg",
+                    "meta": f"surp_acceleration={_surp_accel:+.1f}pp | quarters={_qtrs_str}"})
+            elif _surp_accel <= -2:
+                score -= 2
+                rationale.append({"src": "Earnings",
+                    "head": f"EPS Beat Momentum Fading ({_surp_accel:.1f}pp)",
+                    "body": f"EPS surprises mildly decelerating: {_qtrs_str}. Monitor closely.",
+                    "sentiment": "neg",
+                    "meta": f"surp_acceleration={_surp_accel:+.1f}pp"})
 
         # ── NLP Earnings Tone Analysis (local LLM) ───────────────────────────
         # Analyses the most recent earnings-related news headlines for management
@@ -2909,6 +3072,63 @@ async def generate_signal(
         if vix_ratio is None and market_ctx:
             vix_ratio = (market_ctx.get("macro") or {}).get("vix_term_ratio")
 
+        # ── VIX9D — Near-Term Event Risk ─────────────────────────────────────
+        _macro_now = (market_ctx or {}).get("macro") or {}
+        _vix9d_ratio = _macro_now.get("vix9d_ratio")
+        if _vix9d_ratio is not None and _vix9d_ratio > 1.10 and action in ("BUY", "SELL"):
+            _vix9d = _macro_now.get("vix9d", 0)
+            confidence = round(max(35.0, confidence - 4), 1)
+            sources.add("Macro")
+            rationale.append({"src": "Macro",
+                "head": f"Near-Term Event Risk (VIX9D/VIX {_vix9d_ratio:.2f}×) — Confidence −4pp",
+                "body": (f"9-day VIX ({_vix9d:.1f}) is {_vix9d_ratio:.2f}× the spot VIX. "
+                         "Near-term options demand is concentrated — a known upcoming event (earnings, "
+                         "FOMC, CPI) is distorting short-horizon signals. Wait for post-event clarity "
+                         "before acting on this signal."),
+                "sentiment": "neg", "meta": f"VIX9D/VIX = {_vix9d_ratio:.2f}×"})
+
+        # ── MOVE Index — Bond Market Stress ──────────────────────────────────
+        _move = _macro_now.get("move")
+        if _move is not None and _move > 140 and action == "BUY":
+            confidence = round(max(35.0, confidence - 5), 1)
+            sources.add("Macro")
+            rationale.append({"src": "Macro",
+                "head": f"Treasury Vol Stress (MOVE {_move:.0f}) — Confidence −5pp",
+                "body": (f"CBOE MOVE Index at {_move:.0f} — bond market implied vol is highly elevated. "
+                         "Elevated MOVE historically leads equity drawdowns by 2–3 weeks. "
+                         "Reduce position sizing until MOVE normalises below 120."),
+                "sentiment": "neg", "meta": f"^MOVE = {_move:.0f}"})
+
+        # ── STLFSI4 — Financial Stress (macro signal into single-stock) ───────
+        # Already scored globally in macro.py; here we apply a confidence cap
+        # when stress is extreme to prevent overconfident single-stock BUYs.
+        _stlfsi = _macro_now.get("stlfsi")
+        if _stlfsi is not None and _stlfsi > 1.0 and action == "BUY":
+            confidence = round(min(confidence, 58.0), 1)
+            sources.add("Macro")
+            rationale.append({"src": "Macro",
+                "head": f"Financial Stress Override (STLFSI4 {_stlfsi:+.2f}) — BUY Cap 58%",
+                "body": (f"St. Louis Financial Stress Index at {_stlfsi:+.2f} (>1.0 = crisis). "
+                         "In high-stress regimes, even strong individual-stock setups frequently fail "
+                         "because correlated forced selling overrides fundamentals. BUY confidence "
+                         "capped at 58% until FSI returns below 0.5."),
+                "sentiment": "neg", "meta": f"STLFSI4 = {_stlfsi:+.3f}"})
+
+        # ── Consumer Sentiment Sector Penalty (UMCSENT) ───────────────────────
+        _umcsent = _macro_now.get("umcsent")
+        _sector_etf = (sector_rs or {}).get("sector_etf", "")
+        _consumer_sectors = {"XLY", "XLP", "XLC"}
+        if (_umcsent is not None and _umcsent < 60
+                and action == "BUY" and _sector_etf in _consumer_sectors):
+            score -= 3
+            sources.add("Macro")
+            rationale.append({"src": "Macro",
+                "head": f"Consumer Distress Headwind (UMCSENT {_umcsent:.1f})",
+                "body": (f"U. Michigan Consumer Sentiment at {_umcsent:.1f} — historically distressed "
+                         f"(avg ~85). {_sector_etf} sector stocks face direct demand headwind when "
+                         "household confidence is this weak. XLY/XLC/XLP names are first to reprice."),
+                "sentiment": "neg", "meta": f"UMCSENT={_umcsent:.1f} | sector={_sector_etf}"})
+
         # ── Yield Curve (from macro context) ────────────────────────────────
         yc_spread = ((market_ctx or {}).get("macro") or {}).get("yc_spread")
         if yc_spread is not None and abs(yc_spread) > 0.5 and yc_spread not in [None]:
@@ -3087,6 +3307,98 @@ async def generate_signal(
                     rationale.append({"src": "Fundamentals", "head": f"ROE Declining — {roe_now:.1f}%",
                         "body": f"Return on equity fell {delta:.1f}pp from {roe_prev:.1f}% to {roe_now:.1f}%. Declining ROE often precedes earnings disappointments.",
                         "sentiment": "neg", "meta": f"ROE: {roe_prev:.1f}% → {roe_now:.1f}%"})
+
+        # ── ROE + Revenue/Earnings Growth (yfinance free fields) ─────────────
+        # Supplement the Piotroski F-Score with real-time quality/growth metrics.
+        # info["roe_yf"] = returnOnEquity (e.g. 1.41 = 141%); already fetched.
+        roe_yf    = info.get("roe_yf")
+        rev_grow  = info.get("revenue_growth")   # YoY e.g. 0.166 = 16.6%
+        earn_grow = info.get("earnings_growth")  # YoY
+        if roe_yf is not None and not _is_lev_etf:
+            _roe_pct = roe_yf * 100
+            if _roe_pct >= 40:
+                score += 5
+                sources.add("Fundamentals")
+                rationale.append({"src": "Fundamentals",
+                    "head": f"Exceptional ROE — {_roe_pct:.0f}%",
+                    "body": (f"Return on equity of {_roe_pct:.0f}% — exceptional compounding machine. "
+                             "Companies sustaining ROE >40% typically have durable moats (pricing power, "
+                             "network effects, or capital-light models). Buffett threshold: >20%."),
+                    "sentiment": "pos", "meta": f"ROE={_roe_pct:.0f}%"})
+            elif _roe_pct >= 20:
+                score += 3
+                sources.add("Fundamentals")
+                rationale.append({"src": "Fundamentals",
+                    "head": f"High ROE — {_roe_pct:.0f}%",
+                    "body": f"Return on equity of {_roe_pct:.0f}% — above the 20% quality threshold. Efficient capital allocation.",
+                    "sentiment": "pos", "meta": f"ROE={_roe_pct:.0f}%"})
+            elif _roe_pct < 0:
+                score -= 3
+                sources.add("Fundamentals")
+                rationale.append({"src": "Fundamentals",
+                    "head": f"Negative ROE — {_roe_pct:.0f}%",
+                    "body": f"Return on equity is negative ({_roe_pct:.0f}%) — the company is destroying shareholder value.",
+                    "sentiment": "neg", "meta": f"ROE={_roe_pct:.0f}%"})
+
+        if rev_grow is not None and earn_grow is not None and not _is_lev_etf:
+            _rev_pct  = rev_grow  * 100
+            _earn_pct = earn_grow * 100
+            if _rev_pct >= 20 and _earn_pct >= 20:
+                score += 4
+                sources.add("Fundamentals")
+                rationale.append({"src": "Fundamentals",
+                    "head": f"Dual Growth Acceleration — Rev +{_rev_pct:.0f}% / EPS +{_earn_pct:.0f}% YoY",
+                    "body": (f"Revenue growing {_rev_pct:.0f}% and earnings growing {_earn_pct:.0f}% year-over-year. "
+                             "Dual acceleration is a hallmark of companies in rapid scaling phases — "
+                             "these are the setups institutional growth funds actively accumulate."),
+                    "sentiment": "pos", "meta": f"rev_yoy={_rev_pct:.0f}% | earn_yoy={_earn_pct:.0f}%"})
+            elif _rev_pct < 0 or _earn_pct < 0:
+                _worst = min(_rev_pct, _earn_pct)
+                score -= 3
+                sources.add("Fundamentals")
+                rationale.append({"src": "Fundamentals",
+                    "head": f"Revenue/Earnings Contraction (Rev {_rev_pct:+.0f}% / EPS {_earn_pct:+.0f}%)",
+                    "body": (f"At least one growth line is negative YoY — revenue {_rev_pct:+.0f}%, "
+                             f"earnings {_earn_pct:+.0f}%. Contracting businesses face multiple compression "
+                             "as growth investors exit."),
+                    "sentiment": "neg", "meta": f"rev_yoy={_rev_pct:.0f}% | earn_yoy={_earn_pct:.0f}%"})
+
+        # ── 12-1 Month Momentum Factor ────────────────────────────────────────
+        # Cross-sectional momentum: 6-month return minus 3-month return (from
+        # Finnhub basic_financials, appended to analyst_recs dict in news.py).
+        # Approximates the academic 12-1 month factor without extra API cost.
+        _mom_factor = (analyst_recs or {}).get("momentum_factor")
+        _r26w       = (analyst_recs or {}).get("return_26w")
+        if _mom_factor is not None and not _is_lev_etf:
+            sources.add("Technicals")
+            if _mom_factor >= 20:
+                score += 5
+                rationale.append({"src": "Technicals",
+                    "head": f"Strong Price Momentum Factor (+{_mom_factor:.1f}%)",
+                    "body": (f"6-month return of {_r26w:.1f}% with positive intermediate-term momentum. "
+                             "The 12-1 month cross-sectional momentum factor is one of the most replicated "
+                             "alpha sources in academic finance — high-momentum stocks persistently outperform."),
+                    "sentiment": "pos", "meta": f"momentum_factor={_mom_factor:.1f}% | r26w={_r26w:.1f}%"})
+            elif _mom_factor >= 8:
+                score += 2
+                rationale.append({"src": "Technicals",
+                    "head": f"Positive Price Momentum (+{_mom_factor:.1f}%)",
+                    "body": f"Intermediate-term momentum positive at {_mom_factor:.1f}%. Mild continuation signal.",
+                    "sentiment": "pos", "meta": f"momentum_factor={_mom_factor:.1f}%"})
+            elif _mom_factor <= -20:
+                score -= 5
+                rationale.append({"src": "Technicals",
+                    "head": f"Strong Negative Momentum ({_mom_factor:.1f}%)",
+                    "body": (f"6-month return of {_r26w:.1f}% with large negative momentum factor. "
+                             "Low-momentum stocks systematically underperform — mean reversion is slow "
+                             "and frequently interrupted by further deterioration."),
+                    "sentiment": "neg", "meta": f"momentum_factor={_mom_factor:.1f}% | r26w={_r26w:.1f}%"})
+            elif _mom_factor <= -8:
+                score -= 2
+                rationale.append({"src": "Technicals",
+                    "head": f"Negative Price Momentum ({_mom_factor:.1f}%)",
+                    "body": f"Intermediate-term momentum negative. Mild downtrend confirmation.",
+                    "sentiment": "neg", "meta": f"momentum_factor={_mom_factor:.1f}%"})
 
         # ── Dividend Yield vs 10Y Rate (Polygon accurate TTM yield) ────────────
         # yfinance dividendYield is None for ~40% of tickers; Polygon gives exact amounts.

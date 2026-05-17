@@ -314,6 +314,18 @@ def _fetch_info(ticker: str) -> dict:
             "analyst_count":   info.get("numberOfAnalystOpinions"),
             "rec_mean":        info.get("recommendationMean"),   # 1=Strong Buy ... 5=Strong Sell
             "rec_key":         info.get("recommendationKey"),    # "buy", "hold", "sell", etc.
+            # ── 52-week range ─────────────────────────────────────────────────
+            "week_52_high":    info.get("fiftyTwoWeekHigh"),
+            "week_52_low":     info.get("fiftyTwoWeekLow"),
+            # ── Quality / growth (yfinance free, already fetched) ─────────────
+            "roe_yf":          info.get("returnOnEquity"),       # e.g. 1.41 = 141%
+            "roa_yf":          info.get("returnOnAssets"),
+            "revenue_growth":  info.get("revenueGrowth"),        # YoY, e.g. 0.166 = 16.6%
+            "earnings_growth": info.get("earningsGrowth"),       # YoY
+            "forward_pe":      info.get("forwardPE"),
+            # ── Ownership structure ───────────────────────────────────────────
+            "held_pct_inst":   info.get("heldPercentInstitutions"),  # 0.657 = 65.7%
+            "held_pct_insiders": info.get("heldPercentInsiders"),
         }
     except Exception:
         return {"company": COMPANY_NAMES.get(ticker, ticker)}

@@ -210,11 +210,15 @@ async def get_macro_context() -> dict:
         from config import get_settings
         key = get_settings().fred_api_key
         if key:
-            fed_rate, cpi, hy_spread, ig_spread = await asyncio.gather(
+            fed_rate, cpi, hy_spread, ig_spread, stlfsi, icsa, umcsent, t10y3m = await asyncio.gather(
                 _fred("FEDFUNDS",       key),
                 _fred("CPIAUCSL",       key),
                 _fred("BAMLH0A0HYM2",   key),   # ICE BofA US HY OAS spread (%)
                 _fred("BAMLC0A0CM",     key),   # ICE BofA US IG OAS spread (%)
+                _fred("STLFSI4",        key),   # St. Louis Financial Stress Index
+                _fred("ICSA",           key),   # Weekly initial jobless claims
+                _fred("UMCSENT",        key),   # U. Michigan Consumer Sentiment
+                _fred("T10Y3M",         key),   # 10-Year minus 3-Month yield spread
             )
             if fed_rate is not None:
                 result["fed_funds"] = fed_rate
@@ -279,6 +283,112 @@ async def get_macro_context() -> dict:
                                  "higher funding costs, signalling broad macro caution."),
                         "sentiment": "neg", "meta": f"BAMLC0A0CM = {ig_spread:.0f}bps",
                     })
+
+            # ── St. Louis Financial Stress Index (STLFSI4) ───────────────────
+            # Combines 18 weekly series (rates, spreads, equity vol, FX) into one
+            # standardised score. Negative = below-average stress; positive = stress.
+            if stlfsi is not None:
+                result["stlfsi"] = stlfsi
+                if stlfsi > 1.0:
+                    score -= 8
+                    rationale.append({"src": "FRED",
+                        "head": f"Financial Stress Crisis — STLFSI4 {stlfsi:+.2f}",
+                        "body": (f"St. Louis Financial Stress Index at {stlfsi:+.2f} — well above 1.0 (crisis). "
+                                 "Credit, money market, equity vol, and FX stress are simultaneously elevated. "
+                                 "Historical context: GFC peak = +9, COVID peak = +6, normal range = −1 to +0.5."),
+                        "sentiment": "neg", "meta": f"STLFSI4 = {stlfsi:+.3f}"})
+                elif stlfsi > 0.5:
+                    score -= 4
+                    rationale.append({"src": "FRED",
+                        "head": f"Financial Stress Elevated — STLFSI4 {stlfsi:+.2f}",
+                        "body": (f"St. Louis FSI at {stlfsi:+.2f} — above the 0.5 warning threshold. "
+                                 "Combined stress across credit, equity vol, and money markets warrants "
+                                 "defensive posture."),
+                        "sentiment": "neg", "meta": f"STLFSI4 = {stlfsi:+.3f}"})
+                elif stlfsi < -0.5:
+                    score += 3
+                    rationale.append({"src": "FRED",
+                        "head": f"Financial Conditions Benign — STLFSI4 {stlfsi:+.2f}",
+                        "body": (f"St. Louis FSI at {stlfsi:+.2f} — well below average. Broad financial "
+                                 "conditions are calm across credit, money markets, and equity volatility. "
+                                 "Supportive macro backdrop for risk assets."),
+                        "sentiment": "pos", "meta": f"STLFSI4 = {stlfsi:+.3f}"})
+
+            # ── Initial Jobless Claims (ICSA) ─────────────────────────────────
+            # Weekly, Thursday 8:30am ET. Leading labour market indicator.
+            if icsa is not None:
+                result["icsa"] = icsa
+                if icsa > 350_000:
+                    score -= 8
+                    rationale.append({"src": "FRED",
+                        "head": f"Jobless Claims Stress — {icsa:,.0f}/week",
+                        "body": (f"Initial jobless claims at {icsa:,.0f} — well above the 300k danger threshold. "
+                                 "Rapid labour market deterioration. Risk assets typically reprice 10–20% lower "
+                                 "when claims exceed 400k for more than 3 consecutive weeks."),
+                        "sentiment": "neg", "meta": f"ICSA = {icsa:,.0f}"})
+                elif icsa > 300_000:
+                    score -= 4
+                    rationale.append({"src": "FRED",
+                        "head": f"Rising Jobless Claims — {icsa:,.0f}/week",
+                        "body": (f"Initial claims at {icsa:,.0f} — above the 300k stress level. Labour market "
+                                 "is loosening. Watch for 4-week moving average trend before confirming."),
+                        "sentiment": "neg", "meta": f"ICSA = {icsa:,.0f}"})
+                elif icsa < 225_000:
+                    score += 2
+                    rationale.append({"src": "FRED",
+                        "head": f"Tight Labour Market — {icsa:,.0f} Claims",
+                        "body": (f"Initial claims at {icsa:,.0f} — near historic lows. Very tight labour "
+                                 "market supports consumer spending and corporate earnings."),
+                        "sentiment": "pos", "meta": f"ICSA = {icsa:,.0f}"})
+
+            # ── Consumer Sentiment (UMCSENT) ──────────────────────────────────
+            # Monthly. Historical average ~85. Below 60 = consumer distress.
+            if umcsent is not None:
+                result["umcsent"] = umcsent
+                if umcsent < 60:
+                    score -= 3
+                    rationale.append({"src": "FRED",
+                        "head": f"Consumer Sentiment Distressed — {umcsent:.1f}",
+                        "body": (f"U. Michigan Consumer Sentiment at {umcsent:.1f} — well below historical "
+                                 f"average of ~85. Weak consumer confidence drags on discretionary spending, "
+                                 "retail, and housing. XLY/XLY-linked names face demand headwind."),
+                        "sentiment": "neg", "meta": f"UMCSENT = {umcsent:.1f}"})
+                elif umcsent > 95:
+                    score += 2
+                    rationale.append({"src": "FRED",
+                        "head": f"Consumer Confidence Elevated — {umcsent:.1f}",
+                        "body": (f"Consumer Sentiment at {umcsent:.1f} — above 95 signals strong household "
+                                 "confidence in income and spending. Positive for discretionary consumer stocks."),
+                        "sentiment": "pos", "meta": f"UMCSENT = {umcsent:.1f}"})
+
+            # ── T10Y3M Yield Curve (FRED) ─────────────────────────────────────
+            # 10-year minus 3-month. Better recession predictor than T10Y2Y.
+            # Estrella & Mishkin (1998): every US recession since 1968 preceded by inversion.
+            if t10y3m is not None:
+                result["t10y3m"] = t10y3m
+                if t10y3m < -0.5:
+                    score -= 10
+                    rationale.append({"src": "FRED",
+                        "head": f"Yield Curve Inverted (T10Y3M {t10y3m:+.2f}%)",
+                        "body": (f"10-year minus 3-month Treasury spread at {t10y3m:+.2f}% — deep inversion. "
+                                 "This is the most reliable recession leading indicator: every US recession "
+                                 "since 1968 has been preceded by a T10Y3M inversion. Typical lead time: "
+                                 "12–18 months. Strongly cap BUY signals across economically-sensitive sectors."),
+                        "sentiment": "neg", "meta": f"T10Y3M = {t10y3m:+.2f}%"})
+                elif t10y3m < 0:
+                    score -= 5
+                    rationale.append({"src": "FRED",
+                        "head": f"Yield Curve Inverted (T10Y3M {t10y3m:+.2f}%)",
+                        "body": (f"10Y-3M spread at {t10y3m:+.2f}% — mild inversion. Historical signal for "
+                                 "elevated recession probability over the next 12 months."),
+                        "sentiment": "neg", "meta": f"T10Y3M = {t10y3m:+.2f}%"})
+                elif t10y3m > 1.5:
+                    score += 2
+                    rationale.append({"src": "FRED",
+                        "head": f"Normal Yield Curve (T10Y3M +{t10y3m:.2f}%)",
+                        "body": (f"Healthy 10Y-3M spread of +{t10y3m:.2f}% — positive slope signals growth "
+                                 "expectations and low near-term recession probability."),
+                        "sentiment": "pos", "meta": f"T10Y3M = {t10y3m:+.2f}%"})
     except Exception as e:
         print(f"[macro] FRED: {e}")
 
@@ -317,6 +427,55 @@ async def get_macro_context() -> dict:
                     })
     except Exception as e:
         print(f"[macro] VIX3M: {e}")
+
+    # ── VIX9D — near-term event risk ─────────────────────────────────────
+    # The 9-day VIX captures concentrated near-term options demand (earnings,
+    # FOMC, CPI). VIX9D/VIX > 1.10 signals event-specific fear (not systemic).
+    try:
+        vix9d_df = await get_history("^VIX9D", period="5d", interval="1d")
+        vix_now  = result.get("vix")
+        if vix9d_df is not None and not vix9d_df.empty and vix_now:
+            vix9d = round(float(vix9d_df["Close"].iloc[-1]), 2)
+            result["vix9d"] = vix9d
+            ratio9 = round(vix9d / vix_now, 3) if vix_now > 0 else None
+            result["vix9d_ratio"] = ratio9
+            if ratio9 and ratio9 > 1.10:
+                rationale.append({"src": "Macro",
+                    "head": f"Near-Term Event Risk Elevated (VIX9D/VIX {ratio9:.2f}×)",
+                    "body": (f"9-day VIX ({vix9d:.1f}) is {ratio9:.2f}× spot VIX ({vix_now:.1f}). "
+                             "Near-term options demand outpaces long-term — typically signals a known "
+                             "upcoming event (earnings, FOMC, CPI). Avoid initiating new positions "
+                             "immediately before the event; wait for post-event direction clarity."),
+                    "sentiment": "neg", "meta": f"VIX9D/VIX = {ratio9:.2f}×"})
+    except Exception as e:
+        print(f"[macro] VIX9D: {e}")
+
+    # ── MOVE Index — Treasury volatility ─────────────────────────────────
+    # CBOE MOVE = implied vol on Treasury options. High MOVE precedes equity
+    # stress by 2–3 weeks even when VIX is calm. MOVE < 90 + VIX < 15 = nirvana.
+    try:
+        move_df = await get_history("^MOVE", period="5d", interval="1d")
+        if move_df is not None and not move_df.empty:
+            move = round(float(move_df["Close"].iloc[-1]), 1)
+            result["move"] = move
+            if move > 140:
+                score -= 5
+                rationale.append({"src": "Macro",
+                    "head": f"Treasury Volatility Stress — MOVE {move:.0f}",
+                    "body": (f"CBOE MOVE Index at {move:.0f} — bond market is highly stressed. "
+                             "Elevated Treasury volatility historically leads equity drawdowns by 2–3 weeks. "
+                             "Reduce directional exposure until MOVE normalises below 120."),
+                    "sentiment": "neg", "meta": f"^MOVE = {move:.1f}"})
+            elif move < 90:
+                score += 2
+                rationale.append({"src": "Macro",
+                    "head": f"Bond Market Calm — MOVE {move:.0f}",
+                    "body": (f"MOVE Index at {move:.0f} — Treasury volatility is very low. Combined with "
+                             "low equity vol, this is the 'financial nirvana' regime historically associated "
+                             "with the highest equity Sharpe ratios."),
+                    "sentiment": "pos", "meta": f"^MOVE = {move:.1f}"})
+    except Exception as e:
+        print(f"[macro] MOVE: {e}")
 
     # ── Yield curve (2Y-10Y spread) ───────────────────────────────────────
     try:

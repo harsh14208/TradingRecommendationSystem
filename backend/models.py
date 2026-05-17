@@ -45,6 +45,12 @@ class Signal(Base):
     outcome_1d   = Column(Float, nullable=True)   # % return after 1 day
     outcome_3d   = Column(Float, nullable=True)   # % return after 3 days
     outcome_14d  = Column(Float, nullable=True)   # % return after 14 days
+    # Trade-path analytics (filled by nightly validate_predictions run)
+    hit_stop     = Column(Boolean, nullable=True)  # did price ever touch/breach the stop level
+    hit_target   = Column(Boolean, nullable=True)  # did price ever touch/breach the target level
+    mae          = Column(Float,   nullable=True)  # Max Adverse Excursion (worst % from entry)
+    mfe          = Column(Float,   nullable=True)  # Max Favorable Excursion (best % from entry)
+    exit_type    = Column(String(10), nullable=True)  # 'target' | 'stop' | 'time' | 'pending'
 
 
 class SendLog(Base):
