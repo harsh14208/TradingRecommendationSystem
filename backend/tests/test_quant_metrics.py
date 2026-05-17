@@ -85,11 +85,11 @@ def test_norm_cdf():
 
 def test_annualize_factor():
     import pytest
-    # 100 trades over 100 days → 1 trade/day × 252 = 252
-    assert _annualize_factor(100, 100) == pytest.approx(252.0, rel=0.01)
-    # Edge cases
-    assert _annualize_factor(0, 100) == 252.0
-    assert _annualize_factor(100, 0) == 252.0
+    # Always returns sqrt(252) regardless of inputs — prevents frequency-inflated Sharpe
+    expected = math.sqrt(252)
+    assert _annualize_factor(100, 100) == pytest.approx(expected, rel=1e-9)
+    assert _annualize_factor(0, 100)   == pytest.approx(expected, rel=1e-9)
+    assert _annualize_factor(100, 0)   == pytest.approx(expected, rel=1e-9)
 
 
 # ── calc_metrics ─────────────────────────────────────────────────────────────

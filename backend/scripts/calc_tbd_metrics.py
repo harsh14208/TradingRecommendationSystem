@@ -97,12 +97,20 @@ def _norm_cdf(z: float) -> float:
     """Standard normal CDF using the error function."""
     return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
 
+_SQRT_252 = math.sqrt(252)
+
 def _annualize_factor(n_trades: int, date_range_days: int) -> float:
-    """Trades per year given observed trade frequency."""
-    if date_range_days <= 0 or n_trades <= 0:
-        return 252.0
-    trades_per_day = n_trades / date_range_days
-    return trades_per_day * 252
+    """
+    Return the annualization multiplier for Sharpe/Sortino.
+
+    We use sqrt(252) unconditionally — the industry standard for converting
+    a per-observation ratio to annual. Treating each trade as ~1 day is the
+    honest assumption when trades are sequential signals, not concurrent portfolio
+    positions. Using (trades_per_day × 252) would inflate Sharpe by the square
+    root of the daily signal count, producing the impossible 30+ values that
+    confuse per-trade signal quality with portfolio risk-adjusted returns.
+    """
+    return _SQRT_252
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,16 +152,18 @@ def risk_metrics(returns: list[float], date_range_days: int = 18) -> dict:
     n       = len(returns)
     mu      = _mean(returns)
     sigma   = _std(returns)
-    ann     = _annualize_factor(n, date_range_days)
-    sqrt_ann = math.sqrt(ann)
+    # ann is already sqrt(252) — apply directly, do NOT sqrt again
+    ann = _annualize_factor(n, date_range_days)
 
-    # Sharpe (trade-level, annualized, assuming 0% risk-free rate)
-    sharpe = (mu / sigma * sqrt_ann) if sigma > 0 else float("nan")
+    # Sharpe (trade-level, annualized at sqrt(252), risk-free rate = 0)
+    sharpe = (mu / sigma * ann) if sigma > 0 else float("nan")
 
-    # Sortino — only penalise downside
-    downside = [r for r in returns if r < 0]
-    sigma_d  = _std(downside + [0.0] * (n - len(downside)), ddof=1)
-    sortino  = (mu / sigma_d * sqrt_ann) if sigma_d > 0 else float("nan")
+    # Sortino — semi-deviation: RMS of negative returns measured from target (0%)
+    # Padding with zeros and calling _std() is wrong: _std() shifts the mean,
+    # measuring deviations from a skewed average instead of from the target return.
+    downside_sum_sq = sum(r ** 2 for r in returns if r < 0)
+    sigma_d = math.sqrt(downside_sum_sq / (n - 1)) if n > 1 else 0.0
+    sortino  = (mu / sigma_d * ann) if sigma_d > 0 else float("nan")
 
     # Max drawdown (5% position sizing)
     capital, peak, max_dd = 10_000.0, 10_000.0, 0.0
@@ -162,8 +172,9 @@ def risk_metrics(returns: list[float], date_range_days: int = 18) -> dict:
         peak     = max(peak, capital)
         max_dd   = max(max_dd, (peak - capital) / peak * 100)
 
-    # Calmar  = annualized avg return / max drawdown
-    ann_return = mu * ann
+    # Calmar = annualized avg return / max drawdown
+    # Annualize using sqrt(252) consistently (same basis as Sharpe numerator)
+    ann_return = mu * 252   # daily return × trading days/year
     calmar = (ann_return / max_dd) if max_dd > 0 else float("nan")
 
     # Omega ratio = E[max(R-threshold,0)] / E[max(threshold-R,0)] (threshold=0)
@@ -322,8 +333,9 @@ async def analyze_db() -> None:
         month_map   = defaultdict(list)
         mae_vals    = []
         mfe_vals    = []
-        realized_rr = []
+        stop_dist_vals = []   # distance from entry to stop (%)
         hit_stop_count = hit_target_count = 0
+        stop_enforced_losses = 0   # trades where hit_stop=True but outcome_pct > 0 (phantom wins)
 
         for r in rows:
             try:
@@ -365,14 +377,18 @@ async def analyze_db() -> None:
                         pass
                 if r.hit_stop:
                     hit_stop_count += 1
+                    # Phantom win: price touched stop but outcome_pct still positive
+                    # (stop not enforced intraday — position dipped below stop, recovered)
+                    if ret > 0:
+                        stop_enforced_losses += 1
                 if r.hit_target:
                     hit_target_count += 1
-                # Realized R:R (actual outcome / distance to stop)
-                if r.entry and r.stop and r.entry > 0 and r.stop > 0 and r.outcome_pct is not None:
+                # Stop distance — used to compute Capture Ratio
+                if r.entry and r.stop and r.entry > 0 and r.stop > 0:
                     try:
-                        risk_pct = abs(float(r.entry) - float(r.stop)) / float(r.entry) * 100
-                        if risk_pct > 0:
-                            realized_rr.append(ret / risk_pct)
+                        sd = abs(float(r.entry) - float(r.stop)) / float(r.entry) * 100
+                        if sd > 0:
+                            stop_dist_vals.append(sd)
                     except Exception:
                         pass
             except Exception as _row_err:
@@ -399,8 +415,9 @@ async def analyze_db() -> None:
 
         # ══════════════════════════════════════════════════════════════════════
         print(f"# Signal.Trade — Institutional Performance Report\n")
-        print(f"> **Coverage:** {date_range_str} · **{gm['count']} resolved trades** "
-              f"· annualization factor: {rm.get('ann_factor', 252):.0f}×/yr\n")
+        print(f"> **Coverage:** {date_range_str} · **{gm['count']} resolved trades**\n"
+              f"> _Sharpe/Sortino use sqrt(252) scaling (one-trade-per-day assumption). "
+              f"These are per-signal quality metrics, not portfolio equity-curve Sharpe._\n")
 
         # ── 1. Return summary ─────────────────────────────────────────────────
         print("## 1. Return Summary\n")
@@ -414,8 +431,7 @@ async def analyze_db() -> None:
                 ["Payoff Ratio",         _fmt(rm.get("payoff"), ".2f", "×"), "avg win / |avg loss|"],
                 ["Profit Factor",        pf_str(gm["pf"]),                  "gross profit / gross loss"],
                 ["Expectancy / Trade",   f"{gm['expectancy']:+.2f}%",       "WR×avgW + LR×avgL"],
-                ["Kelly Fraction",       f"{gm['kelly']:.1f}%",             "optimal position size"],
-                ["Annualized Return",    _fmt(rm.get("ann_return"), "+.1f", "%"), "avg × ann factor"],
+                ["Kelly Fraction",       f"{gm['kelly']:.1f}%",             "theoretical optimal size — halve in practice"],
             ]
         )
 
@@ -426,7 +442,7 @@ async def analyze_db() -> None:
             [
                 ["Sharpe Ratio",   _fmt(rm.get("sharpe"), ".2f"),   "> 1.0 = good, > 2.0 = excellent"],
                 ["Sortino Ratio",  _fmt(rm.get("sortino"), ".2f"),  "> 1.5 = good (downside-only σ)"],
-                ["Calmar Ratio",   _fmt(rm.get("calmar"), ".2f"),   "> 0.5 = acceptable"],
+                ["Calmar Ratio",   _fmt(rm.get("calmar"), ".2f"),   "annualized_ret/max_DD — inflated: 5% sequential sizing understates concurrent portfolio drawdown"],
                 ["Omega Ratio",    _fmt(rm.get("omega"), ".2f"),    "> 1.0 = edge exists"],
                 ["Max Drawdown",   f"-{rm.get('max_dd', 0):.2f}%", "5% position sizing"],
                 ["Recovery Factor",_fmt(rm.get("recovery"), ".2f"),"net return / max DD"],
@@ -605,22 +621,50 @@ async def analyze_db() -> None:
         # ── 14. Trade-path analytics ───────────────────────────────────────────
         n = gm["count"]
         print("\n## 13. Trade-Path Analytics (MAE / MFE)\n")
+
+        # Stop-enforced win rate: reclassify phantom wins (hit_stop=True, outcome>0)
+        # In a real portfolio, a stop hit closes the position at a loss.
+        # These trades recovered after touching the stop — but the stop should have closed them.
+        phantom = stop_enforced_losses
+        stop_enforced_wr = (gm["wr"] * n / 100 - phantom) / n * 100 if n > 0 else 0.0
+
         print(f"- **Hit Target:** {hit_target_count} / {n} ({hit_target_count/n*100:.1f}%)")
         print(f"- **Hit Stop:**   {hit_stop_count} / {n} ({hit_stop_count/n*100:.1f}%)")
+        if phantom > 0:
+            print(f"- **Phantom Wins (stop hit but outcome_pct > 0):** {phantom} trades "
+                  f"— stop not enforced intraday, position recovered by measurement date")
+            print(f"- **Stop-Enforced Win Rate:** {stop_enforced_wr:.1f}% "
+                  f"(vs reported {gm['wr']:.1f}% — difference = {gm['wr']-stop_enforced_wr:.1f}pp)")
+
         if mae_vals:
             avg_mae = _mean(mae_vals)
-            print(f"- **Avg MAE:**  {avg_mae:+.2f}%  | worst: {min(mae_vals):+.2f}%")
+            print(f"- **Avg MAE (max adverse excursion):**  {avg_mae:+.2f}%  | worst: {min(mae_vals):+.2f}%")
         if mfe_vals:
             avg_mfe = _mean(mfe_vals)
-            print(f"- **Avg MFE:**  {avg_mfe:+.2f}%  | best: {max(mfe_vals):+.2f}%")
+            print(f"- **Avg MFE (max favorable excursion):** {avg_mfe:+.2f}%  | best: {max(mfe_vals):+.2f}%")
         if mae_vals and mfe_vals:
             mfe_mae = avg_mfe / abs(avg_mae) if avg_mae != 0 else float("inf")
-            print(f"- **MFE/MAE Ratio:** {mfe_mae:.2f}×  (>1 = moves right before reversing)")
-        if realized_rr:
-            avg_rrr = _mean(realized_rr)
-            print(f"- **Realized R:R:** {avg_rrr:.2f}×  (actual outcome / stop distance)")
-            pct_above_1 = sum(1 for v in realized_rr if v > 1) / len(realized_rr) * 100
-            print(f"- **% Trades > 1R:** {pct_above_1:.1f}%")
+            print(f"- **MFE/MAE Ratio:** {mfe_mae:.2f}×  (>1 = position moves favorably before adversely)")
+
+        # Payoff Ratio vs Capture Ratio — intentionally separated and labeled
+        avg_win_val  = gm.get("avg_win",  0.0)
+        avg_loss_val = gm.get("avg_loss", 0.0)
+        payoff_ratio = abs(avg_win_val / avg_loss_val) if avg_loss_val != 0 else float("inf")
+        print(f"\n**Return Quality:**")
+        print(f"- **Payoff Ratio:** {payoff_ratio:.2f}× — magnitude of avg win vs avg loss "
+              f"({avg_win_val:+.2f}% / {avg_loss_val:+.2f}%)")
+        if stop_dist_vals:
+            avg_stop_dist = _mean(stop_dist_vals)
+            capture = gm["avg"] / avg_stop_dist if avg_stop_dist > 0 else float("nan")
+            pct_above_1r = sum(1 for s, r in zip(stop_dist_vals, [
+                r.outcome_pct for r in rows
+                if r.entry and r.stop and r.entry > 0 and r.stop > 0 and r.outcome_pct is not None
+            ]) if s > 0 and r / s > 1.0) / len(stop_dist_vals) * 100 if stop_dist_vals else 0.0
+            print(f"- **Avg Stop Distance:** {avg_stop_dist:.2f}% (wide ATR stops give room but reduce capture)")
+            pct_captured = capture * 100 if capture == capture else 0.0
+            print(f"- **Capture Ratio:** {capture:.2f}× — avg_return / avg_stop_distance "
+                  f"({pct_captured:.0f}% of risked distance captured on average; "
+                  f"distinct from Payoff Ratio which measures win vs loss magnitude)")
 
         # ── 15. Return distribution quartiles ──────────────────────────────────
         print("\n## 14. Return Distribution\n")

@@ -62,13 +62,21 @@ async def test_gate_blocks_low_global_confidence():
 
 
 @pytest.mark.asyncio
-async def test_gate_blocks_intraday():
-    """Intraday style floor is 999 — effectively disabled."""
+async def test_gate_blocks_intraday_below_floor():
+    """Intraday floor is 68% — signals below it are blocked."""
     from services.delivery_gates import check_delivery_gates
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="intraday", confidence=71.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="intraday", confidence=65.0), db, _Settings())
     assert reason is not None
-    assert "disabled" in reason or "floored" in reason
+    assert "floored" in reason or "disabled" in reason
+
+@pytest.mark.asyncio
+async def test_gate_allows_intraday_above_floor():
+    """Intraday signals at ≥68% confidence are allowed through."""
+    from services.delivery_gates import check_delivery_gates
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(_sig(style="intraday", confidence=70.0), db, _Settings())
+    assert reason is None
 
 
 @pytest.mark.asyncio
