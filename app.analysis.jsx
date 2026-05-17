@@ -158,6 +158,11 @@ function PositionCalc({ signal, onPaperTrade }) {
   const shares   = riskPer > 0 ? Math.floor(dollarRisk / riskPer) : 0;
   const maxLoss  = shares * riskPer;
   const maxGain  = shares * rewardPer;
+  // Beta-adjusted sizing: reduce share count proportionally for high-beta names
+  // so the position contributes the same market-dollar-exposure as a beta-1 stock.
+  const beta         = signal.beta ?? null;
+  const betaAdj      = (beta && beta > 0) ? Math.max(0.5, beta) : null;
+  const sharesAdj    = betaAdj ? Math.floor(shares / betaAdj) : null;
 
   const inputStyle = {
     width:70, background:"var(--bg-3)", border:"1px solid var(--line)",
@@ -203,6 +208,7 @@ function PositionCalc({ signal, onPaperTrade }) {
       <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" }}>
         {[
           { label:"Shares",   val: shares > 0 ? shares.toLocaleString() : "—",        color:"var(--text)" },
+          ...(sharesAdj != null && sharesAdj !== shares ? [{ label:`β-Adj (β${beta.toFixed(1)})`, val: sharesAdj > 0 ? sharesAdj.toLocaleString() : "—", color:"var(--accent)" }] : []),
           { label:"Max loss",  val: shares > 0 ? `-$${Math.round(maxLoss).toLocaleString()}` : "—", color:"var(--down)" },
           { label:"Max gain",  val: shares > 0 ? `+$${Math.round(maxGain).toLocaleString()}` : "—", color:"var(--up)"   },
           { label:"Notional",  val: shares > 0 ? `$${Math.round(shares * entry).toLocaleString()}` : "—", color:"var(--text-dim)" },
@@ -231,7 +237,11 @@ function PositionCalc({ signal, onPaperTrade }) {
       </div>
 
       <div style={{ fontSize:9, color:"var(--text-faint)", marginTop:8, lineHeight:1.4 }}>
-        Based on ${fmt(entry)} entry · ${fmt(stop)} stop ({riskPer > 0 ? fmt(riskPer,2) : "—"}/share risk). Not financial advice.
+        Based on ${fmt(entry)} entry · ${fmt(stop)} stop ({riskPer > 0 ? fmt(riskPer,2) : "—"}/share risk).
+        {betaAdj != null && sharesAdj !== shares && (
+          <span style={{ color:"var(--accent)" }}> β-Adj reduces to {sharesAdj} shares for equal market exposure.</span>
+        )}
+        {" "}Not financial advice.
       </div>
     </div>
   );
@@ -918,6 +928,112 @@ function MarketOverviewView({ open, onClose, online }) {
                   )}
                 </div>
               </Card>
+
+              {/* Financial Stress & Labour — STLFSI4, ICSA, UMCSENT */}
+              {(macro.stlfsi != null || macro.icsa != null || macro.umcsent != null) && (
+                <Card title="Financial Stress & Labour">
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:16, alignItems:"baseline" }}>
+                    {macro.stlfsi != null && (
+                      <div style={{ fontFamily:"var(--font-mono)" }}>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>STLFSI4</div>
+                        <div style={{ fontSize:20, fontWeight:700,
+                          color: macro.stlfsi > 1 ? "var(--down)" : macro.stlfsi > 0.5 ? "var(--warn)" : macro.stlfsi < -0.5 ? "var(--up)" : "var(--text)" }}>
+                          {macro.stlfsi > 0 ? "+" : ""}{macro.stlfsi.toFixed(2)}
+                        </div>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", marginTop:2 }}>
+                          {macro.stlfsi > 1 ? "CRISIS" : macro.stlfsi > 0.5 ? "ELEVATED" : macro.stlfsi < -0.5 ? "BENIGN" : "NORMAL"}
+                        </div>
+                      </div>
+                    )}
+                    {macro.icsa != null && (
+                      <div style={{ fontFamily:"var(--font-mono)" }}>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Init. Claims</div>
+                        <div style={{ fontSize:20, fontWeight:700,
+                          color: macro.icsa > 350000 ? "var(--down)" : macro.icsa > 300000 ? "var(--warn)" : macro.icsa < 225000 ? "var(--up)" : "var(--text)" }}>
+                          {(macro.icsa / 1000).toFixed(0)}K
+                        </div>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", marginTop:2 }}>
+                          {macro.icsa < 225000 ? "TIGHT" : macro.icsa > 300000 ? "STRESS" : "NORMAL"}
+                        </div>
+                      </div>
+                    )}
+                    {macro.umcsent != null && (
+                      <div style={{ fontFamily:"var(--font-mono)" }}>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Consumer Sent.</div>
+                        <div style={{ fontSize:20, fontWeight:700,
+                          color: macro.umcsent < 60 ? "var(--down)" : macro.umcsent > 95 ? "var(--up)" : "var(--text)" }}>
+                          {macro.umcsent.toFixed(1)}
+                        </div>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", marginTop:2 }}>
+                          {macro.umcsent < 60 ? "DISTRESSED" : macro.umcsent > 95 ? "ELEVATED" : "AVG ~85"}
+                        </div>
+                      </div>
+                    )}
+                    {macro.t10y3m != null && (
+                      <div style={{ fontFamily:"var(--font-mono)" }}>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>T10Y-3M</div>
+                        <div style={{ fontSize:20, fontWeight:700,
+                          color: macro.t10y3m < 0 ? "var(--down)" : macro.t10y3m > 1.5 ? "var(--up)" : "var(--text)" }}>
+                          {macro.t10y3m > 0 ? "+" : ""}{macro.t10y3m.toFixed(2)}%
+                        </div>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", marginTop:2 }}>
+                          {macro.t10y3m < 0 ? "INVERTED" : macro.t10y3m > 1.5 ? "NORMAL" : "FLAT"}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              )}
+
+              {/* VIX9D + MOVE */}
+              {(macro.vix9d != null || macro.move != null) && (
+                <Card title="Vol Term Structure & Bond Stress">
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:16, alignItems:"baseline" }}>
+                    {macro.vix9d != null && (
+                      <div style={{ fontFamily:"var(--font-mono)" }}>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>VIX9D</div>
+                        <div style={{ fontSize:20, fontWeight:700,
+                          color: macro.vix9d_ratio > 1.1 ? "var(--warn)" : "var(--text)" }}>
+                          {macro.vix9d.toFixed(1)}
+                        </div>
+                        {macro.vix9d_ratio != null && (
+                          <div style={{ fontSize:9, color:"var(--text-faint)", marginTop:2 }}>
+                            {macro.vix9d_ratio.toFixed(2)}× VIX {macro.vix9d_ratio > 1.1 ? "⚠ EVENT RISK" : ""}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {macro.move != null && (
+                      <div style={{ fontFamily:"var(--font-mono)" }}>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>MOVE Index</div>
+                        <div style={{ fontSize:20, fontWeight:700,
+                          color: macro.move > 140 ? "var(--down)" : macro.move < 90 ? "var(--up)" : "var(--text)" }}>
+                          {macro.move.toFixed(0)}
+                        </div>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", marginTop:2 }}>
+                          {macro.move > 140 ? "BOND STRESS" : macro.move < 90 ? "CALM" : "ELEVATED"}
+                        </div>
+                      </div>
+                    )}
+                    {(macro.hy_spread != null || macro.ig_spread != null) && (
+                      <div style={{ fontFamily:"var(--font-mono)" }}>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Credit Spreads</div>
+                        {macro.hy_spread != null && (
+                          <div style={{ fontSize:13, fontWeight:700,
+                            color: macro.hy_spread > 450 ? "var(--down)" : macro.hy_spread < 300 ? "var(--up)" : "var(--text)" }}>
+                            HY {macro.hy_spread.toFixed(0)}bps
+                          </div>
+                        )}
+                        {macro.ig_spread != null && (
+                          <div style={{ fontSize:11, color:"var(--text-faint)" }}>
+                            IG {macro.ig_spread.toFixed(0)}bps
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              )}
 
               {/* COT */}
               <Card title="Hedge Fund S&P Positioning (COT)">

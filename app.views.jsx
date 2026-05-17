@@ -199,11 +199,17 @@ function OutcomeStrip({ ticker, history }) {
       <span style={{ letterSpacing:"0.12em", marginRight:2 }}>L{resolved.length}</span>
       {resolved.map((h, i) => {
         const win = h.outcomePct > 0;
+        // colour-code by exit type when available
+        const exitColor = h.exitType === "target" ? "var(--up)"
+                        : h.exitType === "stop"   ? "var(--down)"
+                        : h.exitType === "time"   ? "var(--warn)"
+                        : win ? "var(--up)" : "var(--down)";
+        const tip = h.exitType ? `${h.exitType.toUpperCase()} exit · ${h.outcomePct > 0 ? "+" : ""}${h.outcomePct?.toFixed(2)}%` : undefined;
         return (
-          <span key={i} style={{
+          <span key={i} title={tip} style={{
             width:6, height:6, borderRadius:"50%",
-            background: win ? "var(--up)" : "var(--down)",
-            boxShadow: win ? "0 0 4px rgba(16,185,129,0.5)" : undefined,
+            background: exitColor,
+            boxShadow: win ? `0 0 4px color-mix(in oklch,${exitColor} 60%,transparent)` : undefined,
           }}/>
         );
       })}
@@ -254,8 +260,16 @@ function HistoryView({ open, onClose, online }) {
   const fmtRet = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
   const retColor = v => v == null ? "var(--text-faint)" : v >= 0 ? "var(--up)" : "var(--down)";
 
+  const exitBadge = r => {
+    if (!r.exitType) return null;
+    const cfg = { target:["TARGET","var(--up)"], stop:["STOP","var(--down)"], time:["TIME","var(--warn)"], pending:["OPEN","var(--text-faint)"] };
+    const [lbl, col] = cfg[r.exitType] || ["—","var(--text-faint)"];
+    return <span style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700, padding:"2px 5px", borderRadius:3,
+      color:col, background:`color-mix(in oklch,${col} 12%,transparent)` }}>{lbl}</span>;
+  };
+
   const exportCSV = () => {
-    const headers = ["Date","Ticker","Action","Confidence","Price","1d","3d","7d","14d"];
+    const headers = ["Date","Ticker","Action","Confidence","Price","1d","3d","7d","14d","MAE","MFE","Exit"];
     const csvRows = [
       headers.join(","),
       ...rows.map(r => [
@@ -268,6 +282,9 @@ function HistoryView({ open, onClose, online }) {
         fmtRet(r.outcome3d),
         fmtRet(r.outcomePct),
         fmtRet(r.outcome14d),
+        r.mae != null ? `${r.mae.toFixed(2)}%` : "",
+        r.mfe != null ? `${r.mfe.toFixed(2)}%` : "",
+        r.exitType ?? "",
       ].map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")),
     ];
     const blob = new Blob([csvRows.join("\n")], { type:"text/csv;charset=utf-8;" });
@@ -328,7 +345,7 @@ function HistoryView({ open, onClose, online }) {
         {!loading && rows.length === 0 && <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>No history yet.</div>}
         {rows.length > 0 && (
           <SortableTable
-            cols={["Date","Ticker","Action","Conf","Price","1d","3d","7d","14d"]}
+            cols={["Date","Ticker","Action","Conf","Price","1d","3d","7d","14d","MAE","MFE","Exit"]}
             defaultSort={{ col:0, dir:"desc" }}
             rows={rows.slice(0,200).map(r => [
               fmtETFull(r.ts),
@@ -340,6 +357,9 @@ function HistoryView({ open, onClose, online }) {
               fmtRet(r.outcome3d),
               fmtRet(r.outcomePct),
               fmtRet(r.outcome14d),
+              r.mae != null ? <span title="Max Adverse Excursion">{r.mae.toFixed(2)}%</span> : "—",
+              r.mfe != null ? <span title="Max Favorable Excursion">+{r.mfe.toFixed(2)}%</span> : "—",
+              exitBadge(r) ?? "—",
             ])}
             colors={[
               null, null, null,
@@ -349,6 +369,9 @@ function HistoryView({ open, onClose, online }) {
               (_,ri) => retColor(rows[ri]?.outcome3d),
               (_,ri) => retColor(rows[ri]?.outcomePct),
               (_,ri) => retColor(rows[ri]?.outcome14d),
+              (_,ri) => rows[ri]?.mae != null ? "var(--down)" : "var(--text-faint)",
+              (_,ri) => rows[ri]?.mfe != null ? "var(--up)"   : "var(--text-faint)",
+              null,
             ]}/>
         )}
       </div>
@@ -365,6 +388,7 @@ function BacktestView({ open, onClose, online }) {
   const [trackRec,  setTrackRec]  = useState(null);
   const [corr,      setCorr]      = useState(null);
   const [calib,     setCalib]     = useState(null);
+  const [decay,     setDecay]     = useState(null);
   const [loading,   setLoading]   = useState(false);
   const [backfilling,    setBackfilling]    = useState(false);
   const [backfillResult, setBackfillResult] = useState(null);
@@ -386,13 +410,15 @@ function BacktestView({ open, onClose, online }) {
       apiFetch("/api/signals/track-record"),
       apiFetch("/api/signals/correlation"),
       apiFetch(`/api/signals/backtest/calibration${qs}`),
-    ]).then(([d, h, src, tkr, tr, cr, cal]) => {
+      apiFetch("/api/signals/alpha-decay"),
+    ]).then(([d, h, src, tkr, tr, cr, cal, dc]) => {
       setData(d);
       setHorizons((h||[]).filter(h => h.n > 0));
       setAccuracy({ sources: src || [], tickers: tkr || [] });
       setTrackRec(tr || []);
       setCorr(cr);
       setCalib(cal || []);
+      setDecay(dc || {});
       setLoading(false);
     }).catch(() => setLoading(false));
   };
@@ -443,7 +469,7 @@ function BacktestView({ open, onClose, online }) {
         </div>
       </div>
       <div style={{ display:"flex", gap:0, borderBottom:"1px solid var(--line)", padding:"0 28px", background:"var(--bg-1)" }}>
-        {[["summary","Summary"],["sources","By Source"],["tickers","By Ticker"],["track","Track Record"],["corr","Correlation"],["calib","Calibration"]].map(([id,label]) => (
+        {[["summary","Summary"],["sources","By Source"],["tickers","By Ticker"],["track","Track Record"],["corr","Correlation"],["calib","Calibration"],["decay","Alpha Decay"]].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{ padding:"10px 14px", fontSize:11, fontFamily:"var(--font-mono)", fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", background:"none", border:"none", cursor:"pointer", borderBottom: tab===id ? "2px solid var(--accent)" : "2px solid transparent", color: tab===id ? "var(--accent)" : "var(--text-faint)", marginBottom:-1 }}>
             {label}
@@ -576,6 +602,47 @@ function BacktestView({ open, onClose, online }) {
                   colors={[null,null,(_,ri)=>wrColor(calib[ri]?.actual),null,null]}/>
               </div>
             ) : <EmptyBt msg="No calibration data yet. Backfill outcomes first, then return here." />}
+          </div>
+        )}
+
+        {!loading && tab === "decay" && (
+          <div style={{ paddingTop:20 }}>
+            <div style={{ fontSize:11, color:"var(--text-faint)", marginBottom:16, maxWidth:620 }}>
+              Alpha decay by signal source — win rate and average return at each holding horizon.
+              Sources that peak at 1d are short-lived; sources still strong at 14d have durable edge.
+              Use this to inform which signal families warrant longer holds.
+            </div>
+            {decay && Object.keys(decay).length > 0 ? (
+              <BtTable
+                title="Alpha decay by source"
+                cols={["Source","N","1d Win%","1d Ret","3d Win%","3d Ret","7d Win%","7d Ret","14d Win%","14d Ret"]}
+                rows={Object.entries(decay)
+                  .sort((a,b) => (b[1].h7d?.win_rate ?? 0) - (a[1].h7d?.win_rate ?? 0))
+                  .map(([src, d]) => {
+                    const h = h => d[h];
+                    const wr = v => v?.win_rate != null ? `${v.win_rate.toFixed(1)}%` : "—";
+                    const ret = v => v?.avg_ret != null ? `${v.avg_ret >= 0 ? "+" : ""}${v.avg_ret.toFixed(2)}%` : "—";
+                    return [
+                      src,
+                      d.n,
+                      wr(h("h1d")), ret(h("h1d")),
+                      wr(h("h3d")), ret(h("h3d")),
+                      wr(h("h7d")), ret(h("h7d")),
+                      wr(h("h14d")), ret(h("h14d")),
+                    ];
+                  })}
+                colors={[
+                  null, null,
+                  (_,ri) => { const v = Object.values(decay)[ri]?.h1d?.win_rate; return v != null ? wrColor(v) : "var(--text-faint)"; },
+                  (_,ri) => { const v = Object.values(decay)[ri]?.h1d?.avg_ret;  return v != null ? (v>=0?"var(--up)":"var(--down)") : "var(--text-faint)"; },
+                  (_,ri) => { const v = Object.values(decay)[ri]?.h3d?.win_rate; return v != null ? wrColor(v) : "var(--text-faint)"; },
+                  (_,ri) => { const v = Object.values(decay)[ri]?.h3d?.avg_ret;  return v != null ? (v>=0?"var(--up)":"var(--down)") : "var(--text-faint)"; },
+                  (_,ri) => { const v = Object.values(decay)[ri]?.h7d?.win_rate; return v != null ? wrColor(v) : "var(--text-faint)"; },
+                  (_,ri) => { const v = Object.values(decay)[ri]?.h7d?.avg_ret;  return v != null ? (v>=0?"var(--up)":"var(--down)") : "var(--text-faint)"; },
+                  (_,ri) => { const v = Object.values(decay)[ri]?.h14d?.win_rate; return v != null ? wrColor(v) : "var(--text-faint)"; },
+                  (_,ri) => { const v = Object.values(decay)[ri]?.h14d?.avg_ret;  return v != null ? (v>=0?"var(--up)":"var(--down)") : "var(--text-faint)"; },
+                ]}/>
+            ) : <EmptyBt msg="No alpha decay data yet. Backfill outcomes first, then return here." />}
           </div>
         )}
       </div>
