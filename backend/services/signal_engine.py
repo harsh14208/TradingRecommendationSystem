@@ -6,9 +6,33 @@ scanner and passed in via `market_ctx`.  Per-ticker data (technicals, news,
 EDGAR insider activity) is fetched concurrently for each ticker.
 """
 import asyncio
+import logging
 from datetime import datetime, time as dtime
-from typing import Optional
+from typing import NamedTuple, Optional
+import numpy as _np
 import pytz
+
+log = logging.getLogger("signal.trade.engine")
+
+
+class _TickerData(NamedTuple):
+    df: "pd.DataFrame"
+    info: dict
+    news: list
+    scraped_news: list
+    insider: list
+    analyst_recs: list
+    earnings_cal: object
+    earnings_surp: object
+    opt_flow: object
+    fundamentals: dict
+    social: object
+    trends: object
+    congress: object
+    df_1h: object
+    massive_sigs: object
+    sector_rs: object
+
 
 from services.google_trends import get_google_trends
 from services.quiverquant import get_congress_signal
@@ -143,18 +167,15 @@ async def _fetch_ticker_data(
     ticker: str,
     prefetched_df: Optional[pd.DataFrame],
     prefetched_info: Optional[dict],
-) -> Optional[tuple]:
+) -> Optional[_TickerData]:
     """
     Fetch all per-ticker data concurrently.
-    Returns (df, info, news, scraped_news, insider, analyst_recs,
-             earnings_cal, earnings_surp, opt_flow, fundamentals,
-             social, trends, congress, df_1h, massive_sigs, sector_rs)
-    or None if df is invalid.
+    Returns a _TickerData namedtuple or None if df is invalid.
     """
     if prefetched_df is not None:
         df   = prefetched_df
         info = prefetched_info or {}
-        news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = await asyncio.gather(
+        _raw = await asyncio.gather(
             get_company_news(ticker, days=7),
             get_scraped_news(ticker, (prefetched_info or {}).get("company", ticker), days=7),
             get_insider_activity(ticker, days=30),
@@ -168,10 +189,14 @@ async def _fetch_ticker_data(
             get_congress_signal(ticker),
             get_history(ticker, period="5d", interval="1h"),
             get_extended_hours_data(ticker),
+            return_exceptions=True,
         )
+        news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = [
+            None if isinstance(r, BaseException) else r for r in _raw
+        ]
         sector_rs = await get_sector_relative_strength(ticker, df)
     else:
-        df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = await asyncio.gather(
+        _raw = await asyncio.gather(
             get_history(ticker, period="1y", interval="1d"),
             get_info(ticker),
             get_company_news(ticker, days=7),
@@ -187,15 +212,24 @@ async def _fetch_ticker_data(
             get_congress_signal(ticker),
             get_history(ticker, period="5d", interval="1h"),
             get_extended_hours_data(ticker),
+            return_exceptions=True,
         )
+        df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = [
+            None if isinstance(r, BaseException) else r for r in _raw
+        ]
         sector_rs = await get_sector_relative_strength(ticker, df)
 
     if df is None or len(df) < 30:
         return None
 
-    return (df, info, news, scraped_news, insider, analyst_recs,
-            earnings_cal, earnings_surp, opt_flow, fundamentals,
-            social, trends, congress, df_1h, massive_sigs, sector_rs)
+    return _TickerData(
+        df=df, info=info, news=news, scraped_news=scraped_news,
+        insider=insider, analyst_recs=analyst_recs,
+        earnings_cal=earnings_cal, earnings_surp=earnings_surp,
+        opt_flow=opt_flow, fundamentals=fundamentals,
+        social=social, trends=trends, congress=congress,
+        df_1h=df_1h, massive_sigs=massive_sigs, sector_rs=sector_rs,
+    )
 
 
 def _assemble_signal(
@@ -781,6 +815,24 @@ def _assemble_signal(
     }
 
 
+def _compute_1h_techs(df_1h) -> dict:
+    """CPU-bound 1H technical indicator computation — runs in a thread pool."""
+    c1h = df_1h["Close"].astype(float)
+    # RSI(14) on 1H
+    _d  = c1h.diff()
+    _ag = _d.clip(lower=0).ewm(com=13, adjust=False).mean()
+    _al = (-_d).clip(lower=0).ewm(com=13, adjust=False).mean()
+    rsi_1h = float((100 - 100 / (1 + _ag / _al.replace(0, _np.nan))).iloc[-1])
+    # MACD on 1H
+    _macd_1h = float(
+        (c1h.ewm(span=12, adjust=False).mean()
+         - c1h.ewm(span=26, adjust=False).mean()).iloc[-1])
+    # Price vs EMA20 on 1H
+    _above_ema_1h = float(c1h.iloc[-1]) > float(
+        c1h.ewm(span=20, adjust=False).mean().iloc[-1])
+    return {"rsi_1h": rsi_1h, "macd_1h": _macd_1h, "above_ema_1h": _above_ema_1h}
+
+
 async def generate_signal(
     ticker: str,
     market_ctx: Optional[dict] = None,
@@ -792,9 +844,7 @@ async def generate_signal(
         _fetched = await _fetch_ticker_data(ticker, prefetched_df, prefetched_info)
         if _fetched is None:
             return None
-        (df, info, news, scraped_news, insider, analyst_recs,
-         earnings_cal, earnings_surp, opt_flow, fundamentals,
-         social, trends, congress, df_1h, massive_sigs, sector_rs) = _fetched
+        df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs, sector_rs = _fetched
         ext_hours = massive_sigs  # unified: both branches fetch get_extended_hours_data
 
         tech = calculate_indicators(df)
@@ -846,7 +896,6 @@ async def generate_signal(
             from services.polygon_client import get_polygon_weekly_bars
             _wdf = await get_polygon_weekly_bars(ticker, weeks=26)
             if _wdf is not None and len(_wdf) >= 14:
-                import numpy as _np
                 _wclose = _wdf["Close"].values
                 _wsma13 = float(_np.mean(_wclose[-13:]))
                 _last10  = _wclose[-10:]
@@ -1515,7 +1564,7 @@ async def generate_signal(
             # Bollinger Bands entirely inside KC = maximum volatility squeeze
             if bb_upper and bb_lower and bb_upper < kc_upper and bb_lower > kc_lower:
                 squeeze_sentiment = "pos" if score > 0 else "neg"
-                score += 4 if score > 0 else -4
+                score += 4 if score > 0 else (-4 if score < 0 else 0)
                 rationale.append({"src": "Technical",
                     "head": "Keltner–Bollinger Squeeze — Maximum Coil",
                     "body": ("Bollinger Bands are fully contained within Keltner Channels — "
@@ -2648,7 +2697,7 @@ async def generate_signal(
             sources.add("Technical")
             if hurst > 0.60:
                 # Persistent trending regime — trust momentum signals more
-                trend_bonus = 5 if score > 0 else -5
+                trend_bonus = 5 if score > 0 else (-5 if score < 0 else 0)
                 score += trend_bonus
                 rationale.append({"src": "Technical",
                     "head": f"Hurst Exponent {hurst:.2f} — Trending Regime",
@@ -2678,7 +2727,7 @@ async def generate_signal(
             sources.add("Technical")
             if fdi < 1.25:
                 # Low fractal dimension — nearly linear trend; breakouts are reliable
-                fdi_bonus = 5 if score > 0 else -5
+                fdi_bonus = 5 if score > 0 else (-5 if score < 0 else 0)
                 score += fdi_bonus
                 rationale.append({"src": "Technical",
                     "head": f"FDI {fdi:.2f} — Trending Market (Trust Breakouts)",
@@ -3154,7 +3203,7 @@ async def generate_signal(
                 _orth_pts = min(_orth_pts, 1.5)
                 _orth_max = min(_orth_max, 9)
             _orth_bonus = min(_orth_max, _n_indep * _orth_pts)
-            score += _orth_bonus if score > 0 else -_orth_bonus
+            score += _orth_bonus if score > 0 else (-_orth_bonus if score < 0 else 0)
             sources.add("Orthogonalization")
             _indep_names = ", ".join(k for k, v in _indep.items() if v)
             _wr_note = f" (ticker win rate {_ticker_wr*100:.0f}% — reduced bonus)" if (_ticker_wr is not None and _ticker_wr < 0.50) else ""
@@ -3196,7 +3245,7 @@ async def generate_signal(
                     break
             if abs(fm_adj) >= 1.0:
                 fm_adj = max(-5.0, min(5.0, fm_adj))
-                score += fm_adj if score > 0 else -fm_adj
+                score += fm_adj if score > 0 else (-fm_adj if score < 0 else 0)
                 sources.add("Backtest")
                 rationale.append({"src": "Backtest",
                     "head": f"Factor Mining Calibration {'+' if fm_adj > 0 else ''}{fm_adj:.1f}",
@@ -3386,20 +3435,10 @@ async def generate_signal(
         # Requires RSI, MACD, and EMA all aligned on the 1H chart.
         try:
             if df_1h is not None and len(df_1h) >= 20:
-                import numpy as _np
-                c1h = df_1h["Close"].astype(float)
-                # RSI(14) on 1H
-                _d  = c1h.diff()
-                _ag = _d.clip(lower=0).ewm(com=13, adjust=False).mean()
-                _al = (-_d).clip(lower=0).ewm(com=13, adjust=False).mean()
-                rsi_1h = float((100 - 100 / (1 + _ag / _al.replace(0, _np.nan))).iloc[-1])
-                # MACD on 1H
-                _macd_1h = float(
-                    (c1h.ewm(span=12, adjust=False).mean()
-                     - c1h.ewm(span=26, adjust=False).mean()).iloc[-1])
-                # Price vs EMA20 on 1H
-                _above_ema_1h = float(c1h.iloc[-1]) > float(
-                    c1h.ewm(span=20, adjust=False).mean().iloc[-1])
+                _1h_result = await asyncio.to_thread(_compute_1h_techs, df_1h)
+                rsi_1h       = _1h_result["rsi_1h"]
+                _macd_1h     = _1h_result["macd_1h"]
+                _above_ema_1h = _1h_result["above_ema_1h"]
 
                 h1_bullish = rsi_1h > 55 and _macd_1h > 0 and _above_ema_1h
                 h1_bearish = rsi_1h < 45 and _macd_1h < 0 and not _above_ema_1h
@@ -3613,8 +3652,8 @@ async def generate_signal(
             sector_rs=sector_rs, days_to_earnings=days_to_earnings,
         )
 
-    except Exception as e:
-        print(f"[signal_engine] {ticker}: {e}")
+    except Exception:
+        log.exception("[signal_engine] %s: unhandled error in generate_signal", ticker)
         return None
 
 
@@ -3640,8 +3679,8 @@ async def scan_all(
                 prefetched_info=infos.get(t),
             )
 
-    results = await asyncio.gather(*[_guarded(t) for t in tickers])
-    signals = [r for r in results if r is not None]
+    results = await asyncio.gather(*[_guarded(t) for t in tickers], return_exceptions=True)
+    signals = [r for r in results if r is not None and not isinstance(r, BaseException)]
 
     # ── Sector Peer Confirmation ─────────────────────────────────────────────
     # Layer 1: ETF sector peers (broad) — existing logic

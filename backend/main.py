@@ -650,7 +650,6 @@ async def _weekly_ticker_screener():
             log.debug(f"[screener] weekly run failed: {e}")
 
 
-@asynccontextmanager
 async def _scan_watchdog():
     """Restart _periodic_scan if it ever exits unexpectedly."""
     global _scan_task
