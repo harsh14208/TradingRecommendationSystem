@@ -86,11 +86,41 @@ async def run_calibration() -> dict:
                 f"wr={wr*100:.1f}% n={n} blend={_blend(n):.2f}"
             )
 
+        # ── Isotonic regression (non-parametric calibration) ─────────────────
+        # Fits a monotonic step-function from (confidence, win/loss) pairs.
+        # Unlike Platt (linear blend to bin empirical rate), isotonic learns
+        # the actual shape of the score→probability relationship from data.
+        # Stored alongside the Platt bins; apply_calibration uses it when ≥30 samples.
+        try:
+            from sklearn.isotonic import IsotonicRegression
+            import numpy as np
+            _X, _y = [], []
+            for action, conf, pct_14d, pct_7d in rows:
+                pct = pct_14d if pct_14d is not None else pct_7d
+                if pct is None:
+                    continue
+                win = 1 if (pct > 0 if action == "BUY" else pct < 0) else 0
+                _X.append(conf / 100.0)
+                _y.append(win)
+            if len(_X) >= 30:
+                ir = IsotonicRegression(out_of_bounds="clip", increasing=True)
+                ir.fit(_X, _y)
+                # Store as sorted (conf, prob) list for JSON serialisation
+                _confs = np.linspace(0.35, 0.75, 41)
+                _probs = ir.predict(_confs)
+                cal_map["_isotonic"] = [[round(float(c), 3), round(float(p), 4)]
+                                         for c, p in zip(_confs, _probs)]
+                log.info(f"[calibration] isotonic fitted on {len(_X)} samples")
+        except ImportError:
+            log.debug("[calibration] scikit-learn not installed — isotonic skipped")
+        except Exception as exc:
+            log.warning(f"[calibration] isotonic failed: {exc}")
+
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         _CAL_FILE.write_text(json.dumps(cal_map, indent=2))
         log.info(
             f"[calibration] wrote {len(cal_map)} bins "
-            f"({sum(v['n'] for v in cal_map.values())} resolved signals)"
+            f"({sum(v['n'] for v in cal_map.values() if isinstance(v, dict))} resolved signals)"
         )
         return cal_map
 
@@ -122,11 +152,29 @@ def apply_calibration(
     if not cal_map or action not in ("BUY", "SELL"):
         return raw_conf, None
 
+    # ── Prefer isotonic regression when available (≥30 training samples) ────
+    # Isotonic gives a proper probability estimate; Platt is a linear blend.
+    _iso = cal_map.get("_isotonic")
+    if _iso and len(_iso) >= 10:
+        try:
+            x = raw_conf / 100.0
+            # Linear interpolation over the stored (conf, prob) table
+            for i in range(len(_iso) - 1):
+                c0, p0 = _iso[i]
+                c1, p1 = _iso[i + 1]
+                if c0 <= x <= c1:
+                    t = (x - c0) / (c1 - c0) if c1 > c0 else 0
+                    prob = p0 + t * (p1 - p0)
+                    calibrated = round(min(72.0, max(35.0, prob * 100)), 1)
+                    return calibrated, {"source": "isotonic", "prob": round(prob, 4)}
+        except Exception:
+            pass  # fall through to Platt
+
+    # ── Platt-style bin blend (fallback) ────────────────────────────────────
     b = str(max(0, (int(raw_conf) // _BIN_SIZE) * _BIN_SIZE))
-    # Try exact bin; fall back one bin lower only if it's a different key
     _lower = str(max(0, int(b) - _BIN_SIZE))
     entry = cal_map.get(b) or (cal_map.get(_lower) if _lower != b else None)
-    if not entry or entry["blend"] == 0.0:
+    if not entry or not isinstance(entry, dict) or entry.get("blend", 0.0) == 0.0:
         return raw_conf, None
 
     emp_wr_pct = entry["win_rate"] * 100

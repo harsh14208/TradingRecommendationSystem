@@ -23,7 +23,7 @@ from services.market_data import get_histories_batch, get_infos_sequential, get_
 from services.signal_engine import scan_all
 from services.telegram_svc import format_signal, send_telegram
 from config import get_settings, TIERS
-from sqlalchemy import select, desc, update
+from sqlalchemy import select, desc, update, func
 
 # ── Data quality monitoring ───────────────────────────────────────────────────
 _data_quality: dict[str, int] = {}  # ticker → consecutive_null_count
@@ -264,6 +264,58 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
         log.info(f" {sig_dict['ticker']} skipped ({label}) "
               f"{_style} conf {sig_dict['confidence']:.0f}% < style floor {_style_floor:.0f}%")
         return
+
+    # ── Pre-earnings hard blackout (2 trading days) ─────────────────────────
+    # Sending directional signals within 2 days of earnings exposes users to:
+    # (1) IV crush destroying options premium even on correct direction,
+    # (2) gap-through-stop risk, (3) analyst pre-positioning distortions.
+    # The post-earnings cooldown (days 0–2) gates after; this gates before.
+    _dte = sig_dict.get("daysToEarnings")
+    if _dte is not None and 0 < _dte <= 2:
+        log.info(f" {sig_dict['ticker']} skipped ({label}) "
+              f"— {_dte}d to earnings (pre-earnings hard blackout)")
+        return
+
+    # ── Sector concentration limit (max 2 BUY sends per sector per 24h) ─────
+    # Sending NVDA + AMD + SOXL + MU in one scan is one correlated bet ×4.
+    # Cap at 2 signals per SPDR sector ETF per rolling 24h window.
+    _sector = sig_dict.get("sectorEtf")
+    if _sector and sig_dict["action"] == "BUY":
+        _sector_cutoff = datetime.utcnow() - timedelta(hours=24)
+        _sector_count = (await db.execute(
+            select(func.count()).select_from(Signal)
+            .where(Signal.sector_etf == _sector)
+            .where(Signal.action     == "BUY")
+            .where(Signal.is_sent    == True)
+            .where(Signal.sent_at    >= _sector_cutoff)
+        )).scalar_one()
+        if _sector_count >= 2:
+            log.info(f" {sig_dict['ticker']} skipped ({label}) "
+                  f"— sector {_sector} already has {_sector_count} BUY sends in 24h (max 2)")
+            return
+
+    # ── Ticker-adaptive confidence floor ────────────────────────────────────
+    # Global threshold is too blunt: AMD (100% win rate) deserves a lower bar;
+    # tickers with <45% win rate need a higher bar to be worth sending.
+    # Reads from adaptive_weights pre-computed each scan cycle.
+    try:
+        from database import AsyncSessionLocal
+        from models import AppSettings
+        async with AsyncSessionLocal() as _adb:
+            _srow = (await _adb.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+        _app_data = (_srow.data or {}) if _srow else {}
+        _ticker_wrs = _app_data.get("adaptive_weights", {}).get("ticker_win_rates", {})
+        _twr = _ticker_wrs.get(sig_dict["ticker"])
+        if _twr is not None:
+            if _twr < 0.45 and sig_dict["confidence"] < 68.0:
+                log.info(f" {sig_dict['ticker']} skipped ({label}) "
+                      f"— hist win rate {_twr*100:.0f}% requires ≥68% conf (got {sig_dict['confidence']:.0f}%)")
+                return
+            if _twr >= 0.75 and sig_dict["confidence"] < 52.0:
+                log.info(f" {sig_dict['ticker']} high-win skip — conf {sig_dict['confidence']:.0f}% < 52% floor even for {_twr*100:.0f}% WR")
+                return
+    except Exception:
+        pass
 
     # ── Source independence gate ─────────────────────────────────────────────
     # A high-confidence signal driven entirely by correlated technical indicators

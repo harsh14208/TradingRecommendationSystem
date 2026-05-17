@@ -272,7 +272,7 @@ function HistoryView({ open, onClose, online }) {
   };
 
   const exportCSV = () => {
-    const headers = ["Date","Ticker","Action","Confidence","Price","1d","3d","7d","14d","MAE","MFE","Exit"];
+    const headers = ["Date","Ticker","Action","Confidence","Price","Exit","Return(best)","MAE","MFE","1d","3d"];
     const csvRows = [
       headers.join(","),
       ...rows.map(r => [
@@ -348,33 +348,44 @@ function HistoryView({ open, onClose, online }) {
         {!loading && rows.length === 0 && <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>No history yet.</div>}
         {rows.length > 0 && (
           <SortableTable
-            cols={["Date","Ticker","Action","Conf","Price","1d","3d","7d","14d","MAE","MFE","Exit"]}
+            cols={["Date","Ticker","Action","Conf","Price","Exit","Return","MAE","MFE","1d","3d"]}
             defaultSort={{ col:0, dir:"desc" }}
-            rows={rows.slice(0,200).map(r => [
-              fmtETFull(r.ts),
-              r.ticker,
-              <span className={`signal-verb ${r.action}`} style={{ fontSize:10 }}>{r.action}</span>,
-              `${r.confidence?.toFixed(0)}%`,
-              `$${fmt(r.price)}`,
-              fmtRet(r.outcome1d),
-              fmtRet(r.outcome3d),
-              fmtRet(r.outcomePct),
-              fmtRet(r.outcome14d),
-              r.mae != null ? <span title="Max Adverse Excursion">{r.mae.toFixed(2)}%</span> : "—",
-              r.mfe != null ? <span title="Max Favorable Excursion">+{r.mfe.toFixed(2)}%</span> : "—",
-              exitBadge(r) ?? "—",
-            ])}
+            rows={rows.slice(0,200).map(r => {
+              // Exit type is now the PRIMARY outcome column.
+              // Raw % return is shown as secondary. This matches reality: a signal
+              // that hit its stop at -8% and recovered to +1% at day 7 is a LOSS.
+              const exitType = r.exitType;
+              const primaryRet = r.outcome14d ?? r.outcomePct ?? r.outcome3d ?? r.outcome1d;
+              const exitPrimary = exitBadge(r);
+              const retDisplay = exitPrimary
+                ? <span style={{ fontFamily:"var(--font-mono)", fontSize:11,
+                    color: exitType === "target" ? "var(--up)" : exitType === "stop" ? "var(--down)" : retColor(primaryRet) }}>
+                    {primaryRet != null ? fmtRet(primaryRet) : "—"}
+                  </span>
+                : <span style={{ color:retColor(primaryRet) }}>{fmtRet(primaryRet)}</span>;
+              return [
+                fmtETFull(r.ts),
+                r.ticker,
+                <span className={`signal-verb ${r.action}`} style={{ fontSize:10 }}>{r.action}</span>,
+                `${r.confidence?.toFixed(0)}%`,
+                `$${fmt(r.price)}`,
+                exitPrimary ?? <span style={{ color:"var(--text-faint)", fontSize:10 }}>pending</span>,
+                retDisplay,
+                r.mae != null ? <span title="Max Adverse Excursion" style={{ color:"var(--down)" }}>{r.mae.toFixed(2)}%</span> : "—",
+                r.mfe != null ? <span title="Max Favorable Excursion" style={{ color:"var(--up)" }}>+{r.mfe.toFixed(2)}%</span> : "—",
+                fmtRet(r.outcome1d),
+                fmtRet(r.outcome3d),
+              ];
+            })}
             colors={[
               null, null, null,
               () => "var(--accent)",
-              null,
+              null, null,
+              (_,ri) => { const r = rows[ri]; return r?.exitType === "target" ? "var(--up)" : r?.exitType === "stop" ? "var(--down)" : retColor(r?.outcomePct); },
+              () => "var(--down)",
+              () => "var(--up)",
               (_,ri) => retColor(rows[ri]?.outcome1d),
               (_,ri) => retColor(rows[ri]?.outcome3d),
-              (_,ri) => retColor(rows[ri]?.outcomePct),
-              (_,ri) => retColor(rows[ri]?.outcome14d),
-              (_,ri) => rows[ri]?.mae != null ? "var(--down)" : "var(--text-faint)",
-              (_,ri) => rows[ri]?.mfe != null ? "var(--up)"   : "var(--text-faint)",
-              null,
             ]}/>
         )}
       </div>

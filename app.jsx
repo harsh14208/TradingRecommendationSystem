@@ -262,6 +262,14 @@ function App() {
 
   const active = signals.find(s => s.id === activeId) || filteredSignals[0] || signals[0];
 
+  // Live price for the active signal — updated from WebSocket tick messages.
+  // tickerTape is already updated by the WS handler; derive livePrice from it.
+  const livePrice = useMemo(() => {
+    if (!active?.ticker) return null;
+    const t = (tickerTape || []).find(t => (t.t || t.ticker) === active.ticker);
+    return t ? (t.p || t.price || null) : null;
+  }, [tickerTape, active?.ticker]);
+
   // Precompute outcome lookup so OutcomeStrip never runs .filter on the full array.
   // O(n) once on histSignals change; O(1) lookup per signal card render.
   const outcomeByTicker = useMemo(() => {
@@ -925,6 +933,7 @@ function App() {
                   onSend={() => sendToTelegram(s.id)}
                   onSkip={() => skipSignal(s.id)}
                   outcomeByTicker={outcomeByTicker}
+                  allSignals={signals}
                 />
                 {/* Full ad unit every 5 signals for free users */}
                 {(idx + 1) % 5 === 0 && <AdSlot user={currentUser}/>}
@@ -978,8 +987,25 @@ function App() {
                     <div className="detail-company">{active.company}</div>
                   </div>
                   <div style={{ marginLeft:"auto", textAlign:"right" }}>
-                    <div className="detail-price mono">${fmt(active.price)}</div>
-                    <div className={`detail-change mono ${up?"up":"down"}`}>{sgn(active.change||0)}{fmt(active.change||0)} ({sgn(active.changePct||0)}{fmt(active.changePct||0)}%)</div>
+                    {/* Live WebSocket price — updates in real time from tick messages */}
+                    {livePrice && livePrice !== active.price ? (
+                      <>
+                        <div className="detail-price mono" style={{ fontSize:18 }}>${fmt(livePrice)}</div>
+                        <div style={{ fontSize:9, fontFamily:"var(--font-mono)", color:"var(--text-faint)" }}>
+                          Live · at signal <span style={{ color:"var(--text-dim)" }}>${fmt(active.price)}</span>
+                          {active.stop && (
+                            <span style={{ marginLeft:6, color: livePrice <= active.stop ? "var(--down)" : "var(--text-faint)" }}>
+                              {livePrice <= active.stop ? "⚠ BELOW STOP" : `${((livePrice - active.stop) / active.stop * 100).toFixed(1)}% above stop`}
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="detail-price mono">${fmt(active.price)}</div>
+                        <div className={`detail-change mono ${up?"up":"down"}`}>{sgn(active.change||0)}{fmt(active.change||0)} ({sgn(active.changePct||0)}{fmt(active.changePct||0)}%)</div>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="hero-meta">
@@ -1074,8 +1100,28 @@ function App() {
                 ))}
               </div>
 
-              {/* ── Tab: Why (rationale + predictive) ── */}
+              {/* ── Tab: Why (chart + rationale + predictive) ── */}
               {detailTab === "why" && <>
+                {/* Chart with entry/stop/target lines — first thing traders look at */}
+                <div className="chart-wrap">
+                  <div className="chart-head">
+                    <span className="mono" style={{ fontSize:10, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>
+                      {active.ticker} · {chartPeriod}
+                    </span>
+                    <span style={{ display:"flex", gap:10, alignItems:"center", fontSize:9, fontFamily:"var(--font-mono)", color:"var(--text-faint)" }}>
+                      {active.entry  && <span style={{ color:"var(--text-dim)" }}>— ENTRY</span>}
+                      {active.stop   && <span style={{ color:"#ef4444" }}>— STOP</span>}
+                      {active.target && <span style={{ color:"#10b981" }}>— TARGET</span>}
+                    </span>
+                    <div className="tabs" style={{ marginLeft:"auto" }}>
+                      {["1D","5D","1M","3M","1Y"].map(t => (
+                        <span key={t} className={`tab ${t===chartPeriod?"active":""}`}
+                          onClick={() => setChartPeriod(t)} style={{ cursor:"pointer" }}>{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <Chart signal={active} style={tweakState.chartStyle} period={chartPeriod}/>
+                </div>
                 <WhyNow signal={active}/>
                 {(predictive || active.confidence) && (
                   <PredictiveIntervals signal={active} predictive={predictive}/>

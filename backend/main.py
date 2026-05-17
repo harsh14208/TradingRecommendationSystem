@@ -164,6 +164,62 @@ async def _nightly_signal_cleanup():
             log.warning(f"[cleanup] nightly cleanup failed: {e}")
 
 
+async def _nightly_outcome_resolution():
+    """
+    Resolve pending outcomes + MAE/MFE + refresh calibration nightly at 2:00am ET.
+
+    Runs AFTER markets close (and after the 4:15am cleanup) to ensure all intraday
+    prices are final.  Without this, calibration.json goes stale, adaptive weights
+    freeze, and the Platt correction stops improving.
+    """
+    ET = pytz.timezone("America/New_York")
+    while True:
+        now_et = datetime.now(ET)
+        target = now_et.replace(hour=2, minute=0, second=0, microsecond=0)
+        if now_et >= target:
+            target += timedelta(days=1)
+        await asyncio.sleep((target - now_et).total_seconds())
+        try:
+            log.info("[nightly] running outcome resolution + calibration refresh…")
+            # Reuse validate_predictions logic without starting a separate process
+            import sys, os
+            sys.path.insert(0, os.path.dirname(__file__))
+            from validate_predictions import resolve_outcomes, resolve_mae_mfe
+            updated = await resolve_outcomes()
+            mae_updated = await resolve_mae_mfe()
+            log.info(f"[nightly] resolved {updated} outcomes, {mae_updated} MAE/MFE records")
+            # Refresh Platt + isotonic calibration now that outcomes are up-to-date
+            from services.calibration import run_calibration
+            cal = await run_calibration()
+            log.info(f"[nightly] calibration refreshed — {len(cal)} bins")
+        except Exception as e:
+            log.warning(f"[nightly] outcome resolution failed: {e}")
+
+
+async def _intraday_stop_monitor():
+    """
+    Check active sent signals for stop/target hits every 30 minutes during market hours.
+    Fires Telegram notification when a stop or target is breached and deactivates the signal.
+    """
+    from services.stop_monitor import check_stop_targets_and_notify
+    ET = pytz.timezone("America/New_York")
+    # Startup delay — let the first scan cycle complete before checking stops
+    await asyncio.sleep(120)
+    while True:
+        now_et = datetime.now(ET)
+        is_market_hours = (
+            now_et.weekday() < 5 and
+            now_et.time() >= __import__("datetime").time(9, 30) and
+            now_et.time() <= __import__("datetime").time(16, 15)
+        )
+        if is_market_hours:
+            try:
+                await check_stop_targets_and_notify()
+            except Exception as e:
+                log.warning(f"[stop_monitor] failed: {e}")
+        await asyncio.sleep(1800)  # 30-minute interval
+
+
 async def _nightly_reflection_learning():
     """
     Automated Reflection & Learning — runs nightly at 4:30am ET alongside cleanup.
@@ -678,6 +734,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_weekly_factor_mining())
     asyncio.create_task(_weekly_ml_retrain())
     asyncio.create_task(_nightly_signal_cleanup())
+    asyncio.create_task(_nightly_outcome_resolution())
+    asyncio.create_task(_intraday_stop_monitor())
     asyncio.create_task(_nightly_reflection_learning())
     # Pre-warm sector heatmap cache so first open is instant
     async def _prewarm_sectors():

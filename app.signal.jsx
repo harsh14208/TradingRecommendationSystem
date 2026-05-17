@@ -1,7 +1,20 @@
 /* ─── Signal row ────────────────────────────────────────────────────────────── */
-function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend, onSkip, suppressed, tickerHistory }) {
+function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend, onSkip,
+                    suppressed, outcomeByTicker, tickerHistory, allSignals }) {
   const up = (s.change || 0) >= 0;
   const conf = s.confidence || 0;
+
+  // Mini confidence sparkline from same-ticker-same-action signals already in feed.
+  // No extra API call — derives from the allSignals array already in memory.
+  const miniConf = useMemo(() => {
+    if (!allSignals) return null;
+    const prev = (allSignals || [])
+      .filter(x => x.ticker === s.ticker && x.action === s.action && x.id !== s.id)
+      .sort((a, b) => (a.ts || "").localeCompare(b.ts || ""))
+      .slice(-4)
+      .map(x => x.confidence || 0);
+    return prev.length >= 1 ? [...prev, conf] : null;
+  }, [allSignals, s.ticker, s.action, s.id, conf]);
   return (
     <div className={`signal${active?" active":""}${expanded?" expanded":""}${suppressed?" suppressed":""}`} onClick={onToggle}>
       <div className="signal-row-inner">
@@ -33,6 +46,25 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
             <span className="action-subtitle">· {ACTION_SUBTITLE[s.action]}</span>
           </div>
           <div className="signal-head">{s.headline}</div>
+          {/* Entry / Stop / Target chips — visible without expanding */}
+          {s.entry && !suppressed && (
+            <div style={{ display:"flex", gap:5, marginTop:3, flexWrap:"wrap" }}>
+              <span style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--text-faint)",
+                padding:"1px 5px", background:"var(--bg-3)", borderRadius:3, letterSpacing:"0.04em" }}>
+                E <strong style={{ color:"var(--text)" }}>${fmt(s.entry)}</strong>
+              </span>
+              {s.stop && <span style={{ fontFamily:"var(--font-mono)", fontSize:9,
+                padding:"1px 5px", background:"rgba(239,68,68,0.1)", borderRadius:3,
+                color:"var(--down)", letterSpacing:"0.04em" }}>
+                S ${fmt(s.stop)}
+              </span>}
+              {s.target && <span style={{ fontFamily:"var(--font-mono)", fontSize:9,
+                padding:"1px 5px", background:"rgba(16,185,129,0.1)", borderRadius:3,
+                color:"var(--up)", letterSpacing:"0.04em" }}>
+                T ${fmt(s.target)}
+              </span>}
+            </div>
+          )}
         </div>
         <div className="signal-right">
           <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:2 }}>
@@ -59,6 +91,21 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
                        border:"1px solid rgba(255,165,0,0.4)", marginLeft:2,
                        whiteSpace:"nowrap" }}>⚠ CALIB</span>
           )}
+          {/* Mini confidence sparkline — 5-point trend from same-ticker signals in memory */}
+          {miniConf && miniConf.length >= 2 && (() => {
+            const lo = Math.min(...miniConf), hi = Math.max(...miniConf, lo + 1);
+            const W = 28, H = 14;
+            const xs = i => (i / (miniConf.length - 1)) * W;
+            const ys = v => H - ((v - lo) / (hi - lo)) * H;
+            const d = miniConf.map((v,i) => `${i===0?"M":"L"}${xs(i).toFixed(1)} ${ys(v).toFixed(1)}`).join(" ");
+            const rising = miniConf[miniConf.length-1] >= miniConf[0];
+            return (
+              <svg viewBox={`0 0 ${W} ${H}`} style={{ width:W, height:H, flexShrink:0 }}
+                title={`Confidence trend: ${miniConf.map(c=>c.toFixed(0)).join(" → ")}%`}>
+                <path d={d} stroke={rising?"var(--up)":"var(--down)"} strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+              </svg>
+            );
+          })()}
           <span className="mono faint" title={fmtETFull(s.ts)}>
             {fmtETTime(s.ts).replace(" ET", "")}
           </span>
@@ -99,7 +146,7 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
             <button className="se-btn primary" onClick={() => { onOpen(); onFullDetail?.(); }}>Full detail →</button>
             <button className="se-btn" onClick={onSend}><Icon name="telegram" size={11}/> Telegram</button>
             <button className="se-btn" onClick={onSkip}><Icon name="clock" size={11}/> Skip</button>
-            <OutcomeStrip ticker={s.ticker} history={tickerHistory}/>
+            <OutcomeStrip ticker={s.ticker} outcomeByTicker={outcomeByTicker} history={tickerHistory}/>
           </div>
         </div>
       )}
