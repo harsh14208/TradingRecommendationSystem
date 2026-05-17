@@ -167,16 +167,21 @@ _DIFF_SIGNAL_MAX_AGE_H = 2.0   # skip only if an active signal was created withi
 
 def _market_session() -> str:
     """Return the current US market session: pre, regular, after, or closed."""
-    t = datetime.now(_ET).time()
+    now_et = datetime.now(_ET)
+    if now_et.weekday() >= 5:
+        return "closed"
+    t = now_et.time()
     if dtime(4, 0) <= t < dtime(9, 30):   return "pre"
     if dtime(9, 30) <= t < dtime(16, 0):  return "regular"
     if dtime(16, 0) <= t < dtime(20, 0):  return "after"
     return "closed"
 
 def _market_hours_ok() -> bool:
-    """Return True during NYSE trading hours (9:30–15:55 ET)."""
-    now_et = datetime.now(_ET).time()
-    return dtime(9, 30) <= now_et <= dtime(15, 55)
+    """Return True during NYSE trading hours (9:30–15:55 ET, Mon–Fri only)."""
+    now_et = datetime.now(_ET)
+    if now_et.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        return False
+    return dtime(9, 30) <= now_et.time() <= dtime(15, 55)
 
 
 async def _get_scan_tickers(settings) -> list[str]:

@@ -197,6 +197,20 @@ class TestMarketHoursOk:
         result = self._call_hours_ok(_mock_scanner_imports, _et_dt(17, 0))
         assert result is False
 
+    def test_saturday_during_trading_time_returns_false(self, _mock_scanner_imports):
+        """Saturday 10:00 ET → closed even though time is within 9:30–15:55."""
+        ET = pytz.timezone("America/New_York")
+        saturday = ET.localize(datetime(2024, 1, 13, 10, 0))  # 2024-01-13 is a Saturday
+        result = self._call_hours_ok(_mock_scanner_imports, saturday)
+        assert result is False
+
+    def test_sunday_during_trading_time_returns_false(self, _mock_scanner_imports):
+        """Sunday 13:00 ET → closed even though time is within 9:30–15:55."""
+        ET = pytz.timezone("America/New_York")
+        sunday = ET.localize(datetime(2024, 1, 14, 13, 0))  # 2024-01-14 is a Sunday
+        result = self._call_hours_ok(_mock_scanner_imports, sunday)
+        assert result is False
+
 
 # ── _pct (scanner) tests ───────────────────────────────────────────────────────
 
