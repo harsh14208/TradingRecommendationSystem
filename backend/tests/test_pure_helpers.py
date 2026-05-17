@@ -39,22 +39,22 @@ class TestBlend:
         assert _blend(3) > 0.0
 
     def test_at_n_full_returns_max_blend(self):
-        """_N_FULL (30) samples → blend == _MAX_BLEND (0.80)."""
-        assert _blend(30) == 0.80
+        """_N_FULL (20) samples → blend == _MAX_BLEND (0.90)."""
+        assert _blend(20) == 0.90
 
     def test_above_n_full_capped_at_max_blend(self):
-        """More than 30 samples → blend capped at 0.80."""
-        assert _blend(100) == 0.80
-        assert _blend(1000) == 0.80
+        """More than 20 samples → blend capped at 0.90."""
+        assert _blend(100) == 0.90
+        assert _blend(1000) == 0.90
 
     def test_intermediate_blend_value(self):
-        """15 samples → blend = min(0.80, 15/30) = 0.5."""
-        assert _blend(15) == pytest.approx(0.5)
+        """10 samples → blend = min(0.90, 10/20) = 0.50."""
+        assert _blend(10) == pytest.approx(0.50)
 
     def test_monotonic_increase(self):
         """Blend increases with n up to max."""
         prev = _blend(0)
-        for n in range(1, 31):
+        for n in range(1, 21):
             cur = _blend(n)
             assert cur >= prev
             prev = cur

@@ -1,5 +1,34 @@
 # Signal.Trade — Session Updates
 
+## 2026-05-17 — v5.6: Signal Lifecycle, Live UI, Send Quality & Test Suite Green
+
+### What this session fixed
+All tests now pass (597 passed, 0 failed). Core structural issues addressed:
+
+**Signal lifecycle**: Stop/target events were never tracked. Signals stayed "active" for 7 days regardless of whether the stop was hit on day 1. Now: `stop_monitor.py` checks live prices every 30 min, fires Telegram notifications, updates `hit_stop`/`hit_target`/`exit_type`, and deactivates the signal.
+
+**Automated nightly resolution**: `validate_predictions.py` was a manual script. Now: `_nightly_outcome_resolution()` runs at 2am ET every day via `asyncio.create_task` in `lifespan()`.
+
+**Send quality**: Three new gates in `_maybe_send()`:
+1. Pre-earnings blackout (2 days before)
+2. Sector concentration (max 2 BUY/sector/24h)
+3. Ticker-adaptive confidence floor (based on historical win rate)
+
+**Calibration**: Isotonic regression added alongside Platt. Learns the actual score→probability curve non-parametrically.
+
+**UI**: Live WebSocket price in detail hero (updates from tick messages). Chart on Why tab first. Entry/Stop/Target chips in collapsed card. Mini 5-point confidence sparkline in feed. Exit type as primary outcome in HistoryView.
+
+**Test bug**: `_is_lev_etf` was referenced inside `_assemble_signal()` without being a parameter — worked in production (called from `generate_signal`'s scope through the module's scoring body but not really as closure) but failed when tests called `_assemble_signal` directly. Fixed by adding `_is_lev_etf: bool = False` as an explicit parameter.
+
+### Git
+```
+904bc22  feat: 15 signal quality + UI improvements — lifecycle, calibration, live UI
+6e8b25d  feat(ui): 10 UI optimizations — performance, workflow, mobile, information architecture
+341414b  fix: correct signal quality measurement — friction, dedup, regime gates, send quality
+```
+
+---
+
 ## 2026-05-16 — v5.5: Validation-Driven Fixes, Quant Features & Leveraged ETF Tracker
 
 ### Context

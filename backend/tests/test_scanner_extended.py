@@ -55,7 +55,9 @@ def _sig(action="BUY", ticker="AAPL", confidence=75.0, price=150.0,
         stop=stop,
         headline="Test headline",
         rr="2.5",
-        sources=[],
+        # Include a non-technical source so the source-independence gate passes
+        # (position signals need ≥2, swing signals need ≥1 non-TA source)
+        sources=["Technical", "Macro"],
         rationale=[],
     )
     base.update(extra)
@@ -206,23 +208,35 @@ class TestMaybeSend:
 
     @pytest.mark.asyncio
     async def test_successful_buy_send_marks_row_as_sent(self):
-        """Happy-path: no cooldown, market hours OK → is_sent=True."""
-        no_cooldown_result = MagicMock()
-        no_cooldown_result.scalar_one_or_none.return_value = None
+        """Happy-path: no cooldown, market hours OK → is_sent=True.
+        DB query order (post-refactor):
+          1. daily-cap check        → scalar_one_or_none=None (no send today)
+          2. sector concentration   → scalar_one()=0 (if sector is set)
+          3. loss-streak check      → scalars().all()=[]
+          4. 24h cooldown           → scalar_one_or_none=None
+        """
+        no_result = MagicMock()
+        no_result.scalar_one_or_none.return_value = None
+        no_result.scalar_one.return_value = 0
 
         streak_result = MagicMock()
         streak_scalars = MagicMock()
         streak_scalars.all.return_value = []
         streak_result.scalars.return_value = streak_scalars
+        streak_result.scalar_one_or_none.return_value = None
+        streak_result.scalar_one.return_value = 0
 
         db = AsyncMock()
         call_count = [0]
 
         async def _execute(_stmt):
             call_count[0] += 1
-            if call_count[0] == 1:
+            # Call 1: daily-cap OR sector concentration → no previous send
+            # Call 2: loss-streak → empty list
+            # Call 3+: cooldown → no previous send
+            if call_count[0] == 2:
                 return streak_result
-            return no_cooldown_result
+            return no_result
 
         db.execute = _execute
         db.add = MagicMock()
@@ -246,22 +260,25 @@ class TestMaybeSend:
     @pytest.mark.asyncio
     async def test_send_log_added_after_successful_send(self):
         """A SendLog row must be added to the session on success."""
-        no_cooldown_result = MagicMock()
-        no_cooldown_result.scalar_one_or_none.return_value = None
+        no_result = MagicMock()
+        no_result.scalar_one_or_none.return_value = None
+        no_result.scalar_one.return_value = 0
 
         streak_result = MagicMock()
         streak_scalars = MagicMock()
         streak_scalars.all.return_value = []
         streak_result.scalars.return_value = streak_scalars
+        streak_result.scalar_one_or_none.return_value = None
+        streak_result.scalar_one.return_value = 0
 
         db = AsyncMock()
         call_count = [0]
 
         async def _execute(_stmt):
             call_count[0] += 1
-            if call_count[0] == 1:
+            if call_count[0] == 2:
                 return streak_result
-            return no_cooldown_result
+            return no_result
 
         db.execute = _execute
         added_objects = []

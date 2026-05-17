@@ -1,9 +1,10 @@
 # Signal.Trade — Development Progress
 
-> **Version: v5.5** · Updated: 2026-05-16 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v5.6** · Updated: 2026-05-17 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
 > ~210 tickers (incl. 52 leveraged ETFs) · 70+ signal blocks · 113 API endpoints · Max confidence: 72% (empirically calibrated)
 > **Data: Polygon.io (OHLCV + indicators + news + financials) · yfinance (fallback) · Massive WebSocket (dark pool) · FRED (macro + credit spreads)**
 > **Database: PostgreSQL 16 (Homebrew local) · 7,015 signals · 8 users**
+> **Tests: 597 passed, 0 failed (all test suites green after all refactoring)**
 
 
 What's Working
@@ -352,6 +353,37 @@ brew install flyctl && fly auth login && fly launch --no-deploy && fly deploy
 ---
 
 ## ✅ Implemented
+
+### v5.6 (2026-05-17) — Signal Lifecycle, Calibration, Live UI & Send Quality Gates
+
+**Signal lifecycle (closed the biggest gap — signals now have a beginning, middle, and end):**
+- [x] **`services/stop_monitor.py` (new)** — intraday stop/target monitor runs every 30 min Mon–Fri 09:30–16:15 ET. Fetches live prices for all active sent signals. Marks `hit_stop`, `hit_target`, `exit_type` in DB. Fires Telegram: "✅ TARGET HIT: AMD BUY — price $183.50 hit target $183.00. +4.4%" or "⛔ STOP HIT: META BUY — price $417.50 breached stop $428.00. -2.4%". Deactivates signal. Previously signals stayed "active" for 7 days regardless of what actually happened.
+- [x] **`_nightly_outcome_resolution()` in main.py** — scheduled 2am ET daily. Calls `resolve_outcomes()` + `resolve_mae_mfe()` + `run_calibration()` automatically. Previously calibration.json went stale because the resolve script required a manual run.
+- [x] **`_intraday_stop_monitor()` in main.py** — registers stop monitor as a background task at startup. Both jobs registered in `lifespan()` via `asyncio.create_task`.
+
+**Calibration upgrade:**
+- [x] **Isotonic regression** — fitted alongside Platt calibration in `calibration.py` when scikit-learn is available. Non-parametric: learns the actual shape of score→probability relationship. Stored as `_isotonic` in calibration.json. `apply_calibration()` uses isotonic interpolation when ≥30 training samples, falls back to Platt bin-blend.
+
+**Send quality gates (scanner.py `_maybe_send`):**
+- [x] **Pre-earnings hard blackout** — no BUY/SELL sent within 2 days of earnings (`daysToEarnings ≤ 2`). Prevents IV crush, gap-through-stop, and analyst pre-positioning distortions.
+- [x] **Sector concentration limit** — max 2 BUY signals per SPDR sector ETF per rolling 24h. Prevents sending NVDA + AMD + SOXL + MU as "4 signals" when they're one correlated market view.
+- [x] **Ticker-adaptive confidence floor** — tickers with historical win rate <45% require ≥68% confidence to send; high-win-rate (≥75%) tickers use a relaxed 52% floor. Reads from `adaptive_weights.ticker_win_rates` cached per scan cycle.
+
+**Signal card UX (app.signal.jsx):**
+- [x] **Entry/Stop/Target chips in collapsed card** — traders see levels (E $175.40 · S $171.00 · T $183.00) without expanding. Green for target, red for stop. Was previously hidden behind a click.
+- [x] **Mini confidence sparkline** — 5-point trend inline in every collapsed card. Derived from same-ticker-same-action signals already in memory (zero extra API calls). Rising = green, falling = red.
+
+**Detail pane (app.jsx):**
+- [x] **Live WebSocket price in hero** — `livePrice` derived from `tickerTape` state updated by WS tick handler. Shows current price vs entry and calculates "X% above stop". Falls back to static scan-time price gracefully.
+- [x] **Chart on Why tab** — LightweightCharts OHLCV chart with entry/stop/target lines moved to top of Why tab. First thing visible after selecting a signal, before rationale cards.
+
+**HistoryView (app.views.jsx):**
+- [x] **Exit type as primary outcome** — TARGET (green) / STOP (red) / TIME (amber) badge is now column 6, before the raw return. A signal that hit stop at -8% and recovered to +1% by day 7 correctly shows as STOP red, not a +1% win.
+
+**Test suite (all tests green after refactoring):**
+- [x] **`_assemble_signal` parameter fix** — `_is_lev_etf` added as explicit keyword parameter (was accidentally accessed as closure variable from `generate_signal`'s scope, causing NameError when tests called `_assemble_signal` directly).
+- [x] **Test updates** — `TestBlend` updated to `_MAX_BLEND=0.90, _N_FULL=20`; `TestBestOutcome` updated to expect `outcome_14d` first; `TestMaybeSend` mocks updated for new daily-cap + source-independence query order; `_sig()` helper given non-technical source so independence gate passes.
+- [x] **597 passed, 0 failed** — all test suites green.
 
 ### v5.5 (2026-05-16) — Validation-Driven Fixes, Quant Features & Leveraged ETF Tracker
 

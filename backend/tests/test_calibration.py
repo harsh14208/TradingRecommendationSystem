@@ -12,13 +12,13 @@ from services.calibration import _blend, apply_calibration
 def test_blend():
     # Under minimum requirements returns 0
     assert _blend(2) == 0.0
-    
-    # Reaches 50% max blend at 15 items
-    assert _blend(15) == 0.5
-    
-    # Caps at 80% weight regardless of high numbers
-    assert _blend(30) == 0.8
-    assert _blend(50) == 0.8
+
+    # Reaches 50% blend at 10 items (min(0.90, 10/20) = 0.50), N_FULL=20, MAX_BLEND=0.90
+    assert _blend(10) == pytest.approx(0.50)
+
+    # Caps at 90% weight regardless of high numbers
+    assert _blend(20) == 0.90
+    assert _blend(50) == 0.90
 
 def test_apply_calibration():
     cal_map = {

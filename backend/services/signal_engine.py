@@ -312,6 +312,7 @@ def _assemble_signal(
     earnings_cal: dict,
     sector_rs: Optional[dict],
     days_to_earnings: Optional[int],
+    _is_lev_etf: bool = False,
 ) -> Optional[dict]:
     """
     Apply risk gates, calibrate confidence, derive style, and build
@@ -528,7 +529,8 @@ def _assemble_signal(
     # regime where individual-stock technical signals become unreliable — everything
     # moves together, fundamentals don't matter, and BUY signals systematically fail.
     # Hard-gate to HOLD; SELL signals remain valid (trend is your friend in stress).
-    _stlfsi_gate = (_macro_now.get("stlfsi") if _macro_now else None)
+    _gate_macro   = (market_ctx or {}).get("macro") or {}
+    _stlfsi_gate  = _gate_macro.get("stlfsi")
     if (action == "BUY"
             and _stlfsi_gate is not None and _stlfsi_gate > 1.5
             and vix is not None and vix > 30):
@@ -4219,6 +4221,7 @@ async def generate_signal(
             avg_sent=avg_sent, price=price, atr=atr,
             market_ctx=market_ctx, earnings_cal=earnings_cal,
             sector_rs=sector_rs, days_to_earnings=days_to_earnings,
+            _is_lev_etf=_is_lev_etf,
         )
 
     except Exception:

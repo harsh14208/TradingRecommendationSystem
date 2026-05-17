@@ -169,7 +169,8 @@ class TestAgeDays:
 
 class TestBestOutcome:
     """Tests for _best_outcome(sig) priority chain:
-    outcome_pct → outcome_14d → outcome_3d → outcome_1d → None
+    outcome_14d → outcome_pct → outcome_3d → outcome_1d → None
+    (14d is now preferred as it shows the most accurate long-horizon return)
     """
 
     def _make_sig(self, **kwargs):
@@ -185,18 +186,18 @@ class TestBestOutcome:
         sig = self._make_sig()
         assert _best_outcome(sig) is None
 
-    def test_outcome_pct_preferred_first(self):
-        """outcome_pct is the most mature, returned first."""
+    def test_outcome_14d_preferred_first(self):
+        """outcome_14d is the most mature horizon, returned first when set."""
         sig = self._make_sig(outcome_pct=7.5, outcome_14d=14.0, outcome_3d=3.0, outcome_1d=1.0)
-        assert _best_outcome(sig) == 7.5
-
-    def test_outcome_14d_fallback(self):
-        """When outcome_pct is None, falls back to outcome_14d."""
-        sig = self._make_sig(outcome_pct=None, outcome_14d=14.0, outcome_3d=3.0, outcome_1d=1.0)
         assert _best_outcome(sig) == 14.0
 
+    def test_outcome_pct_fallback(self):
+        """When outcome_14d is None, falls back to outcome_pct (7d)."""
+        sig = self._make_sig(outcome_pct=7.5, outcome_14d=None, outcome_3d=3.0, outcome_1d=1.0)
+        assert _best_outcome(sig) == 7.5
+
     def test_outcome_3d_fallback(self):
-        """When outcome_pct and outcome_14d are None, falls back to outcome_3d."""
+        """When outcome_14d and outcome_pct are None, falls back to outcome_3d."""
         sig = self._make_sig(outcome_pct=None, outcome_14d=None, outcome_3d=3.5, outcome_1d=1.0)
         assert _best_outcome(sig) == 3.5
 
