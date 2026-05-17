@@ -210,9 +210,11 @@ async def get_macro_context() -> dict:
         from config import get_settings
         key = get_settings().fred_api_key
         if key:
-            fed_rate, cpi = await asyncio.gather(
-                _fred("FEDFUNDS", key),
-                _fred("CPIAUCSL", key),
+            fed_rate, cpi, hy_spread, ig_spread = await asyncio.gather(
+                _fred("FEDFUNDS",       key),
+                _fred("CPIAUCSL",       key),
+                _fred("BAMLH0A0HYM2",   key),   # ICE BofA US HY OAS spread (%)
+                _fred("BAMLC0A0CM",     key),   # ICE BofA US IG OAS spread (%)
             )
             if fed_rate is not None:
                 result["fed_funds"] = fed_rate
@@ -227,6 +229,56 @@ async def get_macro_context() -> dict:
                     score += 5
             if cpi is not None:
                 result["cpi"] = cpi
+
+            # ── HY credit spread (BAMLH0A0HYM2) ─────────────────────────────
+            # Credit markets lead equities. Spread > 450bps = financial stress;
+            # < 300bps = risk-on. This is more direct than the HYG ETF price proxy.
+            if hy_spread is not None:
+                result["hy_spread"] = hy_spread
+                if hy_spread > 600:
+                    score -= 10
+                    rationale.append({
+                        "src": "FRED",
+                        "head": f"HY Credit Spread Crisis — {hy_spread:.0f}bps",
+                        "body": (f"ICE BofA US High Yield spread at {hy_spread:.0f}bps — crisis territory "
+                                 f"(>600bps). Credit markets are pricing severe default risk. Historical "
+                                 "precedent: COVID peak 1100bps, GFC peak 2100bps. Avoid directional BUY."),
+                        "sentiment": "neg", "meta": f"BAMLH0A0HYM2 = {hy_spread:.0f}bps",
+                    })
+                elif hy_spread > 450:
+                    score -= 5
+                    rationale.append({
+                        "src": "FRED",
+                        "head": f"HY Credit Spread Elevated — {hy_spread:.0f}bps",
+                        "body": (f"ICE BofA HY spread at {hy_spread:.0f}bps — above the 450bps stress "
+                                 "threshold. Credit markets are pricing meaningful risk-off sentiment. "
+                                 "BUY signals face macro headwind."),
+                        "sentiment": "neg", "meta": f"BAMLH0A0HYM2 = {hy_spread:.0f}bps",
+                    })
+                elif hy_spread < 300:
+                    score += 4
+                    rationale.append({
+                        "src": "FRED",
+                        "head": f"HY Credit Spread Tight — {hy_spread:.0f}bps (Risk-On)",
+                        "body": (f"ICE BofA HY spread at {hy_spread:.0f}bps — well below the 300bps "
+                                 "threshold. Tight credit spreads signal strong investor risk appetite "
+                                 "and low default expectations. Supportive macro backdrop for equities."),
+                        "sentiment": "pos", "meta": f"BAMLH0A0HYM2 = {hy_spread:.0f}bps",
+                    })
+
+            # ── IG credit spread (BAMLC0A0CM) ────────────────────────────────
+            if ig_spread is not None:
+                result["ig_spread"] = ig_spread
+                if ig_spread > 200:
+                    score -= 4
+                    rationale.append({
+                        "src": "FRED",
+                        "head": f"IG Credit Spread Stressed — {ig_spread:.0f}bps",
+                        "body": (f"Investment-grade spread at {ig_spread:.0f}bps — elevated above the "
+                                 "200bps stress threshold. Even high-quality corporate borrowers face "
+                                 "higher funding costs, signalling broad macro caution."),
+                        "sentiment": "neg", "meta": f"BAMLC0A0CM = {ig_spread:.0f}bps",
+                    })
     except Exception as e:
         print(f"[macro] FRED: {e}")
 

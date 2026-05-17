@@ -24,8 +24,8 @@ _DATA_DIR  = Path(__file__).parent.parent / "data"
 _CAL_FILE  = _DATA_DIR / "calibration.json"
 _BIN_SIZE  = 5          # pp width of each confidence bin
 _MIN_N     = 3          # minimum samples before blending activates
-_MAX_BLEND = 0.80       # never trust empirical data more than 80%
-_N_FULL    = 30         # samples at which blend reaches MAX_BLEND
+_MAX_BLEND = 0.90       # trust empirical data up to 90% (tightened from 80%)
+_N_FULL    = 20         # samples at which blend reaches MAX_BLEND (lowered from 30)
 
 
 def _blend(n: int) -> float:
@@ -46,10 +46,12 @@ async def run_calibration() -> dict:
 
         async with AsyncSessionLocal() as db:
             rows = (await db.execute(
-                select(Signal.action, Signal.confidence, Signal.outcome_pct)
+                select(Signal.action, Signal.confidence, Signal.outcome_14d, Signal.outcome_pct)
                 .where(Signal.is_sent    == True)
-                .where(Signal.outcome_pct.isnot(None))
                 .where(Signal.action.in_(["BUY", "SELL"]))
+                .where(
+                    (Signal.outcome_14d.isnot(None)) | (Signal.outcome_pct.isnot(None))
+                )
             )).all()
 
         if not rows:
@@ -57,8 +59,12 @@ async def run_calibration() -> dict:
             return {}
 
         # Bin → {wins, total}
+        # Prefer outcome_14d; fall back to outcome_pct (7d) when 14d not yet available.
         bins: dict[int, dict] = defaultdict(lambda: {"wins": 0, "total": 0})
-        for action, conf, pct in rows:
+        for action, conf, pct_14d, pct_7d in rows:
+            pct = pct_14d if pct_14d is not None else pct_7d
+            if pct is None:
+                continue
             b = (int(conf) // _BIN_SIZE) * _BIN_SIZE
             b = max(0, min(95, b))
             bins[b]["total"] += 1
@@ -111,7 +117,7 @@ def apply_calibration(
 
     Returns (calibrated_confidence, bin_meta) where bin_meta is the matching
     calibration entry dict (keys: win_rate, n, blend) or None if not applied.
-    Calibrated confidence is clamped to [35, 84].
+    Calibrated confidence is clamped to [35, 72].
     """
     if not cal_map or action not in ("BUY", "SELL"):
         return raw_conf, None
@@ -126,4 +132,4 @@ def apply_calibration(
     emp_wr_pct = entry["win_rate"] * 100
     blend      = entry["blend"]
     calibrated = emp_wr_pct * blend + raw_conf * (1.0 - blend)
-    return round(min(84.0, max(35.0, calibrated)), 1), entry
+    return round(min(72.0, max(35.0, calibrated)), 1), entry

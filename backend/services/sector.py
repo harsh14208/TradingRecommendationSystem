@@ -28,6 +28,11 @@ SECTOR_MAP: dict[str, str] = {
     "VRSK":"XLK","EPAM":"XLK","FSLR":"XLK","ENPH":"XLK","SEDG":"XLK",
     "TQQQ":"XLK","QQQ":"XLK","SSNLF":"XLK","PSTG":"XLK","HUBS":"XLK",
     "APP":"XLK","WDAY":"XLK","TTD":"XLK",  # ad-tech / enterprise SaaS
+    # Tech/Nasdaq leveraged — tracks QQQ/XLK/SOX
+    "SQQQ":"XLK","UPRO":"XLK","SPXL":"XLK","SPXS":"XLK","SPXU":"XLK",
+    "SOXL":"XLK","SOXS":"XLK","TECL":"XLK","TECS":"XLK",
+    "WEBL":"XLK","FNGU":"XLK","FNGD":"XLK",
+    "SSO":"XLK","SDS":"XLK","QLD":"XLK","QID":"XLK","ROM":"XLK","REW":"XLK",
     # ── Communication Services (XLC) — 52 stocks ─────────────────────────────
     "GOOGL":"XLC","GOOG":"XLC","META":"XLC","NFLX":"XLC","DIS":"XLC",
     "CMCSA":"XLC","T":"XLC","VZ":"XLC","TMUS":"XLC","CHTR":"XLC",
@@ -81,6 +86,8 @@ SECTOR_MAP: dict[str, str] = {
     "INCY":"XLV","HALO":"XLV","JAZZ":"XLV","IOVA":"XLV","NKTR":"XLV",
     "ARVN":"XLV","BEAM":"XLV","CRSP":"XLV","NTLA":"XLV","EDIT":"XLV",
     "BLUE":"XLV","FATE":"XLV","RARE":"XLV","RCKT":"XLV","VKTX":"XLV",
+    # Healthcare/biotech leveraged
+    "LABU":"XLV","LABD":"XLV",
     # ── Financials (XLF) — 68 stocks ─────────────────────────────────────────
     "JPM":"XLF","BAC":"XLF","WFC":"XLF","GS":"XLF","MS":"XLF",
     "C":"XLF","BLK":"XLF","BK":"XLF","STT":"XLF","SCHW":"XLF",
@@ -97,6 +104,13 @@ SECTOR_MAP: dict[str, str] = {
     "FI":"XLF","FIS":"XLF","FISV":"XLF","GPN":"XLF","WEX":"XLF",
     "FOUR":"XLF","EVTC":"XLF","RJF":"XLF","LPLA":"XLF","SF":"XLF",
     "EVR":"XLF","HLI":"XLF","JEF":"XLF","LAZ":"XLF","MC":"XLF",
+    # Financials leveraged
+    "FAS":"XLF","FAZ":"XLF","DPST":"XLF",
+    # Small-cap leveraged (IWM proxy — map to XLI as closest sector)
+    "TNA":"XLI","TZA":"XLI","UWM":"XLI","TWM":"XLI","SRTY":"XLI","MIDU":"XLI",
+    # Broad-market leveraged (S&P 500 proxies — map to SPY universe via XLK as lead sector)
+    "UPRO":"XLK","SPXL":"XLK","SPXS":"XLK","SPXU":"XLK","SSO":"XLK","SDS":"XLK",
+    "HIBL":"XLK","HIBS":"XLK","NAIL":"XLI",
     # ── Energy (XLE) — 55 stocks ─────────────────────────────────────────────
     "XOM":"XLE","CVX":"XLE","COP":"XLE","EOG":"XLE","SLB":"XLE",
     "PSX":"XLE","MPC":"XLE","VLO":"XLE","OXY":"XLE","DVN":"XLE",
@@ -109,6 +123,8 @@ SECTOR_MAP: dict[str, str] = {
     "CEIX":"XLE","ET":"XLE","EPD":"XLE","MPLX":"XLE","PAA":"XLE",
     "PAGP":"XLE","NS":"XLE","DKL":"XLE","CAPL":"XLE","HES":"XLE",
     "CPE":"XLE","PR":"XLE","MTUS":"XLE","PTEN":"XLE","HP":"XLE",
+    # Energy leveraged
+    "GUSH":"XLE","DRIP":"XLE","UCO":"XLE","SCO":"XLE",
     # ── Industrials (XLI) — 65 stocks ────────────────────────────────────────
     "GE":"XLI","HON":"XLI","MMM":"XLI","CAT":"XLI","DE":"XLI",
     "RTX":"XLI","LMT":"XLI","NOC":"XLI","GD":"XLI","BA":"XLI",
@@ -136,6 +152,8 @@ SECTOR_MAP: dict[str, str] = {
     "CDE":"XLB","HL":"XLB","PAAS":"XLB","MAG":"XLB","SA":"XLB",
     "EQX":"XLB","OR":"XLB","RGLD":"XLB","SCCO":"XLB","TECK":"XLB",
     "MT":"XLB","VALE":"XLB","RIO":"XLB","BHP":"XLB","ATI":"XLB",
+    # Gold miners leveraged (GDX/GDXJ proxies)
+    "NUGT":"XLB","DUST":"XLB","JNUG":"XLB","JDST":"XLB",
     # ── Real Estate (XLRE) — 55 stocks ───────────────────────────────────────
     "AMT":"XLRE","PLD":"XLRE","EQIX":"XLRE","CCI":"XLRE","PSA":"XLRE",
     "DLR":"XLRE","WELL":"XLRE","VTR":"XLRE","O":"XLRE","NNN":"XLRE",
@@ -148,6 +166,12 @@ SECTOR_MAP: dict[str, str] = {
     "COLD":"XLRE","IIPR":"XLRE","MPW":"XLRE","OHI":"XLRE","LTC":"XLRE",
     "HTA":"XLRE","SITC":"XLRE","REG":"XLRE","KIM":"XLRE","TRNO":"XLRE",
     "REXR":"XLRE","ELS":"XLRE","SUI":"XLRE","ADC":"XLRE","EPRT":"XLRE",
+    # Real estate leveraged
+    "DRN":"XLRE","DRV":"XLRE",
+    # China leveraged (no direct sector ETF — use XLC as closest)
+    "YINN":"XLC","YANG":"XLC",
+    # Treasury leveraged (bond proxies — use XLU as most rate-sensitive)
+    "TMF":"XLU","TMV":"XLU",
     # ── Utilities (XLU) — 55 stocks ──────────────────────────────────────────
     "NEE":"XLU","DUK":"XLU","SO":"XLU","D":"XLU","AEP":"XLU",
     "EXC":"XLU","SRE":"XLU","PCG":"XLU","ED":"XLU","XEL":"XLU",

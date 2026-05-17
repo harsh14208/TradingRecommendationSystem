@@ -82,7 +82,7 @@ def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
     # score=25→~55%, score=40→~63%, score=60→~71%, score=90→~80%, score=150→~84%
     agreement_bonus = min(4.0, agreement * 0.35)  # slightly reduced agreement bonus
     raw = 40.0 + 44.0 * (1.0 - math.exp(-abs_s / 65.0)) + agreement_bonus
-    confidence = round(min(84.0, raw), 1)   # hard ceiling: 84% max to prevent overconfidence
+    confidence = round(min(72.0, raw), 1)   # hard ceiling: 72% max — empirical data shows 75-84% signals win at only 48-50%
     # Thresholds are asymmetric by design: the scoring system has a structural bullish
     # bias (~+13 pts) from analyst consensus, large-cap fundamentals, and bull-market
     # technicals. Raising the BUY bar to 35 and lowering the SELL bar to -18 corrects
@@ -120,6 +120,67 @@ _TIMEFRAME = {
     "swing":    ("over the next 2–10 trading days",           "2–10 days"),
     "position": ("over the coming weeks to months",           "Weeks–months"),
 }
+
+# Leveraged and inverse-leveraged ETFs. Scoring blocks that rely on company
+# fundamentals (Piotroski, FCF, earnings, insider Form 4, analyst EPS revisions,
+# 13F) are bypassed for these tickers because those signals don't apply to
+# daily-rebalancing derivative products. Technical and macro signals still run.
+# Style is capped at "swing" — holding beyond ~5 days incurs significant
+# volatility-decay drag that makes position-style targets unreliable.
+_LEVERAGED_ETFS: frozenset[str] = frozenset({
+    # ── 3× Bull ──────────────────────────────────────────────────────────────
+    "TQQQ",  # ProShares UltraPro QQQ
+    "UPRO",  # ProShares UltraPro S&P 500
+    "SPXL",  # Direxion Daily S&P 500 Bull 3×
+    "SOXL",  # Direxion Daily Semiconductor Bull 3×
+    "TECL",  # Direxion Daily Technology Bull 3×
+    "FAS",   # Direxion Daily Financial Bull 3×
+    "TNA",   # Direxion Daily Small Cap Bull 3×
+    "LABU",  # Direxion Daily S&P Biotech Bull 3×
+    "WEBL",  # Direxion Daily Dow Jones Internet Bull 3×
+    "FNGU",  # MicroSectors FANG+ Index 3× Leveraged
+    "NAIL",  # Direxion Daily Homebuilders & Supplies Bull 3×
+    "DPST",  # Direxion Daily Regional Banks Bull 3×
+    "YINN",  # Direxion Daily FTSE China Bull 3×
+    "DRN",   # Direxion Daily Real Estate Bull 3×
+    "TMF",   # Direxion Daily 20+ Year Treasury Bull 3×
+    "HIBL",  # Direxion Daily S&P 500 High Beta Bull 3×
+    "MIDU",  # Direxion Daily Mid Cap Bull 3×
+    "WANT",  # Direxion Daily Consumer Discretionary Bull 3×
+    "CURE",  # Direxion Daily Healthcare Bull 3×
+    "INDL",  # Direxion Daily MSCI India Bull 2×
+    "GUSH",  # Direxion Daily S&P Oil & Gas E&P Bull 2×
+    "NUGT",  # Direxion Daily Gold Miners Bull 2×
+    "JNUG",  # Direxion Daily Junior Gold Miners Bull 2×
+    "UCO",   # ProShares Ultra DJ-AIG Crude Oil 2×
+    "SSO",   # ProShares Ultra S&P 500 2×
+    "QLD",   # ProShares Ultra QQQ 2×
+    "ROM",   # ProShares Ultra Technology 2×
+    "UWM",   # ProShares Ultra Russell2000 2×
+    # ── 3× Bear / Inverse ────────────────────────────────────────────────────
+    "SQQQ",  # ProShares UltraPro Short QQQ
+    "SPXS",  # Direxion Daily S&P 500 Bear 3×
+    "SPXU",  # ProShares UltraPro Short S&P 500
+    "SOXS",  # Direxion Daily Semiconductor Bear 3×
+    "TECS",  # Direxion Daily Technology Bear 3×
+    "FAZ",   # Direxion Daily Financial Bear 3×
+    "TZA",   # Direxion Daily Small Cap Bear 3×
+    "LABD",  # Direxion Daily S&P Biotech Bear 3×
+    "FNGD",  # MicroSectors FANG+ Index −3× Inverse
+    "YANG",  # Direxion Daily FTSE China Bear 3×
+    "DRV",   # Direxion Daily Real Estate Bear 3×
+    "TMV",   # Direxion Daily 20+ Year Treasury Bear 3×
+    "HIBS",  # Direxion Daily S&P 500 High Beta Bear 3×
+    "SRTY",  # ProShares UltraPro Short Russell2000
+    "DRIP",  # Direxion Daily S&P Oil & Gas E&P Bear 2×
+    "DUST",  # Direxion Daily Gold Miners Bear 2×
+    "JDST",  # Direxion Daily Junior Gold Miners Bear 2×
+    "SCO",   # ProShares UltraShort DJ-AIG Crude Oil 2×
+    "SDS",   # ProShares UltraShort S&P 500 2×
+    "QID",   # ProShares UltraShort QQQ 2×
+    "REW",   # ProShares UltraShort Technology 2×
+    "TWM",   # ProShares UltraShort Russell2000 2×
+})
 
 def _make_plain_english(action: str, ticker: str, style: str, rationale: list,
                          confidence: float, entry, stop, target) -> dict:
@@ -363,6 +424,60 @@ def _assemble_signal(
             "sentiment": "neg",
             "meta": f"ATR%: {atr_pct*100:.2f}% | Score: {score:.1f} | Macro: {_macro_score_now:+.0f}"})
 
+    # ── Defensive-ticker BUY gate ────────────────────────────────────────
+    # Tickers that showed 0% BUY win rate across ≥3 resolved signals in the
+    # May 2026 validation (n=529). These span low-vol defensives, banks, and
+    # consumer staples where momentum signals structurally misfire.
+    # The ATR gate above catches KO/PEP/T; this gate covers higher-ATR names
+    # (BAC, C, USB, PNC, TGT, etc.) that slip past the ATR threshold.
+    _DEFENSIVE_BUY_BLOCK = {
+        "BAC", "KO", "PEP", "T", "NEE", "PG", "USB", "PNC", "C", "TGT",
+        "AIG", "WM", "MCO", "TT", "DE", "TJX",
+    }
+    if action == "BUY" and ticker in _DEFENSIVE_BUY_BLOCK:
+        action = "HOLD"
+        sources.add("Risk Gate")
+        rationale.append({"src": "Risk Gate",
+            "head": f"Defensive-Ticker BUY Gate — {ticker} 0% BUY Win Rate (n≥3)",
+            "body": (f"{ticker} has shown a 0% BUY win rate across validated signals. "
+                     "Momentum and technical breakout signals structurally misfire on this "
+                     "ticker — the price action is mean-reverting or macro-driven rather than "
+                     "trend-following. BUY gated to HOLD until a re-validation shows positive edge."),
+            "sentiment": "neg",
+            "meta": f"Ticker: {ticker} | Validation: 0% BUY win rate | Gate: defensive_ticker_block"})
+
+    # ── Leveraged / inverse-leveraged ETF disclosure ─────────────────────
+    # Always fire for any leveraged ETF signal, regardless of action.
+    # Fundamentals, earnings, and insider scoring are already bypassed upstream;
+    # this card surfaces the decay risk to the user and confirms the bypass.
+    if ticker in _LEVERAGED_ETFS:
+        _lev_bull = ticker not in {
+            "SQQQ","SPXS","SPXU","SOXS","TECS","FAZ","TZA","LABD",
+            "FNGD","YANG","DRV","TMV","HIBS","SRTY","DRIP","DUST",
+            "JDST","SCO","SDS","QID","REW","TWM",
+        }
+        _mult = "3×" if ticker not in {"GUSH","DRIP","NUGT","DUST","JNUG","JDST",
+                                        "UCO","SCO","SSO","SDS","QLD","QID",
+                                        "ROM","REW","UWM","TWM","INDL"} else "2×"
+        _dir  = "Bull" if _lev_bull else "Bear (Inverse)"
+        sources.add("Risk Gate")
+        rationale.append({"src": "Risk Gate",
+            "head": f"{_mult} Leveraged ETF — {_dir} | Hold ≤5 Days",
+            "body": (
+                f"{ticker} is a {_mult} {_dir} leveraged ETF. Each 1% move in the "
+                f"underlying index produces approximately {_mult} in this ETF. "
+                "Key risks: (1) Volatility decay — daily rebalancing causes "
+                "compounding drag; a 10% round-trip in the underlying can cost "
+                "2–8% of NAV even if price returns to start. "
+                "(2) No fundamental scoring — P/E, FCF, earnings, insider activity, "
+                "and analyst revisions are not applicable and have been bypassed. "
+                "(3) Signals are based on technical and macro factors only. "
+                "Recommended maximum hold: swing (2–5 trading days). "
+                "Use position sizing of ⅓ or less vs an equivalent single-stock trade."
+            ),
+            "sentiment": "neg",
+            "meta": f"type=leveraged_etf | mult={_mult} | dir={'bull' if _lev_bull else 'bear'}"})
+
     # ── Bear + high-VIX hard BUY gate ───────────────────────────────────
     # The regime multiplier (×0.82) lowers the score but the BUY threshold
     # stays at ±35, so marginal signals still cross into BUY. In a confirmed
@@ -483,7 +598,7 @@ def _assemble_signal(
                 elif vix > 15:
                     vix_dampener = 0.85  # slightly elevated (mirrors 1.06× score boost boundary)
             wr_delta = round((win_rate - 0.50) * 16 * vix_dampener, 1)
-            confidence = round(min(84.0, max(35.0, confidence + wr_delta)), 1)
+            confidence = round(min(72.0, max(35.0, confidence + wr_delta)), 1)
             if abs(wr_delta) >= 3:
                 sources.add("Backtest")
                 direction_lbl = "boosted" if wr_delta > 0 else "reduced"
@@ -576,18 +691,16 @@ def _assemble_signal(
     if _inst_score > 10:
         _is_position = True
 
-    # ── Intraday style retired (2026-05-10) ──────────────────────────────
-    # Historical validation (n=210): intraday win rate = 44.5%, well below
-    # break-even after bid-ask spread and slippage. The underlying indicators
-    # (RSI oversold, BB touch, Williams %R) still carry real edge — they just
-    # need more time to resolve. Reclassifying as swing gives the signal the
-    # 3–7 day window where the model's actual edge lives (7d win rate = 64.1%).
-    # "intraday" style is no longer emitted. _is_intraday is kept for the
-    # position exclusion guard above so position-style is not assigned to
-    # mean-reversion setups that have a short thesis horizon.
-    if _is_position:
+    if _is_intraday:
+        style = "intraday"
+    elif _is_position:
         style = "position"
     else:
+        style = "swing"
+
+    # Leveraged/inverse ETFs accumulate volatility-decay drag beyond ~5 days.
+    # Position-style hold times are incompatible with daily-rebalancing products.
+    if _is_lev_etf and style == "position":
         style = "swing"
 
     entry, stop, target, rr = _levels(price, atr, action)
@@ -636,7 +749,7 @@ def _assemble_signal(
         elif excess > required_premium * 2:
             # Generous excess return — genuine edge over risk-free
             boost = min(5.0, excess * 0.3)
-            confidence = round(min(84.0, confidence + boost), 1)
+            confidence = round(min(72.0, confidence + boost), 1)
             sources.add("Macro")
             rationale.append({"src": "Macro",
                 "head": f"Strong Risk-Adjusted Return ({projected_pct:.1f}% target, {excess:.1f}pp above hurdle)",
@@ -735,11 +848,11 @@ def _assemble_signal(
         pass
 
     # Hard final ceiling — ensures no post-processing step (adaptive weights,
-    # yield dampener, factor mining boost) can push confidence above 84%.
-    # This ceiling is set by empirical calibration: signals above 84% have
-    # historically yielded only 50-67% actual win rates in this system.
+    # yield dampener, factor mining boost) can push confidence above 72%.
+    # Empirical calibration (May 2026, n=529): bands 75-84% win at only 48-50%,
+    # and 65-70% wins at only 56% — the model's real ceiling of predictive power.
     if action in ("BUY", "SELL"):
-        confidence = round(min(84.0, max(35.0, confidence)), 1)
+        confidence = round(min(72.0, max(35.0, confidence)), 1)
 
     # Final de-confliction safety (string-based warning heads can be brittle):
     # if we detect a known overbought/oversold warning head, apply a small
@@ -812,6 +925,7 @@ def _assemble_signal(
         "sectorEtf":           sector_rs["sector_etf"] if sector_rs else None,
         "rsVsSector":          sector_rs["rs_vs_sector"] if sector_rs else None,
         "plain_english":       plain_english,
+        "beta":                info.get("beta"),
     }
 
 
@@ -846,6 +960,18 @@ async def generate_signal(
             return None
         df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs, sector_rs = _fetched
         ext_hours = massive_sigs  # unified: both branches fetch get_extended_hours_data
+
+        # Leveraged/inverse ETFs: company fundamentals, earnings, and insider
+        # signals are meaningless — bypass them before any worker or scoring block
+        # uses them. Technical, macro, and options signals still score normally.
+        _is_lev_etf = ticker in _LEVERAGED_ETFS
+        if _is_lev_etf:
+            fundamentals = {}
+            earnings_cal  = {}
+            earnings_surp = {}
+            insider       = {}
+            analyst_recs  = {}
+            congress      = {}
 
         tech = calculate_indicators(df)
         if not tech or tech.get("price") is None:
@@ -1909,6 +2035,36 @@ async def generate_signal(
                                  f"Street is broadly negative on this stock."),
                         "sentiment": "neg",
                         "meta": f"SB:{sb} B:{b} H:{h} S:{s} SS:{ss}"})
+
+        # ── Analyst estimate revision momentum ───────────────────────────────
+        # Compare this month's bull/bear scores to last month's. Rising upgrades
+        # and falling downgrades are one of the most consistent documented alpha
+        # factors (SUE effect, earnings revision momentum). Revision data comes
+        # from the same Finnhub recommendation_trends call already made above —
+        # no additional API cost.
+        rev_pts = analyst_recs.get("revision_pts") if analyst_recs else None
+        if rev_pts is not None and abs(rev_pts) >= 2:
+            analyst_score += rev_pts
+            sources.add("Analyst")
+            bull_d = analyst_recs.get("bull_delta", 0)
+            bear_d = analyst_recs.get("bear_delta", 0)
+            rev_period = analyst_recs.get("revision_period", "prior month")
+            if rev_pts > 0:
+                rationale.append({"src": "Analyst",
+                    "head": f"Analyst Upgrade Momentum (+{rev_pts:.0f}pts vs {rev_period})",
+                    "body": (f"Bull score rose by {bull_d:+.0f} and bear score changed by {bear_d:+.0f} "
+                             f"vs {rev_period}. Rising upgrades with falling downgrades is one of the "
+                             "strongest documented equity alpha factors — price follows estimates."),
+                    "sentiment": "pos",
+                    "meta": f"rev_pts={rev_pts:+.0f} | bull_delta={bull_d:+.0f} | bear_delta={bear_d:+.0f}"})
+            else:
+                rationale.append({"src": "Analyst",
+                    "head": f"Analyst Downgrade Momentum ({rev_pts:.0f}pts vs {rev_period})",
+                    "body": (f"Bull score fell by {abs(bull_d):.0f} and bear score rose by {abs(bear_d):.0f} "
+                             f"vs {rev_period}. Analysts are cutting estimates — forward earnings are "
+                             "deteriorating. Negative revision momentum precedes price weakness."),
+                    "sentiment": "neg",
+                    "meta": f"rev_pts={rev_pts:+.0f} | bull_delta={bull_d:+.0f} | bear_delta={bear_d:+.0f}"})
 
         # ── Massive Analyst Intelligence (Bulls Bears Say + Guidance) ───────
         try:
@@ -3738,7 +3894,7 @@ async def scan_all(
                 sig["ticker"], sig["action"], signals_by_ticker
             )
             if adj != 0.0:
-                sig["confidence"] = round(max(35.0, min(84.0, sig["confidence"] + adj)), 1)
+                sig["confidence"] = round(max(35.0, min(72.0, sig["confidence"] + adj)), 1)
                 sentiment = "pos" if adj > 0 else "neg"
                 sig["rationale"] = list(sig.get("rationale", [])) + [{
                     "src":       "Sector",
@@ -3765,7 +3921,7 @@ async def scan_all(
                 # Convert score delta to confidence adjustment (capped ±4pp)
                 _conf_adj = max(-4.0, min(4.0, sc_delta * 0.5))
                 sig["confidence"] = round(
-                    max(35.0, min(84.0, sig["confidence"] + _conf_adj)), 1
+                    max(35.0, min(72.0, sig["confidence"] + _conf_adj)), 1
                 )
                 sig["rationale"] = list(sig.get("rationale", [])) + [{
                     "src":       "Fundamentals",
@@ -3778,6 +3934,46 @@ async def scan_all(
                     "meta":      f"supply_chain_propagation={sc_delta:+.1f}",
                 }]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Fundamentals"})
+    except Exception:
+        pass
+
+    # ── Cross-sectional universe ranking ──────────────────────────────────────
+    # Rank every directional signal by confidence within this scan cycle.
+    # Top decile (+3pp) and top quartile (+1.5pp) get a boost; bottom quartile
+    # and bottom decile receive symmetric penalties. This converts the engine
+    # from absolute scoring to relative scoring — what hedge funds actually use.
+    # Requires ≥10 directional signals to be meaningful; smaller batches skip.
+    try:
+        _dir = [s for s in signals if s.get("action") in ("BUY", "SELL")]
+        _n   = len(_dir)
+        if _n >= 10:
+            _sorted_idx = sorted(range(_n), key=lambda i: _dir[i]["confidence"])
+            for _rank_pos, _idx in enumerate(_sorted_idx):
+                sig  = _dir[_idx]
+                _pct = _rank_pos / (_n - 1)          # 0.0 = weakest, 1.0 = strongest
+                if _pct >= 0.90:
+                    _adj, _label = 3.0,  "Top decile"
+                elif _pct >= 0.75:
+                    _adj, _label = 1.5,  "Top quartile"
+                elif _pct <= 0.10:
+                    _adj, _label = -3.0, "Bottom decile"
+                elif _pct <= 0.25:
+                    _adj, _label = -1.5, "Bottom quartile"
+                else:
+                    continue
+                sig["confidence"] = round(max(35.0, min(72.0, sig["confidence"] + _adj)), 1)
+                _pctile_int = round(_pct * 100)
+                sig["rationale"] = list(sig.get("rationale", [])) + [{
+                    "src":       "Cross-Sectional",
+                    "head":      f"{_label} — {_pctile_int}th Percentile of {_n}-Signal Universe ({_adj:+.0f}pp)",
+                    "body":      (f"Ranked against today's full {_n}-ticker scan universe: {_pctile_int}th "
+                                  f"percentile. {_label} signals receive a {_adj:+.0f}pp confidence "
+                                  "adjustment — the same relative-strength principle used in cross-sectional "
+                                  "quant models to separate strongest from weakest setups each cycle."),
+                    "sentiment": "pos" if _adj > 0 else "neg",
+                    "meta":      f"universe_rank={_pctile_int}th | n={_n} | adj={_adj:+.0f}pp",
+                }]
+                sig["sources"] = sorted(set(sig.get("sources", [])) | {"Cross-Sectional"})
     except Exception:
         pass
 

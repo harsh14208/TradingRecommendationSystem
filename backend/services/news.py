@@ -80,7 +80,7 @@ def _fetch_news(ticker: str, days: int) -> list[dict]:
 
 
 def _fetch_analyst_recs(ticker: str) -> dict:
-    """Return latest Finnhub analyst buy/hold/sell consensus counts."""
+    """Return latest Finnhub analyst consensus + month-over-month revision momentum."""
     cached = _rec_cache.get(ticker)
     if cached and time.time() - cached[1] < REC_CACHE_TTL:
         return cached[0]
@@ -95,7 +95,7 @@ def _fetch_analyst_recs(ticker: str) -> dict:
         raw = client.recommendation_trends(ticker)
         if not raw:
             return {}
-        # Most recent period is first
+        # Most recent period is first; index 1 is prior month
         latest = raw[0]
         result = {
             "period":      latest.get("period", ""),
@@ -105,6 +105,27 @@ def _fetch_analyst_recs(ticker: str) -> dict:
             "sell":        latest.get("sell",       0),
             "strong_sell": latest.get("strongSell", 0),
         }
+
+        # ── Revision momentum: current month vs prior month ──────────────
+        # bull_score = strongBuy*2 + buy (weights conviction)
+        # bear_score = strongSell*2 + sell
+        if len(raw) >= 2:
+            prior = raw[1]
+            cur_bull  = latest.get("strongBuy", 0) * 2 + latest.get("buy", 0)
+            prior_bull = prior.get("strongBuy", 0) * 2  + prior.get("buy", 0)
+            cur_bear  = latest.get("strongSell", 0) * 2 + latest.get("sell", 0)
+            prior_bear = prior.get("strongSell", 0) * 2  + prior.get("sell", 0)
+            bull_delta = cur_bull  - prior_bull
+            bear_delta = cur_bear  - prior_bear
+
+            # Revision score: +ve = analysts upgrading, -ve = downgrading
+            # Cap at ±8 to avoid outsized effect from thin analyst coverage
+            rev_pts = max(-8, min(8, bull_delta - bear_delta))
+            result["revision_pts"]    = rev_pts
+            result["revision_period"] = prior.get("period", "")
+            result["bull_delta"]      = bull_delta
+            result["bear_delta"]      = bear_delta
+
         _rec_cache[ticker] = (result, time.time())
         return result
     except Exception:

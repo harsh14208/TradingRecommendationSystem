@@ -44,8 +44,8 @@ def _age_days(sig: Signal) -> float:
 
 
 def _best_outcome(sig: Signal) -> float | None:
-    """Return the most mature available outcome."""
-    for f in ("outcome_pct", "outcome_14d", "outcome_3d", "outcome_1d"):
+    """Return the most mature available outcome (14d preferred)."""
+    for f in ("outcome_14d", "outcome_pct", "outcome_3d", "outcome_1d"):
         v = getattr(sig, f, None)
         if v is not None:
             return v
@@ -282,7 +282,7 @@ async def calibration_report():
     print(f"  {'-'*60}")
     for s in worst:
         ret = _best_outcome(s)
-        h = "7d" if s.outcome_pct is not None else "3d" if s.outcome_3d is not None else "1d"
+        h = "14d" if s.outcome_14d is not None else "7d" if s.outcome_pct is not None else "3d" if s.outcome_3d is not None else "1d"
         dt = s.created_at.strftime("%Y-%m-%d") if s.created_at else "?"
         print(f"  {s.ticker:<7} {s.action:<6} {s.confidence:>5.1f}% {ret:>+7.2f}%  {dt}  ({h})")
 
@@ -293,7 +293,7 @@ async def calibration_report():
     print(f"  {'-'*60}")
     for s in best:
         ret = _best_outcome(s)
-        h = "7d" if s.outcome_pct is not None else "3d" if s.outcome_3d is not None else "1d"
+        h = "14d" if s.outcome_14d is not None else "7d" if s.outcome_pct is not None else "3d" if s.outcome_3d is not None else "1d"
         dt = s.created_at.strftime("%Y-%m-%d") if s.created_at else "?"
         print(f"  {s.ticker:<7} {s.action:<6} {s.confidence:>5.1f}% {ret:>+7.2f}%  {dt}  ({h})")
 

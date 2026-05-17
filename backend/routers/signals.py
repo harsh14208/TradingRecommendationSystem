@@ -1538,3 +1538,99 @@ async def export_signal_history(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/alpha-decay")
+async def alpha_decay(
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    min_n: int = Query(3, description="Minimum signals per source to include"),
+):
+    """
+    Alpha decay curve by signal source.
+
+    For each source that fired in resolved signals, returns the win rate and
+    average return at 1-day, 3-day, 7-day, and 14-day horizons. Reveals which
+    scoring families have short-lived vs durable edge — informs optimal hold time
+    per signal type.
+
+    Response shape:
+      { source: { n: int, h1d: {n,win_rate,avg_ret}, h3d: ..., h7d: ..., h14d: ... } }
+    """
+    import json as _json
+
+    _ck = "alpha_decay"
+    _cached = _cache_get(_ck)
+    if _cached is not None:
+        return _cached
+
+    rows = (await db.execute(
+        select(
+            Signal.sources,
+            Signal.action,
+            Signal.outcome_1d,
+            Signal.outcome_3d,
+            Signal.outcome_pct,
+            Signal.outcome_14d,
+        )
+        .where(Signal.is_sent == True)
+        .where(Signal.action.in_(["BUY", "SELL"]))
+        .where(
+            (Signal.outcome_1d.isnot(None))
+            | (Signal.outcome_3d.isnot(None))
+            | (Signal.outcome_pct.isnot(None))
+            | (Signal.outcome_14d.isnot(None))
+        )
+    )).all()
+
+    # Accumulate per-source stats at each horizon
+    from collections import defaultdict
+    stats: dict[str, dict] = defaultdict(lambda: {
+        "h1d":  {"wins": 0, "total": 0, "sum_ret": 0.0},
+        "h3d":  {"wins": 0, "total": 0, "sum_ret": 0.0},
+        "h7d":  {"wins": 0, "total": 0, "sum_ret": 0.0},
+        "h14d": {"wins": 0, "total": 0, "sum_ret": 0.0},
+        "n":    0,
+    })
+
+    for sources_raw, action, o1d, o3d, o7d, o14d in rows:
+        try:
+            srcs = _json.loads(sources_raw) if isinstance(sources_raw, str) else (sources_raw or [])
+        except Exception:
+            continue
+        if not srcs:
+            continue
+
+        for src in srcs:
+            s = stats[src]
+            s["n"] += 1
+            for horizon_key, outcome in [("h1d", o1d), ("h3d", o3d), ("h7d", o7d), ("h14d", o14d)]:
+                if outcome is None:
+                    continue
+                h = s[horizon_key]
+                h["total"] += 1
+                h["sum_ret"] += outcome
+                win = outcome > 0 if action == "BUY" else outcome < 0
+                if win:
+                    h["wins"] += 1
+
+    # Format output, filter by min_n
+    result = {}
+    for src, data in sorted(stats.items(), key=lambda x: -x[1]["n"]):
+        if data["n"] < min_n:
+            continue
+        entry: dict = {"n": data["n"]}
+        for hk in ("h1d", "h3d", "h7d", "h14d"):
+            h = data[hk]
+            if h["total"] == 0:
+                entry[hk] = None
+            else:
+                entry[hk] = {
+                    "n":        h["total"],
+                    "win_rate": round(h["wins"] / h["total"] * 100, 1),
+                    "avg_ret":  round(h["sum_ret"] / h["total"], 2),
+                }
+        result[src] = entry
+
+    _cache_set(_ck, result)
+    return result

@@ -456,14 +456,15 @@ async def _weekly_digest():
 
 async def _ensure_default_watchlist():
     """
-    Seed the watchlist with 149 tickers on first startup (or whenever fewer than
+    Seed the watchlist with ~200 tickers on first startup (or whenever fewer than
     20 are present, to recover from an accidental wipe).
 
-    Organised into four thematic tiers:
+    Organised into five thematic tiers:
       1. Mega-cap / S&P 100 core
       2. AI infrastructure & semiconductors (second-wave)
       3. Industrial rotation, commodities, real assets
       4. High-growth software / next-gen tech
+      5. Leveraged & inverse-leveraged ETFs (3× and 2×)
     """
     DEFAULT_TICKERS: list[str] = [
         # ── Mega-cap / S&P 100 core ──────────────────────────────────────────
@@ -491,6 +492,14 @@ async def _ensure_default_watchlist():
         "MDB","DDOG","NET",
         # ── Broad market & sector ETFs ───────────────────────────────────────
         "SPY","QQQ","IWM","TQQQ","XLK","XLF","XLE","XLI","XLV","XLC","XLP","XLRE","XLU","XLB",
+        # ── 3× Bull leveraged ETFs ───────────────────────────────────────────
+        "UPRO","SPXL","SOXL","TECL","FAS","TNA","LABU","WEBL","FNGU",
+        "NAIL","DPST","YINN","DRN","TMF","HIBL","MIDU","GUSH","NUGT","JNUG",
+        # ── 3× Bear / inverse leveraged ETFs ────────────────────────────────
+        "SQQQ","SPXS","SPXU","SOXS","TECS","FAZ","TZA","LABD","FNGD",
+        "YANG","DRV","TMV","HIBS","SRTY","DRIP","DUST","JDST",
+        # ── 2× leveraged (popular liquid pairs) ─────────────────────────────
+        "SSO","SDS","QLD","QID","UCO","SCO","ROM","UWM","TWM",
         # ── Previously-active custom ─────────────────────────────────────────
         "BLK","ELV","EBAY","PNC","USB","WM",
     ]
