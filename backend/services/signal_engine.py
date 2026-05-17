@@ -1176,16 +1176,21 @@ async def generate_signal(
             dominant = _osc_dom
 
         # ── MACD crossover + continuation ───────────────────────────────────
+        # Crossover (_macd_sd) and continuation state (_macd_td) both derive from
+        # the same MACD indicator. Both now route into trend_score so the family
+        # cap (±22) governs the total MACD contribution, not just the state part.
         _macd_sd, _macd_td, _macd_rat, _macd_dom = score_macd(hist, hist_p)
-        score += _macd_sd
+        trend_score += _macd_sd
         trend_score += _macd_td
         rationale.extend(_macd_rat)
         if _macd_dom:
             dominant = _macd_dom
 
         # ── EMA 8/21 Short-term Momentum ────────────────────────────────────
+        # EMA cross (_ema_sd) is another trend signal correlated with MACD cross —
+        # route into trend_score so both share the family cap.
         _ema_sd, _ema_td, _ema_rat = score_ema_cross(tech)
-        score += _ema_sd
+        trend_score += _ema_sd
         trend_score += _ema_td
         rationale.extend(_ema_rat)
 
@@ -1201,7 +1206,14 @@ async def generate_signal(
         # Mean-reversion signals (Bollinger, Z-score, pivot) still score normally.
         if not _is_low_atr:
             score += max(-22, min(22, volume_score)) * 0.85
-            score += max(-18, min(18, trend_score)) * 0.85
+            # trend cap raised ±18→±22: MACD cross + EMA cross now route here
+            # alongside MACD state + ADX, so the combined potential is higher.
+            score += max(-22, min(22, trend_score)) * 0.85
+        # Reset volume_score so the CMF section (lines ~2790+) fills it fresh.
+        # Without this reset, CMF contributions accumulate in volume_score but
+        # never get applied to score — a silent bug where CMF rationale cards
+        # appeared in the UI but had zero effect on the actual signal score.
+        volume_score = 0.0
 
         # ── Moving averages — all routed to ma_score family bucket ─────────
         # SMA200, SMA50, Golden/Death Cross, and EMA200 double-confirmation.
@@ -1311,11 +1323,13 @@ async def generate_signal(
                 "sentiment": "neg",
                 "meta": f"RVOL {vol_ratio:.2f}× | Avg {avg_vol:,}"})
         elif vol_ratio > 1.5:
-            bonus = 8 if score >= 0 else -8
-            score += bonus
+            # Routed into volume_score (not direct score) so it is capped alongside
+            # OBV/CMF — prevents 8 pts bypassing the volume family cap entirely.
+            _vol_conf = 8 if score >= 0 else -8
+            volume_score += _vol_conf
             rationale.append({"src": "Technical", "head": "High-Volume Confirmation",
                 "body": f"Volume {vol_ratio:.1f}× 20-day average — conviction behind the move.",
-                "sentiment": "pos" if bonus > 0 else "neg",
+                "sentiment": "pos" if _vol_conf > 0 else "neg",
                 "meta": f"Vol {volume:,} | Avg {avg_vol:,}"})
 
         # ── Short Interest (squeeze potential) ──────────────────────────
@@ -1364,12 +1378,32 @@ async def generate_signal(
                              "Rising price with heavy short interest can trigger forced short covering."),
                     "sentiment": "pos",
                     "meta": f"Short Float {short_float:.1f}%"})
+            elif short_float > 20 and dtc_ok and score < -10:
+                # Symmetric to the +12 squeeze BUY: high short interest with strong
+                # days-to-cover, but on a confirmed bearish signal = institutional
+                # conviction confirmation. Was previously asymmetric (only -5 pts).
+                score -= 12
+                sources.add("Short Interest")
+                rationale.append({"src": "Short Interest",
+                    "head": f"High Short Interest Confirms Bear — {short_float:.1f}% Float Short",
+                    "body": (f"{short_float:.1f}% of float is sold short with {short_ratio:.1f}d DTC. "
+                             "High institutional conviction backs the bearish thesis — significant "
+                             "short positioning rarely placed without fundamental justification."),
+                    "sentiment": "neg",
+                    "meta": f"Short Float {short_float:.1f}% | DTC {short_ratio:.1f}d"})
+            elif short_float > 20 and score < -10:
+                score -= 7
+                sources.add("Short Interest")
+                rationale.append({"src": "Short Interest",
+                    "head": f"Heavy Short Float Confirms Bear — {short_float:.1f}%",
+                    "body": f"{short_float:.1f}% of float is short — strong institutional conviction in the bearish thesis.",
+                    "sentiment": "neg", "meta": f"Short Float {short_float:.1f}%"})
             elif short_float > 15 and score < -5:
                 score -= 5
                 sources.add("Short Interest")
                 rationale.append({"src": "Short Interest",
-                    "head": f"Heavy Short Interest {short_float:.1f}%",
-                    "body": f"{short_float:.1f}% of float is short — high institutional conviction in bearish thesis.",
+                    "head": f"Elevated Short Interest {short_float:.1f}%",
+                    "body": f"{short_float:.1f}% of float is short — moderate institutional conviction in bearish thesis.",
                     "sentiment": "neg", "meta": f"Short Float {short_float:.1f}%"})
 
         # ── 52-Week Range Position ───────────────────────────────────────────
@@ -1645,26 +1679,31 @@ async def generate_signal(
                 momentum_score -= 4
 
         # ── RSI Divergence ───────────────────────────────────────────────
+        # Routed into osc_score (not direct score) so it competes with RSI level
+        # within the combined stretch cap — prevents +15 divergence on top of +20
+        # RSI-oversold stacking to the same family concept.
         rsi_div = tech.get("rsi_divergence")
         if rsi_div == "bullish":
-            score += 15; dominant = "rsi"
+            osc_score += 12; dominant = "rsi"
             rationale.append({"src": "Technical", "head": "Bullish RSI Divergence",
                 "body": "Price made a lower low but RSI made a higher low — momentum is recovering while price dips. Classic reversal warning.",
                 "sentiment": "pos", "meta": "RSI divergence: bullish"})
         elif rsi_div == "bearish":
-            score -= 15; dominant = "rsi"
+            osc_score -= 12; dominant = "rsi"
             rationale.append({"src": "Technical", "head": "Bearish RSI Divergence",
                 "body": "Price made a higher high but RSI made a lower high — momentum is fading while price rises. Classic exhaustion signal.",
                 "sentiment": "neg", "meta": "RSI divergence: bearish"})
 
         # ── MACD Zero-Line Cross ─────────────────────────────────────────
+        # Routed into trend_score (same family as MACD state/histogram) so all
+        # three MACD signals (crossover, state, zero-cross) share one cap.
         if tech.get("macd_zero_cross_up"):
-            score += 10
+            trend_score += 10
             rationale.append({"src": "Technical", "head": "MACD Crossed Zero — Trend Flipping Bullish",
                 "body": "MACD just crossed above zero. The underlying trend has shifted from bearish to bullish — stronger than a signal-line cross alone.",
                 "sentiment": "pos", "meta": f"MACD = {tech.get('macd', 0):.5f}"})
         elif tech.get("macd_zero_cross_down"):
-            score -= 10
+            trend_score -= 10
             rationale.append({"src": "Technical", "head": "MACD Crossed Zero — Trend Flipping Bearish",
                 "body": "MACD just crossed below zero. The underlying trend has shifted from bullish to bearish — stronger than a signal-line cross alone.",
                 "sentiment": "neg", "meta": f"MACD = {tech.get('macd', 0):.5f}"})
@@ -1711,8 +1750,9 @@ async def generate_signal(
             elif mfi > 70:
                 osc_score -= 4
 
-        # Apply oscillator group cap: max ±28 to prevent correlated over-counting
-        score += max(-28.0, min(28.0, osc_score))
+        # osc_score cap deferred: combined with mean_rev_score into a single
+        # "stretched price" bucket at the end of that section (see ±30 cap below).
+        # This prevents RSI oversold + Z-score oversold from stacking across two caps.
 
         # ── Weekly Multi-Timeframe RSI + SMA Confirmation ────────────────────
         # Weekly RSI < 40 AND daily RSI < 35 = double-confirmed oversold (72% win rate).
@@ -1722,8 +1762,7 @@ async def generate_signal(
             _w_sma20 = _poly_weekly.get("weekly_sma20")
             if _w_rsi is not None and rsi is not None:
                 if _w_rsi < 40 and rsi < 35:
-                    osc_score_adj = 8  # double-confirmed oversold — add directly (outside cap)
-                    score += osc_score_adj
+                    osc_score += 8  # double-confirmed oversold — into osc_score (capped in stretch bucket)
                     rationale.append({"src": "Technical",
                         "head": f"Double-Confirmed Oversold: Weekly RSI {_w_rsi:.1f} + Daily RSI {rsi:.1f}",
                         "body": (f"Weekly RSI ({_w_rsi:.1f}) and daily RSI ({rsi:.1f}) are both in oversold territory. "
@@ -1732,7 +1771,7 @@ async def generate_signal(
                         "sentiment": "pos",
                         "meta": f"W-RSI={_w_rsi:.1f} D-RSI={rsi:.1f}"})
                 elif _w_rsi > 70 and rsi > 65:
-                    score -= 6
+                    osc_score -= 6  # into osc_score (capped in stretch bucket)
                     rationale.append({"src": "Technical",
                         "head": f"Double-Confirmed Overbought: Weekly RSI {_w_rsi:.1f} + Daily RSI {rsi:.1f}",
                         "body": (f"Both weekly ({_w_rsi:.1f}) and daily ({rsi:.1f}) RSI are elevated. "
@@ -1779,11 +1818,14 @@ async def generate_signal(
             elif bb_pct_b > 0.95:
                 mean_rev_score -= 5
 
-        # Apply mean-reversion extremes bucket cap: BB touch + pivot + Z-score +
-        # BB squeeze all ask "is price statistically stretched?" — prevent stacking.
-        # 0.85 discount matches volume_score/trend_score: these signals overlap with
-        # osc_score (RSI oversold ↔ Z-score extreme ↔ BB lower touch).
-        score += max(-18, min(18, mean_rev_score)) * 0.85
+        # ── Combined "Stretched Price" cap (osc_score + mean_rev_score) ────────
+        # Oscillators (RSI, Stoch, Williams, CCI, MFI, divergence, weekly RSI) and
+        # mean-reversion (Z-score, BB touch/squeeze, BB%B, pivot) all ask the same
+        # question: "is price statistically stretched from its norm?"
+        # Applying two separate caps (±28 osc + ±18*0.85 mean_rev = up to ±43.3 pts)
+        # for what is conceptually one signal family was the largest stacking bug.
+        # Unified into a single ±30 cap with 0.85 corr-discount.
+        score += max(-30.0, min(30.0, osc_score + mean_rev_score)) * 0.85
 
         # ── Keltner Channels(20, 2×ATR) ──────────────────────────────────────
         kc_upper = tech.get("kc_upper")
@@ -2842,6 +2884,12 @@ async def generate_signal(
                 if cmf_prev is not None and cmf < cmf_prev - 0.05:
                     volume_score -= 2  # CMF accelerating downward
 
+        # Apply CMF volume_score cap (second application after reset above).
+        # CMF contributions are now capped at ±22 * 0.85 separately from the OBV
+        # block — both families cap at the same limit but cannot stack.
+        if not _is_low_atr:
+            score += max(-22, min(22, volume_score)) * 0.85
+
         # ── VWAP Liquidity Filter ────────────────────────────────────────────
         # Rolling 20-day VWAP is the institutional "cost basis" line for the period.
         # Price below VWAP means the average participant is underwater — a structural
@@ -2953,9 +3001,24 @@ async def generate_signal(
 
         # Apply momentum family bucket cap: ROC10 + streak + Donchian + price
         # structure + gap + RVOL all confirm the same directional momentum.
+        # ── Stretch / Momentum mutual exclusion ─────────────────────────────────
+        # Mean-reversion and trend-continuation are contradictory theses.
+        # When the stretched-price signal strongly dominates one direction, dampen
+        # momentum signals running counter to it — they're the cause of the stretch,
+        # not independent confirmation.  (0.4× instead of zero keeps a trace of the
+        # momentum context in the rationale and score, just not at full weight.)
+        _stretch_total = osc_score + mean_rev_score
+        if _stretch_total < -12 and momentum_score > 0:
+            # Strongly overbought (bearish stretch) but positive momentum: dampen
+            momentum_score *= 0.4
+        elif _stretch_total > 12 and momentum_score < 0:
+            # Strongly oversold (bullish stretch) but negative momentum: dampen
+            # (falling momentum created the oversold — don't let it double-penalise)
+            momentum_score *= 0.4
+
         # Low-ATR: skip momentum family — breakout/momentum signals invalid on range-bound stocks.
         if not _is_low_atr:
-            score += max(-18, min(18, momentum_score)) * 0.85
+            score += max(-26, min(26, momentum_score)) * 0.85
 
         # ── ADR Compression ──────────────────────────────────────────────────
         if tech.get("adr_compression"):
@@ -2976,7 +3039,9 @@ async def generate_signal(
             flip_to_bear = st_dir == -1 and st_dir_prev ==  1
             val_str      = f" ${st_val:.2f}" if st_val else ""
             if flip_to_bull:
-                score += 14; dominant = "macd"
+                # Routed into momentum_score so Supertrend competes within the
+                # momentum family cap (±26) alongside ROC, Donchian, streak, gap.
+                momentum_score += 14; dominant = "macd"
                 rationale.append({"src": "Technical",
                     "head": "Supertrend Bullish Flip ↑",
                     "body": (f"Supertrend(7,3) just flipped from bearish to bullish. "
@@ -2985,7 +3050,7 @@ async def generate_signal(
                     "sentiment": "pos",
                     "meta": f"Supertrend flipped BULLISH{val_str}"})
             elif flip_to_bear:
-                score -= 14; dominant = "macd"
+                momentum_score -= 14; dominant = "macd"
                 rationale.append({"src": "Technical",
                     "head": "Supertrend Bearish Flip ↓",
                     "body": (f"Supertrend(7,3) just flipped from bullish to bearish. "
@@ -2994,7 +3059,7 @@ async def generate_signal(
                     "sentiment": "neg",
                     "meta": f"Supertrend flipped BEARISH{val_str}"})
             elif st_dir == 1:
-                score += 6
+                momentum_score += 6
                 rationale.append({"src": "Technical",
                     "head": f"Supertrend Bullish — ATR Support{val_str}",
                     "body": (f"Supertrend(7,3) is in bullish mode. Price is above its ATR-based "
@@ -3002,7 +3067,7 @@ async def generate_signal(
                     "sentiment": "pos",
                     "meta": f"ST bullish{val_str}"})
             elif st_dir == -1:
-                score -= 6
+                momentum_score -= 6
                 rationale.append({"src": "Technical",
                     "head": f"Supertrend Bearish — ATR Resistance{val_str}",
                     "body": (f"Supertrend(7,3) is in bearish mode. Price is below its ATR-based "
