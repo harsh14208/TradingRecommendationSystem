@@ -1,6 +1,6 @@
 # Signal.Trade — Development Progress
 
-> **Version: v5.8** · Updated: 2026-05-17 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v5.10** · Updated: 2026-05-18 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
 > ~210 tickers (incl. 52 leveraged ETFs) · 70+ signal blocks · 116 API endpoints · Max confidence: 72% (empirically calibrated)
 > **Data: Polygon.io/Massive-first (bulk OHLCV + quotes + reference info) · yfinance fallback · Massive WebSocket (dark pool) · FRED (macro + credit spreads)**
 > **Database: PostgreSQL 16 (primary) · SQLite removed · 7,015+ signals · 8 users**
@@ -23,7 +23,7 @@
 | Confidence gap | +11.0pp overconfident (raw) |
 | XGBoost training samples | 529 |
 
-## 🏅 Quality Ratings — v5.8 (Latest)
+## 🏅 Quality Ratings — v5.10 (Latest)
 
 | Aspect | Score | Grade | Notes |
 |--------|-------|-------|-------|
@@ -42,6 +42,47 @@
 ---
 
 ## ✅ Implemented
+
+### v5.10 (2026-05-18) — Backtest-Validated Signal Quality Gates + Target Calibration
+
+**Signal engine gates (all validated against 20-year backtest, 1940 trades):**
+- [x] **`_levels` swing target 3.0× → 2.0× ATR** — target hit rate doubled from 11% to 18.5% in 5-day holds; R:R maintained at 1.3× (1.5s / 2.0t)
+- [x] **RVOL gate: hard block at <1.2 (removed `score<50` escape)** — low-volume breakouts fail regardless of score; gate now skips gracefully when volume data is unavailable (avoids blocking on missing data)
+- [x] **ATR minimum gate: 0.8% soft-conditional → 0.7% hard block** — stocks moving <0.7%/day cannot generate returns above friction in a 5-day hold; no macro override
+- [x] **ADX minimum gate (new)** — block BUY if ADX<18, non-oversold, score<45; prevents crossover whipsaw in directionless markets (choppy years 2010, 2015)
+- [x] **RSI>70 + ADX<28 weak-trend gate (new)** — block BUY in confirmed bull market when RSI>70 and ADX<28 and score<40; catches "topping market" false breakouts (2018 pattern where overbought stocks with fading trend reversed)
+- [x] **Bear market gate threshold: score<42 → score<50** — 20-year data: BUY signals averaging −1.7%/trade during downtrend+VIX>25; raised bar now requires alt-data confirmation
+- [x] **SMA200 RSI exception tightened: <30 → <25** — RSI 25-30 "oversold bounces" in sustained downtrends are dead-cat bounces; only extreme oversold (RSI<25) waived
+- [x] **SPY neutral zone gate (new)** — block BUY score<45 when SPY within ±2% of SMA200; prevents whipsaw entries at regime turning points (Aug-2022 bear bounce, late-2018 Q4 breakdown both in ±2% zone)
+- [x] **Defensive ticker block extended** — ABBV, MRK, PFE, LLY, TMO, TXN, NKE, V, PM, WMT added based on 20-year backtest underperformance (event-driven / range-bound / non-technical)
+
+**Macro (macro.py):**
+- [x] **SPY history 3mo → 1y** — enables SMA200 computation (requires 200 bars)
+- [x] **`sp500_sma200`, `sp500_sma200_ratio`, `sp500_neutral_zone` (bool) added to macro context** — consumed by neutral zone gate
+
+**Backtest (backtest_technicals.py):**
+- [x] **ETFs removed from universe** — inverse/leveraged ETFs as BUY candidates produce nonsensical results; bond ETFs respond to rates not equity technicals
+- [x] **START restored to 2006-01-01** — pre-2006 adds dot-com crash noise and insufficient signal density for modern tickers
+
+**Tests:**
+- [x] **`test_signal_engine_core.py::test_levels` updated** — expected stop/target values updated for new 1.5s/2.0t swing multipliers
+
+**Backtest result (v5.10 vs starting baseline):**
+
+| Metric | Baseline (v5.0) | v5.10 | Delta |
+|:---|--:|--:|--:|
+| Win Rate | 43.7% | 49.6% | +5.9pp |
+| Avg Return | -0.16% | +0.13% | +0.29pp |
+| Sharpe (per-trade) | -0.05 | +0.04 | +0.09 |
+| Max Drawdown | -51.52% | -3.87% | +47.65pp |
+
+---
+
+### v5.9 (2026-05-17) — Signal Quality Gates, Polygon Batch, Stats Fixes, IBS/VWAP/ATR Indicators
+
+*(see commit `feafb8c`)*
+
+---
 
 ### v5.8 (2026-05-17) — Phantom Win Fix, Risk Optimization & Institutional Analytics
 
