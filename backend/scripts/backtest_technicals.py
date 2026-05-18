@@ -50,29 +50,24 @@ warnings.filterwarnings("ignore")
 # not technicals, and drag avg return by -0.30% to -0.67% per trade.
 # Removed: ABBV, TMO, NKE, TXN, BAC, V, QCOM, AMZN, MRK, PG, COST, PFE, BRK-B, WMT, KO
 TICKERS = [
-    # Mega-cap tech — clear trends, high beta
-    "AAPL", "MSFT", "META", "GOOGL",
-    # Semiconductors & enterprise tech (removed ORCL: legacy range-bound software)
-    "AVGO", "AMD", "INTC", "CSCO", "CRM",
-    # Growth / high-beta tech
-    "TSLA",
-    # Payments — smooth compounders, highest WR in prior run
-    "MA",
-    # Diversified financials
-    "JPM", "WFC",
-    # Healthcare — diversified devices/managed care (removed LLY: drug-approval event risk)
-    "UNH", "JNJ", "ABT",
-    # Industrials — clear macro cycles
-    "CAT", "GE", "UNP", "HD",
-    # Energy — kept CVX (integrated, steadier than pure E&P XOM)
-    "CVX",
-    # Telecom / media (removed DIS: streaming-war event-driven)
-    "VZ", "CMCSA",
-    # Consumer staples (removed MCD: too slow-moving for 5-day swing; friction eats return)
-    "PEP",
-    # Removed: NVDA (AI-cycle extreme volatility), GOOG (GOOGL duplicate),
-    #          XOM (oil-price driven, not technical), NFLX (earnings-gap risk),
-    #          LIN (industrial gas, range-bound), IBM (legacy range-bound)
+    # ── Signal engine watchlist (config.py default) ──────────────────────────
+    # These are the tickers the live scanner tracks; they must all be represented.
+    "NVDA",                                    # AI-cycle leader; high vol but canonical
+    "TSLA",                                    # Growth / high-beta tech
+    "AAPL", "MSFT", "META", "AMD",             # Mega-cap tech
+    "PLTR",                                    # AI data platform; IPO 2020, shorter history
+    "SMCI",                                    # AI server hardware; high beta
+    # ── Additional names for regime/sector coverage ──────────────────────────
+    # Kept from prior run — broaden sample size and stress-test gates
+    "GOOGL",                                   # Mega-cap tech (search/cloud)
+    "AVGO", "INTC", "CSCO", "CRM",            # Semiconductors & enterprise tech
+    "MA",                                      # Payments — smooth compounder
+    "JPM", "WFC",                              # Diversified financials
+    "UNH", "JNJ", "ABT",                      # Healthcare
+    "CAT", "GE", "UNP", "HD",                 # Industrials
+    "CVX",                                     # Energy (integrated)
+    "VZ", "CMCSA",                             # Telecom / media
+    "PEP",                                     # Consumer staples
 ]
 
 START        = "2006-01-01"

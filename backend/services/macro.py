@@ -180,12 +180,13 @@ async def get_macro_context() -> dict:
     except Exception as e:
         print(f"[macro] TNX: {e}")
 
-    # ── S&P 500 regime + SPY 1-month return ──────────────────────────────
+    # ── S&P 500 regime + SPY 1-month return + SMA200 neutral zone ───────────
     try:
-        sp_df = await get_history("^GSPC", period="3mo", interval="1d")
+        # Use 1y to get 252 bars — needed for the SMA200 neutral-zone computation.
+        sp_df = await get_history("^GSPC", period="1y", interval="1d")
         if sp_df is not None and len(sp_df) >= 50:
-            sma50 = float(sp_df["Close"].rolling(50).mean().iloc[-1])
             price = float(sp_df["Close"].iloc[-1])
+            sma50 = float(sp_df["Close"].rolling(50).mean().iloc[-1])
             trend = "up" if price > sma50 else "down"
             result["sp500_trend"] = trend
             result["sp500"]       = round(price, 2)
@@ -198,7 +199,18 @@ async def get_macro_context() -> dict:
                     "body": "Broad market in short-term downtrend. Higher risk for long positions.",
                     "sentiment": "neg", "meta": f"S&P {price:.0f} < 50-DMA {sma50:.0f}",
                 })
-            # Store 1-month SPY return so signal engine can compute relative strength
+            # SMA200 neutral zone: ±2% buffer around SMA200 prevents whipsaw entries
+            # at regime turning points (backtest: Aug-2022 bear bounce, late-2018 Q4 drop).
+            if len(sp_df) >= 200:
+                sma200 = float(sp_df["Close"].rolling(200).mean().iloc[-1])
+                ratio  = price / sma200
+                result["sp500_sma200"]      = round(sma200, 2)
+                result["sp500_sma200_ratio"] = round(ratio, 4)
+                # Confirmed bull:  >2% above SMA200
+                # Neutral / zone:  ±2% of SMA200  → flag to require score ≥ 45
+                # Confirmed bear:  >2% below SMA200
+                result["sp500_neutral_zone"] = 0.98 <= ratio <= 1.02
+            # Store 1-month SPY return for relative-strength calculation
             if len(sp_df) >= 21:
                 spy_1m = (sp_df["Close"].iloc[-1] / sp_df["Close"].iloc[-21] - 1) * 100
                 result["spy_1m_ret"] = round(float(spy_1m), 2)
