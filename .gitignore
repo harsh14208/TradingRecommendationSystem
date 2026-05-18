@@ -54,3 +54,9 @@ node_modules/
 *.db
 *.db-wal
 *.db-shm
+
+# Claude Code local config/memory
+.claude/
+
+# API response caches (regenerated at runtime)
+backend/data/.spy_bars_cache.json

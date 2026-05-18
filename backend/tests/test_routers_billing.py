@@ -25,6 +25,9 @@ def test_get_plans():
     # Router returns {id: <tier>} not {tier: <tier>}
     assert any(p["id"] == "basic" for p in plans)
     assert any(p["id"] == "pro" for p in plans)
+    prices = {p["id"]: p["price"] for p in plans}
+    assert prices["basic"] == 2900
+    assert prices["pro"] == 7900
 
 def test_checkout_session():
     with patch("routers.billing.stripe.checkout.Session.create") as mock_create:

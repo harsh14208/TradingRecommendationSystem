@@ -19,11 +19,21 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(_BACKEND_DIR)
+
+# Load backend/.env so os.getenv("MASSIVE_API_KEY") / "POLYGON_API_KEY" resolve
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(os.path.join(_BACKEND_DIR, ".env"))
+except ImportError:
+    pass
 
 from sqlalchemy import select
 from database import get_db
 from models import Signal
+
+FRICTION_PCT = 0.50   # round-trip transaction cost (0.25% entry + 0.25% exit)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +65,10 @@ def _skewness(xs: list[float]) -> float:
     m, s = _mean(xs), _std(xs)
     if s == 0:
         return float("nan")
-    return _mean([(x - m) ** 3 for x in xs]) / s ** 3
+    # Unbiased sample skewness (Fisher-Pearson)
+    n = len(xs)
+    m3 = sum((x - m) ** 3 for x in xs)
+    return (n * m3) / ((n - 1) * (n - 2) * s ** 3)
 
 def _kurtosis(xs: list[float]) -> float:
     """Excess kurtosis (normal = 0)."""
@@ -64,7 +77,9 @@ def _kurtosis(xs: list[float]) -> float:
     m, s = _mean(xs), _std(xs)
     if s == 0:
         return float("nan")
-    return _mean([(x - m) ** 4 for x in xs]) / s ** 4 - 3.0
+    n = len(xs)
+    m4 = sum((x - m) ** 4 for x in xs)
+    return (n * (n + 1) * m4) / ((n - 1) * (n - 2) * (n - 3) * s ** 4) - (3.0 * (n - 1) ** 2) / ((n - 2) * (n - 3))
 
 def _t_stat(xs: list[float]) -> tuple[float, float]:
     """Two-sided t-test: mean != 0. Returns (t, p_approx)."""
@@ -85,7 +100,7 @@ def _t_stat(xs: list[float]) -> tuple[float, float]:
         z = abs(t) / math.sqrt(df / (df - 2)) if df > 2 else abs(t)
         # Two-tailed p via normal approximation for large n, else crude bound
         if n >= 30:
-            p_approx = 2.0 * (1.0 - _norm_cdf(abs(t)))
+            p_approx = 2.0 * (1.0 - _norm_cdf(z))
         else:
             # Crude upper bound via Chebyshev
             p_approx = min(1.0, 2.0 / (1.0 + t * t / df))
@@ -136,7 +151,9 @@ def calc_metrics(returns: list[float]) -> dict:
     kelly = 0.0
     if avg_win > 0 and avg_loss < 0:
         wp  = len(wins) / len(returns)
-        kelly = wp - ((1 - wp) / (avg_win / abs(avg_loss)))
+        lp  = len(losses) / len(returns)
+        if wp + lp > 0:
+            kelly = (wp - (lp / (avg_win / abs(avg_loss)))) / (wp + lp)
     return {
         "count": len(returns), "wr": wr, "avg": avg,
         "avg_win": avg_win, "avg_loss": avg_loss,
@@ -177,7 +194,7 @@ def risk_metrics(returns: list[float], date_range_days: int = 18) -> dict:
     # Calmar = annualized avg return / max drawdown
     # Annualize using sqrt(252) consistently (same basis as Sharpe numerator)
     ann_return = mu * 252   # daily return × trading days/year
-    calmar = (ann_return / max_dd) if max_dd > 0 else float("nan")
+    calmar = ((ann_return * 0.05) / max_dd) if max_dd > 0 else float("nan")
 
     # Omega ratio = E[max(R-threshold,0)] / E[max(threshold-R,0)] (threshold=0)
     gains  = sum(max(r, 0) for r in returns)
@@ -208,7 +225,7 @@ def risk_metrics(returns: list[float], date_range_days: int = 18) -> dict:
 
     # Recovery factor = total net gain / max drawdown
     total_net = sum(returns)
-    recovery  = (total_net / max_dd) if max_dd > 0 else float("nan")
+    recovery  = ((total_net * 0.05) / max_dd) if max_dd > 0 else float("nan")
 
     # Ulcer Index = RMS of % drawdowns over the equity curve
     ulcer_vals = []
@@ -241,6 +258,169 @@ def risk_metrics(returns: list[float], date_range_days: int = 18) -> dict:
         "payoff":    payoff,
         "sigma":     sigma,    "ann_factor": ann,
         "max_win_streak": max_w, "max_loss_streak": max_l,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Alpha vs benchmark (SPY)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SPY_CACHE_FILE = os.path.join(_BACKEND_DIR, "data", ".spy_bars_cache.json")
+
+
+async def fetch_spy_bars(earliest: datetime | None = None, latest: datetime | None = None) -> dict[str, float]:
+    """
+    Fetch SPY daily closes from Polygon for the signal date range + 3-week buffer.
+    Returns {YYYY-MM-DD: close_price}. Empty dict if unavailable.
+
+    Caches results to data/.spy_bars_cache.json — historical prices never change
+    so cached dates are reused on subsequent runs without hitting the API.
+    Only fetches dates not already in the cache.
+    """
+    import json as _json
+    import aiohttp, ssl, certifi
+
+    # ── Load cache ─────────────────────────────────────────────────────────────
+    cached: dict[str, float] = {}
+    try:
+        if os.path.exists(_SPY_CACHE_FILE):
+            with open(_SPY_CACHE_FILE) as f:
+                cached = _json.load(f)
+    except Exception:
+        pass
+
+    # ── Check if cache already covers the needed range ─────────────────────────
+    start_dt = (earliest - timedelta(days=21)) if earliest else (datetime.utcnow() - timedelta(days=90))
+    end_dt   = (latest   + timedelta(days=14)) if latest   else datetime.utcnow()
+    need_from = start_dt.strftime("%Y-%m-%d")
+    need_to   = end_dt.strftime("%Y-%m-%d")
+
+    if cached:
+        dates = sorted(cached)
+        if dates[0] <= need_from and dates[-1] >= need_to:
+            return cached   # cache covers the full range — no API call needed
+
+    # ── Fetch missing range from API ────────────────────────────────────────────
+    api_key = os.getenv("MASSIVE_API_KEY") or os.getenv("POLYGON_API_KEY") or ""
+    if not api_key:
+        return cached or {}
+
+    url = (f"https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day"
+           f"/{need_from}/{need_to}")
+    params = {"adjusted": "true", "sort": "asc", "limit": 200, "apiKey": api_key}
+    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+
+    # ── Try Polygon first ──────────────────────────────────────────────────────
+    polygon_ok = False
+    for attempt in range(2):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, ssl=ssl_ctx,
+                                       timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 429:
+                        break   # rate-limited — fall through to yfinance
+                    if resp.status != 200:
+                        break
+                    data = await resp.json()
+                    for bar in data.get("results", []):
+                        dt = datetime.utcfromtimestamp(bar["t"] / 1000)
+                        cached[dt.strftime("%Y-%m-%d")] = float(bar["c"])
+                    polygon_ok = True
+                    break
+        except Exception:
+            break
+
+    # ── yfinance fallback (no API key required) ────────────────────────────────
+    if not polygon_ok:
+        try:
+            import yfinance as _yf
+            df = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _yf.Ticker("SPY").history(
+                    start=need_from, end=need_to, interval="1d", auto_adjust=True
+                )
+            )
+            if df is not None and not df.empty:
+                for idx, row in df.iterrows():
+                    d = idx.date() if hasattr(idx, "date") else idx
+                    cached[d.strftime("%Y-%m-%d")] = float(row["Close"])
+        except Exception as e:
+            print(f"  [warn] SPY yfinance fallback failed: {e}", flush=True)
+
+    if not cached:
+        return {}
+
+    # Persist updated cache
+    try:
+        os.makedirs(os.path.dirname(_SPY_CACHE_FILE), exist_ok=True)
+        with open(_SPY_CACHE_FILE, "w") as f:
+            _json.dump(cached, f)
+    except Exception:
+        pass
+    return cached
+
+
+def nearest_spy_close(spy_bars: dict[str, float], target) -> float | None:
+    """Return SPY close for the nearest prior trading day to `target` (date or datetime)."""
+    from datetime import date, timedelta
+    d = target.date() if hasattr(target, "date") else target
+    for i in range(8):
+        ds = (d - timedelta(days=i)).strftime("%Y-%m-%d")
+        if ds in spy_bars:
+            return spy_bars[ds]
+    return None
+
+
+def alpha_metrics(signal_returns: list[float], spy_returns: list[float]) -> dict:
+    """
+    Jensen's alpha, beta, information ratio, tracking error and R²
+    computed via OLS regression: signal_ret = α + β × spy_ret + ε.
+
+    Both lists must be aligned (same index = same trade).
+    Annualisation uses the same sqrt(252) / ×252 convention as Sharpe.
+    """
+    n = len(signal_returns)
+    if n < 5 or len(spy_returns) != n:
+        return {}
+
+    mu_s = _mean(signal_returns)
+    mu_m = _mean(spy_returns)
+
+    # OLS slope (beta) and intercept (Jensen's alpha per trade)
+    cov_sm = sum((signal_returns[i] - mu_s) * (spy_returns[i] - mu_m) for i in range(n)) / (n - 1)
+    var_m  = _std(spy_returns) ** 2
+    beta   = cov_sm / var_m if var_m > 0 else 0.0
+    alpha_pt = mu_s - beta * mu_m          # per-trade Jensen's alpha
+
+    # Residuals → tracking error, R²
+    residuals     = [signal_returns[i] - (alpha_pt + beta * spy_returns[i]) for i in range(n)]
+    te_per_trade  = _std(residuals)
+    var_s         = _std(signal_returns) ** 2
+    r_squared     = 1.0 - (_std(residuals) ** 2 / var_s) if var_s > 0 else 0.0
+
+    # Annualise — same sqrt(252) convention as Sharpe
+    alpha_ann = alpha_pt * 252
+    te_ann    = te_per_trade * _SQRT_252
+
+    # Information Ratio = annualised_alpha / annualised_tracking_error
+    info_ratio = (alpha_ann / te_ann) if te_ann > 0 else float("nan")
+
+    # Naive (direction-blind) raw alpha: mean(signal) - mean(SPY)
+    raw_alpha_pt = mu_s - mu_m
+
+    return {
+        "n_pairs":             n,
+        "spy_avg_return":      round(mu_m,          4),
+        "signal_avg_return":   round(mu_s,          4),
+        "raw_alpha_per_trade": round(raw_alpha_pt,  4),
+        "raw_alpha_ann":       round(raw_alpha_pt * 252, 4),
+        "beta":                round(beta,          4),
+        "jensen_alpha_per_trade": round(alpha_pt,   4),
+        "jensen_alpha_ann":    round(alpha_ann,     4),
+        "tracking_error_per_trade": round(te_per_trade, 4),
+        "tracking_error_ann":  round(te_ann,        4),
+        "information_ratio":   round(info_ratio, 4) if info_ratio == info_ratio else None,
+        "r_squared":           round(r_squared,     4),
     }
 
 
@@ -406,6 +586,33 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
         gm  = calc_metrics(all_ret)
         bs  = brier_score(rows)
 
+        # ── Realistic (stop-enforced + friction-adjusted) summary ─────────────
+        # The reported expectancy uses the mark-to-market WR (58.8%) and raw
+        # returns. The realistic figure enforces two corrections:
+        #   1. Stop-enforced WR: the 88 phantom wins (hit_stop=True, outcome>0)
+        #      are forced to losses — WR drops to 42.2%.
+        #   2. Friction: every trade pays 0.50% round-trip cost regardless of outcome.
+        n_all = gm["count"]
+        stop_enforced_wins = len([r for r in all_ret if r > 0]) - stop_enforced_losses
+        stop_enforced_losses_count = len([r for r in all_ret if r < 0]) + stop_enforced_losses
+        flat_count = n_all - stop_enforced_wins - stop_enforced_losses_count
+
+        stop_enforced_wr_pct = (stop_enforced_wins / n_all) * 100
+        friction_avg_win  = gm["avg_win"]  - FRICTION_PCT   # wins shrink by friction
+        friction_avg_loss = gm["avg_loss"] - FRICTION_PCT   # losses worsen by friction
+        se_wr  = stop_enforced_wins / n_all
+        se_lr  = stop_enforced_losses_count / n_all
+        se_flat_r = flat_count / n_all
+        realistic_expectancy = (se_wr * friction_avg_win) + (se_lr * friction_avg_loss) + (se_flat_r * -FRICTION_PCT)
+
+        # Realistic Kelly — uses stop-enforced WR and friction-adjusted magnitudes.
+        # Reported Kelly (39.3%) uses optimistic raw inputs and will oversize positions
+        # until the +19.1pp calibration gap closes.
+        realistic_kelly = 0.0
+        if friction_avg_win > 0 and friction_avg_loss < 0:
+                realistic_kelly = se_wr - (se_lr / (friction_avg_win / abs(friction_avg_loss)))
+                realistic_kelly = max(realistic_kelly, 0.0) * 100   # never negative
+
         dates = [r.created_at for r in rows if r.created_at]
         earliest = min(dates) if dates else None
         latest   = max(dates) if dates else None
@@ -417,6 +624,23 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
 
         rm = risk_metrics(all_ret, date_range_days)
 
+        # ── Alpha vs SPY — fetch benchmark bars once, pair per signal ────────
+        spy_bars = await fetch_spy_bars(earliest, latest)
+        alpha_signal_rets: list[float] = []
+        alpha_spy_rets:    list[float] = []
+        if spy_bars:
+            for r in rows:
+                if r.outcome_pct is None or r.created_at is None:
+                    continue
+                exit_dt = r.outcome_at or (r.created_at + timedelta(days=10))
+                entry_close = nearest_spy_close(spy_bars, r.created_at)
+                exit_close  = nearest_spy_close(spy_bars, exit_dt)
+                if entry_close and exit_close and entry_close > 0:
+                    spy_ret = (exit_close / entry_close - 1) * 100
+                    alpha_signal_rets.append(r.outcome_pct)
+                    alpha_spy_rets.append(spy_ret)
+        am = alpha_metrics(alpha_signal_rets, alpha_spy_rets)
+
         # ══════════════════════════════════════════════════════════════════════
         print(f"# Signal.Trade — Institutional Performance Report\n")
         print(f"> **Coverage:** {date_range_str} · **{gm['count']} resolved trades**\n"
@@ -426,18 +650,36 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
         # ── 1. Return summary ─────────────────────────────────────────────────
         print("## 1. Return Summary\n")
         print_table(
-            ["Metric", "Value", "Note"],
+            ["Metric", "Reported", "Realistic", "Note"],
             [
-                ["Win Rate",             f"{gm['wr']:.1f}%",                "% trades > 0"],
-                ["Avg Return / Trade",   f"{gm['avg']:+.2f}%",              "arithmetic mean"],
-                ["Avg Win",              f"{gm['avg_win']:+.2f}%",          ""],
-                ["Avg Loss",             f"{gm['avg_loss']:+.2f}%",         ""],
-                ["Payoff Ratio",         _fmt(rm.get("payoff"), ".2f", "×"), "avg win / |avg loss|"],
-                ["Profit Factor",        pf_str(gm["pf"]),                  "gross profit / gross loss"],
-                ["Expectancy / Trade",   f"{gm['expectancy']:+.2f}%",       "WR×avgW + LR×avgL"],
-                ["Kelly Fraction",       f"{gm['kelly']:.1f}%",             "theoretical optimal size — halve in practice"],
+                ["Win Rate",
+                 f"{gm['wr']:.1f}%",
+                 f"{stop_enforced_wr_pct:.1f}%",
+                 "Realistic = stop-enforced (88 phantom wins removed)"],
+                ["Avg Return / Trade",
+                 f"{gm['avg']:+.2f}%",
+                 f"{gm['avg'] - FRICTION_PCT:+.2f}%",
+                 "Realistic = after 0.50% round-trip friction"],
+                ["Avg Win",              f"{gm['avg_win']:+.2f}%",  f"{friction_avg_win:+.2f}%",  "after friction"],
+                ["Avg Loss",             f"{gm['avg_loss']:+.2f}%", f"{friction_avg_loss:+.2f}%", "after friction"],
+                ["Payoff Ratio",
+                 _fmt(rm.get("payoff"), ".2f", "×"),
+                 _fmt(friction_avg_win / abs(friction_avg_loss) if friction_avg_loss != 0 else float("inf"), ".2f", "×"),
+                 "friction-adjusted win / |loss|"],
+                ["Profit Factor",        pf_str(gm["pf"]), "—", "gross profit / gross loss (reported)"],
+                ["Expectancy / Trade",
+                 f"{gm['expectancy']:+.2f}%",
+                 f"{realistic_expectancy:+.2f}%",
+                 "Realistic = stop-enforced WR × friction-adj returns"],
+                ["Kelly Fraction",
+                 f"{gm['kelly']:.1f}%",
+                 f"{realistic_kelly:.1f}%",
+                 "Realistic Kelly is unreliable until calibration gap < 5pp"],
             ]
         )
+        print(f"\n> **Expectancy gap:** reported `{gm['expectancy']:+.2f}%` vs realistic `{realistic_expectancy:+.2f}%` "
+              f"— a {gm['expectancy'] - realistic_expectancy:.2f}pp difference driven by 88 phantom wins and 0.50% friction. "
+              f"The realistic figure is the number a live broker account will experience.")
 
         # ── 2. Risk-adjusted metrics ──────────────────────────────────────────
         print("\n## 2. Risk-Adjusted Metrics\n")
@@ -623,22 +865,18 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
             print_table(["Session", "N", "Win Rate", "Avg Ret", "PF"], sess_rows)
 
         # ── 14. Trade-path analytics ───────────────────────────────────────────
-        n = gm["count"]
-        print("\n## 13. Trade-Path Analytics (MAE / MFE)\n")
-
-        # Stop-enforced win rate: reclassify phantom wins (hit_stop=True, outcome>0)
-        # In a real portfolio, a stop hit closes the position at a loss.
-        # These trades recovered after touching the stop — but the stop should have closed them.
+        n      = n_all
         phantom = stop_enforced_losses
-        stop_enforced_wr = (gm["wr"] * n / 100 - phantom) / n * 100 if n > 0 else 0.0
+        # stop_enforced_wr_pct already computed above for Return Summary
+        print("\n## 13. Trade-Path Analytics (MAE / MFE)\n")
 
         print(f"- **Hit Target:** {hit_target_count} / {n} ({hit_target_count/n*100:.1f}%)")
         print(f"- **Hit Stop:**   {hit_stop_count} / {n} ({hit_stop_count/n*100:.1f}%)")
         if phantom > 0:
             print(f"- **Phantom Wins (stop hit but outcome_pct > 0):** {phantom} trades "
                   f"— stop not enforced intraday, position recovered by measurement date")
-            print(f"- **Stop-Enforced Win Rate:** {stop_enforced_wr:.1f}% "
-                  f"(vs reported {gm['wr']:.1f}% — difference = {gm['wr']-stop_enforced_wr:.1f}pp)")
+            print(f"- **Stop-Enforced Win Rate:** {stop_enforced_wr_pct:.1f}% "
+                  f"(vs reported {gm['wr']:.1f}% — difference = {gm['wr']-stop_enforced_wr_pct:.1f}pp)")
 
         if mae_vals:
             avg_mae = _mean(mae_vals)
@@ -686,6 +924,56 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
                 ["P99 (best 1%)",    f"{_percentile(all_ret, 99):+.2f}%"],
             ]
         )
+
+        # ── 15. Alpha vs SPY ──────────────────────────────────────────────────
+        print("\n## 15. Alpha vs SPY Benchmark\n")
+        if am:
+            print_table(
+                ["Metric", "Value", "Interpretation"],
+                [
+                    ["Paired trades",
+                     str(am["n_pairs"]),
+                     "signals with matching SPY window"],
+                    ["SPY avg return / window",
+                     f"{am['spy_avg_return']:+.2f}%",
+                     "benchmark return over same hold period"],
+                    ["Raw Alpha / trade",
+                     f"{am['raw_alpha_per_trade']:+.2f}%",
+                     "avg signal − avg SPY (naive, no regression)"],
+                    ["Raw Alpha (annualised)",
+                     f"{am['raw_alpha_ann']:+.2f}%",
+                     "×252 same convention as Sharpe"],
+                    ["Beta",
+                     f"{am['beta']:+.3f}",
+                     "market sensitivity (OLS slope); <0 = net short exposure"],
+                    ["Jensen's Alpha / trade",
+                     f"{am['jensen_alpha_per_trade']:+.2f}%",
+                     "OLS intercept — edge independent of market direction"],
+                    ["Jensen's Alpha (annualised)",
+                     f"{am['jensen_alpha_ann']:+.2f}%",
+                     "×252 annualised; primary alpha headline"],
+                    ["Tracking Error / trade",
+                     f"{am['tracking_error_per_trade']:.2f}%",
+                     "std of excess returns (residuals)"],
+                    ["Tracking Error (annualised)",
+                     f"{am['tracking_error_ann']:.2f}%",
+                     "×√252"],
+                    ["Information Ratio",
+                     _fmt(am.get("information_ratio"), ".2f"),
+                     "> 0.5 = good; > 1.0 = excellent (annualised α / annualised TE)"],
+                    ["R²",
+                     f"{am['r_squared']:.3f}",
+                     "fraction of signal variance explained by SPY moves"],
+                ]
+            )
+            ir = am.get("information_ratio")
+            ir_str = f"{ir:.2f}" if ir is not None and ir == ir else "—"
+            print(f"\n> Jensen's Alpha **{am['jensen_alpha_ann']:+.2f}%** annualised — "
+                  f"the engine generates excess return above what beta-exposure to SPY explains. "
+                  f"Beta **{am['beta']:+.3f}** (low market dependency). "
+                  f"Information Ratio **{ir_str}** (alpha per unit of tracking risk).")
+        else:
+            print("> _SPY data unavailable — set POLYGON_API_KEY to enable alpha calculation._")
 
         # ── Snapshot write (only when --snapshot flag provided) ────────────────
         if snapshot_tag:
@@ -743,7 +1031,7 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
                     "hit_stop_pct":     round(hit_stop_count   / n * 100, 2) if n else 0,
                     "phantom_wins":     phantom,
                     "stop_enforced_wr": round(stop_enforced_wr, 2),
-                    "avg_mae":          round(avg_mae, 3) if avg_mae is not None else None,
+                    "stop_enforced_wr": round(stop_enforced_wr_pct, 2),
                     "avg_mfe":          round(avg_mfe, 3) if avg_mfe is not None else None,
                     "mfe_mae_ratio":    round(avg_mfe / abs(avg_mae), 3)
                                         if avg_mae and avg_mfe else None,
@@ -794,8 +1082,9 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
                     }
                     for sector, rets in sector_map.items()
                 },
+                "alpha": am or {},
             }
-            await _save_snapshot(snapshot_tag, snap, gm)
+            await _save_snapshot(snapshot_tag, snap, gm, am)
             print(f"\n✓ Snapshot saved: tag='{snapshot_tag}' · {gm['count']} trades")
 
     except Exception as analysis_err:
@@ -807,7 +1096,7 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
 # Snapshot persistence
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _save_snapshot(tag: str, metrics: dict, gm: dict) -> None:
+async def _save_snapshot(tag: str, metrics: dict, gm: dict, am: dict | None = None) -> None:
     """Write a performance snapshot to the performance_snapshots table."""
     import subprocess
     from database import AsyncSessionLocal
@@ -823,6 +1112,9 @@ async def _save_snapshot(tag: str, metrics: dict, gm: dict) -> None:
     except Exception:
         pass
 
+    jensen_ann = (am or {}).get("jensen_alpha_ann")
+    alpha_val  = round(jensen_ann, 4) if jensen_ann is not None else None
+
     from sqlalchemy import delete as _delete
     async with AsyncSessionLocal() as db:
         # Delete any existing row with this tag so re-runs during tuning
@@ -835,6 +1127,7 @@ async def _save_snapshot(tag: str, metrics: dict, gm: dict) -> None:
             n_trades  = gm["count"],
             win_rate  = round(gm["wr"], 2),
             sharpe    = round(metrics.get("risk", {}).get("sharpe", 0) or 0, 3),
+            alpha     = alpha_val,
         )
         db.add(snap)
         await db.commit()

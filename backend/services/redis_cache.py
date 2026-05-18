@@ -18,12 +18,14 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, Optional
 
 log = logging.getLogger("signal.trade.cache")
 
 # ── In-memory fallback (always active; used when Redis is unavailable) ─────────
 _mem: dict[str, tuple[Any, float]] = {}   # key → (value, expires_at)
+_mem_locks: dict[str, tuple[str, float]] = {}  # key → (token, expires_at)
 
 
 # ── Redis client (lazily initialised) ─────────────────────────────────────────
@@ -111,10 +113,51 @@ async def cache_delete(key: str) -> None:
     _mem.pop(key, None)
 
 
+async def cache_acquire_lock(key: str, ttl: int = 300) -> Optional[str]:
+    """Acquire a coarse distributed lock. Returns a token if acquired."""
+    token = uuid.uuid4().hex
+    try:
+        r = await _get_redis()
+        if r is not None:
+            ok = await r.set(key, token, ex=ttl, nx=True)
+            return token if ok else None
+    except Exception as e:
+        log.debug(f"[cache] Redis lock acquire error ({key}): {e}")
+
+    now = time.monotonic()
+    existing = _mem_locks.get(key)
+    if existing and existing[1] > now:
+        return None
+    _mem_locks[key] = (token, now + ttl)
+    return token
+
+
+async def cache_release_lock(key: str, token: str) -> None:
+    """Release a lock only when the caller owns the token."""
+    try:
+        r = await _get_redis()
+        if r is not None:
+            script = """
+            if redis.call("get", KEYS[1]) == ARGV[1] then
+                return redis.call("del", KEYS[1])
+            end
+            return 0
+            """
+            await r.eval(script, 1, key, token)
+            return
+    except Exception as e:
+        log.debug(f"[cache] Redis lock release error ({key}): {e}")
+
+    existing = _mem_locks.get(key)
+    if existing and existing[0] == token:
+        _mem_locks.pop(key, None)
+
+
 def cache_stats() -> dict:
     """Return basic cache stats for the /api/admin/rate-limits endpoint."""
     return {
         "backend": "redis" if _redis_client else "memory",
         "memory_keys": len(_mem),
+        "memory_locks": len(_mem_locks),
         "redis_connected": _redis_client is not None,
     }

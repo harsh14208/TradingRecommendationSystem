@@ -254,11 +254,18 @@ function App() {
   // Render 30 cards initially; each "Show more" reveals 20 more.
   // Avoids rendering 100+ SVG sparklines at once, which tanks scroll FPS.
   const FEED_PAGE = 30;
+  const SUPPRESSED_PAGE = 20;
   const [feedLimit, setFeedLimit] = useState(FEED_PAGE);
+  const [suppressedLimit, setSuppressedLimit] = useState(SUPPRESSED_PAGE);
   // Reset page when filters change so new results show from the top
-  useEffect(() => { setFeedLimit(FEED_PAGE); }, [feedFilter, styleFilter, threshold]);
+  useEffect(() => {
+    setFeedLimit(FEED_PAGE);
+    setSuppressedLimit(SUPPRESSED_PAGE);
+  }, [feedFilter, styleFilter, threshold, searchQuery]);
   const visibleSignals   = filteredSignals.slice(0, feedLimit);
   const hiddenCount      = filteredSignals.length - visibleSignals.length;
+  const visibleSuppressed = suppressedSignals.slice(0, suppressedLimit);
+  const hiddenSuppressed  = suppressedSignals.length - visibleSuppressed.length;
 
   const active = signals.find(s => s.id === activeId) || filteredSignals[0] || signals[0];
 
@@ -954,10 +961,20 @@ function App() {
                 <div style={{ padding:"10px 14px", fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", borderBottom:"1px solid var(--line)", background:"var(--bg-1)" }}>
                   Suppressed · below {threshold}% · {suppressedSignals.length}
                 </div>
-                {suppressedSignals.map(s => (
+                {visibleSuppressed.map(s => (
                   <SignalRow key={s.id} s={s} suppressed active={false} expanded={false}
                     onToggle={() => {}} onOpen={() => {}} onSend={() => {}} onSkip={() => {}}/>
                 ))}
+                {hiddenSuppressed > 0 && (
+                  <button
+                    onClick={() => setSuppressedLimit(l => l + SUPPRESSED_PAGE)}
+                    style={{ width:"100%", padding:"9px 0", background:"var(--bg-2)",
+                             border:"none", borderTop:"1px solid var(--line)",
+                             color:"var(--text-faint)", fontFamily:"var(--font-mono)",
+                             fontSize:10, cursor:"pointer", letterSpacing:"0.08em" }}>
+                    Show {Math.min(hiddenSuppressed, SUPPRESSED_PAGE)} more suppressed · {hiddenSuppressed} remaining
+                  </button>
+                )}
               </>
             )}
           </div>

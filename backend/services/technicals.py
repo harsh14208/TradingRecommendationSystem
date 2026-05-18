@@ -116,8 +116,20 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
         out["ema8_prev"]  = round(float(ema8.iloc[-2]),  4) if len(ema8)  > 1 else None
         out["ema21_prev"] = round(float(ema21.iloc[-2]), 4) if len(ema21) > 1 else None
 
-        # ── ATR(14) — numpy fast-path eliminates pd.concat ──────────────
-        out["atr"] = _np_atr(high.values, low.values, close.values, 14)
+        # ── True Range series (shared by ATR, ADX, Keltner, Supertrend) ────
+        # Defined once here so all downstream try-blocks get the same series.
+        _prev_c = close.shift(1)
+        tr = pd.Series(
+            np.maximum(
+                (high - low).values,
+                np.maximum(np.abs(high - _prev_c).values, np.abs(low - _prev_c).values)
+            ),
+            index=close.index,
+        )
+        atr_s = tr.ewm(com=13, adjust=False).mean()  # Wilder ATR(14) series
+
+        # ── ATR(14) scalar ──────────────────────────────────────────────
+        out["atr"] = round(float(atr_s.iloc[-1]), 4)
 
         # ── Bollinger Bands(20, 2) ───────────────────────────────────────
         _bb_mid_arr = _np_sma(_c, 20)
@@ -481,6 +493,156 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             if vwap_val:
                 out["vwap_20"]  = round(vwap_val, 4)
                 out["vwap_pct"] = round((out["price"] - vwap_val) / vwap_val * 100, 2)
+                # Prior-day vwap_pct (for cross detection in signal engine)
+                if len(vwap_s) >= 2 and not pd.isna(vwap_s.iloc[-2]):
+                    vwap_prev_val = float(vwap_s.iloc[-2])
+                    if vwap_prev_val > 0:
+                        out["vwap_pct_prev"] = round(
+                            (float(close.iloc[-2]) - vwap_prev_val) / vwap_prev_val * 100, 2
+                        )
+                # VWAP slope: True if VWAP has risen over the last 3 bars
+                if len(vwap_s) >= 4:
+                    vwap_3d_ago = float(vwap_s.iloc[-4]) if not pd.isna(vwap_s.iloc[-4]) else None
+                    if vwap_3d_ago:
+                        out["vwap_slope_pos"] = bool(vwap_val > vwap_3d_ago)
+                # VWAP σ bands: std-dev of close around VWAP (not Bollinger Bands —
+                # different distribution because we use VWAP not SMA as centre)
+                vwap_resid = close - vwap_s
+                vwap_std_s = vwap_resid.rolling(n_vwap).std()
+                if not pd.isna(vwap_std_s.iloc[-1]):
+                    vwap_std = float(vwap_std_s.iloc[-1])
+                    if vwap_std > 0:
+                        out["vwap_band1_upper"] = round(vwap_val + vwap_std,       4)
+                        out["vwap_band1_lower"] = round(vwap_val - vwap_std,       4)
+                        out["vwap_band2_upper"] = round(vwap_val + 2 * vwap_std,   4)
+                        out["vwap_band2_lower"] = round(vwap_val - 2 * vwap_std,   4)
+        except Exception:
+            pass
+
+        # ── IBS — Internal Bar Strength ──────────────────────────────────
+        # Where the close lands within the day's range: 0 = at low, 1 = at high.
+        # A reliable single-bar mean-reversion exhaustion signal.
+        try:
+            c0_ibs = float(close.iloc[-1])
+            h0_ibs = float(high.iloc[-1])
+            l0_ibs = float(low.iloc[-1])
+            rng_ibs = h0_ibs - l0_ibs
+            if rng_ibs > 0:
+                out["ibs"] = round((c0_ibs - l0_ibs) / rng_ibs, 4)
+        except Exception:
+            pass
+
+        # ── ATR Expansion / Contraction tracking ─────────────────────────
+        # Counts consecutive bars ATR is expanding or contracting, and the
+        # ATR percentile rank over the last 252 bars (regime filter).
+        try:
+            atr_clean = atr_s.dropna()
+            if len(atr_clean) >= 10:
+                atr_arr = atr_clean.values
+                expand_cnt = 0
+                contract_cnt = 0
+                for i in range(len(atr_arr) - 1, 0, -1):
+                    if atr_arr[i] > atr_arr[i - 1]:
+                        if contract_cnt == 0:
+                            expand_cnt += 1
+                        else:
+                            break
+                    else:
+                        if expand_cnt == 0:
+                            contract_cnt += 1
+                        else:
+                            break
+                out["atr_expand_bars"]   = expand_cnt
+                out["atr_contract_bars"] = contract_cnt
+                n_rank = min(252, len(atr_clean))
+                atr_window = atr_clean.iloc[-n_rank:].values
+                out["atr_pct_rank"] = round(
+                    float(np.mean(atr_window < atr_window[-1])) * 100, 1
+                )
+        except Exception:
+            pass
+
+        # ── Volume Profile (POC / VAH / VAL) — daily OHLCV approximation ─
+        # Distributes each session's volume uniformly across its H-L range,
+        # then finds the modal price (POC) and 70%-volume value area (VAH/VAL).
+        try:
+            n_vp = min(20, len(df))
+            vp_df = df.iloc[-n_vp:]
+            p_min = float(vp_df["Low"].min())
+            p_max = float(vp_df["High"].max())
+            if p_max > p_min:
+                n_bins = 40
+                bins   = np.linspace(p_min, p_max, n_bins + 1)
+                bvol   = np.zeros(n_bins)
+                for _, row in vp_df.iterrows():
+                    h_r = float(row["High"]); l_r = float(row["Low"])
+                    v_r = float(row["Volume"]); rng_r = h_r - l_r
+                    for j in range(n_bins):
+                        if rng_r <= 0:
+                            idx = min(int((float(row["Close"]) - p_min) / (p_max - p_min) * n_bins), n_bins - 1)
+                            bvol[idx] += v_r
+                            break
+                        overlap = min(h_r, bins[j + 1]) - max(l_r, bins[j])
+                        if overlap > 0:
+                            bvol[j] += v_r * (overlap / rng_r)
+                poc_idx = int(np.argmax(bvol))
+                out["vp_poc"] = round(float((bins[poc_idx] + bins[poc_idx + 1]) / 2), 4)
+                # Value Area: expand from POC until 70% of total volume captured
+                total_v = float(np.sum(bvol))
+                target  = total_v * 0.70
+                lo_i = hi_i = poc_idx
+                acc = float(bvol[poc_idx])
+                while acc < target and (lo_i > 0 or hi_i < n_bins - 1):
+                    lo_add = float(bvol[lo_i - 1]) if lo_i > 0 else 0.0
+                    hi_add = float(bvol[hi_i + 1]) if hi_i < n_bins - 1 else 0.0
+                    if lo_add >= hi_add and lo_i > 0:
+                        lo_i -= 1; acc += lo_add
+                    elif hi_i < n_bins - 1:
+                        hi_i += 1; acc += hi_add
+                    else:
+                        break
+                out["vp_vah"] = round(float(bins[hi_i + 1]), 4)
+                out["vp_val"] = round(float(bins[lo_i]),     4)
+        except Exception:
+            pass
+
+        # ── Market Structure — BOS / MSS ─────────────────────────────────
+        # Detects Break of Structure (trend continuation) and Market Structure
+        # Shift (liquidity grab + reversal) using 3-bar pivot highs/lows.
+        try:
+            if len(df) >= 20:
+                n_ms   = min(60, len(df))
+                ms_h   = high.iloc[-n_ms:].values.astype(float)
+                ms_l   = low.iloc[-n_ms:].values.astype(float)
+                ms_c   = close.iloc[-n_ms:].values.astype(float)
+                phighs: list[tuple[int, float]] = []
+                plows:  list[tuple[int, float]] = []
+                for i in range(1, len(ms_h) - 1):
+                    if ms_h[i] > ms_h[i - 1] and ms_h[i] > ms_h[i + 1]:
+                        phighs.append((i, ms_h[i]))
+                    if ms_l[i] < ms_l[i - 1] and ms_l[i] < ms_l[i + 1]:
+                        plows.append((i, ms_l[i]))
+                last_c = ms_c[-1]
+                struct = None
+                ms_lvl = None
+                if len(phighs) >= 2:
+                    lph = phighs[-1][1]; pph = phighs[-2][1]
+                    if last_c > lph and lph > pph:           # BOS bull: close breaks above HH
+                        struct = "bos_bull"; ms_lvl = lph
+                    elif last_c < lph:
+                        struct = "below_resistance"; ms_lvl = lph
+                if len(plows) >= 2:
+                    lpl = plows[-1][1]; ppl = plows[-2][1]
+                    if last_c < lpl and lpl < ppl:           # BOS bear: close breaks below LL
+                        struct = "bos_bear"; ms_lvl = lpl
+                    # MSS bull: swept prior low then closed above last swing high
+                    if (lpl < ppl * 0.995 and len(phighs) >= 1
+                            and plows[-1][0] > phighs[-1][0]
+                            and last_c > phighs[-1][1]):
+                        struct = "mss_bull"; ms_lvl = phighs[-1][1]
+                if struct:
+                    out["market_struct"] = struct
+                    out["ms_level"]      = round(float(ms_lvl), 4)
         except Exception:
             pass
 

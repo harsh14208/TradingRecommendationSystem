@@ -104,10 +104,41 @@ def get_settings() -> Settings:
 # Tier hierarchy — higher index = more access
 TIERS = ["free", "basic", "pro"]
 
+TIER_PRICES_CENTS = {
+    "free":  0,
+    "basic": 2900,
+    "pro":   7900,
+}
+
 TIER_LABELS = {
     "free":  "Free",
     "basic": "Basic · $29/mo",
     "pro":   "Pro · $79/mo",
+}
+
+TIER_PLAN_FEATURES = {
+    "free": [
+        "View signals in dashboard",
+        "Market context panel",
+        "Signal history (read-only)",
+    ],
+    "basic": [
+        "Everything in Free",
+        "Telegram signal delivery",
+        "Backtest & win-rate stats",
+        "Custom watchlist",
+        "Full signal history",
+    ],
+    "pro": [
+        "Everything in Basic",
+        "Paper trading (Alpaca)",
+        "Signal correlation matrix",
+        "Predictive confidence intervals",
+        "Sector heatmap",
+        "Simulated backtest with costs",
+        "Price alerts",
+        "Weekly digest",
+    ],
 }
 
 TIER_FEATURES = {

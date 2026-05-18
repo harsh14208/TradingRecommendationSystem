@@ -343,24 +343,62 @@ async def _rate_limited(fn, *args):
 async def get_histories_batch(
     tickers: list[str], period: str = "1y", interval: str = "1d"
 ) -> dict[str, pd.DataFrame]:
-    return await asyncio.get_running_loop().run_in_executor(
-        _executor, _fetch_histories_batch, tickers, period, interval
+    tickers = [t.upper() for t in tickers]
+    polygon_out: dict[str, pd.DataFrame] = {}
+    try:
+        from services.polygon_client import get_polygon_histories_batch
+        polygon_out = await get_polygon_histories_batch(tickers, period=period, interval=interval)
+    except Exception:
+        polygon_out = {}
+
+    missing = [t for t in tickers if t not in polygon_out]
+    if not missing:
+        return polygon_out
+
+    if _yf_is_blocked():
+        return polygon_out
+
+    yf_out = await asyncio.get_running_loop().run_in_executor(
+        _executor, _fetch_histories_batch, missing, period, interval
     )
+    return {**yf_out, **polygon_out}
 
 
 async def get_quotes_batch(tickers: list[str]) -> list[dict]:
     """
-    Fetch current quotes via yfinance 2d batch (optimised from 5d → 2d).
-    Polygon grouped-daily is rate-limited on the free tier for 150+ tickers,
-    so yfinance batch remains the fastest path for bulk quote fetching.
+    Fetch current quotes via Polygon/Massive first, with yfinance batch fallback.
     """
-    return await asyncio.get_running_loop().run_in_executor(_executor, _fetch_quotes_batch, tickers)
+    tickers = [t.upper() for t in tickers]
+    quotes: list[dict] = []
+    try:
+        from services.polygon_client import get_polygon_quotes_batch
+        quotes = list(await get_polygon_quotes_batch(tickers))
+    except Exception:
+        quotes = []
+
+    found = {q.get("t") for q in quotes}
+    missing = [t for t in tickers if t not in found]
+    if missing and not _yf_is_blocked():
+        yf_quotes = await asyncio.get_running_loop().run_in_executor(_executor, _fetch_quotes_batch, missing)
+        quotes.extend(yf_quotes)
+    return quotes
 
 
 async def get_infos_sequential(tickers: list[str]) -> dict[str, dict]:
     """Fetch .info for each ticker one at a time with rate-limiting."""
-    result: dict[str, dict] = {}
+    tickers = [t.upper() for t in tickers]
+    try:
+        from services.polygon_client import get_polygon_infos_batch
+        result = await get_polygon_infos_batch(tickers)
+    except Exception:
+        result = {}
+
     for t in tickers:
+        if t in result:
+            continue
+        if _yf_is_blocked():
+            result[t] = {"company": COMPANY_NAMES.get(t, t)}
+            continue
         result[t] = await _rate_limited(_fetch_info, t)
     return result
 

@@ -362,17 +362,16 @@ async def backtest_stats(
         # ~52 signal cycles per year (7-day hold periods)
         sharpe = round((mean_r / std_r) * math.sqrt(52), 2) if std_r > 0 else None
 
-        # Max drawdown on cumulative return curve
-        cumulative, peak, max_dd = 1.0, 1.0, 0.0
-        for r in sorted(returns, key=lambda _: 0):  # use as-is order
-            cumulative *= (1 + r / 100)
-            peak = max(peak, cumulative)
-            dd = (peak - cumulative) / peak * 100
-            max_dd = max(max_dd, dd)
+        # Max drawdown assuming 5% position sizing per trade
+        capital, peak, max_dd = 10_000.0, 10_000.0, 0.0
+        for r in returns:
+            capital += capital * 0.05 * (r / 100)
+            peak = max(peak, capital)
+            max_dd = max(max_dd, (peak - capital) / peak * 100)
         max_dd = round(max_dd, 2)
 
         ann_return = round(mean_r * 52, 2)  # rough annualisation
-        calmar = round(ann_return / max_dd, 2) if max_dd > 0 else None
+        calmar = round((ann_return * 0.05) / max_dd, 2) if max_dd > 0 else None
 
         return {"sharpe": sharpe, "max_drawdown": round(-max_dd, 2), "calmar": calmar,
                 "ann_return": ann_return}
@@ -463,11 +462,8 @@ async def backtest_oos(
     n_oos = len(oos_rows)
 
     def _is_win(sig: Signal) -> bool:
-        """Win = positive outcome for BUY, negative outcome for SELL."""
-        if sig.action == "BUY":
-            return (sig.outcome_pct or 0) > 0
-        else:  # SELL
-            return (sig.outcome_pct or 0) < 0
+        """Win = positive outcome (database already flips SELL outcomes)."""
+        return (sig.outcome_pct or 0) > 0
 
     def _window_stats(sigs) -> dict:
         if not sigs:
@@ -490,7 +486,7 @@ async def backtest_oos(
         if n_oos > 1 else 0.0
     )
     oos_std = math.sqrt(oos_variance)
-    oos_sharpe = round((oos_mean / oos_std) * math.sqrt(252), 2) if oos_std > 0 else 0.0
+    oos_sharpe = round((oos_mean / oos_std) * math.sqrt(52), 2) if oos_std > 0 else 0.0
 
     # 30-day rolling windows (up to 6)
     windows = []
@@ -751,7 +747,7 @@ async def backtest_simulate(
             if exit_price is None:
                 # Time-based exit at close on day 7
                 exit_row    = future.iloc[min(6, len(future) - 1)]
-                exit_price  = float(exit_row["Close"]) * (1 - slip if is_buy else 1 + slip)
+                exit_price  = float(exit_row["Close"])
                 exit_day    = min(7, len(future))
                 exit_reason = "timeout"
 
@@ -1405,7 +1401,7 @@ async def calibration_curve(
             continue
         lo = int(conf // BUCKET_WIDTH) * BUCKET_WIDTH
         lo = max(40, min(95, lo))
-        win = (outcome > 0) if action == "BUY" else (outcome < 0)
+        win = (outcome > 0)
         buckets.setdefault(lo, []).append(win)
 
     result = []
@@ -1610,7 +1606,7 @@ async def alpha_decay(
                 h = s[horizon_key]
                 h["total"] += 1
                 h["sum_ret"] += outcome
-                win = outcome > 0 if action == "BUY" else outcome < 0
+                win = (outcome > 0)
                 if win:
                     h["wins"] += 1
 

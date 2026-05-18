@@ -101,6 +101,7 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN discord_webhook_url VARCHAR(500)",
             "ALTER TABLE users ADD COLUMN webhook_url VARCHAR(500)",
             "ALTER TABLE signals ADD COLUMN expires_at DATETIME",
+            "ALTER TABLE performance_snapshots ADD COLUMN alpha REAL",
         ]
         for sql in _migrations:
             try:

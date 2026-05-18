@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 import aiohttp
 import pandas as pd
 from datetime import datetime, timedelta
@@ -100,6 +101,114 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
     except Exception as e:
         log.warning(f"[polygon] Exception fetching {ticker}: {e}")
         return None
+
+
+async def get_polygon_histories_batch(
+    tickers: list[str], period: str = "1y", interval: str = "1d", concurrency: int = 4
+) -> dict[str, pd.DataFrame]:
+    """
+    Fetch OHLCV for many tickers from Polygon/Massive first.
+
+    This intentionally keeps the per-ticker API shape so rate limits remain
+    easy to reason about. Callers can fall back missing tickers to yfinance.
+    """
+    if not _get_api_key() or not tickers:
+        return {}
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _one(ticker: str):
+        async with sem:
+            df = await get_polygon_history(ticker, period=period, interval=interval)
+            if df is not None and not df.empty and len(df) >= 2:
+                return ticker, df
+            return ticker, None
+
+    results = await asyncio.gather(*[_one(t.upper()) for t in tickers], return_exceptions=True)
+    out: dict[str, pd.DataFrame] = {}
+    for item in results:
+        if isinstance(item, Exception):
+            continue
+        ticker, df = item
+        if df is not None:
+            out[ticker] = df
+    return out
+
+
+async def get_polygon_quotes_batch(tickers: list[str]) -> list[dict]:
+    """Return quote-like {t, p, c} rows using recent Polygon daily bars."""
+    histories = await get_polygon_histories_batch(tickers, period="5d", interval="1d")
+    quotes: list[dict] = []
+    for ticker in tickers:
+        df = histories.get(ticker.upper())
+        if df is None or len(df) < 2:
+            continue
+        try:
+            close = df["Close"].dropna()
+            if len(close) < 2:
+                continue
+            price = float(close.iloc[-1])
+            prev = float(close.iloc[-2])
+            if prev <= 0:
+                continue
+            quotes.append({
+                "t": ticker.upper(),
+                "p": round(price, 2),
+                "c": round((price - prev) / prev * 100, 2),
+            })
+        except Exception:
+            continue
+    return quotes
+
+
+async def get_polygon_info(ticker: str) -> dict | None:
+    """Fetch reference metadata available from Polygon's ticker details endpoint."""
+    api_key = _get_api_key()
+    if not api_key:
+        return None
+    url = f"{_BASE}/v3/reference/tickers/{ticker.upper()}"
+    params = {"apiKey": api_key}
+    try:
+        import ssl, certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+        result = data.get("results") or {}
+        if not result:
+            return None
+        return {
+            "company": result.get("name") or ticker.upper(),
+            "market_cap": result.get("market_cap"),
+            "weighted_shares_outstanding": result.get("weighted_shares_outstanding"),
+            "homepage_url": result.get("homepage_url"),
+            "sic_description": result.get("sic_description"),
+        }
+    except Exception as e:
+        log.debug(f"[polygon] info {ticker}: {e}")
+        return None
+
+
+async def get_polygon_infos_batch(tickers: list[str], concurrency: int = 4) -> dict[str, dict]:
+    if not _get_api_key() or not tickers:
+        return {}
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _one(ticker: str):
+        async with sem:
+            return ticker.upper(), await get_polygon_info(ticker)
+
+    results = await asyncio.gather(*[_one(t) for t in tickers], return_exceptions=True)
+    out: dict[str, dict] = {}
+    for item in results:
+        if isinstance(item, Exception):
+            continue
+        ticker, info = item
+        if info:
+            out[ticker] = info
+    return out
 
 
 async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame | None:

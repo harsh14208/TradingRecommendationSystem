@@ -183,4 +183,5 @@ class PerformanceSnapshot(Base):
     n_trades   = Column(Integer,     nullable=False)               # quick filter without JSON parse
     win_rate   = Column(Float,       nullable=True)                # quick filter
     sharpe     = Column(Float,       nullable=True)                # quick filter
+    alpha      = Column(Float,       nullable=True)                # Jensen's alpha annualized (quick filter)
     created_at = Column(DateTime,    server_default=func.now())

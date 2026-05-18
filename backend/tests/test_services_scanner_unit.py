@@ -69,4 +69,12 @@ def test_check_data_quality_counts_and_transition_alerts():
         assert alerts == []
 
     # 2) 5th consecutive -> alert once
-    alerts
+    alerts = scanner._check_data_quality(histories, settings=types.SimpleNamespace())
+    assert alerts == ["AAPL"]
+
+
+def test_scan_status_exposes_lifecycle_fields():
+    status = scanner.get_scan_status()
+    assert status["state"] in {"idle", "running", "success", "failed", "skipped_overlap", "skipped_distributed_overlap"}
+    assert "last_stage" in status
+    assert "skipped_overlaps" in status

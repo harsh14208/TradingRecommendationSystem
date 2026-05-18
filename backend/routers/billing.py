@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import TIER_LABELS, TIERS, get_settings
+from config import TIER_LABELS, TIER_PLAN_FEATURES, TIER_PRICES_CENTS, TIERS, get_settings
 from database import get_db
 from models import User
 from services.auth_svc import get_current_user, user_to_dict
@@ -49,55 +49,37 @@ def _price_id(tier: str) -> str:
 
 @router.get("/plans")
 async def get_plans():
-    return [
+    plans = [
         {
             "id":       "free",
             "name":     "Free",
-            "price":    0,
+            "price":    TIER_PRICES_CENTS["free"],
             "currency": "usd",
             "interval": None,
-            "features": [
-                "View signals in dashboard",
-                "Market context panel",
-                "Signal history (read-only)",
-            ],
+            "features": TIER_PLAN_FEATURES["free"],
             "cta": "Current plan",
         },
         {
             "id":       "basic",
             "name":     "Basic",
-            "price":    999,  # cents
+            "price":    TIER_PRICES_CENTS["basic"],
             "currency": "usd",
             "interval": "month",
-            "features": [
-                "Everything in Free",
-                "Telegram signal delivery",
-                "Backtest & win-rate stats",
-                "Custom watchlist",
-                "Full signal history",
-            ],
+            "features": TIER_PLAN_FEATURES["basic"],
             "cta": "Start Basic",
         },
         {
             "id":       "pro",
             "name":     "Pro",
-            "price":    1999,
+            "price":    TIER_PRICES_CENTS["pro"],
             "currency": "usd",
             "interval": "month",
-            "features": [
-                "Everything in Basic",
-                "Paper trading (Alpaca)",
-                "Signal correlation matrix",
-                "Predictive confidence intervals",
-                "Sector heatmap",
-                "Simulated backtest with costs",
-                "Price alerts",
-                "Weekly digest",
-            ],
+            "features": TIER_PLAN_FEATURES["pro"],
             "cta":      "Start Pro",
             "highlight": True,
         },
     ]
+    return plans
 
 
 # ── Checkout ──────────────────────────────────────────────────────────────────

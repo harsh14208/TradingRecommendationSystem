@@ -15,6 +15,9 @@ from config import (
     get_settings,
     TIERS,
     TIER_FEATURES,
+    TIER_LABELS,
+    TIER_PLAN_FEATURES,
+    TIER_PRICES_CENTS,
     has_feature,
     tier_gte,
 )
@@ -130,6 +133,17 @@ class TestTiersConstant:
 
     def test_tiers_order_pro_last(self):
         assert TIERS[-1] == "pro"
+
+    def test_paid_plan_prices_are_current_public_prices(self):
+        assert TIER_PRICES_CENTS["basic"] == 2900
+        assert TIER_PRICES_CENTS["pro"] == 7900
+        assert "$29/mo" in TIER_LABELS["basic"]
+        assert "$79/mo" in TIER_LABELS["pro"]
+
+    def test_plan_features_match_tiers(self):
+        assert set(TIER_PLAN_FEATURES) == set(TIERS)
+        assert "Telegram signal delivery" in TIER_PLAN_FEATURES["basic"]
+        assert "Paper trading (Alpaca)" in TIER_PLAN_FEATURES["pro"]
 
 
 # ── get_settings ───────────────────────────────────────────────────────────────
