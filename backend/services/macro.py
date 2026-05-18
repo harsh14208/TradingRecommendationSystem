@@ -607,7 +607,7 @@ async def get_macro_context() -> dict:
     # ── Market status from Polygon.io ─────────────────────────────────────
     # Replaces the time-heuristic check with authoritative NYSE open/close state.
     try:
-        import os, ssl, certifi, aiohttp
+        import ssl, certifi, aiohttp
         _poly_key = os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY") or ""
         if _poly_key:
             _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
