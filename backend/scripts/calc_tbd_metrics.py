@@ -975,6 +975,163 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
         else:
             print("> _SPY data unavailable — set POLYGON_API_KEY to enable alpha calculation._")
 
+        # ── §16. Pro-Forma Analysis — v5.12 filters applied retrospectively ─────
+        # Answers: "what would performance look like if fixes had been live
+        # for the entire history?"
+        #
+        # Filters applied (matching live v5.12 gates):
+        #   A. XLF / XLP sector excluded  — blocked in delivery_gates.py since v5.8
+        #   B. Intraday style excluded     — disabled in delivery_gates.py (v5.12)
+        #   C. Confidence > 65% excluded   — ceiling lowered to 65% (v5.12)
+        print("\n## 16. Pro-Forma Analysis — v5.12 Filters Applied Retrospectively\n")
+        print("> Retroactively applies v5.12 gates to historical trades to quantify")
+        print("> the lift those fixes would have produced if deployed from day 1.\n")
+
+        PROFORMA_BLOCKED_SECTORS = {"XLF", "XLP", "XLU"}
+        PROFORMA_CONF_CEILING    = 65.0  # new ceiling in v5.12
+
+        def _row_passes_proforma(r) -> bool:
+            """True if this trade would have been delivered under v5.12 rules."""
+            # A. Sector gate
+            if (r.sector_etf or "").upper() in PROFORMA_BLOCKED_SECTORS:
+                return False
+            # B. Intraday gate
+            if (r.style or "").lower() == "intraday":
+                return False
+            # C. Confidence ceiling
+            if r.confidence is not None and float(r.confidence) > PROFORMA_CONF_CEILING:
+                return False
+            return True
+
+        pf_rows = [r for r in rows if _row_passes_proforma(r)]
+        pf_ret  = [r.outcome_pct for r in pf_rows
+                   if r.outcome_pct is not None and r.outcome_pct == r.outcome_pct]
+        pf_stop = [r for r in pf_rows if r.hit_stop]
+        pf_phantom = sum(
+            1 for r in pf_stop
+            if r.outcome_pct is not None and r.outcome_pct > 0
+        )
+        pf_n = len(pf_ret)
+        pf_se_wins = sum(1 for r in pf_rows
+                         if r.outcome_pct is not None and r.hit_stop and r.outcome_pct <= 0)
+        pf_non_phantom = sum(1 for r in pf_rows if r.outcome_pct is not None)
+        pf_stop_enforced_wr = (
+            (pf_non_phantom - len(pf_stop) + pf_se_wins) / pf_non_phantom * 100
+            if pf_non_phantom else 0.0
+        )
+
+        removed_total = len(rows) - len(pf_rows)
+        removed_xlf   = sum(1 for r in rows if (r.sector_etf or "").upper() in PROFORMA_BLOCKED_SECTORS)
+        removed_intra = sum(1 for r in rows if (r.style or "").lower() == "intraday"
+                            and (r.sector_etf or "").upper() not in PROFORMA_BLOCKED_SECTORS)
+        removed_conf  = sum(1 for r in rows
+                            if r.confidence is not None and float(r.confidence) > PROFORMA_CONF_CEILING
+                            and (r.sector_etf or "").upper() not in PROFORMA_BLOCKED_SECTORS
+                            and (r.style or "").lower() != "intraday")
+
+        print(f"**Trades removed:** {removed_total} / {len(rows)} total")
+        print(f"  — Sector gate (XLF/XLP/XLU):         {removed_xlf} trades")
+        print(f"  — Intraday style:                     {removed_intra} trades")
+        print(f"  — Confidence > 65%:                   {removed_conf} trades")
+        print(f"**Remaining for pro-forma analysis:**   {len(pf_rows)} trades\n")
+
+        if pf_ret:
+            orig_gm = gm
+            pf_gm   = calc_metrics(pf_ret)
+            orig_rm = rm
+            pf_rm   = risk_metrics(pf_ret, date_range_days)
+
+            def _delta(a, b, fmt="+.2f"):
+                d = b - a
+                return f"{d:{fmt}}"
+
+            print("### 16a. Side-by-Side Comparison\n")
+            print_table(
+                ["Metric", "Original (all 529)", f"Pro-Forma ({pf_n})", "Delta"],
+                [
+                    ["N Trades",
+                     str(len(all_ret)), str(pf_n), f"{pf_n - len(all_ret):+d}"],
+                    ["Win Rate (reported)",
+                     f"{orig_gm['wr']:.1f}%", f"{pf_gm['wr']:.1f}%",
+                     _delta(orig_gm['wr'], pf_gm['wr']) + "pp"],
+                    ["Stop-Enforced WR",
+                     f"{stop_enforced_wr_pct:.1f}%", f"{pf_stop_enforced_wr:.1f}%",
+                     _delta(stop_enforced_wr_pct, pf_stop_enforced_wr) + "pp"],
+                    ["Avg Return",
+                     f"{orig_gm['avg']:+.2f}%", f"{pf_gm['avg']:+.2f}%",
+                     _delta(orig_gm['avg'], pf_gm['avg']) + "pp"],
+                    ["Avg Win",
+                     f"{orig_gm['avg_win']:+.2f}%", f"{pf_gm['avg_win']:+.2f}%",
+                     _delta(orig_gm['avg_win'], pf_gm['avg_win']) + "pp"],
+                    ["Avg Loss",
+                     f"{orig_gm['avg_loss']:+.2f}%", f"{pf_gm['avg_loss']:+.2f}%",
+                     _delta(orig_gm['avg_loss'], pf_gm['avg_loss']) + "pp"],
+                    ["Profit Factor",
+                     f"{orig_gm['pf']:.2f}×" if orig_gm['pf'] != float('inf') else "∞",
+                     f"{pf_gm['pf']:.2f}×"   if pf_gm['pf']  != float('inf') else "∞",
+                     _delta(orig_gm['pf'] if orig_gm['pf'] != float('inf') else 99,
+                            pf_gm['pf']  if pf_gm['pf']  != float('inf') else 99, "+.2f") + "×"],
+                    ["Sharpe",
+                     f"{orig_rm.get('sharpe', 0):.2f}", f"{pf_rm.get('sharpe', 0):.2f}",
+                     _delta(orig_rm.get('sharpe', 0), pf_rm.get('sharpe', 0))],
+                    ["Sortino",
+                     f"{orig_rm.get('sortino', 0):.2f}", f"{pf_rm.get('sortino', 0):.2f}",
+                     _delta(orig_rm.get('sortino', 0), pf_rm.get('sortino', 0))],
+                    ["Max Drawdown",
+                     f"-{orig_rm.get('max_dd', 0):.2f}%", f"-{pf_rm.get('max_dd', 0):.2f}%",
+                     _delta(orig_rm.get('max_dd', 0), pf_rm.get('max_dd', 0)) + "pp"],
+                    ["VaR 95%",
+                     f"{orig_rm.get('var_95', 0):.2f}%", f"{pf_rm.get('var_95', 0):.2f}%",
+                     _delta(orig_rm.get('var_95', 0), pf_rm.get('var_95', 0)) + "pp"],
+                    ["Phantom Wins",
+                     str(phantom), str(pf_phantom), f"{pf_phantom - phantom:+d}"],
+                ]
+            )
+
+            # Style breakdown for pro-forma
+            pf_style_map = defaultdict(list)
+            for r in pf_rows:
+                if r.outcome_pct is not None:
+                    pf_style_map[(r.style or "swing").lower()].append(r.outcome_pct)
+
+            print("\n### 16b. Pro-Forma by Style\n")
+            pf_style_rows = []
+            for st in ["position", "swing", "intraday"]:
+                st_rets = pf_style_map.get(st, [])
+                m_ = calc_metrics(st_rets)
+                rm_ = risk_metrics(st_rets, date_range_days)
+                pf_style_rows.append([
+                    f"**{st.capitalize()}**",
+                    str(m_["count"]),
+                    f"{m_['wr']:.1f}%" if m_["count"] else "—",
+                    f"{m_['avg']:+.2f}%" if m_["count"] else "—",
+                    f"{rm_.get('sharpe', 0):.2f}" if m_["count"] else "—",
+                    "DISABLED" if st == "intraday" else "",
+                ])
+            print_table(["Style", "N", "Win Rate", "Avg Ret", "Sharpe", "Note"],
+                        pf_style_rows)
+
+            # Sector breakdown for pro-forma
+            pf_sector_map = defaultdict(list)
+            for r in pf_rows:
+                if r.outcome_pct is not None and r.sector_etf:
+                    pf_sector_map[r.sector_etf].append(r.outcome_pct)
+
+            print("\n### 16c. Pro-Forma Sector Performance (after removing XLF/XLP/XLU)\n")
+            pf_sec_rows = sorted(
+                [(s, calc_metrics(v)) for s, v in pf_sector_map.items()],
+                key=lambda x: x[1]["avg"], reverse=True,
+            )
+            print_table(
+                ["Sector ETF", "N", "Win Rate", "Avg Ret", "PF"],
+                [[s, str(m_["count"]), f"{m_['wr']:.1f}%",
+                  f"{m_['avg']:+.2f}%",
+                  f"{m_['pf']:.2f}×" if m_['pf'] != float('inf') else "∞"]
+                 for s, m_ in pf_sec_rows],
+            )
+        else:
+            print("[no pro-forma trades remain after filtering]")
+
         # ── Snapshot write (only when --snapshot flag provided) ────────────────
         if snapshot_tag:
             avg_mae  = _mean(mae_vals)  if mae_vals  else None
