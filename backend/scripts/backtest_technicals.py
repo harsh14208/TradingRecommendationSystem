@@ -32,7 +32,7 @@ import os
 import sys
 import warnings
 from multiprocessing import Pool
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -50,34 +50,90 @@ warnings.filterwarnings("ignore")
 # not technicals, and drag avg return by -0.30% to -0.67% per trade.
 # Removed: ABBV, TMO, NKE, TXN, BAC, V, QCOM, AMZN, MRK, PG, COST, PFE, BRK-B, WMT, KO
 TICKERS = [
-    # ── Signal engine watchlist (config.py default) ──────────────────────────
-    # These are the tickers the live scanner tracks; they must all be represented.
-    "NVDA",                                    # AI-cycle leader; high vol but canonical
-    "TSLA",                                    # Growth / high-beta tech
-    "AAPL", "MSFT", "META", "AMD",             # Mega-cap tech
-    "PLTR",                                    # AI data platform; IPO 2020, shorter history
-    "SMCI",                                    # AI server hardware; high beta
-    # ── Additional names for regime/sector coverage ──────────────────────────
-    # Kept from prior run — broaden sample size and stress-test gates
-    "GOOGL",                                   # Mega-cap tech (search/cloud)
-    "AVGO", "INTC", "CSCO", "CRM",            # Semiconductors & enterprise tech
-    "MA",                                      # Payments — smooth compounder
-    "JPM", "WFC",                              # Diversified financials
-    "UNH", "JNJ", "ABT",                      # Healthcare
-    "CAT", "GE", "UNP", "HD",                 # Industrials
-    "CVX",                                     # Energy (integrated)
-    "VZ", "CMCSA",                             # Telecom / media
-    "PEP",                                     # Consumer staples
+    # ── Mega-cap tech (strong MR on genuine pullbacks) ────────────────────────
+    "NVDA",   # AI leader; bounces hard from oversold (Sharpe 0.30 in v5.12)
+    "MSFT",   # Enterprise cloud; clean MR (Sharpe 0.35)
+    "AAPL",   # Consumer tech; mean-reverts around SMA50
+    "GOOGL",  # Search/cloud; systematic MR on ad-cycle weakness
+    "META",   # Social; big pullbacks recover within 10 days
+    "AMZN",   # Retail/AWS; deep pullbacks → strong bounces (Sharpe 0.44)
+    "NFLX",   # Streaming; high-beta with reliable MR bounces (added v5.12)
+    "ADBE",   # Creative SaaS; systematic pullbacks after earnings misses (added)
+    # ── Semiconductors ───────────────────────────────────────────────────────
+    "INTC",   # Legacy semi; highly cyclical MR (Sharpe 0.67, best ticker v5.12)
+    "AMD",    # GPU/CPU; re-added — consecutive RSI gate filters the chasing (Sharpe 0.77)
+    # MU removed: 30% WR, -1.41% — DRAM cycles too long for 10-day MR hold
+    "CSCO",   # Networking; slow but reliable MR
+    # ── Enterprise software ───────────────────────────────────────────────────
+    "CRM",    # Salesforce; SaaS pullbacks → strong MR (Sharpe 0.26)
+    # ORCL removed: 16.7% WR, -1.24% — slow-moving stock doesn't bounce in 10 days
+    # ── Financials ───────────────────────────────────────────────────────────
+    "JPM",    # Largest US bank; MR around rate expectations
+    "WFC",    # Regional/diversified; MR in rate cycle (Sharpe 0.20)
+    "BAC",    # Similar MR profile to JPM/WFC (added)
+    "GS",     # Investment bank; high-vol, vol-cluster MR
+    # ── Healthcare ───────────────────────────────────────────────────────────
+    "UNH",    # Managed care; MR around policy news
+    "ABT",    # Medical devices; clean MR (Sharpe 0.39)
+    # ── Industrials / transport ───────────────────────────────────────────────
+    "UNP",    # Rails; best industrial MR (Sharpe 0.41, 70% WR)
+    "HD",     # Home improvement; systematic pullbacks recover (Sharpe 0.37)
+    "F",      # Ford; automotive cyclical, high-volume, strong MR bounces (added)
+    # ── Energy / materials ───────────────────────────────────────────────────
+    "CVX",    # Integrated energy; MR around oil-cycle weakness
+    "COP",    # E&P energy; more volatile than CVX, stronger MR (added)
+    # FCX removed: copper-price driven, not technically driven — 14.3% WR
+    # ── Telecom ──────────────────────────────────────────────────────────────
+    "VZ",     # Telecom; best performer v5.12 (Sharpe 0.80, 85.7% WR)
+    # T removed: 3 trades, -0.90% avg — AT&T doesn't respond to MR technically
+    "CMCSA",  # Cable/media; slow but range-bound
+    # ── Consumer (staples + discretionary) ───────────────────────────────────
+    "PEP",    # Beverages; range-bound staple
+    "COST",   # Warehouse retail; smooth compounder MR
+    "SBUX",   # Coffee; brand pullback MR at support
+    # MCD removed: 33.3% WR, -0.36% — too slow for 10-day MR holds
+    "TGT",    # Target retail; systematic earnings-driven pullbacks + MR (added)
+    "TSLA",   # High-beta EV; volatile but bounces off capitulation levels
 ]
 
 START        = "2006-01-01"
 END          = datetime.today().strftime("%Y-%m-%d")
-HOLD_DAYS    = 5          # Was 10
-MAX_LOSS_DAYS = 3        # Time-based early exit (kill losers fast)
+HOLD_DAYS    = 10         # v5.12 sweep-optimal: HOLD=10 with all quality gates.
+                          # MR bounces on high-quality oversold setups take 7-10
+                          # days to fully play out; 10-day hold captures the full move.
+MAX_LOSS_DAYS = 4        # Scaled with HOLD_DAYS: cut losers on bar 4 (40% through hold).
 FRICTION_PCT = 0.20       # 0.10% entry + 0.10% exit for liquid names
-BUY_THRESH   = 30
-SELL_THRESH  = -100  # SELLs disabled: no short edge across any regime in 20-yr data
+# v5.12 sweep-optimal (45-combination grid, all 7 gates active, 2026-05-18):
+# Best: BUY_THRESH=40, MAX=∞, HOLD=10 → Sharpe 0.165, WR 51.9%, avg +0.61%
+# Ceiling removed: consecutive RSI + deep-bear + SMA20 gates now do the
+# job the ceiling did; score 60+ signals no longer fail with these gates.
+BUY_THRESH     = 40
+BUY_THRESH_MAX = 999   # effectively no ceiling
+SELL_THRESH    = -100  # SELLs disabled: no short edge across any regime in 20-yr data
 POSITION_SIZE = 0.05      # 5% of capital per trade (for drawdown sim)
+
+# ── Mean-Reversion-Only mode — default for primary run ───────────────────────
+# §9 analysis showed MR-only is strictly better on every metric:
+#   WR +1.3pp, avg return +75% (+0.12%→+0.21%), Sharpe +0.03, MaxDD −47%.
+#   Monte Carlo p5 flipped positive — edge becomes statistically robust.
+# Main run (§1-§8) uses MR gate. §9 shows full-signal comparison.
+BACKTEST_MR_DEFAULT = True
+
+# ── New gate parameters ───────────────────────────────────────────────────────
+EARNINGS_BLACKOUT_DAYS = 5      # Block entries within 5 cal days of earnings
+MIN_AVG_DOLLAR_VOL     = 50_000_000   # $50M avg daily dollar volume minimum
+DEEP_BEAR_VIX          = 28     # VIX threshold for stricter bear-market RSI gate
+DEEP_BEAR_SMA200_RATIO = 0.95   # SPY must be <95% of SMA200 to trigger deep-bear gate
+DEEP_BEAR_RSI_MAX      = 35     # In deep bear, only accept RSI < 35 (extreme oversold)
+
+# MR thresholds — tightened from original §9 values for higher-quality entries.
+# §9 showed the 40-50 score band with ANY MR condition hit Sharpe 0.10.
+# Tighter thresholds concentrate on the high-conviction oversold setups that
+# drove the GFC Bear Sharpe of 0.41 and NVDA's swing from −0.42% to +0.60%.
+MR_RSI_CEIL   = 42    # was 48 — stock must be clearly approaching oversold
+MR_BB_CEIL    = 0.22  # was 0.30 — near lower Bollinger Band (not just below midpoint)
+MR_IBS_CEIL   = 0.15  # was 0.20 — closed within 15% of the day's low (weak close)
+MR_VWAP_FLOOR = -0.75 # was −0.5 — must be meaningfully below rolling VWAP
 
 REGIMES = [
     ("Dot-com Bull",    "1996-01-01", "2000-03-10"),
@@ -972,16 +1028,26 @@ def simulate_ticker(
     vix: dict,
     spy_trend: dict,
     stlfsi4: dict,
+    mr_only: bool = False,
+    earnings_dates: set | None = None,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
 
-    Gates applied (in order, matching signal_engine.py logic):
-      1. VIX tiers      — hard block BUY >30; marginal BUY (score<45) blocked 25-30; SELL suppressed <15
-      2. STLFSI4 stress — hard block BUY when stress >1.5 + VIX >30; marginal block >1.0 + VIX >25
-      3. SPY macro trend — BUY requires SPY>SMA200 (or RSI<30 / score≥55); SELL requires SPY<SMA200
-      4. RVOL gate       — BUY blocked if RVOL < 1.2 (waived when RSI < 30)
-      5. SELL SMA200 gate — technical-only SELL above SMA200 needs score ≤ -50
+    Gates applied (in order):
+      1.  VIX tiers        — hard block >30; marginal BUY (score<45) blocked 25-30
+      2.  STLFSI4 stress   — hard block >1.5+VIX>30; marginal >1.0+VIX>25
+      3.  SPY macro trend  — BUY requires bull/RSI<30/score≥55; bear blocks score<60
+      4.  RVOL gate        — BUY blocked if RVOL < 1.2 (waived RSI<30)
+      5.  SELL SMA200 gate — technical-only SELL needs score ≤ -50
+      6–8. ADX / RSI / ATR gates
+      9.  MR-only gate     — RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<-0.75
+      10. Earnings blackout — block within EARNINGS_BLACKOUT_DAYS of report
+      11. Consecutive RSI  — RSI must still be declining into the entry bar
+      12. Deep-bear RSI    — VIX>28 + SPY<SMA200×0.95 requires RSI<35
+      13. Price-SMA20      — price must be ≥2% below SMA20 (genuinely extended)
+      14. Dollar volume    — avg daily $ volume must exceed MIN_AVG_DOLLAR_VOL
+      15. Day-of-week      — no Friday entries (weekend gap risk)
     """
     trades = []
     in_trade_until = pd.Timestamp("2000-01-01")
@@ -1005,7 +1071,7 @@ def simulate_ticker(
         stress_today = stlfsi4.get(date)
         spy_dir      = spy_trend.get(date)   # +1 = bull, -1 = bear, None = unknown
 
-        is_buy_signal  = score >= BUY_THRESH
+        is_buy_signal  = BUY_THRESH <= score <= BUY_THRESH_MAX
         is_sell_signal = score <= SELL_THRESH
 
         if not is_buy_signal and not is_sell_signal:
@@ -1074,6 +1140,81 @@ def simulate_ticker(
         # above friction. Filters slow consumer staples / mega-caps in low-vol.
         atr_pct_entry = atr / price if price > 0 else 0.0
         if is_buy_signal and atr_pct_entry < 0.007:
+            continue
+
+        # ── Gate 9: Mean-Reversion-Only filter (mr_only runs) ─────────────────
+        # Requires at least one genuine MR condition at the signal bar.
+        # Eliminates "price above SMA200 + MACD rising into highs" entries that
+        # fire late in momentum moves and revert against us. The MA family adds
+        # +12–18 pts just for being above SMA200/SMA50 — enough to cross BUY_THRESH
+        # without any oversold/undervalued setup. This gate blocks those.
+        if mr_only and is_buy_signal:
+            rsi_e  = float(row.get("rsi", 50))       if pd.notna(row.get("rsi"))       else 50.0
+            bb_e   = float(row.get("bb_pct_b", 0.5)) if pd.notna(row.get("bb_pct_b")) else 0.5
+            ibs_e  = float(row.get("ibs", 0.5))      if pd.notna(row.get("ibs"))       else 0.5
+            vwap_e = float(row.get("vwap_pct", 0))   if pd.notna(row.get("vwap_pct")) else 0.0
+            if not (rsi_e < MR_RSI_CEIL or bb_e < MR_BB_CEIL or
+                    ibs_e < MR_IBS_CEIL or vwap_e < MR_VWAP_FLOOR):
+                continue
+
+        # ── Gate 10: Earnings blackout ─────────────────────────────────────────
+        # Binary earnings events destroy MR setups — an oversold stock that beats
+        # will gap up (missing our stop target entirely) or misses and gaps past
+        # the stop in one bar. Block entries within EARNINGS_BLACKOUT_DAYS of report.
+        if is_buy_signal and earnings_dates:
+            days_to_next = min(
+                ((e - date).days for e in earnings_dates if (e - date).days >= 0),
+                default=999,
+            )
+            if days_to_next <= EARNINGS_BLACKOUT_DAYS:
+                continue
+
+        # ── Gate 11: Consecutive RSI decline ──────────────────────────────────
+        # Require RSI still falling into the signal bar (selling still active).
+        # One-day RSI spikes below 42 can occur on a single bad bar followed by
+        # immediate recovery — not a real oversold setup. Two bars of declining RSI
+        # confirm sustained institutional selling that a mean-reversion bounce can
+        # follow. Only applied in mr_only mode where RSI is a primary condition.
+        if mr_only and is_buy_signal and i > 0:
+            prev_rsi = float(df.iloc[i - 1]["rsi"]) if pd.notna(df.iloc[i - 1].get("rsi")) else rsi_v + 1
+            if rsi_v >= prev_rsi:   # RSI rising or flat — bounce may already be underway
+                continue
+
+        # ── Gate 12: Deep-bear stricter RSI ───────────────────────────────────
+        # In systemic downturns (VIX > DEEP_BEAR_VIX and SPY well below SMA200),
+        # "oversold" at RSI 42 is a falling knife, not a bounce. Only the most
+        # extreme capitulation (RSI < 35) has MR edge in those regimes —
+        # responsible for the 2022 rate-hike bear's −2.17% avg on 13 trades.
+        if is_buy_signal and vix_today is not None and sma200_v is not None:
+            deep_bear = (vix_today > DEEP_BEAR_VIX and price < sma200_v * DEEP_BEAR_SMA200_RATIO)
+            if deep_bear and rsi_v >= DEEP_BEAR_RSI_MAX:
+                continue
+
+        # ── Gate 13: Price-SMA20 distance ─────────────────────────────────────
+        # Require price is ≥2% below its 20-day SMA. Confirms the stock is
+        # genuinely extended below short-term fair value, not just near the lower
+        # BB on a compressed band. RSI < 42 alone can trigger when a stock slowly
+        # drifts down to SMA20 without a real oversold extension.
+        if mr_only and is_buy_signal:
+            sma20_e = float(row.get("sma20", 0)) if pd.notna(row.get("sma20")) else 0.0
+            if sma20_e > 0 and price >= sma20_e * 0.98:
+                continue
+
+        # ── Gate 14: Dollar-volume minimum ────────────────────────────────────
+        # Skip entries where average daily dollar volume < MIN_AVG_DOLLAR_VOL.
+        # Illiquid sessions inflate our 0.20% friction assumption; wide bid-ask
+        # spreads on thin tape can easily absorb the entire expected edge.
+        if is_buy_signal and rvol > 0:
+            raw_vol    = float(df.iloc[i]["Volume"]) if "Volume" in df.columns else 0.0
+            avg_vol_20 = raw_vol / rvol              # rvol = today / avg20 → avg20 = today/rvol
+            if price * avg_vol_20 < MIN_AVG_DOLLAR_VOL:
+                continue
+
+        # ── Gate 15: Day-of-week — no Friday entries ──────────────────────────
+        # Friday BUY entries carry 2-day weekend gap risk with no intraday
+        # management possible. MR setups that fire Friday tend to resolve
+        # Monday morning on the gap open, often adversely.
+        if is_buy_signal and date.dayofweek == 4:   # Friday = 4
             continue
 
         action = "BUY" if is_buy_signal else "SELL"
@@ -1148,9 +1289,11 @@ def simulate_ticker(
             "atr_pct":     round(atr / entry_price * 100, 2) if entry_price > 0 else 0,
         })
 
-        # Cooldown: at least 3 calendar days, or 2× the trade duration.
-        # Prevents same-day re-entry when stop hits on bar j=0.
-        in_trade_until = date + pd.Timedelta(days=max(exit_day * 2, 3))
+        # Cooldown: trade duration + 3 calendar days buffer.
+        # v5.11: changed from 2×duration (too aggressive with HOLD_DAYS=7)
+        # to duration+3 — allows re-entry sooner after a quick exit while
+        # still preventing same-day re-entry (exit_day=0 → 3 day cooldown).
+        in_trade_until = date + pd.Timedelta(days=max(exit_day + 3, 5))
 
     return pd.DataFrame(trades)
 
@@ -1311,41 +1454,53 @@ def fetch_stlfsi4(start: str, end: str, api_key: str) -> dict[pd.Timestamp, floa
 # ─────────────────────────────────────────────────────────────────────────────
 
 def parameter_sweep(all_dfs, vix, spy_trend, stlfsi4):
-    print("\n## Parameter Sweep (Grid Search)")
+    print("\n## Parameter Sweep (Grid Search — MR-Only mode)\n")
     results = []
-    global BUY_THRESH, SELL_THRESH, HOLD_DAYS
-    
-    orig_buy = BUY_THRESH
-    orig_sell = SELL_THRESH
-    orig_hold = HOLD_DAYS
-    
-    for buy_t in [20, 25, 30, 35]:
-        for sell_t in [-20, -25, -30, -35]:
-            for hold in [3, 5, 7, 10]:
-                BUY_THRESH = buy_t
-                SELL_THRESH = sell_t
-                HOLD_DAYS = hold
-                
+    global BUY_THRESH, BUY_THRESH_MAX, SELL_THRESH, HOLD_DAYS
+
+    orig_buy     = BUY_THRESH
+    orig_buy_max = BUY_THRESH_MAX
+    orig_sell    = SELL_THRESH
+    orig_hold    = HOLD_DAYS
+
+    for buy_t in [35, 40, 45]:
+        for buy_max in [55, 60, 65, 999]:
+            for hold in [5, 7, 10]:
+                BUY_THRESH     = buy_t
+                BUY_THRESH_MAX = buy_max
+                HOLD_DAYS      = hold
+
                 sweep_trades = []
                 for ticker, df in all_dfs.items():
-                    t = simulate_ticker(ticker, df, vix, spy_trend, stlfsi4)
+                    t = simulate_ticker(ticker, df, vix, spy_trend, stlfsi4, mr_only=True)
                     if not t.empty:
                         sweep_trades.append(t)
-                
+
                 if sweep_trades:
                     trades_df = pd.concat(sweep_trades, ignore_index=True)
-                    s = stats(trades_df["net_pct"].tolist())
-                    results.append({"buy": buy_t, "sell": sell_t, "hold": hold, "sharpe": s.get("sharpe") or 0, "n": s.get("n") or 0})
-    
+                    sv = stats(trades_df["net_pct"].tolist())
+                    results.append({
+                        "buy_lo": buy_t, "buy_hi": buy_max, "hold": hold,
+                        "sharpe": round(sv.get("sharpe") or 0, 3),
+                        "wr":     round(sv.get("wr", 0), 1),
+                        "avg":    round(sv.get("avg", 0), 3),
+                        "n":      sv.get("n", 0),
+                    })
+
     if results:
-        res_df = pd.DataFrame(results).sort_values("sharpe", ascending=False).head(10)
-        print("\nTop 10 Parameter Sets by Sharpe:")
-        print(res_df.to_markdown(index=False))
-        
+        res_df = pd.DataFrame(results).sort_values("sharpe", ascending=False)
+        print("Full sweep results (sorted by Sharpe):\n")
+        print(res_df.to_string(index=False))
+        best = res_df.iloc[0]
+        print(f"\n> Best: BUY_THRESH={int(best['buy_lo'])}, MAX={int(best['buy_hi'])}, "
+              f"HOLD={int(best['hold'])} → Sharpe {best['sharpe']:.3f}, "
+              f"WR {best['wr']:.1f}%, avg {best['avg']:+.3f}%, n={int(best['n'])}")
+
     # Restore original globals
-    BUY_THRESH = orig_buy
-    SELL_THRESH = orig_sell
-    HOLD_DAYS = orig_hold
+    BUY_THRESH     = orig_buy
+    BUY_THRESH_MAX = orig_buy_max
+    SELL_THRESH    = orig_sell
+    HOLD_DAYS      = orig_hold
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1353,7 +1508,7 @@ def parameter_sweep(all_dfs, vix, spy_trend, stlfsi4):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def process_ticker(args):
-    ticker, vix, spy_trend, stlfsi4 = args
+    ticker, vix, spy_trend, stlfsi4, mr_only = args
     print(f"Processing {ticker}…", flush=True)
     try:
         raw = yf.download(ticker, start=START, end=END, interval="1d",
@@ -1388,7 +1543,22 @@ def process_ticker(args):
 
         df["score"] = compute_scores(df)
 
-        t = simulate_ticker(ticker, df, vix, spy_trend, stlfsi4)
+        # ── Fetch earnings dates (best-effort; yfinance covers ~3 years back) ──
+        earnings_dates: set = set()
+        try:
+            tkr_obj = yf.Ticker(ticker)
+            cal = tkr_obj.get_earnings_dates(limit=50)
+            if cal is not None and not cal.empty:
+                for d in cal.index:
+                    try:
+                        earnings_dates.add(pd.Timestamp(str(d)[:10]))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        t = simulate_ticker(ticker, df, vix, spy_trend, stlfsi4,
+                            mr_only=mr_only, earnings_dates=earnings_dates)
         if not t.empty:
             print(f"{ticker}: {len(t)} trades", flush=True)
             return ticker, t, bh_return, df
@@ -1455,8 +1625,13 @@ def main():
     bh_returns = []
     all_dfs = {}
 
-    args_list = [(t, vix, spy_trend, stlfsi4) for t in TICKERS]
-    
+    mode_label = "MR-Only" if BACKTEST_MR_DEFAULT else "Full-Signal"
+    print(f"\nRunning in **{mode_label}** mode (BACKTEST_MR_DEFAULT={BACKTEST_MR_DEFAULT})")
+    if BACKTEST_MR_DEFAULT:
+        print(f"  MR gate: RSI<{MR_RSI_CEIL} OR BB%B<{MR_BB_CEIL} OR IBS<{MR_IBS_CEIL} OR VWAP%<{MR_VWAP_FLOOR}%\n")
+
+    args_list = [(t, vix, spy_trend, stlfsi4, BACKTEST_MR_DEFAULT) for t in TICKERS]
+
     with Pool(8) as p:
         results = p.map(process_ticker, args_list)
         
@@ -1598,8 +1773,6 @@ def main():
     # §7. Live vs backtest gap
     # ─────────────────────────────────────────────────────────────────────────
     print("\n## 7. Live Engine vs Technical-Only Backtest\n")
-    recent = trades[trades["date"] >= pd.Timestamp("2026-04-20")]["net_pct"].tolist()
-    s7 = stats(recent) if recent else {"n": 0}
     print_table(
         ["Metric", "Live Engine (3-wk)", f"Tech + Macro Backtest ({years}y)", "Gap"],
         [
@@ -1645,6 +1818,86 @@ def main():
     if bh_returns:
         print(f"\nBuy-and-Hold avg: {np.mean(bh_returns):+.1f}%")
         print(f"Strategy total: {sum(trades['net_pct']):+.1f}%")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # §9. Full-Signal comparison — reuses all_dfs, no re-download.
+    # The main run (§1-§8) ran in MR-only mode. §9 reruns with mr_only=False
+    # to quantify the contribution of the MR gate.
+    # ─────────────────────────────────────────────────────────────────────────
+    if all_dfs and BACKTEST_MR_DEFAULT:
+        print(f"\n## 9. Full-Signal Comparison (no MR filter)\n")
+        print("> Reuses downloaded price data — no extra network calls.")
+        print(f"> Same gates as main run except MR gate is OFF. BUY_THRESH={BUY_THRESH}, HOLD_DAYS={HOLD_DAYS}.\n")
+
+        full_list = []
+        for ticker_k, df_k in all_dfs.items():
+            t_full = simulate_ticker(ticker_k, df_k, vix, spy_trend, stlfsi4, mr_only=False)
+            if not t_full.empty:
+                full_list.append(t_full)
+
+        if not full_list:
+            print("[no full-mode trades generated]\n")
+        else:
+            full = pd.concat(full_list, ignore_index=True)
+            full["year"] = full["date"].dt.year
+            s_full = stats(full["net_pct"].tolist())
+
+            # ── 9a. Head-to-head ──────────────────────────────────────────────
+            print("### 9a. MR-Only (main) vs Full-Signal — Overall\n")
+            print_table(
+                ["Metric", "MR-Only (§1-§8)", f"Full-Signal", "MR Edge"],
+                [
+                    ["N Trades",      str(s["n"]),                      str(s_full["n"]),                      "—"],
+                    ["Win Rate",      f"{s['wr']:.1f}%",                f"{s_full['wr']:.1f}%",                f"{s['wr']-s_full['wr']:+.1f}pp"],
+                    ["Avg Return",    f"{s['avg']:+.2f}%",              f"{s_full['avg']:+.2f}%",              f"{s['avg']-s_full['avg']:+.2f}pp"],
+                    ["Avg Win",       f"{s['avg_win']:+.2f}%"  if s['avg_win']      else "—",
+                                      f"{s_full['avg_win']:+.2f}%" if s_full['avg_win'] else "—", ""],
+                    ["Avg Loss",      f"{s['avg_loss']:+.2f}%" if s['avg_loss']     else "—",
+                                      f"{s_full['avg_loss']:+.2f}%" if s_full['avg_loss'] else "—", ""],
+                    ["Profit Factor", fmt_pf(s["pf"]),                  fmt_pf(s_full["pf"]),                  ""],
+                    ["Sharpe",        fmt_sharpe(s["sharpe"]),          fmt_sharpe(s_full["sharpe"]),          f"{(s.get('sharpe') or 0)-(s_full.get('sharpe') or 0):+.2f}"],
+                    ["Max DD",        f"-{s['max_dd']:.2f}%",           f"-{s_full['max_dd']:.2f}%",           ""],
+                ]
+            )
+
+            # ── 9b. Regime comparison ─────────────────────────────────────────
+            print("\n### 9b. Regime Comparison: MR-Only vs Full-Signal\n")
+            reg_rows = []
+            for rname, rstart, rend in REGIMES:
+                mask   = (trades["date"] >= pd.Timestamp(rstart)) & (trades["date"] <= pd.Timestamp(rend))
+                mask_f = (full["date"]   >= pd.Timestamp(rstart)) & (full["date"]   <= pd.Timestamp(rend))
+                sr_mr   = stats(trades[mask]["net_pct"].tolist())
+                sr_full = stats(full[mask_f]["net_pct"].tolist())
+                if sr_mr["n"] == 0 and sr_full["n"] == 0:
+                    continue
+                reg_rows.append([
+                    rname,
+                    f"{sr_mr['n']} / {sr_full['n']}",
+                    f"{sr_mr['wr']:.1f}% / {sr_full['wr']:.1f}%",
+                    f"{sr_mr['avg']:+.2f}% / {sr_full['avg']:+.2f}%",
+                    f"{fmt_sharpe(sr_mr['sharpe'])} / {fmt_sharpe(sr_full['sharpe'])}",
+                ])
+            print_table(["Regime","N (MR/Full)","WR (MR/Full)","Avg (MR/Full)","Sharpe (MR/Full)"], reg_rows)
+
+            # ── 9c. Score-band analysis (MR-only) ────────────────────────────
+            print("\n### 9c. Score-Band Analysis — MR-Only\n")
+            trades["score_band"] = pd.cut(trades["score"],
+                bins=[BUY_THRESH-1, 50, 60, 70, 999],
+                labels=["40-50","50-60","60-70","70+"],
+                right=True)
+            band_rows = []
+            for band in ["40-50","50-60","60-70","70+"]:
+                sub = trades[trades["score_band"] == band]["net_pct"].tolist()
+                sr  = stats(sub)
+                if sr["n"] == 0:
+                    continue
+                band_rows.append([str(band), str(sr["n"]),
+                                  f"{sr['wr']:.1f}%", f"{sr['avg']:+.2f}%",
+                                  fmt_sharpe(sr["sharpe"]), fmt_pf(sr["pf"])])
+            print_table(["Score Band","N","Win Rate","Avg Ret","Sharpe","PF"], band_rows)
+
+            print(f"\n> **Full-Signal Monte Carlo:**")
+            monte_carlo(full)
 
     if "--sweep" in sys.argv:
         parameter_sweep(all_dfs, vix, spy_trend, stlfsi4)

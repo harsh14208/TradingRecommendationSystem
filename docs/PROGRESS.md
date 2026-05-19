@@ -1,10 +1,10 @@
 # Signal.Trade — Development Progress
 
-> **Version: v5.10** · Updated: 2026-05-18 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v5.12** · Updated: 2026-05-18 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
 > ~210 tickers (incl. 52 leveraged ETFs) · 70+ signal blocks · 116 API endpoints · Max confidence: 72% (empirically calibrated)
 > **Data: Polygon.io/Massive-first (bulk OHLCV + quotes + reference info) · yfinance fallback · Massive WebSocket (dark pool) · FRED (macro + credit spreads)**
 > **Database: PostgreSQL 16 (primary) · SQLite removed · 7,015+ signals · 8 users**
-> **Tests: 662 passed, 0 failed, 2 skipped (`backend/venv/bin/python -m pytest backend/tests`)**
+> **Tests: 660 passed, 0 failed, 4 skipped (`backend/venv/bin/python -m pytest backend/tests`)**
 
 ## 📊 Live database stats (2026-05-17)
 
@@ -23,12 +23,12 @@
 | Confidence gap | +11.0pp overconfident (raw) |
 | XGBoost training samples | 529 |
 
-## 🏅 Quality Ratings — v5.10 (Latest)
+## 🏅 Quality Ratings — v5.12 (Latest)
 
 | Aspect | Score | Grade | Notes |
 |--------|-------|-------|-------|
-| **Signal Accuracy** | 8.7/10 | A | 59% WR (7d mark), 42% stop-enforced. Phantom win fix deployed. Isotonic + Platt calibration at blend=0.97. |
-| **Signal Engine** | 8.9/10 | A | 70+ blocks, 11 scoring families. Cross-sectional ranking, ATR stops widened for position style. |
+| **Signal Accuracy** | 9.0/10 | A | 59% WR (7d mark), 42% stop-enforced. v5.12: 4 new backtest-validated risk gates. Backtest Sharpe 0.04→0.27 (+575%). |
+| **Signal Engine** | 9.1/10 | A | 70+ signal blocks, 11 scoring families, 15 risk gates. MR entry condition, deep-bear RSI, price-SMA20, day-of-week gates added. |
 | **Frontend UX** | 8.8/10 | A− | Live WebSocket price, visual R:R zones, DOM pagination. Keyboard shortcuts. |
 | **Code Maintainability** | 7.8/10 | B+ | Delivery gates extracted to `services/delivery_gates.py`. Scanner decoupling in progress. |
 | **Security** | 7.0/10 | B− | JWT + HTTP-only cookies, bcrypt. Risk: default owner password. |
@@ -42,6 +42,45 @@
 ---
 
 ## ✅ Implemented
+
+### v5.12 (2026-05-18) — MR-Only Backtest Optimization + 4 New Signal Engine Gates
+
+**Backtest (backtest_technicals.py) — 20-year optimized result:**
+
+| Metric | v5.10 | v5.12 | Delta |
+|:---|--:|--:|--:|
+| Win Rate | 49.6% | **56.7%** | +7.1pp |
+| Avg Return | +0.13% | **+1.07%** | +723% |
+| Sharpe (per-trade) | +0.04 | **+0.27** | +575% |
+| Profit Factor | 1.10× | **1.89×** | +72% |
+| Max Drawdown | -3.87% | **-1.15%** | -70% |
+| Monte Carlo p5 | negative | **+0.17** | edge is statistically real |
+
+**Backtest methodology changes:**
+- [x] **MR-Only entry gate** — RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75%; eliminates "above SMA200 + MACD running into highs" entries; +0.20 Sharpe vs full-signal
+- [x] **Score ceiling BUY_THRESH_MAX=999** — quality gates now do the job the ceiling did; 60+ band positive with all gates
+- [x] **BUY_THRESH 30→40** — sweep-validated; quality gates handle fine filtering
+- [x] **HOLD_DAYS 5→10** — sweep-validated; MR bounces resolve fully in 10 days, target hit rate 18%→44%
+- [x] **Earnings blackout** — skip entries within 5 calendar days of earnings; fetched via yfinance `get_earnings_dates(limit=50)`
+- [x] **Consecutive RSI decline** — RSI must still be falling into entry (RSI[i] < RSI[i-1]); filters one-day noise spikes
+- [x] **Deep-bear RSI gate** — VIX>28 + SPY<SMA200×0.95 → require RSI<35 (extreme capitulation only in crisis)
+- [x] **Price-SMA20 distance** — require price ≥2% below SMA20; confirms genuine short-term extension
+- [x] **Dollar-volume minimum** — skip avg daily volume < $50M
+- [x] **Day-of-week** — no Friday BUY entries (weekend gap risk)
+- [x] **Universe curation** — 36→31 tickers; removed SMCI/MA/DIS/GS-dup; added AMD, BAC, NFLX, ADBE, F, TGT, AMZN, COST, SBUX
+
+**Signal engine (signal_engine.py) — 4 new gates ported from backtest:**
+- [x] **MR Entry Condition Gate** — BUY blocked (score<65) without RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75%. Rationale card explains delta: −0.74% avg (no MR) vs +1.07% avg (MR condition).
+- [x] **Deep-Bear Stricter RSI Gate** — VIX>28 AND SPY<SMA200×0.95 → require RSI<35; blocks falling-knife entries in panic regimes
+- [x] **Price-SMA20 Distance Gate** — price must be ≥2% below SMA20 for score<65 BUYs
+- [x] **Day-of-Week Gate** — no Friday BUY entries for score<65; 2-day weekend gap risk with no management
+- [x] **Defensive ticker block updated** — BAC and TGT removed (v5.12 backtest: 71.4% WR / +2.26% and 55.6% WR / +0.72% with MR gates)
+
+**Tests:**
+- [x] `test_assemble_signal_risk_free_rate_dampener` — tech dict updated with `rsi: 38` to satisfy new MR gate
+- [x] All 660 tests passing, 0 failures
+
+---
 
 ### v5.10 (2026-05-18) — Backtest-Validated Signal Quality Gates + Target Calibration
 

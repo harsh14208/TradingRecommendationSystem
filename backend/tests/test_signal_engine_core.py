@@ -128,7 +128,7 @@ def test_assemble_signal_risk_free_rate_dampener():
     res = _assemble_signal(
         ticker="TSLA",
         info={"company": "Tesla"},
-        tech={"price": 100.0, "atr": 1.0}, # Target will be 100 + 3*1 = 103 (3% return)
+        tech={"price": 100.0, "atr": 1.0, "rsi": 38.0}, # rsi<42 satisfies MR gate; target 100+3*1=103
         score=50.0, # BUY
         rationale=[],
         sources=set(),

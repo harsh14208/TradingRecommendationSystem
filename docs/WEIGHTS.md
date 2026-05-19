@@ -1,6 +1,6 @@
 # Signal.Trade — Scoring Weights & Signal Gates Reference
 
-> **Version: v5.10** · Updated: 2026-05-18
+> **Version: v5.12** · Updated: 2026-05-18
 > Source of truth: `backend/services/signal_scoring.py` + `backend/services/signal_engine.py`
 
 ---
@@ -205,7 +205,7 @@ If BUY signal AND volume dry-up (<50% avg) AND RSI ≥ 30: `score ×0.70`.
 | **RSI Overbought + Weak Trend (v5.10)** | RSI>70 AND ADX<28 AND bull mkt AND score<40 | BUY → HOLD |
 | ATR Minimum | ATR < 0.7% of price | BUY → HOLD |
 | Low-Vol Stock | ATR < 0.8% AND (score<35 OR macro<0) | BUY → HOLD |
-| Defensive Ticker Block | ticker in {BAC, KO, PEP, T, NEE, PG, TGT, AIG, USB, PNC, C, WM, MCO, TT, DE, TJX, ABBV, MRK, PFE, LLY, TMO, TXN, NKE, V, PM, WMT} | BUY → HOLD |
+| Defensive Ticker Block | ticker in {KO, PEP, T, NEE, PG, USB, PNC, C, AIG, WM, MCO, TT, DE, TJX, ABBV, MRK, PFE, LLY, TMO, TXN, NKE, V, PM, WMT} — BAC and TGT removed in v5.12 | BUY → HOLD |
 | Dollar Volume | < $5M/day | −4–8pp confidence penalty |
 | STLFSI4 + VIX stress | STLFSI4>1.5 AND VIX>30 | BUY → HOLD |
 | STLFSI4 + VIX elevated | STLFSI4>1.0 AND VIX>25 AND score<50 | BUY → HOLD |
@@ -217,6 +217,10 @@ If BUY signal AND volume dry-up (<50% avg) AND RSI ≥ 30: `score ×0.70`.
 | Broad Market Breadth | >70% S&P above 200DMA AND score<42 | BUY → HOLD |
 | VIX Hard Floor | VIX>30 AND confidence<75% | BUY/SELL → HOLD |
 | Mega-Cap Haircut | Mkt cap ≥$500B | −2pp confidence |
+| **MR Entry Condition (v5.12)** | score<65 AND no (RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75) | BUY → HOLD |
+| **Deep-Bear RSI (v5.12)** | VIX>28 AND SPY<SMA200×0.95 AND RSI≥35 | BUY → HOLD |
+| **Price-SMA20 Distance (v5.12)** | score<65 AND price ≥ SMA20×0.98 (less than 2% below 20-DMA) | BUY → HOLD |
+| **Day-of-Week (v5.12)** | Friday AND score<65 | BUY → HOLD |
 
 ---
 

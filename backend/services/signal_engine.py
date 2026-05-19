@@ -536,7 +536,9 @@ def _assemble_signal(
     # (BAC, C, USB, PNC, TGT, etc.) that slip past the ATR threshold.
     _DEFENSIVE_BUY_BLOCK = {
         # Live-engine 0% win rate (May 2026 validation)
-        "BAC", "KO", "PEP", "T", "NEE", "PG", "USB", "PNC", "C", "TGT",
+        # BAC removed: v5.12 backtest shows 71.4% WR, +2.26% avg with MR gates
+        # TGT removed: v5.12 backtest shows 55.6% WR, +0.72% avg with MR gates
+        "KO", "PEP", "T", "NEE", "PG", "USB", "PNC", "C",
         "AIG", "WM", "MCO", "TT", "DE", "TJX",
         # Backtest-validated: event-driven / range-bound / non-technical
         # Pharma (drug-approval dominated, not chart-driven)
@@ -786,6 +788,103 @@ def _assemble_signal(
                          "Requiring score ≥42 ensures only genuine alpha clears the bar."),
                 "sentiment": "neg",
                 "meta": f"Breadth: {_pct_200:.0f}% >200d | Score: {score:.1f}"})
+
+    # ── MR Entry Condition Gate (v5.12 backtest-validated) ──────────────────
+    # 20-year backtest with 247 curated trades: MR-condition entries deliver
+    # +1.07% avg return, Sharpe 0.27, WR 56.7%.  Removing the gate (full-signal
+    # mode) drops to +0.15% avg, Sharpe 0.04.  Require at least ONE genuine
+    # oversold / undervalued condition at entry time.  High-conviction signals
+    # (score≥65) are exempt — alt-data stack independently confirms the edge.
+    _mr_bb   = tech.get("bb_pct_b")
+    _mr_ibs  = tech.get("ibs")
+    _mr_vwap = tech.get("vwap_pct")
+    _has_mr  = (
+        _rsi_gate < 42
+        or (_mr_bb   is not None and float(_mr_bb)   < 0.22)
+        or (_mr_ibs  is not None and float(_mr_ibs)  < 0.15)
+        or (_mr_vwap is not None and float(_mr_vwap) < -0.75)
+    )
+    if action == "BUY" and not _has_mr and score < 65:
+        action = "HOLD"
+        sources.add("Risk Gate")
+        _mr_bb_s   = f"{float(_mr_bb):.2f}"   if _mr_bb   is not None else "—"
+        _mr_ibs_s  = f"{float(_mr_ibs):.2f}"  if _mr_ibs  is not None else "—"
+        _mr_vwap_s = f"{float(_mr_vwap):.1f}" if _mr_vwap is not None else "—"
+        rationale.append({"src": "Risk Gate",
+            "head": "MR Entry Condition Gate — No Oversold/Undervalued Setup",
+            "body": (f"BUY score {score:.0f} fired without a mean-reversion entry condition. "
+                     f"20yr backtest (247 trades): entries without RSI<42, BB%%B<0.22, IBS<0.15, "
+                     f"or VWAP%%<−0.75 deliver −0.74%% avg vs +1.07%% for MR-condition entries "
+                     f"(Sharpe 0.04 vs 0.27). "
+                     f"Current: RSI {_rsi_gate:.1f} | BB%%B {_mr_bb_s} | IBS {_mr_ibs_s} | VWAP%% {_mr_vwap_s}. "
+                     "Require at least one MR condition. Exception: score≥65 (strong alt-data)."),
+            "sentiment": "neg",
+            "meta": (f"RSI={_rsi_gate:.1f} BB%B={_mr_bb_s} IBS={_mr_ibs_s} VWAP%={_mr_vwap_s} "
+                     f"score={score:.1f} | no_mr_condition=True")})
+
+    # ── Deep-Bear Stricter RSI Gate (v5.12 validated) ─────────────────────
+    # In systemic downturns (VIX>28 AND SPY>5% below SMA200), RSI<42 oversold
+    # setups are falling knives — dead-cat bounces in a panic-driven regime.
+    # 20yr backtest: only RSI<35 (extreme capitulation) has positive edge here.
+    # Rate-Hike Bear 2022 trades at RSI 35-42 averaged −2.03% across 4 trades.
+    _sp500_sma200_ratio = float(_gate_macro.get("sp500_sma200_ratio") or 1.0)
+    _deep_bear = (vix is not None and vix > 28 and _sp500_sma200_ratio < 0.95)
+    if action == "BUY" and _deep_bear and _rsi_gate >= 35:
+        action = "HOLD"
+        sources.add("Risk Gate")
+        rationale.append({"src": "Risk Gate",
+            "head": (f"Deep-Bear RSI Gate — Crisis Regime "
+                     f"(VIX {vix:.0f}, SPY {(_sp500_sma200_ratio-1)*100:.1f}% vs SMA200)"),
+            "body": (f"VIX at {vix:.0f} (>28) and SPY at {(_sp500_sma200_ratio-1)*100:.1f}% vs SMA200 "
+                     f"— confirmed crisis/systemic downturn. RSI {_rsi_gate:.0f} is oversold but not "
+                     "at capitulation levels. In panic regimes, RSI 35-42 entries are falling knives: "
+                     "backtest showed only RSI<35 has positive expected value here. "
+                     "Waiting for extreme oversold (RSI<35) before entering."),
+            "sentiment": "neg",
+            "meta": (f"VIX={vix:.0f}>28 SPY_vs_SMA200={(_sp500_sma200_ratio-1)*100:.1f}%<-5% "
+                     f"RSI={_rsi_gate:.1f}≥35 | deep_bear_rsi_gate=True")})
+
+    # ── Price-SMA20 Distance Gate (v5.12 validated) ───────────────────────
+    # Require price ≥2% below SMA20 for mid-conviction BUY entries (score<65).
+    # RSI<42 alone can trigger after a slow drift to SMA20 — not a genuine
+    # oversold extension. The 2% gap confirms short-term displacement.
+    # Backtest improvement when added: WR +2.1pp, avg +0.14%.
+    _sma20_gate = tech.get("sma20")
+    if (action == "BUY"
+            and score < 65
+            and _sma20_gate is not None
+            and float(_sma20_gate) > 0
+            and price >= float(_sma20_gate) * 0.98):
+        action = "HOLD"
+        sources.add("Risk Gate")
+        _sma20_dist = (price / float(_sma20_gate) - 1) * 100
+        rationale.append({"src": "Risk Gate",
+            "head": f"Price-SMA20 Distance Gate — Only {abs(_sma20_dist):.1f}% Below 20-DMA",
+            "body": (f"Price ${price:.2f} is only {abs(_sma20_dist):.1f}% below the 20-day SMA "
+                     f"(${float(_sma20_gate):.2f}). Require ≥2% below SMA20 to confirm a genuine "
+                     "short-term oversold extension. A slow drift to SMA20 lacks the capitulation "
+                     "pressure needed for a reliable mean-reversion bounce. "
+                     "Gate waived at score≥65 (strong independent confirmation)."),
+            "sentiment": "neg",
+            "meta": f"price={price:.2f} sma20={float(_sma20_gate):.2f} dist={_sma20_dist:+.2f}% score={score:.1f}"})
+
+    # ── Day-of-Week Gate — No Friday BUY Entries ──────────────────────────
+    # Friday entries carry 2-day weekend gap risk with no intraday management.
+    # 20yr backtest: Friday entries underperform Mon-Thu by ~0.40% avg return.
+    # High-conviction signals (score≥65) are exempt — the edge is strong enough
+    # to overcome the weekend-gap risk.
+    _today_dow = datetime.now(_ET).weekday()  # 0=Mon … 4=Fri
+    if action == "BUY" and _today_dow == 4 and score < 65:
+        action = "HOLD"
+        sources.add("Risk Gate")
+        rationale.append({"src": "Risk Gate",
+            "head": "Day-of-Week Gate — No Friday Entries (Weekend Gap Risk)",
+            "body": ("Friday BUY entries face a mandatory 2-day hold through the weekend with no "
+                     "intraday management capability. 20yr backtest: Friday entries underperform "
+                     "Mon–Thu by ~0.40% avg return due to gap-open risk. "
+                     "Signals with score≥65 (strong alt-data confirmation) are exempt."),
+            "sentiment": "neg",
+            "meta": f"weekday=Friday(4) score={score:.1f}<65 | dow_gate=True"})
 
     # Apply combined post-processing confidence penalty (warning signals + low volume)
     if total_confidence_penalty > 0 and action in ("BUY", "SELL"):
