@@ -18,12 +18,16 @@ log = logging.getLogger("scanner")
 
 # ── Gate configuration ────────────────────────────────────────────────────────
 
-# Empirical profit factors — disable styles below breakeven.
-# Intraday PF 0.73x (disabled), Swing PF 1.41x (elevated floor).
+# Empirical profit factors from 529 resolved live signals (Apr-May 2026):
+#   Position: 61.6% WR, +2.88% avg, Sharpe 6.45  → keep flowing
+#   Swing:    45.5% WR, +0.81% avg, Sharpe 1.93   → restrict to near-ceiling only
+#   Intraday: 34.8% WR, -0.65% avg, Sharpe -1.88  → disabled
+# Note: confidence ceiling lowered to 65% in v5.12; intraday floor of 68
+# would already block all intraday, but set to 999 to be explicit.
 STYLE_CONF_FLOORS: dict[str, float] = {
-    "intraday": 68.0,    # high floor while signal quality is being improved
-    "swing":    70.0,    # elevated until swing sub-model is retrained
-    "position": 0.0,     # no additional floor — driven by global min_confidence
+    "intraday": 999.0,   # DISABLED — 34.8% WR, Sharpe -1.88 (May 2026 live data)
+    "swing":    62.0,    # adjusted for new 65% ceiling; only near-ceiling swing setups pass
+    "position": 0.0,     # no additional floor — driven by global min_confidence (55%)
 }
 
 # Sectors with empirical PF < 0.40x blocked until per-sector models retrained.

@@ -75,14 +75,18 @@ from services.technicals import calculate_indicators
 def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
     import math
     abs_s = abs(score)
-    # Sigmoid calibrated against DB win rates (May 2026 calibration data).
-    # Asymptote lowered from 92% → 84%: empirical data shows that signals above
-    # 80% confidence have historically yielded only 50-67% actual win rates — a
-    # 15-38pp overconfidence gap. Capping at 84% brings the scale closer to reality.
-    # score=25→~55%, score=40→~63%, score=60→~71%, score=90→~80%, score=150→~84%
-    agreement_bonus = min(4.0, agreement * 0.35)  # slightly reduced agreement bonus
+    # Sigmoid calibrated against 529 resolved live signals (Apr–May 2026).
+    # Confidence ceiling history:
+    #   84% (v5.8) → 72% (v5.10) → 65% (v5.12)
+    # Rationale for 65% ceiling: live calibration shows the system is structurally
+    # over-confident at high scores — 70-72% conf band wins at only 58.6% (−13pp
+    # gap), and 80%+ conf band wins at 55% (−30pp gap). The BEST-performing band
+    # is medium-confidence 55–70% (67.6% WR, +3.14% avg). Capping at 65% keeps
+    # all signals in the range where the edge is consistently observable.
+    # score=35→~58%, score=50→~62%, score=70→~64%, score=100+→~65% (ceiling)
+    agreement_bonus = min(3.0, agreement * 0.30)  # reduced — high-agreement signals were over-inflated
     raw = 40.0 + 44.0 * (1.0 - math.exp(-abs_s / 65.0)) + agreement_bonus
-    confidence = round(min(72.0, raw), 1)   # hard ceiling: 72% max — empirical data shows 75-84% signals win at only 48-50%
+    confidence = round(min(65.0, raw), 1)   # hard ceiling: 65% — live data shows 70%+ wins at ≤59%
     # Thresholds are asymmetric by design: the scoring system has a structural bullish
     # bias (~+13 pts) from analyst consensus, large-cap fundamentals, and bull-market
     # technicals. Raising the BUY bar to 35 and lowering the SELL bar to -18 corrects
@@ -91,7 +95,7 @@ def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
         return "BUY",  confidence
     if score <= -30:
         return "SELL", confidence
-    return "HOLD", max(40.0, min(55.0, confidence))
+    return "HOLD", max(40.0, min(52.0, confidence))  # HOLD cap lowered to match new BUY/SELL ceiling
 
 
 def _levels(price: float, atr: float, action: str, style: str = "swing"):

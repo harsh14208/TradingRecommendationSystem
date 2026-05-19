@@ -63,7 +63,7 @@ async def test_gate_blocks_low_global_confidence():
 
 @pytest.mark.asyncio
 async def test_gate_blocks_intraday_below_floor():
-    """Intraday floor is 68% — signals below it are blocked."""
+    """Intraday is disabled (floor=999) — all intraday signals blocked."""
     from services.delivery_gates import check_delivery_gates
     db = await _db_no_sector_count()
     reason, _ = await check_delivery_gates(_sig(style="intraday", confidence=65.0), db, _Settings())
@@ -71,28 +71,31 @@ async def test_gate_blocks_intraday_below_floor():
     assert "floored" in reason or "disabled" in reason
 
 @pytest.mark.asyncio
-async def test_gate_allows_intraday_above_floor():
-    """Intraday signals at ≥68% confidence are allowed through."""
+async def test_gate_blocks_intraday_above_old_floor():
+    """Intraday disabled at floor=999 — even high confidence signals are blocked.
+    Live data: 34.8% WR, Sharpe -1.88 (May 2026). Disabled pending re-calibration."""
     from services.delivery_gates import check_delivery_gates
     db = await _db_no_sector_count()
     reason, _ = await check_delivery_gates(_sig(style="intraday", confidence=70.0), db, _Settings())
-    assert reason is None
+    assert reason is not None
+    assert "floored" in reason or "disabled" in reason
 
 
 @pytest.mark.asyncio
-async def test_gate_blocks_swing_below_70():
-    """Swing floor raised to 70%."""
+async def test_gate_blocks_swing_below_62():
+    """Swing floor lowered to 62% (adjusted for new 65% confidence ceiling)."""
     from services.delivery_gates import check_delivery_gates
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=65.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=61.0), db, _Settings())
     assert reason is not None
 
 
 @pytest.mark.asyncio
-async def test_gate_allows_swing_at_70():
+async def test_gate_allows_swing_at_62():
+    """Swing signals at ≥62% pass the style floor."""
     from services.delivery_gates import check_delivery_gates
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=70.5), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=63.0), db, _Settings())
     assert reason is None
 
 
