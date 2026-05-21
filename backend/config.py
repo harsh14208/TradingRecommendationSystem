@@ -1,16 +1,23 @@
+import hashlib
 import secrets
 import time as _time
 from pydantic_settings import BaseSettings
 
-# Stable dev-only secret — generated once per process, never persisted
-_DEV_JWT_SECRET: str = secrets.token_hex(32)
+# Stable dev-only fallback — derived from a fixed seed so it survives uvicorn
+# --reload (module is re-imported on each reload, but the seed stays constant).
+# Tokens issued before a reload remain valid in dev.  Override with JWT_SECRET
+# in .env for production (and for true token isolation between environments).
+_DEV_JWT_SECRET: str = hashlib.sha256(b"signal-trade-dev-secret-v1").hexdigest()
 
 
 class Settings(BaseSettings):
     # ── Existing ──────────────────────────────────────────────────────────────
     finnhub_api_key: str = ""
     watchlist: str = "NVDA,TSLA,AAPL,AMD,META,MSFT,PLTR,SMCI,QQQ,SPY,IWM,GLD,XLK,XLF,XLE"
-    scan_interval: int = 60
+    scan_interval: int = 60  # legacy fallback, unused when scan_times is set
+    # Five ET times to run the scanner on trading days (comma-separated HH:MM).
+    # Defaults: open, mid-morning, midday, afternoon, pre-close.
+    scan_times: str = "08:45,11:00,13:00,14:30,15:45"
     fred_api_key: str = ""
     alpaca_api_key: str = ""
     alpaca_api_secret: str = ""

@@ -480,15 +480,15 @@ def print_table(header: list[str], rows: list[list[str]]) -> None:
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def analyze_db(snapshot_tag: str | None = None) -> None:
+async def analyze_db(snapshot_tag: str | None = None, since_days: int | None = None) -> None:
     db_gen = get_db()
     db     = await anext(db_gen)
     try:
-        rows = (await db.execute(
-            select(Signal)
-            .where(Signal.outcome_pct.isnot(None))
-            .order_by(Signal.created_at.asc())
-        )).scalars().all()
+        q = select(Signal).where(Signal.outcome_pct.isnot(None))
+        if since_days:
+            cutoff = datetime.utcnow() - timedelta(days=since_days)
+            q = q.where(Signal.created_at >= cutoff)
+        rows = (await db.execute(q.order_by(Signal.created_at.asc()))).scalars().all()
     except Exception as db_err:
         print(f"[error] DB query failed: {db_err}")
         return
@@ -513,6 +513,9 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
         conf_map    = defaultdict(list)
         exit_map    = defaultdict(list)
         month_map   = defaultdict(list)
+        dow_map     = defaultdict(list)   # day-of-week → returns
+        ticker_map  = defaultdict(list)   # ticker → returns
+        dte_map     = defaultdict(list)   # days-to-earnings bucket → returns
         mae_vals        = []
         mfe_vals        = []
         stop_dist_vals  = []   # distance from entry to stop (%)
@@ -543,6 +546,25 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
                     try:
                         month_map[month_key(r.created_at)].append(ret)
                     except Exception:
+                        pass
+                    try:
+                        dow_map[r.created_at.strftime("%A")].append(ret)
+                    except Exception:
+                        pass
+                if r.ticker:
+                    ticker_map[r.ticker].append(ret)
+                if r.days_to_earnings is not None:
+                    try:
+                        dte = int(r.days_to_earnings)
+                        if dte <= 3:
+                            dte_map["0-3d (blackout zone)"].append(ret)
+                        elif dte <= 7:
+                            dte_map["4-7d (caution ×0.75)"].append(ret)
+                        elif dte <= 14:
+                            dte_map["8-14d (mild caution)"].append(ret)
+                        else:
+                            dte_map["15+d (safe zone)"].append(ret)
+                    except (TypeError, ValueError):
                         pass
                 if r.mae is not None:
                     try:
@@ -839,6 +861,64 @@ async def analyze_db(snapshot_tag: str | None = None) -> None:
                 f"{gap:+.1f}pp", calib,
             ])
         print_table(["Band", "N", "Avg Conf", "Actual WR", "Gap", "Calibrated?"], band_rows)
+
+        # ── 12a. Day-of-week breakdown ─────────────────────────────────────────
+        DOW_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        if dow_map:
+            print("\n## 11a. Performance by Day of Week\n")
+            print("> Diagnoses live-vs-backtest gap: are certain scan days underperforming?\n")
+            dow_rows = []
+            for day in DOW_ORDER:
+                if day not in dow_map:
+                    continue
+                m = calc_metrics(dow_map[day])
+                flag = " ⚠" if m["wr"] < 45 or m["avg"] < 0 else ""
+                dow_rows.append([day, str(m["count"]),
+                                  f"{m['wr']:.1f}%{flag}", f"{m['avg']:+.2f}%{flag}",
+                                  pf_str(m["pf"])])
+            print_table(["Day", "N", "Win Rate", "Avg Ret", "PF"], dow_rows)
+            best_day  = max(DOW_ORDER, key=lambda d: calc_metrics(dow_map.get(d,[])).get("avg", -99))
+            worst_day = min(DOW_ORDER, key=lambda d: calc_metrics(dow_map.get(d,[])).get("avg", 99) if dow_map.get(d) else 99)
+            print(f"\n> Best day: **{best_day}** · Worst day: **{worst_day}**")
+
+        # ── 12b. Ticker-level breakdown ────────────────────────────────────────
+        if ticker_map:
+            print("\n## 11b. Performance by Ticker (top/bottom 5)\n")
+            print("> Identifies tickers dragging live performance vs backtest universe.\n")
+            tickers_sorted = sorted(ticker_map.items(),
+                                    key=lambda kv: calc_metrics(kv[1]).get("avg", -99),
+                                    reverse=True)
+            ticker_rows = []
+            shown = set()
+            for tkr, rets in tickers_sorted[:5]:   # top 5 by avg ret
+                m = calc_metrics(rets)
+                ticker_rows.append([f"**{tkr}** ↑", str(m["count"]),
+                                     f"{m['wr']:.1f}%", f"{m['avg']:+.2f}%", pf_str(m["pf"])])
+                shown.add(tkr)
+            for tkr, rets in tickers_sorted[-5:]:  # bottom 5 by avg ret
+                if tkr in shown:
+                    continue
+                m = calc_metrics(rets)
+                ticker_rows.append([f"{tkr} ↓", str(m["count"]),
+                                     f"{m['wr']:.1f}%", f"{m['avg']:+.2f}%", pf_str(m["pf"])])
+            print_table(["Ticker", "N", "Win Rate", "Avg Ret", "PF"], ticker_rows)
+
+        # ── 12c. Days-to-earnings breakdown ───────────────────────────────────
+        if dte_map:
+            print("\n## 11c. Performance by Days-to-Next-Earnings\n")
+            print("> Validates the earnings gate: signals near earnings should show lower WR.\n")
+            dte_order = ["0-3d (blackout zone)", "4-7d (caution ×0.75)",
+                         "8-14d (mild caution)", "15+d (safe zone)"]
+            dte_rows = []
+            for bucket in dte_order:
+                if bucket not in dte_map:
+                    continue
+                m = calc_metrics(dte_map[bucket])
+                flag = " ⚠" if m["wr"] < 45 or m["avg"] < 0 else ""
+                dte_rows.append([bucket, str(m["count"]),
+                                  f"{m['wr']:.1f}%{flag}", f"{m['avg']:+.2f}%{flag}",
+                                  pf_str(m["pf"])])
+            print_table(["Earnings Proximity", "N", "Win Rate", "Avg Ret", "PF"], dte_rows)
 
         # ── 12. Sector performance ─────────────────────────────────────────────
         if sector_map:
@@ -1341,5 +1421,9 @@ if __name__ == "__main__":
         "--snapshot", metavar="TAG", default=None,
         help="Save a named snapshot to the DB after printing (e.g. 'v3-sector-gates')",
     )
+    parser.add_argument(
+        "--days", metavar="N", type=int, default=None,
+        help="Limit analysis to signals from the last N calendar days (e.g. --days 21)",
+    )
     args = parser.parse_args()
-    asyncio.run(analyze_db(snapshot_tag=args.snapshot))
+    asyncio.run(analyze_db(snapshot_tag=args.snapshot, since_days=args.days))

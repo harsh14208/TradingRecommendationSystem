@@ -73,29 +73,36 @@ from services.technicals import calculate_indicators
 
 
 def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
+    """
+    Map raw signal score → (action, raw_confidence).
+
+    This produces the ALPHA SCORE component — used for trade ranking.
+    The PROBABILITY component is produced by apply_calibration() in calibration.py.
+
+    v2 change (calibration-v2 paper): wider sigmoid spread so the calibration
+    layer has room to differentiate signal quality. The old 65% hard ceiling
+    compressed score 35→100+ into a 7pp range (58–65%), making Brier ≈ random.
+
+    New spread: score 35→50%, score 70→63%, score 100→70%, score 150→76%.
+    The calibration ceiling (78%) is now enforced inside apply_calibration(),
+    not here — this function is the alpha score, not the final confidence number.
+    """
     import math
     abs_s = abs(score)
-    # Sigmoid calibrated against 529 resolved live signals (Apr–May 2026).
-    # Confidence ceiling history:
-    #   84% (v5.8) → 72% (v5.10) → 65% (v5.12)
-    # Rationale for 65% ceiling: live calibration shows the system is structurally
-    # over-confident at high scores — 70-72% conf band wins at only 58.6% (−13pp
-    # gap), and 80%+ conf band wins at 55% (−30pp gap). The BEST-performing band
-    # is medium-confidence 55–70% (67.6% WR, +3.14% avg). Capping at 65% keeps
-    # all signals in the range where the edge is consistently observable.
-    # score=35→~58%, score=50→~62%, score=70→~64%, score=100+→~65% (ceiling)
-    agreement_bonus = min(3.0, agreement * 0.30)  # reduced — high-agreement signals were over-inflated
-    raw = 40.0 + 44.0 * (1.0 - math.exp(-abs_s / 65.0)) + agreement_bonus
-    confidence = round(min(65.0, raw), 1)   # hard ceiling: 65% — live data shows 70%+ wins at ≤59%
-    # Thresholds are asymmetric by design: the scoring system has a structural bullish
-    # bias (~+13 pts) from analyst consensus, large-cap fundamentals, and bull-market
-    # technicals. Raising the BUY bar to 35 and lowering the SELL bar to -18 corrects
-    # for this: empirical BUY win rate is 42% (below coin-flip) vs SELL at 48%.
+    # Wider sigmoid: 50% at score=35, 70% at score=100, 76% at score=150
+    # Calibration then maps this to the empirical win rate for each band.
+    agreement_bonus = min(2.0, agreement * 0.25)
+    raw = 35.0 + 50.0 * (1.0 - math.exp(-abs_s / 80.0)) + agreement_bonus
+    # Pre-calibration ceiling: 78% (same as calibration._CONF_CEIL)
+    # This prevents the alpha score from starting outside the calibration's output range.
+    confidence = round(min(78.0, raw), 1)
+    # Thresholds are asymmetric: the system has a structural bullish bias (~+13 pts).
+    # Raising BUY bar to 35 and SELL bar to -30 corrects for this.
     if score >= 35:
         return "BUY",  confidence
     if score <= -30:
         return "SELL", confidence
-    return "HOLD", max(40.0, min(52.0, confidence))  # HOLD cap lowered to match new BUY/SELL ceiling
+    return "HOLD", max(38.0, min(52.0, confidence))
 
 
 def _levels(price: float, atr: float, action: str, style: str = "swing"):
@@ -1131,7 +1138,15 @@ def _assemble_signal(
         cal_map = (market_ctx or {}).get("calibration_map", {})
         if cal_map:
             pre_cal = confidence
-            confidence, _bin = apply_calibration(confidence, action, cal_map)
+            # Pass the current market regime (bull/bear/neutral) so the calibration
+            # can use the regime-specific isotonic curve trained on similar market states.
+            _sp500_trend = macro.get("sp500_trend") if macro else None
+            # sp500_trend is a string ("up"/"down"/None) set by macro.py
+            _cal_regime  = ("bull" if _sp500_trend == "up"
+                            else "bear" if _sp500_trend == "down"
+                            else "neutral")
+            confidence, _bin = apply_calibration(confidence, action, cal_map,
+                                                  regime=_cal_regime)
             if _bin and abs(confidence - pre_cal) >= 2:
                 _emp_wr   = round(_bin["win_rate"] * 100, 1)
                 _n        = _bin["n"]
@@ -1630,22 +1645,8 @@ async def generate_signal(
                     "body": "Doji candle after bearish run. Potential exhaustion of selling pressure.",
                     "sentiment": "pos", "meta": "Candlestick: Doji"})
 
-        # ── Pivot Point Support / Resistance ────────────────────────────
-        pivot    = tech.get("pivot")
-        pivot_r1 = tech.get("pivot_r1")
-        pivot_s1 = tech.get("pivot_s1")
-        if pivot and pivot_r1 and pivot_s1:
-            tol = atr * 0.3
-            if abs(price - pivot_s1) < tol:
-                mean_rev_score += 8
-                rationale.append({"src": "Technical", "head": "At Pivot S1 Support",
-                    "body": f"Price near classic pivot S1 support (${pivot_s1:.2f}). High-probability bounce level.",
-                    "sentiment": "pos", "meta": f"Pivot ${pivot:.2f} | S1 ${pivot_s1:.2f}"})
-            elif abs(price - pivot_r1) < tol:
-                mean_rev_score -= 8
-                rationale.append({"src": "Technical", "head": "At Pivot R1 Resistance",
-                    "body": f"Price near classic pivot R1 resistance (${pivot_r1:.2f}). Potential ceiling; watch for rejection.",
-                    "sentiment": "neg", "meta": f"Pivot ${pivot:.2f} | R1 ${pivot_r1:.2f}"})
+        # PIVOT (S1/R1) scoring removed — alpha decomp v6/v7 confirmed redundant
+        # (ΔSharpe = +0.01 when removed; information already captured by BB/VWAP bands)
 
         # ── Volume confirmation ─────────────────────────────────────────
         vol_ratio = volume / avg_vol
@@ -2015,21 +2016,8 @@ async def generate_signal(
             elif roc10 < -4:
                 momentum_score -= 4
 
-        # ── RSI Divergence ───────────────────────────────────────────────
-        # Routed into osc_score (not direct score) so it competes with RSI level
-        # within the combined stretch cap — prevents +15 divergence on top of +20
-        # RSI-oversold stacking to the same family concept.
-        rsi_div = tech.get("rsi_divergence")
-        if rsi_div == "bullish":
-            osc_score += 12; dominant = "rsi"
-            rationale.append({"src": "Technical", "head": "Bullish RSI Divergence",
-                "body": "Price made a lower low but RSI made a higher low — momentum is recovering while price dips. Classic reversal warning.",
-                "sentiment": "pos", "meta": "RSI divergence: bullish"})
-        elif rsi_div == "bearish":
-            osc_score -= 12; dominant = "rsi"
-            rationale.append({"src": "Technical", "head": "Bearish RSI Divergence",
-                "body": "Price made a higher high but RSI made a lower high — momentum is fading while price rises. Classic exhaustion signal.",
-                "sentiment": "neg", "meta": "RSI divergence: bearish"})
+        # RSI_DIV scoring removed — alpha decomp v6/v7 confirmed redundant
+        # (ΔSharpe = +0.03 when removed; noise in the presence of RSI level + KC + Donchian)
 
         # ── MACD Zero-Line Cross ─────────────────────────────────────────
         # Routed into trend_score (same family as MACD state/histogram) so all
@@ -2069,23 +2057,8 @@ async def generate_signal(
                     "body": f"Price {zscore:.1f}σ above 20-day mean. Statistically stretched to the upside.",
                     "sentiment": "neg", "meta": f"Z-Score = +{zscore:.2f}σ"})
 
-        # ── Money Flow Index MFI(14) — volume-weighted RSI ───────────────
-        mfi = tech.get("mfi")
-        if mfi is not None:
-            if mfi < 20:
-                osc_score += 8
-                rationale.append({"src": "Technical", "head": f"MFI Oversold ({mfi:.0f})",
-                    "body": f"Money Flow Index at {mfi:.0f} — money is flowing OUT heavily. Volume-confirmed oversold condition. Bounce setup.",
-                    "sentiment": "pos", "meta": f"MFI(14) = {mfi:.1f}"})
-            elif mfi < 30:
-                osc_score += 4
-            elif mfi > 80:
-                osc_score -= 8
-                rationale.append({"src": "Technical", "head": f"MFI Overbought ({mfi:.0f})",
-                    "body": f"Money Flow Index at {mfi:.0f} — money is flowing IN excessively. Volume-confirmed overbought condition. Distribution risk.",
-                    "sentiment": "neg", "meta": f"MFI(14) = {mfi:.1f}"})
-            elif mfi > 70:
-                osc_score -= 4
+        # MFI scoring removed — alpha decomp v6/v7 confirmed redundant
+        # (ΔSharpe = +0.04 when removed; volume-weighted RSI already captured by OBV + RSI)
 
         # ── IBS — Internal Bar Strength ──────────────────────────────────
         # Where the close landed within the day's range (0 = at low, 1 = at high).
@@ -2200,10 +2173,14 @@ async def generate_signal(
         score += (max(-18.0, min(18.0, osc_score)) + max(-8.0, min(8.0, mean_rev_score))) * 0.85
 
         # ── Keltner Channels(20, 2×ATR) ──────────────────────────────────────
+        # Backtest-validated (alpha decomp v3): below kc_lower on oversold RSI
+        # = ATR-extreme oversold = MR bounce setup (routes to mean_rev_score).
+        # Above kc_upper = momentum breakout (unchanged, routes to score directly).
         kc_upper = tech.get("kc_upper")
         kc_lower = tech.get("kc_lower")
         if kc_upper and kc_lower:
             sources.add("Technical")
+            _kc_rsi = rsi if isinstance(rsi, (int, float)) else 50.0
             if price > kc_upper:
                 score += 8
                 rationale.append({"src": "Technical",
@@ -2213,12 +2190,33 @@ async def generate_signal(
                              "Bollinger — a KC breakout signals genuine momentum, not just volatility expansion."),
                     "sentiment": "pos", "meta": f"KC Upper: ${kc_upper:.2f}"})
             elif price < kc_lower:
-                score -= 8
+                if _kc_rsi is not None and _kc_rsi < 42:
+                    # MR-contrarian: ATR-extreme oversold = bounce candidate (direct score)
+                    # Note: routes to score directly (not mean_rev_score) because mean_rev_score
+                    # was already assembled at line ~2200; second-block additions only affect
+                    # the _stretch_total momentum dampener, not the score itself.
+                    score += 8
+                    rationale.append({"src": "Technical",
+                        "head": f"Keltner Lower Breach — ATR-Extreme Oversold (RSI {_kc_rsi:.1f})",
+                        "body": (f"Price ${price:.2f} below lower Keltner Channel (${kc_lower:.2f}) "
+                                 f"with RSI {_kc_rsi:.1f}. KC breach on oversold RSI marks "
+                                 "ATR-extreme oversold — statistically strong mean-reversion setup."),
+                        "sentiment": "pos", "meta": f"KC Lower: ${kc_lower:.2f} | RSI: {_kc_rsi:.1f}"})
+                else:
+                    # Momentum breakdown when not oversold
+                    score -= 8
+                    rationale.append({"src": "Technical",
+                        "head": f"Keltner Channel Breakdown (${kc_lower:.2f})",
+                        "body": (f"Price ${price:.2f} fell below the lower Keltner Channel "
+                                 f"(${kc_lower:.2f}). KC breakdowns are high-conviction distribution signals."),
+                        "sentiment": "neg", "meta": f"KC Lower: ${kc_lower:.2f}"})
+            elif price < kc_lower * 1.01 and _kc_rsi is not None and _kc_rsi < 50:
+                # Approaching lower KC from above = nearing support zone (direct score)
+                score += 5
                 rationale.append({"src": "Technical",
-                    "head": f"Keltner Channel Breakdown (${kc_lower:.2f})",
-                    "body": (f"Price ${price:.2f} fell below the lower Keltner Channel "
-                             f"(${kc_lower:.2f}). KC breakdowns are high-conviction distribution signals."),
-                    "sentiment": "neg", "meta": f"KC Lower: ${kc_lower:.2f}"})
+                    "head": f"Approaching Keltner Support (${kc_lower:.2f})",
+                    "body": f"Price ${price:.2f} within 1% of lower Keltner Channel. ATR-based support approaching — watch for bounce.",
+                    "sentiment": "pos", "meta": f"KC Lower: ${kc_lower:.2f}"})
             # Bollinger Bands entirely inside KC = maximum volatility squeeze
             if bb_upper and bb_lower and bb_upper < kc_upper and bb_lower > kc_lower:
                 squeeze_sentiment = "pos" if score > 0 else "neg"
@@ -2231,7 +2229,54 @@ async def generate_signal(
                     "sentiment": squeeze_sentiment,
                     "meta": f"BB inside KC | KC: ${kc_lower:.2f}–${kc_upper:.2f}"})
 
+        # ── Donchian Channel (20-day) — MR-contrarian ────────────────────
+        # Backtest-validated (alpha decomp v3): near 20-day low = extreme oversold
+        # over a 20-session window = high-probability mean-reversion bounce setup.
+        # Near 20-day high = momentum continuation (routes to momentum_score).
+        _dc_low  = tech.get("donchian_low")
+        _dc_high = tech.get("donchian_high")
+        _dc_lowp = tech.get("donchian_low_p")
+        _dc_hip  = tech.get("donchian_high_p")
+        _dc_rsi = rsi if isinstance(rsi, (int, float)) else 50.0
+        if _dc_low and _dc_high and _dc_high > _dc_low:
+            sources.add("Technical")
+            _dc_range = _dc_high - _dc_low
+            _dc_pos   = (price - _dc_low) / _dc_range   # 0 = at 20d low, 1 = at 20d high
+            # MR path: only activate when approaching oversold (RSI < 45)
+            # avoids double-counting with the existing Donchian momentum block (line ~3460)
+            if _dc_lowp and price <= _dc_lowp * 1.002 and _dc_rsi is not None and _dc_rsi < 45:
+                # New 20-day low on oversold RSI (direct score — mean_rev_score already assembled)
+                score += 8
+                rationale.append({"src": "Technical",
+                    "head": f"New 20-Day Low — Donchian Oversold Extension (RSI {_dc_rsi:.1f})",
+                    "body": (f"Price ${price:.2f} at new 20-session low (${_dc_low:.2f}) "
+                             f"with RSI {_dc_rsi:.1f}. Double-confirmed oversold: Donchian extension + "
+                             "approaching RSI oversold. High-probability mean-reversion bounce zone."),
+                    "sentiment": "pos", "meta": f"20d Low: ${_dc_low:.2f} | RSI: {_dc_rsi:.1f}"})
+            elif _dc_pos <= 0.10 and _dc_rsi is not None and _dc_rsi < 50:
+                # In bottom 10% of 20-day range with weakening RSI (direct score)
+                score += 5
+                rationale.append({"src": "Technical",
+                    "head": f"Near 20-Day Donchian Low — Oversold Zone",
+                    "body": (f"Price in bottom {_dc_pos*100:.0f}% of its 20-session range "
+                             f"(${_dc_low:.2f}–${_dc_high:.2f}). Extended below near-term value."),
+                    "sentiment": "pos", "meta": f"Donchian pos: {_dc_pos*100:.0f}%"})
+            elif _dc_hip and price >= _dc_hip * 0.998:
+                # At new 20-day high = momentum breakout
+                momentum_score += 8
+                rationale.append({"src": "Technical",
+                    "head": f"New 20-Day High — Donchian Breakout",
+                    "body": (f"Price ${price:.2f} at new 20-session high (${_dc_high:.2f}). "
+                             "20-day channel breakout signals accumulating institutional momentum."),
+                    "sentiment": "pos", "meta": f"20d High: ${_dc_high:.2f}"})
+            elif _dc_pos >= 0.90:
+                # In top 10% of 20-day range = approaching breakout zone
+                momentum_score += 4
+
         # ── Consecutive Close Streak vs SMA20 ────────────────────────────
+        # Backtest-validated (alpha decomp v3): negative streak (extended below SMA20)
+        # routes to mean_rev_score as a bounce candidate, not a bearish momentum signal.
+        # Positive streak (above SMA20) remains a momentum signal.
         streak = tech.get("close_streak", 0)
         if streak >= 7:
             momentum_score += 8
@@ -2239,14 +2284,19 @@ async def generate_signal(
                 "body": f"Price has closed above its 20-day average for {streak} consecutive sessions. Persistent institutional buying.",
                 "sentiment": "pos", "meta": f"Streak: {streak} days above SMA20"})
         elif streak <= -7:
-            momentum_score -= 8
-            rationale.append({"src": "Technical", "head": f"{abs(streak)} Straight Closes Below SMA20",
-                "body": f"Price has closed below its 20-day average for {abs(streak)} straight sessions. Sustained distribution.",
-                "sentiment": "neg", "meta": f"Streak: {abs(streak)} days below SMA20"})
+            # Extended weakness below SMA20 = bounce candidate (direct score — after mean_rev assembly)
+            score += 7
+            rationale.append({"src": "Technical",
+                "head": f"{abs(streak)} Days Below SMA20 — Mean-Reversion Setup",
+                "body": (f"Price has closed below its 20-day average for {abs(streak)} straight sessions. "
+                         "Extended SMA20 undercuts are statistically reliable mean-reversion setups — "
+                         "the longer the streak, the higher the probability of a bounce to the moving average."),
+                "sentiment": "pos", "meta": f"Streak: {streak} days below SMA20"})
         elif streak >= 4:
             momentum_score += 4
         elif streak <= -4:
-            momentum_score -= 4
+            # Moderate weakness = mild MR signal (direct score)
+            score += 4
 
         # ── Credit Stress (HYG trend from macro context) ─────────────────
         hyg_1m = macro.get("hyg_1m_ret")
@@ -3322,7 +3372,12 @@ async def generate_signal(
                     "sentiment": "neg", "meta": f"VWAP slope=down | Price {vwap_pct:+.1f}% below"})
 
         # ── VWAP σ Bands — mean reversion extremes ───────────────────────────
-        # σ bands use std dev of price around VWAP (not Bollinger — different distribution)
+        # σ bands use std dev of price around VWAP (not Bollinger — different distribution).
+        # BUG FIX: these signals were only going to mean_rev_score (for stretch dampening)
+        # but NOT to score directly. mean_rev_score was already assembled at line ~2200;
+        # second-block additions only affect _stretch_total, not the final score.
+        # Fix: add score directly (capped) to match the backtest which includes VWAP bands
+        # in the MR family and routes them to the assembled score.
         vwap_b2u = tech.get("vwap_band2_upper")
         vwap_b2l = tech.get("vwap_band2_lower")
         vwap_b1u = tech.get("vwap_band1_upper")
@@ -3330,15 +3385,17 @@ async def generate_signal(
         if all(v is not None for v in (vwap_b2u, vwap_b2l, vwap_b1u, vwap_b1l, vwap_20)):
             sources.add("Technical")
             if price >= vwap_b2u:
-                mean_rev_score -= 14
+                mean_rev_score -= 14   # keeps _stretch_total dampening
+                score -= 10            # direct score contribution (backtest parity)
                 rationale.append({"src": "Technical",
                     "head": f"VWAP +2σ Band Touch (${vwap_b2u:.2f}) — Extreme Overbought",
                     "body": (f"Price at ${price:.2f} has reached the VWAP +2σ band (${vwap_b2u:.2f}). "
                              "Statistically rare overextension above institutional cost basis. "
-                             "High-probability mean reversion back toward VWAP (${vwap_20:.2f})."),
+                             f"High-probability mean reversion back toward VWAP (${vwap_20:.2f})."),
                     "sentiment": "neg", "meta": f"+2σ band = ${vwap_b2u:.2f}"})
             elif price >= vwap_b1u:
                 mean_rev_score -= 8
+                score -= 6
                 rationale.append({"src": "Technical",
                     "head": f"VWAP +1σ Band Touch (${vwap_b1u:.2f}) — Overbought vs VWAP",
                     "body": (f"Price at the VWAP +1σ band (${vwap_b1u:.2f}). "
@@ -3346,14 +3403,16 @@ async def generate_signal(
                     "sentiment": "neg", "meta": f"+1σ band = ${vwap_b1u:.2f}"})
             elif price <= vwap_b2l:
                 mean_rev_score += 14
+                score += 10            # direct score contribution
                 rationale.append({"src": "Technical",
                     "head": f"VWAP −2σ Band Touch (${vwap_b2l:.2f}) — Extreme Oversold",
                     "body": (f"Price at ${price:.2f} has reached the VWAP −2σ band (${vwap_b2l:.2f}). "
                              "Extreme statistical discount to institutional cost basis — "
-                             "high-probability bounce back toward VWAP (${vwap_20:.2f})."),
+                             f"high-probability bounce back toward VWAP (${vwap_20:.2f})."),
                     "sentiment": "pos", "meta": f"−2σ band = ${vwap_b2l:.2f}"})
             elif price <= vwap_b1l:
                 mean_rev_score += 8
+                score += 6
                 rationale.append({"src": "Technical",
                     "head": f"VWAP −1σ Band Touch (${vwap_b1l:.2f}) — Oversold vs VWAP",
                     "body": (f"Price at the VWAP −1σ band (${vwap_b1l:.2f}). "
@@ -3402,7 +3461,11 @@ async def generate_signal(
                     "sentiment": "neg", "meta": f"20d Low = ${dc_low:.2f}"})
 
         # ── Price Structure (HH/HL or LH/LL) ────────────────────────────────
-        ps = tech.get("price_structure")
+        # Backtest-validated (alpha decomp v4): LH/LL on approaching-oversold RSI = MR
+        # bounce candidate (sustained downtrend extended = bounce setup), not bearish momentum.
+        # HH/HL remains a momentum confirmation signal (unchanged direction).
+        ps     = tech.get("price_structure")
+        _ps_rsi = rsi if isinstance(rsi, (int, float)) else 50.0
         if ps == "hh_hl":
             momentum_score += 7
             sources.add("Technical")
@@ -3410,11 +3473,24 @@ async def generate_signal(
                 "body": "Recent swing highs and lows are both ascending — the classic definition of an uptrend. Bias remains long until structure breaks.",
                 "sentiment": "pos", "meta": "HH + HL pattern (20-bar)"})
         elif ps == "lh_ll":
-            momentum_score -= 7
             sources.add("Technical")
-            rationale.append({"src": "Technical", "head": "Bearish Price Structure — Lower Highs & Lower Lows",
-                "body": "Recent swing highs and lows are both declining — the classic definition of a downtrend. Bias remains short until structure reverses.",
-                "sentiment": "neg", "meta": "LH + LL pattern (20-bar)"})
+            if _ps_rsi is not None and _ps_rsi < 45:
+                # Downtrend + approaching oversold = MR bounce setup (v4 alpha finding)
+                # LH/LL signals sustained weakness that creates a mean-reversion opportunity.
+                score += 7
+                rationale.append({"src": "Technical",
+                    "head": "Bearish Price Structure (LH/LL) — Extended Downtrend = MR Setup",
+                    "body": (f"Price structure shows Lower Highs & Lower Lows — sustained downtrend — "
+                             f"with RSI {_ps_rsi:.1f} approaching oversold. Extended LH/LL structures "
+                             "resolve with mean-reversion bounces when selling exhausts. "
+                             "Both the structure and RSI confirm the setup."),
+                    "sentiment": "pos", "meta": f"LH + LL | RSI {_ps_rsi:.1f}"})
+            else:
+                # Trending down without oversold confirmation = momentum signal (unchanged)
+                momentum_score -= 7
+                rationale.append({"src": "Technical", "head": "Bearish Price Structure — Lower Highs & Lower Lows",
+                    "body": "Recent swing highs and lows are both declining — the classic definition of a downtrend. Bias remains short until structure reverses.",
+                    "sentiment": "neg", "meta": "LH + LL pattern (20-bar)"})
 
         # ── Gap Analysis ─────────────────────────────────────────────────────
         gap_pct = tech.get("gap_pct")
@@ -3525,6 +3601,38 @@ async def generate_signal(
             rationale.append({"src": "Technical", "head": "Volatility Coiling — ADR% at 6-Month Low",
                 "body": f"Average daily range compressed to {adr:.2f}% vs 6-month high of {adr_hi:.2f}%. Volatility compression historically precedes large directional moves. Watch for a Donchian or Bollinger breakout.",
                 "sentiment": "neu", "meta": f"ADR = {adr:.2f}% (6M high: {adr_hi:.2f}%)"})
+
+        # ── ATR Percentile Rank — Volatility Regime ──────────────────────────
+        # Backtest-validated (alpha decomp v4): ATR_REG was the strongest new family
+        # (ΔSharpe −0.07 when removed). Low ATR rank = volatility coiling = mean-
+        # reverting environment where MR signals fire with higher reliability.
+        # Average |correlation| with all other families = 0.08 (near-orthogonal).
+        _atr_pct_rank = tech.get("atr_pct_rank")
+        if _atr_pct_rank is not None:
+            sources.add("Technical")
+            if _atr_pct_rank < 10:
+                # Volatility at historical 10th percentile — maximum coil → MR premium
+                score += 6
+                rationale.append({"src": "Technical",
+                    "head": f"Volatility at 10th Percentile — MR-Optimal Environment",
+                    "body": (f"ATR is at the {_atr_pct_rank:.0f}th percentile of its 1-year range. "
+                             "Extreme volatility compression creates a mean-reverting environment — "
+                             "price moves are limited and reversals are faster and more reliable."),
+                    "sentiment": "pos", "meta": f"ATR pct rank = {_atr_pct_rank:.0f}th"})
+            elif _atr_pct_rank < 20:
+                # Low volatility — mild MR premium
+                score += 3
+                rationale.append({"src": "Technical",
+                    "head": f"Low Volatility Regime — {_atr_pct_rank:.0f}th Percentile",
+                    "body": f"ATR at the {_atr_pct_rank:.0f}th percentile. Quiet tape favours mean-reversion over momentum.",
+                    "sentiment": "pos", "meta": f"ATR pct rank = {_atr_pct_rank:.0f}th"})
+            elif _atr_pct_rank > 90:
+                # Expanding volatility — momentum dominant, MR less reliable
+                score -= 5
+                rationale.append({"src": "Technical",
+                    "head": f"Volatility Expanding — {_atr_pct_rank:.0f}th Percentile",
+                    "body": f"ATR at the {_atr_pct_rank:.0f}th percentile. High and expanding volatility favours momentum — mean-reversion signals are less reliable and stops are frequently hit.",
+                    "sentiment": "neg", "meta": f"ATR pct rank = {_atr_pct_rank:.0f}th"})
 
         # ── Supertrend(7, 3) ─────────────────────────────────────────────────
         st_dir      = tech.get("supertrend_dir",      0) or 0

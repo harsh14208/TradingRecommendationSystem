@@ -306,11 +306,29 @@ async def resolve_mae_mfe() -> int:
                     sig_db.hit_target = _hit_target
                     sig_db.exit_type  = exit_type
 
-                    # Lock outcome_pct at the exit level for stop/target hits so the
-                    # nightly calendar fill (resolve_outcomes) cannot overwrite it with
-                    # a 7-day mark-to-market price. This eliminates phantom wins where
-                    # price dips through the stop and recovers before the 7d measurement.
-                    if exit_type == "stop" and sig_db.outcome_pct is None and sig.stop and entry > 0:
+                    # Lock outcome_pct at the exit level for stop/target hits.
+                    #
+                    # Root cause of phantom wins (88 of 529 trades, 16.6%):
+                    #   1. Price dips below stop intraday; stop_monitor is not running
+                    #      at that moment → hit_stop never set, outcome_pct never locked.
+                    #   2. resolve_outcomes() runs 7 days later → price has recovered,
+                    #      writes a POSITIVE outcome_pct.
+                    #   3. resolve_mae_mfe() (this function) then retrospectively detects
+                    #      the stop breach from OHLC history, sets hit_stop=True — but
+                    #      the old check `outcome_pct is None` fails because step 2 already
+                    #      wrote a positive value.  Phantom win is now permanent.
+                    #
+                    # Fix: also overwrite when the retrospective stop is detected AND
+                    # the current outcome_pct is positive (the phantom condition).
+                    # outcome_pct > 0 + hit_stop = True = phantom win by definition.
+                    _is_phantom_win = (
+                        exit_type == "stop" and
+                        sig_db.outcome_pct is not None and
+                        sig_db.outcome_pct > 0
+                    )
+                    if exit_type == "stop" and sig.stop and entry > 0 and (
+                        sig_db.outcome_pct is None or _is_phantom_win
+                    ):
                         raw = (sig.stop - entry) / entry * 100
                         sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
                         sig_db.outcome_at  = datetime.utcnow()

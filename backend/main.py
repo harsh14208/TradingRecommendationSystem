@@ -88,27 +88,70 @@ _scan_task: asyncio.Task | None = None
 _scan_fail_streak = 0
 
 async def _periodic_scan():
+    """Run the scanner at fixed ET times on trading days (Mon–Fri).
+
+    Times are read from settings.scan_times (default: 09:35,11:00,13:00,14:30,15:45).
+    Each iteration sleeps until the next scheduled time, fires the scan, then repeats.
+    """
     global _scan_fail_streak
-    await asyncio.sleep(settings.scan_interval)  # first run already fired at startup
+    ET = pytz.timezone("America/New_York")
+
+    def _next_fire() -> datetime:
+        """Return the next scheduled datetime in ET (could be today or tomorrow)."""
+        cfg = get_settings()
+        slots: list[tuple[int, int]] = []
+        for part in cfg.scan_times.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                h, m = part.split(":")
+                slots.append((int(h), int(m)))
+            except ValueError:
+                pass
+        if not slots:
+            slots = [(9, 35), (11, 0), (13, 0), (14, 30), (15, 45)]
+        slots.sort()
+
+        now = datetime.now(ET)
+        # Walk forward up to 7 days to skip weekends
+        for day_offset in range(7):
+            candidate_day = now + timedelta(days=day_offset)
+            if candidate_day.weekday() >= 5:  # Sat=5, Sun=6
+                continue
+            for h, m in slots:
+                fire = candidate_day.replace(hour=h, minute=m, second=0, microsecond=0)
+                if fire > now + timedelta(seconds=5):  # 5s buffer avoids re-firing same slot
+                    return fire
+        # Fallback: next Monday 09:35 (should never reach here)
+        return now + timedelta(hours=24)
+
     while True:
+        fire_at = _next_fire()
+        wait_s = (fire_at - datetime.now(ET)).total_seconds()
+        log.info("[scanner] next scheduled scan: %s ET (%.0fs from now)",
+                 fire_at.strftime("%a %Y-%m-%d %H:%M"), wait_s)
+        try:
+            await asyncio.sleep(max(0, wait_s))
+        except asyncio.CancelledError:
+            raise
+
         try:
             await run_scan(broadcast_fn=manager.broadcast)
             _scan_fail_streak = 0
         except asyncio.CancelledError:
-            raise  # allow clean shutdown to propagate
+            raise
         except BaseException as e:
             _scan_fail_streak += 1
             print(f"[scanner] periodic error (streak {_scan_fail_streak}): {type(e).__name__}: {e}")
-            # Alert on first failure and every 5th thereafter to avoid spam
             if _scan_fail_streak == 1 or _scan_fail_streak % 5 == 0:
                 await _alert_telegram(
                     f"⚠️ Signal.Trade scanner error (streak {_scan_fail_streak})\n"
                     f"{type(e).__name__}: {str(e)[:200]}"
                 )
-        try:
-            await asyncio.sleep(settings.scan_interval)
-        except asyncio.CancelledError:
-            raise
+
+        # Brief pause so _next_fire() doesn't re-select the slot we just fired
+        await asyncio.sleep(60)
 
 
 async def _nightly_signal_cleanup():
@@ -721,7 +764,7 @@ async def _weekly_ticker_screener():
 async def _scan_watchdog():
     """Restart _periodic_scan if it ever exits unexpectedly."""
     global _scan_task
-    await asyncio.sleep(settings.scan_interval + 10)  # let first run settle
+    await asyncio.sleep(120)  # let startup settle before watching
     while True:
         await asyncio.sleep(30)
         if _scan_task is None or _scan_task.done():

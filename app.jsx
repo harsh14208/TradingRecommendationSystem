@@ -26,9 +26,13 @@ function App() {
   const [signals,     setSignals]     = useState(() => {
     try {
       const c = localStorage.getItem("st_signals_cache");
-      if (c) return JSON.parse(c);
+      if (c) {
+        const parsed = JSON.parse(c);
+        if (Array.isArray(parsed)) return parsed;
+        localStorage.removeItem("st_signals_cache"); // discard corrupt cache
+      }
     } catch {}
-    return typeof SIGNALS !== "undefined" ? SIGNALS : [];
+    return typeof SIGNALS !== "undefined" && Array.isArray(SIGNALS) ? SIGNALS : [];
   });
   const [histSignals, setHistSignals] = useState([]);
   const [sources,     setSources]     = useState(typeof SOURCES !== "undefined" ? SOURCES : []);
@@ -426,11 +430,11 @@ function App() {
         apiFetch("/api/signals"),
         apiFetch("/api/sources"),
       ]);
-      if (sigs) {
+      if (Array.isArray(sigs)) {
         setSignals(sigs);
         try { localStorage.setItem("st_signals_cache", JSON.stringify(sigs)); } catch {}
       }
-      if (srcs) setSources(srcs);
+      if (Array.isArray(srcs)) setSources(srcs);
       setOnline(true);
     } catch {
       setOnline(false);
@@ -446,8 +450,8 @@ function App() {
       apiFetch("/api/market/context"),
       apiFetch("/api/signals/history"),
     ]).then(([lg, quotes, mktCtx, hist]) => {
-      if (lg)     setLog(lg);
-      if (quotes) setTickerTape(quotes);
+      if (Array.isArray(lg))     setLog(lg);
+      if (Array.isArray(quotes)) setTickerTape(quotes);
       if (mktCtx) setMarketCtx(mktCtx);
       if (hist)   setHistSignals(Array.isArray(hist) ? hist.filter(h => h.outcomePct != null) : []);
     }).catch(() => {});
@@ -1504,7 +1508,7 @@ function App() {
         {marketCtx?.macro?.yield_10y != null && <span>10Y <span className="mono">{marketCtx.macro.yield_10y.toFixed(2)}%</span></span>}
         {marketCtx?.macro?.spx_1m != null && <span>SPX <span className="mono" style={{ color: marketCtx.macro.spx_1m>=0?"var(--up)":"var(--down)" }}>{marketCtx.macro.spx_1m>=0?"+":""}{marketCtx.macro.spx_1m.toFixed(1)}%</span></span>}
         <span>SENT <span className="mono">{log.filter(l=>l.status==="sent").length}</span> TODAY</span>
-        <span style={{ marginLeft:"auto" }}>MODE · {tweakState.aggressiveness.toUpperCase()}</span>
+        <span style={{ marginLeft:"auto" }}>MODE · {(tweakState.aggressiveness||"balanced").toUpperCase()}</span>
         <span title={`Your local time: ${localClock} (${localTz})`}>{etOffset} {etAbbr}</span>
       </div>
 

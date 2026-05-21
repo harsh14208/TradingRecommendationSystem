@@ -39,9 +39,9 @@ class _Print:
 def handle_messages(messages: list):
     now = time.time()
     try:
-        from massive.websocket.models import Trade
+        from massive.websocket.models import EquityTrade
         for msg in messages:
-            if isinstance(msg, Trade):
+            if isinstance(msg, EquityTrade):
                 is_off_exchange = getattr(msg, "exchange", 0) == 4
                 size     = getattr(msg, "size",   0)
                 price    = getattr(msg, "price",  0.0)
@@ -67,6 +67,9 @@ def _run_darkpool_scanner():
         log.info("[dark_pool] Starting Massive WebSocket stream for Dark Pool prints…")
         client.run(handle_messages)
     except Exception as e:
+        err = str(e).lower()
+        if "plan" in err or "upgrade" in err or "subscription" in err:
+            raise  # let outer loop apply long backoff
         log.warning(f"[dark_pool] Massive WebSocket error: {e}")
 
 
@@ -74,37 +77,42 @@ async def start_dark_pool_stream():
     """
     Start the Massive WebSocket client with a reconnect watchdog.
     If the stream silently dies (no messages for 60s), restart it automatically.
+    Plan-limit errors back off for 6 hours instead of hammering every 15s.
     """
     if not os.getenv("MASSIVE_API_KEY"):
         return
 
     import time as _t
     _last_msg = [_t.monotonic()]
-    _STALL_SEC = 60  # Massive stream considered stalled after 60s silence
-
-    original_handle = handle_messages
-
-    def _guarded_handle(messages):
-        _last_msg[0] = _t.monotonic()
-        original_handle(messages)
+    _STALL_SEC = 60
+    _PLAN_LIMIT_BACKOFF = 6 * 3600  # 6 hours — plan won't change sooner
 
     while True:
         try:
-            # Run the scanner in a thread; watchdog runs in asyncio
             stream_task = asyncio.create_task(asyncio.to_thread(_run_darkpool_scanner))
+            stalled = False
             while not stream_task.done():
                 await asyncio.sleep(10)
                 if _t.monotonic() - _last_msg[0] > _STALL_SEC:
                     log.warning("[dark_pool] stream stalled (%ds no messages) — restarting",
                                 _STALL_SEC)
                     stream_task.cancel()
+                    stalled = True
                     break
-            await asyncio.sleep(5)  # brief pause before reconnect
+            if not stalled:
+                await stream_task  # surface any exception (e.g. plan-limit AuthError)
+            await asyncio.sleep(5)
         except asyncio.CancelledError:
             return
         except Exception as e:
-            log.warning("[dark_pool] stream error: %s — retrying in 10s", e)
-            await asyncio.sleep(10)
+            err = str(e).lower()
+            if "plan" in err or "upgrade" in err or "subscription" in err or "auth" in err:
+                log.warning("[dark_pool] plan does not include WebSocket access — "
+                            "pausing for 6h (upgrade at massive.com/pricing)")
+                await asyncio.sleep(_PLAN_LIMIT_BACKOFF)
+            else:
+                log.warning("[dark_pool] stream error: %s — retrying in 10s", e)
+                await asyncio.sleep(10)
 
 
 async def get_dark_pool_flow(tickers: list[str]) -> dict:
