@@ -1,17 +1,18 @@
 """
-Headless news scraper: Finviz (Playwright + aiohttp fallback), Benzinga RSS, Reuters RSS.
+Headless news scraper: Yahoo Finance RSS, Seeking Alpha RSS, Reuters RSS, Finviz fallback.
 
 Priority order per ticker:
-  1. Seeking Alpha company RSS — free per-ticker feed, structured analyst + news items
-  2. Reuters via Google News RSS — reliable attribution, no key required
-  3. Finviz news table — aiohttp first; Playwright if blocked (optional dep)
+  1. Yahoo Finance RSS  — free per-ticker feed, no key, reliable uptime
+  2. Seeking Alpha RSS  — free per-ticker feed, structured analyst + news items
+  3. Reuters via Google News RSS — reliable attribution, no key required
+  4. Finviz news table  — aiohttp first; Playwright if blocked (optional dep)
 
 Results are deduped by headline word-overlap and merged newest-first.
-Cache TTL: 20 min (news_scraper sits alongside Finnhub, not replacing it).
+Cache TTL: 10 min (news_scraper sits alongside Finnhub, not replacing it).
 
 Install Playwright once with:
     pip install playwright && playwright install chromium
-If playwright is absent, Benzinga + Reuters still work; Finviz is skipped.
+If playwright is absent, Yahoo/SeekingAlpha/Reuters still work; Finviz is skipped.
 """
 
 import asyncio
@@ -50,6 +51,56 @@ _HEADERS = {
     "Accept-Encoding": "gzip, deflate",  # omit br — aiohttp lacks brotli support
     "Connection":      "keep-alive",
 }
+
+
+# ── Yahoo Finance RSS ─────────────────────────────────────────────────────────
+
+async def _fetch_yahoo_finance(ticker: str, session: aiohttp.ClientSession) -> list[dict]:
+    """
+    Yahoo Finance publishes a free per-ticker RSS feed with recent headlines.
+    Endpoint: feeds.finance.yahoo.com/rss/2.0/headline?s=TICKER
+    No API key required; generally very reliable.
+    """
+    url = (
+        f"https://feeds.finance.yahoo.com/rss/2.0/headline"
+        f"?s={ticker.upper()}&region=US&lang=en-US"
+    )
+    try:
+        async with session.get(url, ssl=_ssl_ctx, headers=_HEADERS,
+                               timeout=aiohttp.ClientTimeout(total=12)) as r:
+            if r.status != 200:
+                log.debug(f"[yahoo] {ticker}: HTTP {r.status}")
+                return []
+            text = await r.text()
+    except Exception as e:
+        log.debug(f"[yahoo] {ticker}: {e}")
+        return []
+
+    text = re.sub(r'\s+xmlns(?::\w+)?="[^"]+"', "", text)
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as e:
+        log.debug(f"[yahoo] {ticker}: XML parse error: {e}")
+        return []
+
+    items: list[dict] = []
+    for item in root.findall(".//item")[:10]:
+        title     = (item.findtext("title")       or "").strip()
+        link      = (item.findtext("link")        or "").strip()
+        desc      = (item.findtext("description") or "").strip()
+        pub       = item.findtext("pubDate")       or ""
+        desc_clean = re.sub(r"<[^>]+>", "", desc)[:300]
+        hours_ago  = _hours_since(pub)
+        if title and hours_ago < 7 * 24:
+            items.append({
+                "headline":  title,
+                "summary":   desc_clean or title,
+                "sentiment": score_sentiment(title + " " + desc_clean),
+                "hours_ago": hours_ago,
+                "source":    "Yahoo Finance",
+                "url":       link,
+            })
+    return items
 
 
 # ── Seeking Alpha RSS ────────────────────────────────────────────────────────
@@ -369,26 +420,25 @@ async def get_scraped_news(ticker: str, company: str = "", days: int = 7) -> lis
 
     connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
     async with aiohttp.ClientSession(headers=_HEADERS, connector=connector) as session:
-        sa_task,      reuters_task,  finviz_task = (
+        yahoo, sa, reuters, finviz = await asyncio.gather(
+            _fetch_yahoo_finance(ticker, session),
             _fetch_seeking_alpha(ticker, session),
             _fetch_reuters(ticker, company or ticker, session),
             _fetch_finviz(ticker),
-        )
-        sa, reuters, finviz = await asyncio.gather(
-            sa_task, reuters_task, finviz_task,
             return_exceptions=True,
         )
 
+    yahoo   = yahoo   if isinstance(yahoo,   list) else []
     sa      = sa      if isinstance(sa,      list) else []
     reuters = reuters if isinstance(reuters, list) else []
     finviz  = finviz  if isinstance(finviz,  list) else []
 
-    result = _merge_dedupe([sa, reuters, finviz])
+    result = _merge_dedupe([yahoo, sa, reuters, finviz])
     _CACHE[cache_key] = (result, time.time())
 
     log.info(
         f"[news_scraper] {ticker}: {len(result)} merged items "
-        f"(seekingalpha={len(sa)}, reuters={len(reuters)}, finviz={len(finviz)})"
+        f"(yahoo={len(yahoo)}, seekingalpha={len(sa)}, reuters={len(reuters)}, finviz={len(finviz)})"
     )
     return result
 

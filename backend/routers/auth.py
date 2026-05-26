@@ -21,7 +21,6 @@ from database import get_db
 from models import PasswordResetToken, RefreshToken, User
 from services.auth_svc import (
     create_access_token,
-    decode_access_token,
     generate_link_code,
     generate_refresh_token,
     get_current_user,
@@ -309,8 +308,14 @@ async def get_me(user: User = Depends(get_current_user)):
     return user_to_dict(user)
 
 
+_VALID_BROKERS = {"alpaca", "ibkr"}
+
+
 class UpdateMeIn(BaseModel):
-    full_name: str | None = None
+    full_name:             str | None   = None
+    auto_execute:          bool | None  = None
+    auto_execute_min_conf: float | None = None   # 50–100, or null to reset to 75
+    auto_execute_broker:   str | None   = None   # "alpaca" | "ibkr" | "" to clear
 
     @field_validator("full_name")
     @classmethod
@@ -322,6 +327,20 @@ class UpdateMeIn(BaseModel):
             raise ValueError("Name must be 60 characters or fewer")
         return v or None
 
+    @field_validator("auto_execute_min_conf")
+    @classmethod
+    def conf_range(cls, v: float | None) -> float | None:
+        if v is not None and not (50.0 <= v <= 100.0):
+            raise ValueError("auto_execute_min_conf must be between 50 and 100")
+        return v
+
+    @field_validator("auto_execute_broker")
+    @classmethod
+    def broker_valid(cls, v: str | None) -> str | None:
+        if v is not None and v != "" and v not in _VALID_BROKERS:
+            raise ValueError(f"auto_execute_broker must be one of {sorted(_VALID_BROKERS)}")
+        return v or None
+
 
 @router.patch("/me")
 async def update_me(
@@ -331,6 +350,14 @@ async def update_me(
 ):
     if body.full_name is not None:
         user.full_name = body.full_name or None
+    if body.auto_execute is not None:
+        user.auto_execute = body.auto_execute
+    if body.auto_execute_min_conf is not None:
+        user.auto_execute_min_conf = body.auto_execute_min_conf
+    elif body.auto_execute_min_conf == 0:       # explicit null reset
+        user.auto_execute_min_conf = None
+    if body.auto_execute_broker is not None:
+        user.auto_execute_broker = body.auto_execute_broker or None
     await db.commit()
     return user_to_dict(user)
 

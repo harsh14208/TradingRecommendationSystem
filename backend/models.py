@@ -124,6 +124,10 @@ class User(Base):
     # Integrations — outbound webhooks + Discord delivery
     webhook_url             = Column(String(500), nullable=True)   # HMAC-signed signal POST
     discord_webhook_url     = Column(String(500), nullable=True)   # Discord channel webhook
+    # Autonomous execution — auto-trade signals above min confidence
+    auto_execute            = Column(Boolean, default=False, nullable=False, server_default="0")
+    auto_execute_min_conf   = Column(Float, nullable=True)         # None = use 75.0
+    auto_execute_broker     = Column(String(50), nullable=True)    # "alpaca" | "ibkr" | None
     # Timestamps
     created_at              = Column(DateTime, server_default=func.now())
     last_seen_at            = Column(DateTime, nullable=True)

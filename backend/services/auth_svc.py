@@ -153,5 +153,8 @@ def user_to_dict(u: User) -> dict:
         "discord_webhook_url":       getattr(u, "discord_webhook_url", None),
         "webhook_url":               getattr(u, "webhook_url", None),
         "oauth_provider":            getattr(u, "oauth_provider", None),
+        "auto_execute":              getattr(u, "auto_execute", False),
+        "auto_execute_min_conf":     getattr(u, "auto_execute_min_conf", None),
+        "auto_execute_broker":       getattr(u, "auto_execute_broker", None),
         "created_at":                u.created_at.isoformat() if u.created_at else None,
     }

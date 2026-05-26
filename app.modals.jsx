@@ -20,6 +20,11 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   const [digestMsg,     setDigestMsg]     = useState("");
   const [digestStatus,  setDigestStatus]  = useState(null);
   const [webhookMsg,    setWebhookMsg]    = useState("");
+  const [autoExec,      setAutoExec]      = useState(user?.auto_execute ?? false);
+  const [autoExecConf,  setAutoExecConf]  = useState(user?.auto_execute_min_conf ?? "");
+  const [autoExecBroker,setAutoExecBroker]= useState(user?.auto_execute_broker ?? "");
+  const [autoExecSaving,setAutoExecSaving]= useState(false);
+  const [autoExecMsg,   setAutoExecMsg]   = useState("");
 
   useEffect(() => {
     if (open && user) {
@@ -28,6 +33,10 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
       setWebhookMsg("");
       setNameError("");
       setConfError("");
+      setAutoExec(user.auto_execute ?? false);
+      setAutoExecConf(user.auto_execute_min_conf ?? "");
+      setAutoExecBroker(user.auto_execute_broker ?? "");
+      setAutoExecMsg("");
       if (user.is_owner) {
         authFetch("/api/admin/setup-status").then(r => r.json()).then(setSetupStatus).catch(() => {});
         apiFetch("/api/admin/stats").then(d => { if (d) setAdminStats(d); }).catch(() => {});
@@ -112,6 +121,36 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
       setDigestMsg(err.message || "Could not send weekly digest.");
     } finally {
       setDigestSending(false);
+    }
+  };
+
+  const saveAutoExec = async () => {
+    setAutoExecSaving(true);
+    setAutoExecMsg("");
+    try {
+      const body = {
+        auto_execute: autoExec,
+        auto_execute_broker: autoExecBroker || "",
+      };
+      if (autoExecConf !== "") {
+        const v = Number(autoExecConf);
+        if (isNaN(v) || v < 50 || v > 100) {
+          setAutoExecMsg("Min confidence must be 50–100");
+          setAutoExecSaving(false);
+          return;
+        }
+        body.auto_execute_min_conf = v;
+      }
+      const res = await authFetch("/api/auth/me", { method:"PATCH", body: JSON.stringify(body) });
+      if (!res.ok) throw new Error("Save failed");
+      const d = await res.json();
+      setUser(d);
+      setAutoExecMsg("Saved ✓");
+      setTimeout(() => setAutoExecMsg(""), 2000);
+    } catch {
+      setAutoExecMsg("Could not save — try again");
+    } finally {
+      setAutoExecSaving(false);
     }
   };
 
@@ -358,6 +397,59 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
             )}
           </div>
           {confError && <div style={{ fontSize:10, color:"var(--down)", marginTop:4, fontFamily:"var(--font-mono)" }}>{confError}</div>}
+        </div>
+
+        {/* Autonomous Execution */}
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:10, fontWeight:600, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"var(--font-mono)", marginBottom:12, paddingBottom:8, borderBottom:"1px solid var(--line)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <span>Autonomous Execution</span>
+            <span style={{ fontSize:9, color:"var(--warn)", fontWeight:400 }}>Beta · Alpaca/IBKR setup required</span>
+          </div>
+          <div style={{ fontSize:11, color:"var(--text-faint)", marginBottom:10, lineHeight:1.55 }}>
+            When enabled, high-confidence signals are automatically submitted to your connected broker as market orders. Requires broker API credentials configured server-side.
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+            <button
+              onClick={() => setAutoExec(v => !v)}
+              style={{ width:36, height:20, borderRadius:10, border:"none", cursor:"pointer", position:"relative",
+                background: autoExec ? "var(--accent)" : "var(--bg-3)", transition:"background 0.2s" }}>
+              <span style={{ position:"absolute", top:2, left: autoExec ? 18 : 2, width:16, height:16, borderRadius:"50%", background:"#fff", transition:"left 0.2s" }}/>
+            </button>
+            <span style={{ fontSize:12, color: autoExec ? "var(--text)" : "var(--text-faint)" }}>
+              {autoExec ? "Auto-execute enabled" : "Auto-execute disabled"}
+            </span>
+          </div>
+          {autoExec && (
+            <div style={{ display:"flex", flexDirection:"column", gap:8, paddingLeft:0 }}>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <input
+                  type="number" min="50" max="100" placeholder="75"
+                  value={autoExecConf}
+                  onChange={e => setAutoExecConf(e.target.value)}
+                  style={{ ...inp, width:72 }}
+                />
+                <span style={{ fontSize:11, color:"var(--text-faint)" }}>% min confidence</span>
+              </div>
+              <select
+                value={autoExecBroker}
+                onChange={e => setAutoExecBroker(e.target.value)}
+                style={{ ...inp, width:"100%", appearance:"none" }}>
+                <option value="">Select broker…</option>
+                <option value="alpaca">Alpaca</option>
+                <option value="ibkr">IBKR (Interactive Brokers)</option>
+              </select>
+            </div>
+          )}
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:10 }}>
+            <button className="btn ghost" style={{ fontSize:11 }} onClick={saveAutoExec} disabled={autoExecSaving}>
+              {autoExecSaving ? "Saving…" : "Save"}
+            </button>
+            {autoExecMsg && (
+              <span style={{ fontSize:11, color: autoExecMsg.startsWith("Saved") ? "var(--up)" : "var(--down)", fontFamily:"var(--font-mono)" }}>
+                {autoExecMsg}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Referral */}
