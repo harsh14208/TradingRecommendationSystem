@@ -1,5 +1,5 @@
 """
-Polygon.io Pre-Computed Technical Indicators (free tier accessible)
+Polygon.io Pre-Computed Technical Indicators (Starter plan — unlimited calls)
 
 Endpoints used:
   v1/indicators/rsi/{ticker}   — RSI(14) daily + weekly
@@ -22,7 +22,7 @@ log = logging.getLogger("signal.trade.polygon_indicators")
 
 _cache: dict[str, dict] = {}
 _weekly_cache: dict[str, dict] = {}
-_TTL = 1800         # 30 minutes
+_TTL = 600          # 10 minutes — unlimited Polygon calls
 _WEEKLY_TTL = 3600  # 1 hour — weekly bars change once per week
 _BASE = "https://api.polygon.io"
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
@@ -54,7 +54,6 @@ async def get_indicators(ticker: str) -> dict:
     """
     Fetch RSI(14), MACD(12,26,9), SMA(20/50/200), EMA(8/21/200) for a ticker.
     Returns dict with current values, or empty dict if unavailable.
-    Rate-limit aware: sequential with small jitter between calls.
     """
     now = time.time()
     if ticker in _cache and now - _cache[ticker]["ts"] < _TTL:
@@ -71,36 +70,30 @@ async def get_indicators(ticker: str) -> dict:
     result: dict = {}
     try:
         async with aiohttp.ClientSession() as session:
-            rsi_vals = await _fetch_indicator(session, f"v1/indicators/rsi/{t}",
-                                              {**base_params, "window": 14})
-            await asyncio.sleep(0.15)
+            async def _fetch_macd() -> list:
+                try:
+                    async with session.get(
+                        f"{_BASE}/v1/indicators/macd/{t}",
+                        params={**base_params, "short_window": 12,
+                                "long_window": 26, "signal_window": 9},
+                        ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=8)
+                    ) as resp:
+                        if resp.status == 200:
+                            d = await resp.json()
+                            return (d.get("results", {}) or {}).get("values", [])
+                except Exception:
+                    pass
+                return []
 
-            macd_data_raw = []
-            try:
-                async with session.get(f"{_BASE}/v1/indicators/macd/{t}",
-                                       params={**base_params, "short_window": 12,
-                                               "long_window": 26, "signal_window": 9},
-                                       ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                    if resp.status == 200:
-                        d = await resp.json()
-                        macd_data_raw = (d.get("results", {}) or {}).get("values", [])
-            except Exception:
-                pass
-            await asyncio.sleep(0.15)
-
-            sma20_vals  = await _fetch_indicator(session, f"v1/indicators/sma/{t}",
-                                                 {**base_params, "window": 20})
-            await asyncio.sleep(0.1)
-            sma50_vals  = await _fetch_indicator(session, f"v1/indicators/sma/{t}",
-                                                 {**base_params, "window": 50})
-            await asyncio.sleep(0.1)
-            sma200_vals = await _fetch_indicator(session, f"v1/indicators/sma/{t}",
-                                                 {**base_params, "window": 200})
-            await asyncio.sleep(0.1)
-
-            # EMA(200) — more responsive than SMA(200), preferred by institutional algos
-            ema200_vals = await _fetch_indicator(session, f"v1/indicators/ema/{t}",
-                                                 {**base_params, "window": 200})
+            (rsi_vals, macd_data_raw, sma20_vals,
+             sma50_vals, sma200_vals, ema200_vals) = await asyncio.gather(
+                _fetch_indicator(session, f"v1/indicators/rsi/{t}",   {**base_params, "window": 14}),
+                _fetch_macd(),
+                _fetch_indicator(session, f"v1/indicators/sma/{t}",   {**base_params, "window": 20}),
+                _fetch_indicator(session, f"v1/indicators/sma/{t}",   {**base_params, "window": 50}),
+                _fetch_indicator(session, f"v1/indicators/sma/{t}",   {**base_params, "window": 200}),
+                _fetch_indicator(session, f"v1/indicators/ema/{t}",   {**base_params, "window": 200}),
+            )
 
         # Parse RSI
         if rsi_vals:
@@ -157,11 +150,10 @@ async def get_weekly_indicators(ticker: str) -> dict:
 
     try:
         async with aiohttp.ClientSession() as session:
-            rsi_w = await _fetch_indicator(session, f"v1/indicators/rsi/{t}",
-                                           {**weekly_params, "window": 14})
-            await asyncio.sleep(0.15)
-            sma20_w = await _fetch_indicator(session, f"v1/indicators/sma/{t}",
-                                             {**weekly_params, "window": 20})
+            rsi_w, sma20_w = await asyncio.gather(
+                _fetch_indicator(session, f"v1/indicators/rsi/{t}", {**weekly_params, "window": 14}),
+                _fetch_indicator(session, f"v1/indicators/sma/{t}", {**weekly_params, "window": 20}),
+            )
 
         if rsi_w:
             result["weekly_rsi"] = round(float(rsi_w[0].get("value", 0)), 2)

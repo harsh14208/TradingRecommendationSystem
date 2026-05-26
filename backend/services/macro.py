@@ -20,7 +20,7 @@ from services.redis_cache import cache_get, cache_set
 _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 
 _CACHE_KEY = "macro:context"
-CACHE_TTL = 3600  # 1 hour — macro data is slow-moving
+CACHE_TTL = 900   # 15 minutes — VIX is key MR gate input; refresh frequently
 
 
 async def _fred(series_id: str, api_key: str) -> Optional[float]:
@@ -133,6 +133,10 @@ async def get_macro_context() -> dict:
         if vix_df is not None and not vix_df.empty:
             vix = round(float(vix_df["Close"].iloc[-1]), 2)
             result["vix"] = vix
+            # VIX 3-day slope: positive = VIX still rising (panic building), negative = falling (capitulation passing)
+            if len(vix_df) >= 3:
+                vix_3d = vix_df["Close"].iloc[-3:].values.astype(float)
+                result["vix_3d_slope"] = round(float(vix_3d[-1] - vix_3d[0]), 2)
             if vix > 30:
                 score -= 12
                 rationale.append({

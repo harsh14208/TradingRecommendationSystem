@@ -36,7 +36,7 @@ _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 log = logging.getLogger("signal.news_scraper")
 
 _CACHE: dict[str, tuple[list, float]] = {}
-_TTL = 1200  # 20 minutes — news moves faster than macro
+_TTL = 600   # 10 minutes — news is time-sensitive
 
 # Chrome-like UA to avoid trivial bot blocks on Finviz / Google
 _HEADERS = {

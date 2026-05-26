@@ -272,51 +272,87 @@ async def get_reconstructed_orders(ticker: str | None = None) -> dict:
 
 async def get_massive_advanced_signals(ticker: str) -> dict:
     """
-    Fetch advanced Massive API signals: Short Interest, FTDs, GEX, Level 2, Corp Actions.
+    Fetch Polygon-backed signals for corporate actions and FTDs.
+
+    Endpoints used (all real, verified against Polygon docs):
+      - /v3/reference/dividends  — detect upcoming ex-dividend dates
+      - /v3/reference/splits     — detect upcoming stock splits
+      - /v2/reference/ftd        — Fails-to-Deliver + Reg SHO (Business plan; graceful 403)
+
+    Returns:
+      ftd          — {"is_reg_sho": bool, "spike_pct": float}
+      corp_actions — {"ex_div_soon": bool, "ex_div_date": str|None, "split_soon": bool}
+      dark_pool_flow — float (millions, from live WebSocket accumulator)
     """
-    api_key = os.getenv("MASSIVE_API_KEY")
+    api_key = os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY")
     if not api_key:
         return {}
 
     import aiohttp, ssl, certifi
+    from datetime import date, timedelta
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-    base_url = "https://api.polygon.io/v3/reference"
-    params = {"ticker": ticker, "apiKey": api_key}
 
     results = {
-        "ftd":          {"is_reg_sho": False, "spike_pct": 0.0},
-        "gex":          {"net_gex": 0.0},
-        "order_book":   {"bid_ask_ratio": 1.0},
-        "corp_actions": {"active_asr": False, "issuer_buying": False},
-        "retail_flow":  0.0,
+        "ftd":           {"is_reg_sho": False, "spike_pct": 0.0},
+        "corp_actions":  {"ex_div_soon": False, "ex_div_date": None, "split_soon": False},
         "dark_pool_flow": _flow_data.get(ticker, 0.0),
-        "short_interest": {"short_volume_pct": 0.0},
     }
+
+    today        = date.today()
+    lookahead_14 = (today + timedelta(days=14)).isoformat()
+    lookahead_7  = (today + timedelta(days=7)).isoformat()
 
     try:
         async with aiohttp.ClientSession() as session:
-            endpoints = {
-                "short_interest": f"{base_url}/short_interest",
-                "ftd":            f"{base_url}/ftd",
-                "gex":            f"{base_url}/options_gex",
-                "order_book":     f"{base_url}/level2",
-                "corp_actions":   f"{base_url}/corporate_actions",
-            }
 
-            async def fetch_ep(key, url):
+            async def _get(url: str, params: dict) -> dict:
                 try:
-                    async with session.get(url, params=params, timeout=5, ssl=ssl_ctx) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if data.get("results"):
-                                results[key] = data["results"][0]
-                        # 403 = endpoint requires higher Polygon plan — skip silently
+                    params["apiKey"] = api_key
+                    async with session.get(url, params=params, timeout=6, ssl=ssl_ctx) as r:
+                        if r.status == 200:
+                            return await r.json()
                 except Exception:
                     pass
+                return {}
 
-            await asyncio.gather(*(fetch_ep(k, v) for k, v in endpoints.items()))
+            # ── Dividends: ex-div within 14 days blocks MR entry ────────────
+            div_data = await _get(
+                "https://api.polygon.io/v3/reference/dividends",
+                {"ticker": ticker, "ex_dividend_date.lte": lookahead_14, "order": "asc", "limit": 5},
+            )
+            for div in (div_data.get("results") or []):
+                ex_date = div.get("ex_dividend_date", "")
+                if ex_date and ex_date >= today.isoformat():
+                    results["corp_actions"]["ex_div_soon"] = True
+                    results["corp_actions"]["ex_div_date"] = ex_date
+                    break
+
+            # ── Splits: split within 14 days ─────────────────────────────────
+            split_data = await _get(
+                "https://api.polygon.io/v3/reference/splits",
+                {"ticker": ticker, "execution_date.lte": lookahead_14, "order": "asc", "limit": 5},
+            )
+            for sp in (split_data.get("results") or []):
+                ex_date = sp.get("execution_date", "")
+                if ex_date and ex_date >= today.isoformat():
+                    results["corp_actions"]["split_soon"] = True
+                    break
+
+            # ── FTDs (Business plan — graceful 403) ──────────────────────────
+            ftd_data = await _get(
+                f"https://api.polygon.io/v2/reference/ftd",
+                {"symbol": ticker, "limit": 10},
+            )
+            ftd_results = ftd_data.get("results") or []
+            if ftd_results:
+                latest = ftd_results[0]
+                qty     = float(latest.get("quantity", 0) or 0)
+                prev_q  = float(ftd_results[1].get("quantity", 0) or 0) if len(ftd_results) > 1 else 0.0
+                spike   = ((qty - prev_q) / prev_q * 100) if prev_q > 0 else 0.0
+                is_sho  = bool(latest.get("threshold_securities_list", False))
+                results["ftd"] = {"is_reg_sho": is_sho, "spike_pct": round(spike, 1)}
 
     except Exception as e:
-        log.warning(f"[dark_pool] Failed to fetch massive advanced signals for {ticker}: {e}")
+        log.warning(f"[dark_pool] advanced signals error for {ticker}: {e}")
 
     return results

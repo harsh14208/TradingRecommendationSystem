@@ -32,7 +32,7 @@ import aiohttp
 log = logging.getLogger("signal.trade.massive_analyst")
 
 _cache: dict[str, dict] = {}
-_TTL = 21600  # 6 hours
+_TTL = 3600   # 1 hour — analyst sentiment can shift intraday on news
 
 _BASE = "https://api.polygon.io"
 
@@ -44,7 +44,7 @@ async def _fetch(session: aiohttp.ClientSession, endpoint: str, params: dict) ->
     try:
         async with session.get(f"{_BASE}/{endpoint}", params=params, ssl=_SSL_CTX,
                                timeout=aiohttp.ClientTimeout(total=8)) as resp:
-            if resp.status != 200:  # 403 = premium, degrade gracefully
+            if resp.status != 200:
                 return {}
             data = await resp.json()
             results = data.get("results") or []

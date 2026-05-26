@@ -10,6 +10,7 @@ Enhanced detection across multiple expiries:
 """
 import asyncio
 import math
+import os
 import time as _time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -147,19 +148,226 @@ def compute_dealer_positioning(
         "interpretation": " ".join(interp_parts) or "Neutral dealer positioning.",
     }
 
-_executor   = ThreadPoolExecutor(max_workers=3)
+_executor   = ThreadPoolExecutor(max_workers=8)
 _opt_cache: dict[str, tuple[dict, float]] = {}
-CACHE_TTL   = 2400  # 40 min — more frequent refresh for intraday sweeps
+CACHE_TTL   = 300   # 5 min — unlimited Polygon calls; options flow changes fast intraday
 
 # Per-ticker rolling IV history for IV Rank computation (populated over time)
 _iv_history: dict[str, list[float]] = {}
 _IV_HISTORY_MAX = 252
 
 
+def _fetch_options_polygon(ticker: str) -> dict | None:
+    """
+    Fetch options chain from Polygon /v3/snapshot/options/{ticker}.
+    Requires Polygon Starter plan ($30/mo). Returns None on 403 or any failure
+    so the caller can fall back to yfinance.
+    """
+    api_key = os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY")
+    if not api_key:
+        return None
+
+    import requests
+    from datetime import datetime
+
+    # Paginate up to 2000 contracts (8 pages × 250) — full chain for accurate GEX.
+    url = f"https://api.polygon.io/v3/snapshot/options/{ticker}"
+    params = {"apiKey": api_key, "limit": 250}
+    raw: list = []
+    try:
+        next_url: str | None = url
+        pages = 0
+        while next_url and pages < 8:
+            if pages == 0:
+                resp = requests.get(next_url, params=params, timeout=8)
+            else:
+                resp = requests.get(next_url, timeout=8)
+            if resp.status_code == 403:
+                return None  # plan gate — fall through to yfinance
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            batch = data.get("results") or []
+            raw.extend(batch)
+            next_url = data.get("next_url")
+            pages += 1
+    except Exception:
+        return None
+
+    if not raw:
+        return None
+
+    # Try underlying_asset.price / .value (populated on real-time plan; None on delayed)
+    spot = None
+    for r in raw:
+        ua = r.get("underlying_asset", {})
+        v = ua.get("price") or ua.get("value")
+        if v:
+            spot = float(v)
+            break
+
+    calls_pg = [r for r in raw if r.get("details", {}).get("contract_type") == "call"]
+    puts_pg  = [r for r in raw if r.get("details", {}).get("contract_type") == "put"]
+
+    # Infer spot from near-ATM call delta when underlying_asset doesn't populate
+    # (common on 15-min delayed Options Starter plan). Find call with delta closest
+    # to 0.50 — by put-call parity that strike ≈ forward price ≈ spot.
+    if spot is None and calls_pg:
+        best_delta_diff = float("inf")
+        for r in calls_pg:
+            g = r.get("greeks") or {}
+            d = g.get("delta")
+            if d is not None:
+                diff = abs(float(d) - 0.50)
+                if diff < best_delta_diff:
+                    best_delta_diff = diff
+                    k = (r.get("details") or {}).get("strike_price")
+                    if k:
+                        spot = float(k)
+
+    call_vol = sum(int(r.get("day", {}).get("volume", 0) or 0) for r in calls_pg)
+    put_vol  = sum(int(r.get("day", {}).get("volume", 0) or 0) for r in puts_pg)
+    call_oi  = sum(int(r.get("open_interest", 0) or 0) for r in calls_pg)
+    put_oi   = sum(int(r.get("open_interest", 0) or 0) for r in puts_pg)
+    total_vol = call_vol + put_vol
+    if total_vol < 50:
+        return None
+
+    pc_ratio = round(put_vol / call_vol, 3) if call_vol > 0 else None
+    total_oi  = call_oi + put_oi
+    unusual_vol_ratio = round(total_vol / total_oi, 2) if total_oi > 0 else None
+
+    # GEX from real market-implied gammas
+    gex_total = 0.0
+    if spot and spot > 0:
+        for r in raw:
+            greeks = r.get("greeks") or {}
+            g      = float(greeks.get("gamma", 0) or 0)
+            oi     = float(r.get("open_interest", 0) or 0)
+            ctype  = r.get("details", {}).get("contract_type", "call")
+            if g == 0 or oi == 0:
+                continue
+            sign = -1 if ctype == "call" else 1
+            gex_total += sign * g * oi * 100 * spot
+    gex_total = round(gex_total, 0)
+
+    # IV stats for IV Rank / term spike (group by expiry)
+    from collections import defaultdict
+    by_expiry: dict[str, list] = defaultdict(list)
+    for r in raw:
+        exp = (r.get("details") or {}).get("expiration_date", "")
+        iv  = r.get("implied_volatility")
+        if exp and iv:
+            by_expiry[exp].append(float(iv))
+
+    sorted_exps = sorted(by_expiry.keys())
+    near_iv = float(sum(by_expiry[sorted_exps[0]]) / len(by_expiry[sorted_exps[0]])) if sorted_exps else None
+    far_iv  = float(sum(by_expiry[sorted_exps[1]]) / len(by_expiry[sorted_exps[1]])) if len(sorted_exps) >= 2 else None
+    iv_term_spike = round(near_iv / far_iv, 2) if near_iv and far_iv and far_iv > 0 else None
+
+    all_ivs = [float(r["implied_volatility"]) for r in raw if r.get("implied_volatility")]
+    avg_iv  = round(sum(all_ivs) / len(all_ivs), 4) if all_ivs else None
+
+    if avg_iv and avg_iv > 0:
+        hist = _iv_history.setdefault(ticker, [])
+        hist.append(avg_iv)
+        if len(hist) > _IV_HISTORY_MAX:
+            _iv_history[ticker] = hist[-_IV_HISTORY_MAX:]
+
+    iv_rank = None
+    if avg_iv:
+        iv_hist = _iv_history.get(ticker, [])
+        if len(iv_hist) >= 10:
+            iv_low  = min(iv_hist)
+            iv_high = max(iv_hist)
+            iv_rank = round((avg_iv - iv_low) / (iv_high - iv_low) * 100, 1) if iv_high > iv_low else 50.0
+
+    # 25-delta skew using real deltas from Polygon greeks
+    skew_25d = put_iv_25d = call_iv_25d = None
+    if spot and spot > 0:
+        put_25_ivs = [
+            float(r.get("implied_volatility", 0))
+            for r in puts_pg
+            if r.get("implied_volatility") and 0.20 <= abs(float((r.get("greeks") or {}).get("delta", 0) or 0)) <= 0.30
+        ]
+        call_25_ivs = [
+            float(r.get("implied_volatility", 0))
+            for r in calls_pg
+            if r.get("implied_volatility") and 0.20 <= abs(float((r.get("greeks") or {}).get("delta", 0) or 0)) <= 0.30
+        ]
+        if put_25_ivs and call_25_ivs:
+            put_iv_25d  = round(sum(put_25_ivs)  / len(put_25_ivs),  4)
+            call_iv_25d = round(sum(call_25_ivs) / len(call_25_ivs), 4)
+            skew_25d    = round(put_iv_25d - call_iv_25d, 4)
+
+    # Sweep detection: vol >> OI
+    sweep_calls, sweep_puts = [], []
+    for r in raw:
+        day  = r.get("day") or {}
+        vol  = int(day.get("volume", 0) or 0)
+        oi   = int(r.get("open_interest", 0) or 0)
+        ctype = (r.get("details") or {}).get("contract_type", "call")
+        if oi > 0 and vol / oi > 5 and vol > 200:
+            entry = {
+                "strike":  float((r.get("details") or {}).get("strike_price", 0) or 0),
+                "vol":     vol,
+                "oi":      oi,
+                "vol_oi":  round(vol / oi, 1),
+                "iv":      float(r.get("implied_volatility", 0) or 0),
+                "expiry":  (r.get("details") or {}).get("expiration_date", ""),
+                "itm":     False,
+            }
+            (sweep_calls if ctype == "call" else sweep_puts).append(entry)
+    sweep_calls.sort(key=lambda x: -x["vol"])
+    sweep_puts.sort(key=lambda x: -x["vol"])
+
+    # OTM volumes (simple approximation — no spot means skip)
+    otm_call_vol = otm_put_vol = 0
+    if spot and spot > 0:
+        for r in calls_pg:
+            k = float((r.get("details") or {}).get("strike_price", 0) or 0)
+            if k > spot:
+                otm_call_vol += int((r.get("day") or {}).get("volume", 0) or 0)
+        for r in puts_pg:
+            k = float((r.get("details") or {}).get("strike_price", 0) or 0)
+            if k < spot:
+                otm_put_vol += int((r.get("day") or {}).get("volume", 0) or 0)
+
+    return {
+        "call_vol":          call_vol,
+        "put_vol":           put_vol,
+        "pc_ratio":          pc_ratio,
+        "total_vol":         total_vol,
+        "unusual_vol_ratio": unusual_vol_ratio,
+        "avg_iv":            avg_iv,
+        "near_iv":           near_iv,
+        "far_iv":            far_iv,
+        "iv_term_spike":     iv_term_spike,
+        "otm_call_vol":      otm_call_vol,
+        "otm_put_vol":       otm_put_vol,
+        "sweep_calls":       sweep_calls[:3],
+        "sweep_puts":        sweep_puts[:3],
+        "expiry":            sorted_exps[0] if sorted_exps else None,
+        "expiries_checked":  len(sorted_exps),
+        "iv_rank":           iv_rank,
+        "skew_25d":          skew_25d,
+        "put_iv_25d":        put_iv_25d,
+        "call_iv_25d":       call_iv_25d,
+        "gex":               gex_total,
+        "source":            "polygon",
+    }
+
+
 def _fetch_options(ticker: str) -> dict:
     cached = _opt_cache.get(ticker)
     if cached and _time.time() - cached[1] < CACHE_TTL:
         return cached[0]
+
+    # Try Polygon Starter plan first (real market-implied greeks + real-time volume)
+    result = _fetch_options_polygon(ticker)
+    if result:
+        _opt_cache[ticker] = (result, _time.time())
+        return result
 
     try:
         t           = yf.Ticker(ticker, session=_session)

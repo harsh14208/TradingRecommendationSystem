@@ -1,5 +1,5 @@
 """
-Corporate Events — Polygon.io reference endpoints (all free-tier accessible).
+Corporate Events — Polygon.io reference endpoints.
 
 Sources:
   v3/reference/dividends  — ex-dividend dates (bullish pre-event bid)
@@ -27,7 +27,7 @@ import certifi
 log = logging.getLogger("signal.trade.corporate_events")
 
 _cache: dict = {"events": None, "by_ticker": None, "ts": 0.0}
-_TTL = 14400  # 4 hours
+_TTL = 3600   # 1 hour — ex-div/split dates via Polygon (unlimited calls)
 _BASE = "https://api.polygon.io"
 
 _MA_KEYWORDS   = {"acqui", "merger", "takeover", "buyout", "acquisition", "acquire"}

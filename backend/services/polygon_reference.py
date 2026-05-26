@@ -1,5 +1,5 @@
 """
-Polygon.io Reference Data — ticker details + float computation (free tier).
+Polygon.io Reference Data — ticker details + float computation.
 
 Endpoints:
   v3/reference/tickers/{ticker}          — weighted_shares_outstanding

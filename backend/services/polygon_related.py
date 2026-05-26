@@ -1,5 +1,5 @@
 """
-Polygon.io Related Companies (v1/related-companies/{ticker}) — free tier accessible.
+Polygon.io Related Companies (v1/related-companies/{ticker}).
 
 Returns Polygon's proprietary list of related tickers identified through
 news co-occurrence and return correlation analysis. More precise than
@@ -12,7 +12,6 @@ Used in signal_engine's Sector Peer Confirmation block:
   COMBINED: Both layers give higher signal quality
 
 Cache: 24 hours per ticker (relationships are stable week-to-week).
-Rate limit: one call per ticker, cached → minimal API usage.
 """
 import asyncio
 import logging

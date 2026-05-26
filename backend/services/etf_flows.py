@@ -23,7 +23,7 @@ import aiohttp
 log = logging.getLogger("signal.trade.etf_flows")
 
 _cache: dict = {"data": None, "ts": 0.0}
-_TTL = 14400  # 4 hours
+_TTL = 1800   # 30 minutes — ETF flow data via Polygon (unlimited calls)
 
 SECTOR_ETFS = ["XLK", "XLF", "XLY", "XLC", "XLV", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
 
@@ -47,7 +47,7 @@ async def _fetch_etf_flows_massive(tickers: list[str]) -> dict[str, dict]:
                 try:
                     async with session.get(url, params=params, ssl=ssl_ctx,
                                            timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                        if resp.status != 200:  # 403 = premium endpoint, skip
+                        if resp.status != 200:
                             return
                         data = await resp.json()
                         rows = data.get("results") or []

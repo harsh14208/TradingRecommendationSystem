@@ -63,32 +63,18 @@ TICKERS = [
     "INTC",   # Legacy semi; highly cyclical MR (Sharpe 0.67, best ticker v5.12)
     "AMD",    # GPU/CPU; re-added — consecutive RSI gate filters the chasing (Sharpe 0.77)
     # MU removed: 30% WR, -1.41% — DRAM cycles too long for 10-day MR hold
+    "QCOM",   # Established mobile semi
+    "TXN",    # Analog semi, consistent
+    "MRVL",   # Infrastructure semi
     "CSCO",   # Networking; slow but reliable MR
-    # ── Enterprise software ───────────────────────────────────────────────────
-    "CRM",    # Salesforce; SaaS pullbacks → strong MR (Sharpe 0.26)
-    # ORCL removed: 16.7% WR, -1.24% — slow-moving stock doesn't bounce in 10 days
     # ── Financials ───────────────────────────────────────────────────────────
     "JPM",    # Largest US bank; MR around rate expectations
     "WFC",    # Regional/diversified; MR in rate cycle (Sharpe 0.20)
     "BAC",    # Similar MR profile to JPM/WFC (added)
     "GS",     # Investment bank; high-vol, vol-cluster MR
-    # ── Healthcare ───────────────────────────────────────────────────────────
-    "UNH",    # Managed care; MR around policy news
-    "ABT",    # Medical devices; clean MR (Sharpe 0.39)
-    # ── Industrials / transport ───────────────────────────────────────────────
-    "UNP",    # Rails; best industrial MR (Sharpe 0.41, 70% WR)
+    # ── Consumer (staples + discretionary) ───────────────────────────────────
     "HD",     # Home improvement; systematic pullbacks recover (Sharpe 0.37)
     "F",      # Ford; automotive cyclical, high-volume, strong MR bounces (added)
-    # ── Energy / materials ───────────────────────────────────────────────────
-    "CVX",    # Integrated energy; MR around oil-cycle weakness
-    "COP",    # E&P energy; more volatile than CVX, stronger MR (added)
-    # FCX removed: copper-price driven, not technically driven — 14.3% WR
-    # ── Telecom ──────────────────────────────────────────────────────────────
-    "VZ",     # Telecom; best performer v5.12 (Sharpe 0.80, 85.7% WR)
-    # T removed: 3 trades, -0.90% avg — AT&T doesn't respond to MR technically
-    "CMCSA",  # Cable/media; slow but range-bound
-    # ── Consumer (staples + discretionary) ───────────────────────────────────
-    "PEP",    # Beverages; range-bound staple
     "COST",   # Warehouse retail; smooth compounder MR
     "SBUX",   # Coffee; brand pullback MR at support
     # MCD removed: 33.3% WR, -0.36% — too slow for 10-day MR holds
@@ -98,6 +84,7 @@ TICKERS = [
 
 START        = "2006-01-01"
 END          = datetime.today().strftime("%Y-%m-%d")
+TRADE_FROM   = END   # no filter by default — override for short-window runs
 HOLD_DAYS    = 10         # v5.12 sweep-optimal: HOLD=10 with all quality gates.
                           # MR bounces on high-quality oversold setups take 7-10
                           # days to fully play out; 10-day hold captures the full move.
@@ -130,10 +117,20 @@ DEEP_BEAR_RSI_MAX      = 35     # In deep bear, only accept RSI < 35 (extreme ov
 # §9 showed the 40-50 score band with ANY MR condition hit Sharpe 0.10.
 # Tighter thresholds concentrate on the high-conviction oversold setups that
 # drove the GFC Bear Sharpe of 0.41 and NVDA's swing from −0.42% to +0.60%.
-MR_RSI_CEIL   = 42    # was 48 — stock must be clearly approaching oversold
-MR_BB_CEIL    = 0.22  # was 0.30 — near lower Bollinger Band (not just below midpoint)
-MR_IBS_CEIL   = 0.15  # was 0.20 — closed within 15% of the day's low (weak close)
-MR_VWAP_FLOOR = -0.75 # was −0.5 — must be meaningfully below rolling VWAP
+MR_RSI_CEIL    = 42    # was 48 — stock must be clearly approaching oversold
+MR_BB_CEIL     = 0.22  # was 0.30 — near lower Bollinger Band (not just below midpoint)
+MR_IBS_CEIL    = 0.15  # was 0.20 — closed within 15% of the day's low (weak close)
+MR_VWAP_FLOOR  = -0.75 # was −0.5 — must be meaningfully below rolling VWAP
+# Extended MR triggers — orthogonal to RSI/BB/IBS/VWAP, add new entry classes:
+MR_GAP_FLOOR   = -1.5  # gap down ≥1.5% = panic sell overshoots, post-gap MR bounce (65-70% fill rate)
+MR_STREAK_CEIL = -6    # 6+ consecutive closes below SMA20 = sustained weakness exhaustion
+
+# Momentum gate parameters (dual_gate mode — parallel to MR gate)
+# When dual_gate=True, entries are allowed if MR gate OR momentum gate passes.
+# Momentum gate targets trending breakout setups: RSI in healthy trend zone,
+# MACD accelerating, OBV positive (accumulation), above SMA50, outperforming SPY.
+MOM_RSI_FLOOR = 50    # RSI above neutral (trending, not mean-reverting)
+MOM_RSI_CEIL  = 68    # RSI below overbought (room left to run)
 
 REGIMES = [
     ("Dot-com Bull",    "1996-01-01", "2000-03-10"),
@@ -986,7 +983,9 @@ def compute_scores(df: pd.DataFrame) -> pd.Series:
 
     return pd.Series(np.round(score, 2), index=df.index)
 
-def atr_levels(price: float, atr: float, action: str, adx: float = 25.0) -> tuple[float, float]:
+def atr_levels(price: float, atr: float, action: str, adx: float = 25.0,
+               stop_mult_override: float | None = None,
+               target_mult_override: float | None = None) -> tuple[float, float]:
     """Return (stop_price, target_price) for swing style.
 
     Three Fixes:
@@ -1012,6 +1011,11 @@ def atr_levels(price: float, atr: float, action: str, adx: float = 25.0) -> tupl
     else:
         s, t = 1.5, 2.0
 
+    if stop_mult_override is not None:
+        s = stop_mult_override
+    if target_mult_override is not None:
+        t = target_mult_override
+
     if action == "BUY":
         return price - s * atr, price + t * atr
     else:
@@ -1029,7 +1033,22 @@ def simulate_ticker(
     spy_trend: dict,
     stlfsi4: dict,
     mr_only: bool = False,
+    dual_gate: bool = False,
     earnings_dates: set | None = None,
+    earnings_blackout_days: int | None = None,
+    hold_days_override: int | None = None,
+    mr_rsi_ceil_override: float | None = None,
+    stop_mult_override: float | None = None,
+    target_mult_override: float | None = None,
+    buy_thresh_override: int | None = None,
+    vix_min_override: float | None = None,
+    require_mr_count_override: int | None = None,
+    require_consec_score_override: bool | None = None,
+    atr_pct_rank_min_override: float | None = None,
+    atr_pct_rank_max_override: float | None = None,
+    ret_jump_filter_override: float | None = None,
+    entry_delay_override: bool = False,
+    ibs_sma20_streak_override: int | None = None,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -1041,7 +1060,8 @@ def simulate_ticker(
       4.  RVOL gate        — BUY blocked if RVOL < 1.2 (waived RSI<30)
       5.  SELL SMA200 gate — technical-only SELL needs score ≤ -50
       6–8. ADX / RSI / ATR gates
-      9.  MR-only gate     — RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<-0.75
+      9.  MR/Dual gate     — MR: RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<-0.75
+                             MOM (dual_gate): RSI 50-68 + MACD accel + OBV+ + >SMA50 + RS+
       10. Earnings blackout — block within EARNINGS_BLACKOUT_DAYS of report
       11. Consecutive RSI  — RSI must still be declining into the entry bar
       12. Deep-bear RSI    — VIX>28 + SPY<SMA200×0.95 requires RSI<35
@@ -1051,10 +1071,28 @@ def simulate_ticker(
     """
     trades = []
     in_trade_until = pd.Timestamp("2000-01-01")
+    _hold_days         = hold_days_override    if hold_days_override    is not None else HOLD_DAYS
+    _mr_rsi_ceil       = mr_rsi_ceil_override  if mr_rsi_ceil_override  is not None else MR_RSI_CEIL
+    _buy_thresh        = buy_thresh_override   if buy_thresh_override   is not None else BUY_THRESH
+    _vix_min           = vix_min_override
+    _require_mr_count  = require_mr_count_override  if require_mr_count_override  is not None else 1
+    _require_consec    = require_consec_score_override if require_consec_score_override is not None else False
+    # Default to 20 in MR-only mode — matches live engine gate (§12e validated:
+    # Ann. Sharpe 0.92 → 1.00, removes only 17% of trades, WR +3.4pp).
+    _atr_rank_min      = (atr_pct_rank_min_override if atr_pct_rank_min_override is not None
+                          else (20.0 if mr_only else None))
+    _atr_rank_max      = atr_pct_rank_max_override   # None = no ceiling
+    _ret_jump_max      = ret_jump_filter_override     # e.g. -6.0 blocks if 1-day chg < -6%
+    _entry_delay       = entry_delay_override         # True = fill at T+2 open, not T+1
+    _ibs_sma20_streak  = ibs_sma20_streak_override   # e.g. 5 = require ≥5 days below SMA20 for IBS-only MR
 
+    _trade_from_ts = pd.Timestamp(TRADE_FROM)
     for i in range(200, len(df)):
         row   = df.iloc[i]
         date  = df.index[i]
+
+        if TRADE_FROM != END and date < _trade_from_ts:
+            continue
 
         if date <= in_trade_until:
             continue
@@ -1071,7 +1109,7 @@ def simulate_ticker(
         stress_today = stlfsi4.get(date)
         spy_dir      = spy_trend.get(date)   # +1 = bull, -1 = bear, None = unknown
 
-        is_buy_signal  = BUY_THRESH <= score <= BUY_THRESH_MAX
+        is_buy_signal  = _buy_thresh <= score <= BUY_THRESH_MAX
         is_sell_signal = score <= SELL_THRESH
 
         if not is_buy_signal and not is_sell_signal:
@@ -1142,42 +1180,94 @@ def simulate_ticker(
         if is_buy_signal and atr_pct_entry < 0.007:
             continue
 
-        # ── Gate 9: Mean-Reversion-Only filter (mr_only runs) ─────────────────
-        # Requires at least one genuine MR condition at the signal bar.
-        # Eliminates "price above SMA200 + MACD rising into highs" entries that
-        # fire late in momentum moves and revert against us. The MA family adds
-        # +12–18 pts just for being above SMA200/SMA50 — enough to cross BUY_THRESH
-        # without any oversold/undervalued setup. This gate blocks those.
-        if mr_only and is_buy_signal:
+        # ── Gate 9: MR-only / Dual-Gate filter ────────────────────────────────
+        # mr_only=True: entry requires at least one genuine MR condition.
+        # dual_gate=True: entry allowed if MR gate passes OR momentum gate passes.
+        # MR gate: RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<-0.75 (oversold setup)
+        # MOM gate: RSI in [50,68], MACD accelerating, OBV positive, above SMA50,
+        #           outperforming SPY (trending breakout setup — orthogonal to MR)
+        _is_mr_setup  = False
+        _is_mom_setup = False
+        if (mr_only or dual_gate) and is_buy_signal:
             rsi_e  = float(row.get("rsi", 50))       if pd.notna(row.get("rsi"))       else 50.0
             bb_e   = float(row.get("bb_pct_b", 0.5)) if pd.notna(row.get("bb_pct_b")) else 0.5
             ibs_e  = float(row.get("ibs", 0.5))      if pd.notna(row.get("ibs"))       else 0.5
-            vwap_e = float(row.get("vwap_pct", 0))   if pd.notna(row.get("vwap_pct")) else 0.0
-            if not (rsi_e < MR_RSI_CEIL or bb_e < MR_BB_CEIL or
-                    ibs_e < MR_IBS_CEIL or vwap_e < MR_VWAP_FLOOR):
+            vwap_e = float(row.get("vwap_pct", 0))   if pd.notna(row.get("vwap_pct"))  else 0.0
+            gap_e    = float(row.get("gap_pct",       0))  if pd.notna(row.get("gap_pct"))       else 0.0
+            streak_e = float(row.get("close_streak",  0))  if pd.notna(row.get("close_streak"))  else 0.0
+            _is_mr_setup = (rsi_e   < _mr_rsi_ceil  or bb_e   < MR_BB_CEIL   or
+                            ibs_e   < MR_IBS_CEIL   or vwap_e < MR_VWAP_FLOOR or
+                            gap_e   < MR_GAP_FLOOR  or streak_e <= MR_STREAK_CEIL)
+            if dual_gate and not _is_mr_setup:
+                _mh    = float(row.get("macd_hist",   0))   if pd.notna(row.get("macd_hist"))   else 0.0
+                _mhp   = float(row.get("macd_hist_p", 0))   if pd.notna(row.get("macd_hist_p")) else 0.0
+                _obva  = bool(row.get("obv_above", 0))
+                _s50   = float(row.get("sma50", price))      if pd.notna(row.get("sma50"))       else price
+                _s20   = float(row.get("sma20", price))      if pd.notna(row.get("sma20"))       else price
+                _rs1m  = float(row.get("rs_1m",   0))        if pd.notna(row.get("rs_1m"))       else 0.0
+                _wk52  = float(row.get("wk52_pos", 0.5))     if pd.notna(row.get("wk52_pos"))    else 0.5
+                _is_mom_setup = (
+                    54 <= rsi_e <= 63 and       # tight trend zone: not barely neutral, not near overbought
+                    _mh > 0 and _mh > _mhp and  # MACD positive AND accelerating (both required)
+                    _obva and                    # OBV accumulation confirmed
+                    price > _s50 and            # above SMA50 (medium-term uptrend)
+                    price > _s20 and            # above SMA20 (short-term momentum intact)
+                    _rs1m > 2.0 and             # meaningfully outperforming SPY (not marginal)
+                    _wk52 > 0.88 and            # within 12% of 52W high (George & Hwang 2004)
+                    adx_entry > 22 and          # genuine trend strength (not chop)
+                    score >= 50                  # high-conviction signal required for momentum
+                )
+            if not (_is_mr_setup or _is_mom_setup):
                 continue
+
+            # ── Gate 9a: MR multi-condition confluence ─────────────────────────
+            # By default one MR condition suffices (OR logic). When
+            # require_mr_count_override > 1, demand simultaneous signals —
+            # e.g. IBS<0.15 AND RSI<42 — filtering single-condition IBS-only
+            # entries that are the weakest class of MR setups.
+            if _is_mr_setup and _require_mr_count > 1:
+                _mr_count = sum([
+                    rsi_e   < _mr_rsi_ceil,
+                    bb_e    < MR_BB_CEIL,
+                    ibs_e   < MR_IBS_CEIL,
+                    vwap_e  < MR_VWAP_FLOOR,
+                    gap_e   < MR_GAP_FLOOR,
+                    streak_e <= MR_STREAK_CEIL,
+                ])
+                if _mr_count < _require_mr_count:
+                    continue
 
         # ── Gate 10: Earnings blackout ─────────────────────────────────────────
         # Binary earnings events destroy MR setups — an oversold stock that beats
         # will gap up (missing our stop target entirely) or misses and gaps past
-        # the stop in one bar. Block entries within EARNINGS_BLACKOUT_DAYS of report.
-        if is_buy_signal and earnings_dates:
-            days_to_next = min(
+        # the stop in one bar. Block entries within the blackout window.
+        _earn_blackout = earnings_blackout_days if earnings_blackout_days is not None else EARNINGS_BLACKOUT_DAYS
+        _days_to_earn: int = 999
+        if earnings_dates:
+            _days_to_earn = min(
                 ((e - date).days for e in earnings_dates if (e - date).days >= 0),
                 default=999,
             )
-            if days_to_next <= EARNINGS_BLACKOUT_DAYS:
+            if is_buy_signal and _days_to_earn <= _earn_blackout:
                 continue
 
-        # ── Gate 11: Consecutive RSI decline ──────────────────────────────────
+        # ── Gate 11: Consecutive RSI decline (all MR setups) ─────────────────
         # Require RSI still falling into the signal bar (selling still active).
-        # One-day RSI spikes below 42 can occur on a single bad bar followed by
-        # immediate recovery — not a real oversold setup. Two bars of declining RSI
-        # confirm sustained institutional selling that a mean-reversion bounce can
-        # follow. Only applied in mr_only mode where RSI is a primary condition.
-        if mr_only and is_buy_signal and i > 0:
+        # Applies to all MR entries including gap/streak triggers — if RSI is rising
+        # on a gap-down or streak bar, the bounce may already be underway and entry
+        # is late. Tested RSI-only bypass in v11d: added bad trades, Sharpe 0.16.
+        if is_buy_signal and i > 0 and _is_mr_setup and not _is_mom_setup:
             prev_rsi = float(df.iloc[i - 1]["rsi"]) if pd.notna(df.iloc[i - 1].get("rsi")) else rsi_v + 1
             if rsi_v >= prev_rsi:   # RSI rising or flat — bounce may already be underway
+                continue
+
+        # ── Gate 18: Persistent oversold — consecutive score requirement ───────
+        # Require the previous bar also had score >= BUY_THRESH. One-day panic
+        # signals frequently whipsaw; persistent oversold (2+ days above threshold)
+        # indicates sustained selling pressure nearing exhaustion — higher conviction.
+        if is_buy_signal and _require_consec and i > 0:
+            prev_score = float(df.iloc[i - 1]["score"]) if "score" in df.columns else 0.0
+            if prev_score < _buy_thresh:
                 continue
 
         # ── Gate 12: Deep-bear stricter RSI ───────────────────────────────────
@@ -1190,12 +1280,12 @@ def simulate_ticker(
             if deep_bear and rsi_v >= DEEP_BEAR_RSI_MAX:
                 continue
 
-        # ── Gate 13: Price-SMA20 distance ─────────────────────────────────────
-        # Require price is ≥2% below its 20-day SMA. Confirms the stock is
-        # genuinely extended below short-term fair value, not just near the lower
-        # BB on a compressed band. RSI < 42 alone can trigger when a stock slowly
-        # drifts down to SMA20 without a real oversold extension.
-        if mr_only and is_buy_signal:
+        # ── Gate 13: Price-SMA20 distance (MR setups only) ────────────────────
+        # Require price is ≥2% below its 20-day SMA. Confirms genuine oversold
+        # extension, not just a slow drift down to SMA20. Skipped for momentum
+        # setups — those entries require price ABOVE SMA20 by definition, so this
+        # gate would incorrectly block all momentum entries.
+        if is_buy_signal and _is_mr_setup and not _is_mom_setup:
             sma20_e = float(row.get("sma20", 0)) if pd.notna(row.get("sma20")) else 0.0
             if sma20_e > 0 and price >= sma20_e * 0.98:
                 continue
@@ -1217,29 +1307,95 @@ def simulate_ticker(
         if is_buy_signal and date.dayofweek == 4:   # Friday = 4
             continue
 
+        # ── Gate 16: VIX minimum — skip low-volatility regime entries ─────────
+        # In low-VIX environments stocks don't panic-sell deeply enough for
+        # meaningful MR bounces. Elevated VIX = fear-driven capitulation =
+        # stronger bounce. Only applied when vix_min_override is set.
+        if is_buy_signal and _vix_min is not None and vix_today is not None:
+            if vix_today < _vix_min:
+                continue
+
+        # ── Gate 17: ATR percentile rank minimum ──────────────────────────────
+        # Only enter when this stock's ATR is elevated relative to its own
+        # history. Low ATR%rank = dormant period = weak bounces. High ATR%rank
+        # = panic-level volatility = MR bounces are strongest.
+        atr_rank_e = float(row.get("atr_pct_rank", 50)) if pd.notna(row.get("atr_pct_rank")) else 50.0
+        if is_buy_signal and _atr_rank_min is not None:
+            if atr_rank_e < _atr_rank_min:
+                continue
+
+        # ── Gate 17b: ATR percentile rank ceiling (§17a research) ─────────────
+        # ATR > 70th pct = trending panic / structural breakdown. At this extreme,
+        # forced selling may not have peaked — the stock is in a trending move, not
+        # a recoverable dip. MR setups in very-high-ATR regimes often continue lower
+        # before reversing (Quantpedia ATR regime research, P50/P70 threshold finding).
+        if is_buy_signal and _atr_rank_max is not None:
+            if atr_rank_e > _atr_rank_max:
+                continue
+
+        # ── Gate 17c: Single-day return jump filter (§17b research) ───────────
+        # Large single-day drops (< −6%) often signal fundamental repricing
+        # (earnings miss, guidance cut, fraud, regulatory action) rather than
+        # a recoverable panic. The stock may gap down and stay down.
+        # Alpha Architect finding: filtering "return jumps" tripled cumulative returns.
+        # IBS-only entries on −8%+ days are especially suspect — closing near the low
+        # of an 8% down day is often the beginning of multi-day continuation.
+        if is_buy_signal and _ret_jump_max is not None:
+            chg_e = float(row.get("change_pct", 0)) if pd.notna(row.get("change_pct")) else 0.0
+            if chg_e < _ret_jump_max:
+                continue
+
+        # ── Gate 17e: IBS + multi-day SMA20 confluence (§17e research, Pagonidis) ──
+        # Pagonidis (2013): IBS<0.15 triggered by a single bad day without sustained
+        # selling pressure produces weaker MR bounces. Combining IBS<0.15 with
+        # ≥N consecutive days below SMA20 confirms the stock is genuinely oversold,
+        # not just experiencing a one-day intrabar weakness event.
+        # Gate: when IBS<0.15 is the SOLE MR trigger (RSI≥42, BB≥0.22, VWAP≥-0.75,
+        # no gap, no streak), require close_streak ≤ -N (N = _ibs_sma20_streak).
+        if is_buy_signal and _ibs_sma20_streak is not None and _is_mr_setup:
+            _ibs_ev  = float(row.get("ibs",      0.5)) if pd.notna(row.get("ibs"))      else 0.5
+            _rsi_ev  = float(row.get("rsi",       50))  if pd.notna(row.get("rsi"))      else 50.0
+            _bb_ev   = float(row.get("bb_pct_b", 0.5)) if pd.notna(row.get("bb_pct_b")) else 0.5
+            _vwap_ev = float(row.get("vwap_pct",   0)) if pd.notna(row.get("vwap_pct")) else 0.0
+            _gap_ev  = float(row.get("gap_pct",    0)) if pd.notna(row.get("gap_pct"))  else 0.0
+            _ibs_is_sole = (
+                _ibs_ev  < MR_IBS_CEIL
+                and _rsi_ev  >= _mr_rsi_ceil
+                and _bb_ev   >= MR_BB_CEIL
+                and _vwap_ev >= MR_VWAP_FLOOR
+                and _gap_ev  >= MR_GAP_FLOOR
+            )
+            if _ibs_is_sole:
+                _streak_ev = float(row.get("close_streak", 0)) if pd.notna(row.get("close_streak")) else 0.0
+                if _streak_ev > -_ibs_sma20_streak:
+                    continue
+
         action = "BUY" if is_buy_signal else "SELL"
 
         adx_v = float(row["adx"]) if pd.notna(row.get("adx")) else 25.0
 
-        # Signal is generated at bar-i close; fill at next bar's open (no look-ahead).
-        if i + 1 >= len(df):
+        # Signal is generated at bar-i close; fill at T+1 open (default) or T+2 open
+        # when entry_delay_override=True (§17d: skip the continuation morning).
+        _fill_bar = i + 2 if _entry_delay else i + 1
+        if _fill_bar >= len(df):
             break
-        entry_price = float(df.iloc[i + 1]["Open"])
+        entry_price = float(df.iloc[_fill_bar]["Open"])
 
         # Anchor stop/target to actual fill price, not signal-bar close.
         # Using signal close misplaces stops by the overnight gap distance.
-        stop_price, target_price = atr_levels(entry_price, atr, action, adx_v)
+        stop_price, target_price = atr_levels(entry_price, atr, action, adx_v,
+                                              stop_mult_override, target_mult_override)
 
         # ── Scan next HOLD_DAYS bars for stop/target/time-loss exit ──────────
         exit_price = None
         exit_reason = "time"
-        exit_day = HOLD_DAYS
+        exit_day = _hold_days
 
-        for j in range(0, HOLD_DAYS):
-            if (i + 1) + j >= len(df):
+        for j in range(0, _hold_days):
+            if _fill_bar + j >= len(df):
                 exit_day = j - 1 if j > 0 else 0
                 break
-            bar = df.iloc[(i + 1) + j]
+            bar = df.iloc[_fill_bar + j]
             day_high  = float(bar["High"])
             day_low   = float(bar["Low"])
             day_close = float(bar["Close"])
@@ -1253,6 +1409,24 @@ def simulate_ticker(
                 # (avoids exiting trades that are merely flat or marginally negative)
                 if j >= MAX_LOSS_DAYS - 1 and day_close < entry_price * 0.99:
                     exit_price = day_close; exit_reason = "time_loss"; exit_day = j; break
+                # ── Adaptive exit: MR bounce completion ─────────────────────────
+                # Exit when indicators show the bounce is done and we're profitable.
+                # Captures peak-of-bounce return; avoids giving back gains.
+                # Requires: profitable > 0.5% AND ≥ 2 days elapsed (noise filter).
+                if j >= 2 and day_close > entry_price * 1.005:
+                    _rsi_now  = float(bar.get("rsi",        50)) if pd.notna(bar.get("rsi"))        else 50.0
+                    _macd_h   = float(bar.get("macd_hist",   0)) if pd.notna(bar.get("macd_hist"))   else 0.0
+                    _macd_hp  = float(bar.get("macd_hist_p", 0)) if pd.notna(bar.get("macd_hist_p")) else 0.0
+                    _vwap_p   = float(bar.get("vwap_pct",   -1)) if pd.notna(bar.get("vwap_pct"))   else -1.0
+                    _sma20_x  = float(bar.get("sma20", 0))        if pd.notna(bar.get("sma20"))      else 0.0
+                    _bounce_done = (
+                        _rsi_now > 55                             # RSI normalized above neutral
+                        or (_macd_h > 0 and _macd_h > _macd_hp)  # MACD positive + still accelerating
+                        or _vwap_p > 0                            # price recaptured 20-day VWAP
+                        or (_sma20_x > 0 and day_close > _sma20_x)  # price back above SMA20
+                    )
+                    if _bounce_done:
+                        exit_price = day_close; exit_reason = "adaptive"; exit_day = j; break
             else:  # SELL / short
                 if day_high >= stop_price:
                     exit_price = stop_price; exit_reason = "stop";   exit_day = j; break
@@ -1262,7 +1436,7 @@ def simulate_ticker(
                     exit_price = day_close; exit_reason = "time_loss"; exit_day = j; break
 
         if exit_price is None:
-            idx = min((i + 1) + (HOLD_DAYS - 1), len(df) - 1)
+            idx = min((i + 1) + (_hold_days - 1), len(df) - 1)
             exit_price = float(df.iloc[idx]["Close"])
 
         # ── Return calculation ────────────────────────────────────────────────
@@ -1274,19 +1448,20 @@ def simulate_ticker(
         net_pct = gross_pct - FRICTION_PCT
 
         trades.append({
-            "date":        date,
-            "ticker":      ticker,
-            "action":      action,
-            "score":       score,
-            "entry":       round(entry_price, 2),
-            "stop":        round(stop_price, 2),
-            "target":      round(target_price, 2),
-            "exit_price":  round(exit_price, 2),
-            "exit_reason": exit_reason,
-            "exit_day":    exit_day,
-            "gross_pct":   round(gross_pct, 3),
-            "net_pct":     round(net_pct, 3),
-            "atr_pct":     round(atr / entry_price * 100, 2) if entry_price > 0 else 0,
+            "date":            date,
+            "ticker":          ticker,
+            "action":          action,
+            "score":           score,
+            "entry":           round(entry_price, 2),
+            "stop":            round(stop_price, 2),
+            "target":          round(target_price, 2),
+            "exit_price":      round(exit_price, 2),
+            "exit_reason":     exit_reason,
+            "exit_day":        exit_day,
+            "gross_pct":       round(gross_pct, 3),
+            "net_pct":         round(net_pct, 3),
+            "atr_pct":         round(atr / entry_price * 100, 2) if entry_price > 0 else 0,
+            "days_to_earnings": _days_to_earn if _days_to_earn < 999 else None,
         })
 
         # Cooldown: trade duration + 3 calendar days buffer.
@@ -1307,6 +1482,50 @@ _EMPTY_STATS = {
     "avg_win": None, "avg_loss": None,
     "pf": None, "sharpe": None, "max_dd": 0.0,
 }
+
+def stats_weighted(rets: list[float], scores: list[float]) -> dict:
+    """Score-proportional position sizing Sharpe.
+
+    Each trade is weighted by its conviction score (normalized, mean=1.0).
+    Models a portfolio where position size scales with signal confidence.
+    Scores are min-max normalised then floored at 0.5× so no trade is zeroed out.
+    """
+    if not rets or not scores or len(rets) != len(scores):
+        return dict(_EMPTY_STATS)
+    arr = np.array(rets,   dtype=float)
+    w   = np.array(scores, dtype=float)
+    if w.max() == w.min():
+        return stats(rets)
+    w = (w - w.min()) / (w.max() - w.min())  # 0→1
+    w = w + 0.5                               # floor at 0.5× (still participate)
+    w = w / w.mean()                          # mean-normalize to 1.0
+
+    mu  = float(np.average(arr, weights=w))
+    var = float(np.average((arr - mu) ** 2, weights=w))
+    std = math.sqrt(var) if var > 0 else 0.0
+    sharpe = round(mu / std, 4) if std > 0 else None
+
+    wins_w  = float(np.sum(w[arr > 0]))
+    total_w = float(np.sum(w))
+    wr_w = wins_w / total_w * 100 if total_w > 0 else 0.0
+
+    cap, peak, max_dd = 10_000.0, 10_000.0, 0.0
+    for r, wi in zip(rets, (w / w.mean()).tolist()):
+        cap   += cap * POSITION_SIZE * wi * (r / 100)
+        peak   = max(peak, cap)
+        max_dd = max(max_dd, (peak - cap) / peak * 100)
+
+    return {
+        "n":        len(rets),
+        "wr":       round(wr_w, 1),
+        "avg":      round(mu, 2),
+        "avg_win":  None,
+        "avg_loss": None,
+        "pf":       None,
+        "sharpe":   sharpe,
+        "max_dd":   round(max_dd, 2),
+    }
+
 
 def stats(rets: list[float]) -> dict:
     if not rets:
@@ -1612,9 +1831,10 @@ def main():
         # Try loading from backend/.env directly
         _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
         try:
-            for line in open(_env_path):
-                if line.startswith("FRED_API_KEY="):
-                    _fred_key = line.strip().split("=", 1)[1]
+            with open(_env_path) as _ef:
+                for line in _ef:
+                    if line.startswith("FRED_API_KEY="):
+                        _fred_key = line.strip().split("=", 1)[1]
         except Exception:
             pass
     stlfsi4 = fetch_stlfsi4(START, END, _fred_key)
@@ -1690,7 +1910,7 @@ def main():
     # ─────────────────────────────────────────────────────────────────────────
     print("\n## 3. Exit-Type Breakdown\n")
     rows = []
-    for reason in ["target", "stop", "time", "time_loss"]:
+    for reason in ["target", "stop", "time", "time_loss", "adaptive"]:
         sub = trades[trades["exit_reason"] == reason]["net_pct"].tolist()
         s3 = stats(sub)
         pct_of_total = len(sub) / len(trades) * 100

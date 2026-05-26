@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import resource
 import ssl
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -8,6 +9,17 @@ from pathlib import Path
 
 import certifi
 import pytz
+
+# Raise the per-process open-file limit early so long-running scan cycles
+# (which accumulate sockets + SQLite WAL handles) don't hit the OS default
+# (256 on macOS, 1024 on Linux).  We request 65536; cap at the hard limit.
+try:
+    _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    _target = min(_hard, 65536)
+    if _target > _soft:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (_target, _hard))
+except Exception:
+    pass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,54 +100,117 @@ _scan_task: asyncio.Task | None = None
 _scan_fail_streak = 0
 
 async def _periodic_scan():
-    """Run the scanner at fixed ET times on trading days (Mon–Fri).
+    """Continuous market-hours scanner (Mon–Fri, 09:30–16:00 ET).
 
-    Times are read from settings.scan_times (default: 09:35,11:00,13:00,14:30,15:45).
-    Each iteration sleeps until the next scheduled time, fires the scan, then repeats.
+    Fires at 09:30 sharp on market open, then every scan_interval_min minutes
+    until close. One final scan fires at 16:02 to catch any close-of-day prints.
+    Sleeps overnight and on weekends until the next 09:30 open.
+
+    Legacy fixed-slot behaviour is preserved when scan_interval_min == 0 and
+    scan_times is non-empty in settings.
     """
     global _scan_fail_streak
     ET = pytz.timezone("America/New_York")
 
-    def _next_fire() -> datetime:
-        """Return the next scheduled datetime in ET (could be today or tomorrow)."""
-        cfg = get_settings()
-        slots: list[tuple[int, int]] = []
-        for part in cfg.scan_times.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            try:
-                h, m = part.split(":")
-                slots.append((int(h), int(m)))
-            except ValueError:
-                pass
-        if not slots:
-            slots = [(9, 35), (11, 0), (13, 0), (14, 30), (15, 45)]
-        slots.sort()
+    def _is_trading_day(dt: datetime) -> bool:
+        return dt.weekday() < 5  # Mon–Fri (basic; no holiday calendar)
 
+    def _next_market_open() -> datetime:
         now = datetime.now(ET)
-        # Walk forward up to 7 days to skip weekends
-        for day_offset in range(7):
-            candidate_day = now + timedelta(days=day_offset)
-            if candidate_day.weekday() >= 5:  # Sat=5, Sun=6
+        for offset in range(7):
+            candidate = now + timedelta(days=offset)
+            if not _is_trading_day(candidate):
                 continue
-            for h, m in slots:
-                fire = candidate_day.replace(hour=h, minute=m, second=0, microsecond=0)
-                if fire > now + timedelta(seconds=5):  # 5s buffer avoids re-firing same slot
-                    return fire
-        # Fallback: next Monday 09:35 (should never reach here)
-        return now + timedelta(hours=24)
+            open_dt = candidate.replace(hour=9, minute=30, second=0, microsecond=0)
+            if open_dt > now + timedelta(seconds=10):
+                return open_dt
+        return now + timedelta(hours=24)  # fallback
 
-    while True:
-        fire_at = _next_fire()
-        wait_s = (fire_at - datetime.now(ET)).total_seconds()
-        log.info("[scanner] next scheduled scan: %s ET (%.0fs from now)",
-                 fire_at.strftime("%a %Y-%m-%d %H:%M"), wait_s)
-        try:
+    # ── Legacy fixed-slot path (scan_interval_min == 0) ──────────────────────
+    cfg = get_settings()
+    if getattr(cfg, "scan_interval_min", 15) == 0 and cfg.scan_times.strip():
+        def _next_fire() -> datetime:
+            slots: list[tuple[int, int]] = []
+            for part in cfg.scan_times.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    h, m = part.split(":")
+                    slots.append((int(h), int(m)))
+                except ValueError:
+                    pass
+            if not slots:
+                slots = [(9, 30), (11, 0), (13, 0), (14, 30), (15, 45)]
+            slots.sort()
+            now = datetime.now(ET)
+            for day_offset in range(7):
+                candidate_day = now + timedelta(days=day_offset)
+                if candidate_day.weekday() >= 5:
+                    continue
+                for h, m in slots:
+                    fire = candidate_day.replace(hour=h, minute=m, second=0, microsecond=0)
+                    if fire > now + timedelta(seconds=5):
+                        return fire
+            return now + timedelta(hours=24)
+
+        while True:
+            try:
+                fire_at = _next_fire()
+            except Exception as e:
+                log.warning("[scanner] _next_fire failed (%s: %s); retrying in 60s", type(e).__name__, e)
+                await asyncio.sleep(60)
+                continue
+            wait_s = (fire_at - datetime.now(ET)).total_seconds()
+            log.info("[scanner] next fixed-slot scan: %s ET (%.0fs)", fire_at.strftime("%a %H:%M"), wait_s)
             await asyncio.sleep(max(0, wait_s))
-        except asyncio.CancelledError:
-            raise
+            try:
+                await run_scan(broadcast_fn=manager.broadcast)
+                _scan_fail_streak = 0
+            except asyncio.CancelledError:
+                raise
+            except BaseException as e:
+                _scan_fail_streak += 1
+                print(f"[scanner] periodic error (streak {_scan_fail_streak}): {type(e).__name__}: {e}")
+                if _scan_fail_streak == 1 or _scan_fail_streak % 5 == 0:
+                    await _alert_telegram(
+                        f"⚠️ Scanner error (streak {_scan_fail_streak})\n{type(e).__name__}: {str(e)[:200]}")
+            await asyncio.sleep(60)
+        return  # unreachable but satisfies linter
 
+    # ── Continuous market-hours path ──────────────────────────────────────────
+    while True:
+        now = datetime.now(ET)
+        interval_min = getattr(get_settings(), "scan_interval_min", 15) or 15
+
+        if not _is_trading_day(now):
+            next_open = _next_market_open()
+            wait_s = (next_open - now).total_seconds()
+            log.info("[scanner] weekend — sleeping until %s ET (%.1fh)",
+                     next_open.strftime("%a %H:%M"), wait_s / 3600)
+            await asyncio.sleep(wait_s)
+            continue
+
+        market_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=16, minute=0,  second=0, microsecond=0)
+        post_close   = now.replace(hour=16, minute=2,  second=0, microsecond=0)
+
+        if now < market_open:
+            wait_s = (market_open - now).total_seconds()
+            log.info("[scanner] pre-market — sleeping %.1fmin until 09:30 ET open", wait_s / 60)
+            await asyncio.sleep(wait_s)
+            continue
+
+        if now > post_close:
+            next_open = _next_market_open()
+            wait_s = (next_open - now).total_seconds()
+            log.info("[scanner] after-hours — sleeping until %s ET (%.1fh)",
+                     next_open.strftime("%a %H:%M"), wait_s / 3600)
+            await asyncio.sleep(wait_s)
+            continue
+
+        # Fire scan
+        log.info("[scanner] firing continuous scan at %s ET", now.strftime("%H:%M:%S"))
         try:
             await run_scan(broadcast_fn=manager.broadcast)
             _scan_fail_streak = 0
@@ -143,15 +218,27 @@ async def _periodic_scan():
             raise
         except BaseException as e:
             _scan_fail_streak += 1
-            print(f"[scanner] periodic error (streak {_scan_fail_streak}): {type(e).__name__}: {e}")
+            print(f"[scanner] error (streak {_scan_fail_streak}): {type(e).__name__}: {e}")
             if _scan_fail_streak == 1 or _scan_fail_streak % 5 == 0:
                 await _alert_telegram(
-                    f"⚠️ Signal.Trade scanner error (streak {_scan_fail_streak})\n"
-                    f"{type(e).__name__}: {str(e)[:200]}"
-                )
+                    f"⚠️ Scanner error (streak {_scan_fail_streak})\n{type(e).__name__}: {str(e)[:200]}")
 
-        # Brief pause so _next_fire() doesn't re-select the slot we just fired
-        await asyncio.sleep(60)
+        # After close: one final scan at 16:02 then sleep overnight
+        now_after = datetime.now(ET)
+        if now_after >= market_close:
+            if now_after < post_close:
+                await asyncio.sleep((post_close - now_after).total_seconds())
+                try:
+                    await run_scan(broadcast_fn=manager.broadcast)
+                except Exception:
+                    pass
+            next_open = _next_market_open()
+            wait_s = (_next_market_open() - datetime.now(ET)).total_seconds()
+            log.info("[scanner] post-close scan done — sleeping until %s ET",
+                     next_open.strftime("%a %H:%M"))
+            await asyncio.sleep(max(0, wait_s))
+        else:
+            await asyncio.sleep(interval_min * 60)
 
 
 async def _nightly_signal_cleanup():
@@ -691,23 +778,25 @@ async def _prewarm_news_batch():
 
 async def _warm_indicator_cache():
     """
-    Pre-fetch Polygon indicators for all watchlist tickers over 60 minutes at startup.
-    1 ticker every 23 seconds stays inside the free-tier 5 req/min limit.
-    polygon_indicators._cache persists in memory — signal generation reads from warm cache.
+    Pre-fetch Polygon indicators for all watchlist tickers at startup.
+    Runs 10 tickers concurrently (unlimited Polygon calls on Starter plan).
+    Completes in ~30 seconds instead of the old 60-minute free-tier throttle.
     """
-    await asyncio.sleep(30)  # let first scan start first
+    await asyncio.sleep(15)  # let first scan start first
     try:
         from services.polygon_indicators import get_indicators
         from services.scanner import _get_scan_tickers
         tickers = await _get_scan_tickers(get_settings())
-        log.info(f"[startup] warming indicator cache for {len(tickers)} tickers (~{len(tickers)*23//60}min)")
-        for t in tickers:
-            try:
-                await get_indicators(t)
-            except Exception:
-                pass
-            await asyncio.sleep(23)  # 23s gap → ~2.6 calls/min, within 5/min limit
-        log.info("[startup] indicator cache warm complete")
+        log.info(f"[startup] warming indicator cache for {len(tickers)} tickers (10 concurrent)")
+        sem = asyncio.Semaphore(10)  # 10 concurrent — well within unlimited plan
+        async def _fetch_one(t: str):
+            async with sem:
+                try:
+                    await get_indicators(t)
+                except Exception:
+                    pass
+        await asyncio.gather(*[_fetch_one(t) for t in tickers])
+        log.info("[startup] indicator cache warm complete (%d tickers)", len(tickers))
     except Exception as e:
         log.debug(f"[startup] indicator cache warm failed: {e}")
 
@@ -805,7 +894,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(start_dark_pool_stream())
     # News batch prefetch — warm per-ticker news cache once before first scan
     asyncio.create_task(_prewarm_news_batch())
-    # Indicator cache warming — spread over 60 minutes at startup (1 ticker/23s)
+    # Indicator cache warming — 10 concurrent fetches, completes in ~30s
     asyncio.create_task(_warm_indicator_cache())
     # Weekly ticker screener — suggest new tickers every Sunday
     asyncio.create_task(_weekly_ticker_screener())

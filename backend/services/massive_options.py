@@ -21,7 +21,7 @@ import aiohttp
 log = logging.getLogger("signal.trade.massive_options")
 
 _cache: dict[str, dict] = {}
-_TTL = 900  # 15 minutes
+_TTL = 300  # 5 minutes — unlimited Polygon calls
 
 _BASE = "https://api.polygon.io"
 
@@ -49,7 +49,7 @@ async def get_option_chain_signals(ticker: str, current_price: float) -> dict:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, ssl=ssl_ctx,
                                    timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:  # 403 on free plan — return empty gracefully
+                if resp.status != 200:
                     return {}
                 data = await resp.json()
                 chain = data.get("results") or []

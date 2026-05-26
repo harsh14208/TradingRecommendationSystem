@@ -26,7 +26,7 @@ import aiohttp
 log = logging.getLogger("signal.trade.8k_events")
 
 _cache: dict[str, dict] = {}
-_TTL = 7200  # 2 hours
+_TTL = 1800  # 30 minutes — 8-K material events are time-sensitive
 
 _BASE = "https://api.polygon.io"
 
@@ -70,7 +70,6 @@ async def get_8k_signals(ticker: str) -> dict:
     import ssl, certifi
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     cutoff = (date.today() - timedelta(days=5)).isoformat()
-    # Polygon.io SEC filings index — free tier accessible
     url = f"{_BASE}/vX/reference/sec/filings"
     params = {"apiKey": api_key, "ticker": ticker, "type": "8-K",
               "filing_date.gte": cutoff, "limit": 5}
@@ -79,7 +78,7 @@ async def get_8k_signals(ticker: str) -> dict:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, ssl=ssl_ctx,
                                    timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                if resp.status != 200:  # 403 = premium, return empty
+                if resp.status != 200:
                     return {"score": 0.0, "events": [], "filings": []}
                 data = await resp.json()
                 filings = data.get("results") or []

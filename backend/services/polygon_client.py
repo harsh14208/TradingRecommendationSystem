@@ -104,13 +104,11 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
 
 
 async def get_polygon_histories_batch(
-    tickers: list[str], period: str = "1y", interval: str = "1d", concurrency: int = 4
+    tickers: list[str], period: str = "1y", interval: str = "1d", concurrency: int = 20
 ) -> dict[str, pd.DataFrame]:
     """
     Fetch OHLCV for many tickers from Polygon/Massive first.
-
-    This intentionally keeps the per-ticker API shape so rate limits remain
-    easy to reason about. Callers can fall back missing tickers to yfinance.
+    Callers can fall back missing tickers to yfinance.
     """
     if not _get_api_key() or not tickers:
         return {}
@@ -191,7 +189,7 @@ async def get_polygon_info(ticker: str) -> dict | None:
         return None
 
 
-async def get_polygon_infos_batch(tickers: list[str], concurrency: int = 4) -> dict[str, dict]:
+async def get_polygon_infos_batch(tickers: list[str], concurrency: int = 20) -> dict[str, dict]:
     if not _get_api_key() or not tickers:
         return {}
     sem = asyncio.Semaphore(max(1, concurrency))
@@ -213,7 +211,7 @@ async def get_polygon_infos_batch(tickers: list[str], concurrency: int = 4) -> d
 
 async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame | None:
     """
-    Fetch the last `weeks` weekly OHLCV bars from Polygon.io (free tier).
+    Fetch the last `weeks` weekly OHLCV bars from Polygon.io.
     Used for weekly trend strength confirmation — reduces false signals in
     choppy markets that look bullish on daily but not on weekly timeframe.
     Returns DataFrame with columns Open/High/Low/Close/Volume, or None on error.

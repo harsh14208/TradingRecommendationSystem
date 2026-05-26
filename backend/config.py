@@ -14,10 +14,11 @@ class Settings(BaseSettings):
     # ── Existing ──────────────────────────────────────────────────────────────
     finnhub_api_key: str = ""
     watchlist: str = "NVDA,TSLA,AAPL,AMD,META,MSFT,PLTR,SMCI,QQQ,SPY,IWM,GLD,XLK,XLF,XLE"
-    scan_interval: int = 60  # legacy fallback, unused when scan_times is set
-    # Five ET times to run the scanner on trading days (comma-separated HH:MM).
-    # Defaults: open, mid-morning, midday, afternoon, pre-close.
-    scan_times: str = "08:45,11:00,13:00,14:30,15:45"
+    scan_interval: int = 60  # legacy fallback, unused
+    scan_times: str = ""     # legacy fixed-slot override (leave empty for continuous mode)
+    # Continuous market-hours scanning: fire every N minutes from 09:30 to 16:00 ET.
+    # Set to 0 to fall back to legacy scan_times fixed slots.
+    scan_interval_min: int = 15
     fred_api_key: str = ""
     alpaca_api_key: str = ""
     alpaca_api_secret: str = ""
