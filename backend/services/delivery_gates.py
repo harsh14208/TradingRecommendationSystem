@@ -10,11 +10,16 @@ Extracted from scanner._maybe_send() so that:
   - scanner.py stays focused on orchestration
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, func
 
 log = logging.getLogger("scanner")
+
+
+def _utcnow_naive() -> datetime:
+    """UTC timestamp compatible with existing naive SQLAlchemy DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # ── Gate configuration ────────────────────────────────────────────────────────
 
@@ -90,7 +95,7 @@ async def check_delivery_gates(
     # ── Sector concentration limit (max 2 BUY per sector per 24h) ────────────
     if sector and action == "BUY":
         from models import Signal
-        cutoff = datetime.utcnow() - timedelta(hours=24)
+        cutoff = _utcnow_naive() - timedelta(hours=24)
         count = (await db.execute(
             select(func.count()).select_from(Signal)
             .where(Signal.sector_etf == sector)

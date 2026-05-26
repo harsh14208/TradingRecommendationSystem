@@ -4,7 +4,7 @@ No PII is exposed. All stats are aggregate and anonymised.
 """
 import math
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -15,6 +15,11 @@ from models import Signal
 from routers.signals import _best_outcome
 
 router = APIRouter(prefix="/api/public", tags=["public"])
+
+
+def _utcnow_naive() -> datetime:
+    """UTC timestamp compatible with existing naive SQLAlchemy DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @router.get("/track-record")
@@ -109,7 +114,7 @@ async def public_track_record(db: AsyncSession = Depends(get_db)):
     worst5  = [_brief(r, v) for r, v in sorted_scored[-5:] if v < 0]
 
     # Signal cadence (signals per week over last 4 weeks)
-    four_weeks_ago = datetime.utcnow() - timedelta(weeks=4)
+    four_weeks_ago = _utcnow_naive() - timedelta(weeks=4)
     recent = [r for r in rows if r.created_at and r.created_at >= four_weeks_ago]
     signals_per_week = round(len(recent) / 4, 1) if recent else 0
 

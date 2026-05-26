@@ -168,6 +168,25 @@ class PushSubscription(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class StripeEvent(Base):
+    """Processed Stripe webhook event IDs — prevents double-processing across restarts."""
+    __tablename__ = "stripe_events"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    event_id   = Column(String(64), nullable=False, unique=True, index=True)
+    processed_at = Column(DateTime, server_default=func.now())
+
+
+class PasswordResetToken(Base):
+    """Hashed password-reset tokens stored in DB so they survive restarts."""
+    __tablename__ = "password_reset_tokens"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    token_hash  = Column(String(64), nullable=False, unique=True, index=True)  # SHA-256 hex
+    email       = Column(String(255), nullable=False, index=True)
+    expires_at  = Column(DateTime, nullable=False)
+    used        = Column(Boolean, default=False)
+    created_at  = Column(DateTime, server_default=func.now())
+
+
 class PerformanceSnapshot(Base):
     """Immutable point-in-time record of system performance metrics.
 

@@ -95,6 +95,8 @@ else:
     log.info("[db] PostgreSQL — production-ready concurrency.")
 
 _scan_task: asyncio.Task | None = None
+# Supervised background tasks: name → (task, coroutine_factory, started_at)
+_bg_tasks: dict[str, dict] = {}
 
 
 _scan_fail_streak = 0
@@ -863,6 +865,39 @@ async def _scan_watchdog():
             _scan_task = asyncio.create_task(_periodic_scan())
 
 
+def _supervise(name: str, coro_fn, restart: bool = True):
+    """Start a named background task and keep a handle for health reporting.
+
+    If restart=True, the task is automatically restarted on unexpected exit
+    (but not on CancelledError, which is a clean shutdown signal).
+    """
+    from datetime import timezone as _tz
+
+    async def _wrapper():
+        while True:
+            started = datetime.now(_tz.utc).replace(tzinfo=None)
+            task = asyncio.current_task()
+            _bg_tasks[name]["started_at"] = started
+            _bg_tasks[name]["task"] = task
+            _bg_tasks[name]["status"] = "running"
+            try:
+                await coro_fn()
+                _bg_tasks[name]["status"] = "done"
+            except asyncio.CancelledError:
+                _bg_tasks[name]["status"] = "cancelled"
+                raise
+            except Exception as exc:
+                _bg_tasks[name]["status"] = f"error: {exc}"
+                log.error(f"[bg:{name}] crashed — {exc}", exc_info=True)
+                await _alert_telegram(f"⚠️ Background task '{name}' died: {exc}")
+            if not restart:
+                break
+            await asyncio.sleep(5)  # brief pause before restart
+
+    _bg_tasks[name] = {"task": None, "status": "starting", "started_at": None}
+    return asyncio.create_task(_wrapper(), name=name)
+
+
 async def lifespan(app: FastAPI):
     await init_db()
     await _ensure_owner_account()
@@ -871,13 +906,14 @@ async def lifespan(app: FastAPI):
     global _scan_task
     _scan_task = asyncio.create_task(_periodic_scan())
     asyncio.create_task(_scan_watchdog())
-    asyncio.create_task(_weekly_digest())
-    asyncio.create_task(_weekly_factor_mining())
-    asyncio.create_task(_weekly_ml_retrain())
-    asyncio.create_task(_nightly_signal_cleanup())
-    asyncio.create_task(_nightly_outcome_resolution())
-    asyncio.create_task(_intraday_stop_monitor())
-    asyncio.create_task(_nightly_reflection_learning())
+    _supervise("weekly_digest",           _weekly_digest,            restart=True)
+    _supervise("weekly_factor_mining",    _weekly_factor_mining,     restart=True)
+    _supervise("weekly_ml_retrain",       _weekly_ml_retrain,        restart=True)
+    _supervise("nightly_signal_cleanup",  _nightly_signal_cleanup,   restart=True)
+    _supervise("nightly_outcome_resolution", _nightly_outcome_resolution, restart=True)
+    _supervise("intraday_stop_monitor",   _intraday_stop_monitor,    restart=True)
+    _supervise("nightly_reflection",      _nightly_reflection_learning, restart=True)
+    _supervise("weekly_screener",         _weekly_ticker_screener,   restart=True)
     # Pre-warm sector heatmap cache so first open is instant
     async def _prewarm_sectors():
         try:
@@ -886,22 +922,22 @@ async def lifespan(app: FastAPI):
             print("[startup] sector heatmap pre-warmed")
         except Exception as e:
             print(f"[startup] sector prewarm failed: {e}")
-    asyncio.create_task(_prewarm_sectors())
+    _supervise("prewarm_sectors", _prewarm_sectors, restart=False)
     if settings.alpaca_api_key and settings.alpaca_api_secret:
         alpaca_ws.start(settings.alpaca_api_key, settings.alpaca_api_secret,
                         settings.tickers, manager.broadcast)
     from services.dark_pool import start_dark_pool_stream
-    asyncio.create_task(start_dark_pool_stream())
-    # News batch prefetch — warm per-ticker news cache once before first scan
-    asyncio.create_task(_prewarm_news_batch())
-    # Indicator cache warming — 10 concurrent fetches, completes in ~30s
-    asyncio.create_task(_warm_indicator_cache())
-    # Weekly ticker screener — suggest new tickers every Sunday
-    asyncio.create_task(_weekly_ticker_screener())
+    _supervise("dark_pool_stream", start_dark_pool_stream, restart=True)
+    _supervise("prewarm_news",     _prewarm_news_batch,    restart=False)
+    _supervise("warm_indicators",  _warm_indicator_cache,  restart=False)
     yield
     alpaca_ws.stop()
     if _scan_task:
         _scan_task.cancel()
+    for entry in _bg_tasks.values():
+        t = entry.get("task")
+        if t and not t.done():
+            t.cancel()
 
 
 app = FastAPI(title="Signal.Trade API", version="1.0.0", lifespan=lifespan)
@@ -1015,10 +1051,21 @@ async def health_check():
             await session.execute(text("SELECT 1"))
         from datetime import timezone as _tz
         scan = get_scan_status()
+        bg_status = {
+            name: {
+                "status": entry.get("status", "unknown"),
+                "started_at": entry["started_at"].isoformat() if entry.get("started_at") else None,
+                "alive": entry.get("task") is not None and not entry["task"].done(),
+            }
+            for name, entry in _bg_tasks.items()
+        }
+        degraded = [n for n, e in bg_status.items() if not e["alive"] and e["status"] not in ("done", "cancelled", "starting")]
         return {
-            "status": "ok",
+            "status": "degraded" if degraded else "ok",
             "db": "connected",
             "scan": scan,
+            "background_tasks": bg_status,
+            "degraded_tasks": degraded,
             "ts": datetime.now(_tz.utc).isoformat(),
         }
     except Exception as e:

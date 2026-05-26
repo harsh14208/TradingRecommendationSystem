@@ -4,6 +4,7 @@ from services.signal_engine import (
     _score_to_action,
     _levels,
     _make_plain_english,
+    _collect_fetch_results,
     _current_session,
     _assemble_signal,
     scan_all,
@@ -65,6 +66,19 @@ def test_make_plain_english_hold():
     res = _make_plain_english("HOLD", "IBM", "swing", [], 50.0, None, None, None)
     assert "mixed signals" in res["summary"]
 
+def test_collect_fetch_results_records_provider_failures():
+    values, warnings = _collect_fetch_results(
+        "AAPL",
+        ["news", "options"],
+        [RuntimeError("rate limited"), {"ok": True}],
+    )
+    assert values == [None, {"ok": True}]
+    assert warnings == [{
+        "source": "news",
+        "error": "RuntimeError",
+        "message": "rate limited",
+    }]
+
 def test_current_session():
     session = _current_session()
     assert session in ["pre", "regular", "after", "closed"]
@@ -95,6 +109,32 @@ def test_assemble_signal_basic_buy():
     assert res["action"] in ["BUY", "HOLD"]
     assert "confidence" in res
     assert res["style"] == "swing"  # Default fallback
+
+def test_assemble_signal_surfaces_data_warnings():
+    res = _assemble_signal(
+        ticker="MSFT",
+        info={"company": "Microsoft"},
+        tech={"price": 300.0, "atr": 5.0, "volume": 1000000, "avg_volume": 800000},
+        score=40.0,
+        rationale=[{"head": "Strong uptrend", "sentiment": "pos", "src": "Technical"}],
+        sources={"Technical"},
+        _force_hold=False,
+        _is_low_atr=False,
+        _atr_pct_pre=0.016,
+        total_confidence_penalty=0.0,
+        avg_sent=0.6,
+        price=300.0,
+        atr=5.0,
+        market_ctx={"macro": {"sp500_trend": "up"}},
+        earnings_cal={"days_to_earnings": 15},
+        sector_rs=None,
+        days_to_earnings=15,
+        data_warnings=[{"source": "options_flow", "error": "TimeoutError", "message": ""}],
+    )
+
+    assert "Data Quality" in res["sources"]
+    assert res["dataWarnings"][0]["source"] == "options_flow"
+    assert any(r["head"] == "Partial Data Degradation" for r in res["rationale"])
 
 @pytest.mark.asyncio
 async def test_scan_all_empty_graceful():
@@ -287,3 +327,61 @@ async def test_generate_signal_sell_branches():
         assert res is not None
         assert res["ticker"] == "AAPL"
         assert res["action"] == "SELL"
+
+
+def _base_assemble_kwargs(**overrides):
+    defaults = dict(
+        ticker="AAPL",
+        info={"company": "Apple"},
+        tech={"price": 150.0, "atr": 3.0, "volume": 1_000_000, "avg_volume": 900_000},
+        score=40.0,
+        rationale=[],
+        sources=set(),
+        _force_hold=False,
+        _is_low_atr=False,
+        _atr_pct_pre=0.02,
+        total_confidence_penalty=0.0,
+        avg_sent=0.5,
+        price=150.0,
+        atr=3.0,
+        market_ctx={"macro": {"sp500_trend": "up"}},
+        earnings_cal={},
+        sector_rs=None,
+        days_to_earnings=None,
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+def test_iv_rank_flag_elevated_emits_rationale():
+    """IV Rank > 70 should add an Options rationale card."""
+    res = _assemble_signal(
+        **_base_assemble_kwargs(opt_flow={"iv_rank": 75.0, "pc_ratio": 0.9, "gex": 0})
+    )
+    heads = [r["head"] for r in res["rationale"]]
+    assert any("IV Rank" in h for h in heads), f"Expected IV Rank card, got: {heads}"
+    assert "Options" in res["sources"]
+
+
+def test_iv_rank_flag_low_no_rationale():
+    """IV Rank ≤ 70 should NOT emit an IV Rank rationale card."""
+    res = _assemble_signal(
+        **_base_assemble_kwargs(opt_flow={"iv_rank": 50.0, "pc_ratio": 0.9, "gex": 0})
+    )
+    heads = [r["head"] for r in res["rationale"]]
+    assert not any("IV Rank" in h for h in heads), f"Unexpected IV Rank card: {heads}"
+
+
+def test_iv_rank_flag_post_earnings_context():
+    """IV Rank > 70 with recent earnings (days_since=3) gets IV crush wording."""
+    res = _assemble_signal(
+        **_base_assemble_kwargs(
+            opt_flow={"iv_rank": 80.0, "pc_ratio": 0.9, "gex": 0},
+            earnings_cal={"days_since_earnings": 3, "last_earnings_date": "2026-05-22"},
+        )
+    )
+    heads = [r["head"] for r in res["rationale"]]
+    bodies = [r["body"] for r in res["rationale"]]
+    iv_cards = [(h, b) for h, b in zip(heads, bodies) if "IV Rank" in h]
+    assert iv_cards, "Expected IV Rank card near earnings"
+    assert "crush" in iv_cards[0][1].lower() or "crush" in iv_cards[0][0].lower()

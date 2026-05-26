@@ -6,7 +6,7 @@ Bulk data is cached 4 hours; per-ticker results are cached 24 hours.
 import ssl
 import time
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
 import certifi
@@ -52,7 +52,7 @@ async def get_congress_signal(ticker: str) -> dict:
         if not all_trades:
             return {}  # bulk fetch failed entirely — don't cache, try again next scan
 
-        cutoff = datetime.utcnow() - timedelta(days=90)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=90)
         recent_buys, recent_sells = [], []
 
         for t in all_trades:

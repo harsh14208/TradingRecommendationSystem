@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Response
 from services.market_data import get_history, get_quotes
 from services.fear_greed import get_fear_greed, get_put_call_ratio
+from services.breadth import get_market_breadth
 from services.auth_svc import get_current_user
 from config import get_settings, TIERS
 from models import User
@@ -149,11 +150,12 @@ async def market_overview():
         # Fetch Massive data and other web-scraped indicators concurrently
         massive_task = asyncio.to_thread(_fetch_massive_indices)
         
-        massive_res, tnx_df, fg, pc = await asyncio.gather(
+        massive_res, tnx_df, fg, pc, breadth = await asyncio.gather(
             massive_task,
             get_history("^TNX", period="1mo", interval="1d"),      # 10Y Yield
             get_fear_greed(),
             get_put_call_ratio(),
+            get_market_breadth(),
             return_exceptions=True
         )
 
@@ -178,7 +180,7 @@ async def market_overview():
             "yield_10y": process_df(tnx_df),
             "fear_greed": None if isinstance(fg, Exception) or fg is None else {"score": fg.get("score"), "label": fg.get("label"), "history": fg.get("history", [])},
             "put_call_ratio": None if isinstance(pc, Exception) or pc is None else {"ratio": pc.get("ratio"), "history": pc.get("history", [])},
-            "breadth": {"pct_above_200d": 63.4, "history": [55, 58, 60, 62, 61, 63, 63.4]}, # Placeholder
+            "breadth": None if isinstance(breadth, Exception) or breadth is None else breadth,
         }
 
         # Filter out any failed data fetches. The boolean logic here is critical:

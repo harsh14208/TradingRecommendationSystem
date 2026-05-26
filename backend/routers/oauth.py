@@ -29,7 +29,7 @@ from services.auth_svc import (
     user_to_dict,
 )
 from models import RefreshToken
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 log = logging.getLogger("signal.trade.oauth")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -140,6 +140,11 @@ async def google_oauth_callback(
 _REFRESH_COOKIE = "st_refresh"
 _REFRESH_EXPIRE_DAYS = 30
 
+
+def _utcnow_naive() -> datetime:
+    """UTC timestamp compatible with existing naive SQLAlchemy DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 @router.get("/oauth-exchange")
 async def oauth_exchange(
     code:     str = Query(...),
@@ -162,7 +167,7 @@ async def oauth_exchange(
     # Persist the refresh token so the user can renew their session silently
     try:
         token_hash = hashlib.sha256(raw_refresh.encode()).hexdigest()
-        expires_at = datetime.utcnow() + timedelta(days=_REFRESH_EXPIRE_DAYS)
+        expires_at = _utcnow_naive() + timedelta(days=_REFRESH_EXPIRE_DAYS)
         db.add(RefreshToken(user_id=user_id, token_hash=token_hash, expires_at=expires_at))
         await db.commit()
     except Exception:
@@ -203,7 +208,7 @@ async def _upsert_oauth_user(
         if not user.email_verified:
             user.email_verified = True
             user.email_verify_token = None
-        user.last_seen_at = datetime.utcnow()
+        user.last_seen_at = _utcnow_naive()
         if name and not user.full_name:
             user.full_name = name
     else:

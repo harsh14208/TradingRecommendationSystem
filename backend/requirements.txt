@@ -29,7 +29,9 @@ pywebpush>=2.0.0            # web push notifications (VAPID)
 # ── ML ──
 xgboost>=2.0.0
 scikit-learn>=1.4.0
+scipy>=1.11.0       # exact t-distribution p-values in calc_tbd_metrics
 
 # ── Dev / CI ──
 pip-audit>=2.7.0
 email-validator
+pytest-timeout>=2.3.1

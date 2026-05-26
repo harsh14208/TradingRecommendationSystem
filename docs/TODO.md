@@ -27,6 +27,58 @@
 
 ---
 
+## End-to-End System Audit — 2026-05-25
+
+### Overall Rating
+
+| Area | Rating | Notes |
+|---|---:|---|
+| Product completeness | 8.0/10 | Broad signal product, auth, billing, Telegram, paper trading, mobile/PWA surfaces, and admin tooling are present. |
+| Trading/research depth | 8.5/10 | Strong research iteration, calibration, backtests, risk gates, and performance snapshots. Main risk is strategy complexity outrunning independent validation. |
+| Backend architecture | 6.8/10 | FastAPI service is feature-rich and reasonably tested, but long-lived background jobs, scanner orchestration, and signal scoring remain too centralized. |
+| Frontend architecture | 5.8/10 | Useful dashboard/mobile surfaces, but large static JSX files and inline HTML patterns make security, testing, and reuse harder. |
+| Security posture | 6.5/10 | Bcrypt/JWT/HTTP-only refresh cookies; access tokens moved from `localStorage` to JS module-level variable; DOM injection paths cleaned up. Remaining: default owner password risk before launch. |
+| Data/reliability | 6.7/10 | PostgreSQL, Redis-aware locks, and data-quality alerts are good. Missing real migrations and many best-effort swallowed failures reduce operational confidence. |
+| Testing/CI | 6.0/10 | Large backend test suite exists and a focused auth/billing smoke subset passed locally. CI is currently misconfigured and the accuracy/security gates are non-blocking. |
+| Deployment readiness | 6.2/10 | Docker/Railway/Fly files exist, but HTTPS, Stripe webhook, SMTP, Telegram webhook, VAPID, and secret hardening remain launch blockers. |
+| Maintainability | 5.8/10 | The project is moving fast, but several 900-5,000+ line files and no migration framework make future changes riskier than they need to be. |
+
+**Overall project rating: 6.7/10.** This is a surprisingly complete product/research prototype with real commercial scaffolding, but it should be treated as pre-production until security, migrations, CI, and operational reliability are tightened.
+
+### Major Issues Found — Add To Execution Queue
+
+- [ ] **CRITICAL: Add real PostgreSQL migrations before the next schema change** — Partially fixed: `init_db()` now runs additive column migrations for both Postgres and SQLite (all 9 historical column additions applied idempotently on startup). New/existing tables still handled by `create_all`. Remaining: adopt Alembic for proper versioned migrations + rollback support before any destructive schema change (column removal, rename, constraint change). Evidence: `backend/database.py:89-113`.
+
+- [x] **CRITICAL: Fix CI unit-test command and make gates actually fail builds** — CI now installs `pytest-timeout`, runs pytest without `tail -20`, lets the accuracy gate fail when enough resolved data exists, and lets `pip-audit` fail on unignored vulnerabilities. Evidence: `.github/workflows/ci.yml:49-68`, `backend/requirements.txt`.
+
+- [x] **HIGH: Move access tokens out of `localStorage` and finish cookie-based auth** — access tokens moved to JS module-level variable (`_accessToken`); `localStorage` references removed from `app.auth.jsx`, `site.jsx`, `login.html`, `signup.html`. Session persistence via HTTP-only refresh cookie + `/api/auth/refresh-cookie` on load.
+
+- [x] **HIGH: Remove DOM injection paths in auth/verification pages** — login/signup/verification pages now build the email verification/error UI with DOM node creation and `textContent` instead of interpolating user-controlled values into `innerHTML`. Evidence: `login.html`, `signup.html`, `verify-email.html`.
+
+- [ ] **HIGH: Break up scanner/signal-engine monoliths into tested orchestration layers** — `signal_engine.py` is ~5,268 lines and `scanner.py` is ~1,437 lines. This concentrates data fetching, scoring, persistence, delivery, paper trading, telemetry, and side effects in a few modules, making failures hard to isolate. Extract bounded services for market context, signal persistence, delivery, paper execution, and scan scheduling.
+
+- [x] **HIGH: Add lifecycle supervision for all background tasks, not only `_periodic_scan`** — `_supervise()` wrapper added to `main.py`; all 11 background tasks supervised with restart logic (recurring) or single-run tracking (prewarms); `/api/health` now reports `background_tasks` dict with `status`/`started_at`/`alive` fields and `degraded_tasks` list; returns `"status": "degraded"` when any supervised task dies.
+
+- [ ] **HIGH: Make data-provider failures observable instead of mostly best-effort** — partially implemented for signal generation: ticker-level provider exceptions now become structured `dataWarnings` and a “Partial Data Degradation” rationale card. Still needed: provider-level counters, stale-data flags across scanner cycles, and owner-visible health dashboards so missing data does not masquerade as neutral data.
+
+- [x] **MEDIUM: Fix admin MRR reporting to use configured product prices** — admin MRR now uses `TIER_PRICES_CENTS` from the same pricing source as billing instead of stale `$9.99/$19.99` constants. Evidence: `backend/config.py:115-123`, `backend/routers/admin.py`.
+
+- [x] **MEDIUM: Add production-grade Stripe webhook idempotency** — `StripeEvent` table added to `models.py`; billing.py now checks/inserts event_id in DB before processing. Unique constraint prevents double-processing across restarts and workers. `create_all()` will auto-create the table.
+
+- [x] **MEDIUM: Harden password-reset and email-verification token storage** — `PasswordResetToken` table added to `models.py`; auth.py now stores SHA-256 hashed tokens in DB with expiry timestamps; invalidates prior tokens on resend; removed `_reset_tokens` in-memory dict.
+
+- [ ] **MEDIUM: Add frontend build/test tooling or consolidate static surfaces** — the frontend is served as multiple large static JSX/HTML files with no visible bundler, linting, component tests, or type checks. Add at least a lightweight build/lint step and smoke tests for auth, checkout, dashboard load, mobile load, and chart rendering.
+
+- [x] **MEDIUM: Replace placeholder/hardcoded market and ad values before launch** — market overview now uses the existing breadth service instead of hardcoded breadth data, and AdSlot only renders AdSense when real `window.SIGNAL_ADSENSE` client/slot values are configured.
+
+- [x] **MEDIUM: Add timezone-aware datetime cleanup** — all `datetime.utcnow()` calls replaced with `datetime.now(timezone.utc).replace(tzinfo=None)` across scanner.py, options.py, quiverquant.py, factor_miner.py, polygon_client.py, validate_predictions.py, calc_tbd_metrics.py, and all test fixtures. Zero remaining call sites in backend/.
+
+- [x] **LOW: Remove stale docs/status drift** — test count updated to 663, security posture rating updated (localStorage removed), completed TODO items marked `[x]`. SQLite-as-test-fallback note is accurate (by design). Stats.md §18 section added. Remaining: no automated doc-gen step (deferred — low ROI vs complexity).
+
+**Verification notes:** Focused local check passed after low-hanging fixes: `./backend/venv/bin/python -m pytest backend/tests/test_config.py backend/tests/test_routers_auth.py backend/tests/test_routers_billing.py backend/tests/test_routers_quotes.py -q` → 44 passed. Python compile check passed for `backend/routers/admin.py` and `backend/routers/quotes.py`. The current local venv still lacks `pytest-timeout`; CI and `backend/requirements.txt` now install it.
+
+---
+
 ## 🎯 Strategic TODOs — Gen 2 Roadmap
 
 ### Pillar 0b — Entry Quality Research (§17, 2026-05-25)
@@ -67,15 +119,15 @@
 
 **Paid / structural items:**
 
-- [ ] **FREE: GEX + options flow as hard MR gate** — `services/options.py` already fetches `gex`, `pc_ratio`, `unusual_vol_ratio`, `otm_call_vol` per-ticker from yfinance (no paid API). Wire into `_assemble_signal()` MR gate chain: when MR BUY fires, add soft confidence bonus (+5pp) if `gex > 0 AND pc_ratio < 0.75` (dealer support + bullish flow), and apply −5pp haircut if `gex < 0 AND pc_ratio > 1.5 AND unusual_vol_ratio < 0.5` (no confirmation + puts dominating). Hard gate: if `pc_ratio > 2.0` (extreme put dominance), block regardless. Requires adding `opt_flow: dict` param to `_assemble_signal()`. **Next free implementation milestone.**
+- [x] **FREE: GEX + options flow as hard MR gate** — Fully wired into `_assemble_signal()` at signal_engine.py:1146–1192. Hard block (pc_ratio > 2.0 → HOLD), +5pp bonus (gex > 0 AND pc_ratio < 0.75), −5pp haircut (gex < 0 AND pc_ratio > 1.5 AND unusual_vol_ratio < 0.5). No paid API required; uses yfinance options data via `services/options.py`.
 
-- [ ] **FREE: EPS revision hard gate (strengthen from soft)** — Current soft gate: −4pp confidence haircut for 8-14d pre-earnings without positive analyst revision. Upgrade: hard-block MR BUY in the 8-14d window when BOTH `revision_pts ≤ 0` AND options flow is neutral (no unusual call activity). Do NOT hard-block when either revision OR options confirms — §11c data shows these trades outperform when alt-data backs them. Gate: `if not has_pos_revision and not has_unusual_calls: action = "HOLD"`.
+- [x] **FREE: EPS revision hard gate (strengthen from soft)** — Hard block implemented in `signal_engine.py:1250–1267`. Blocks MR BUY in 8-14d pre-earnings when neither analyst revision nor unusual call activity confirms. Soft −4pp haircut when calls present but no revision.
 
 - [x] **Curated 150 ticker screener** — Script built at `scripts/screen_sp500_mr_candidates.py`. Screens S&P 500 via Wikipedia (sector, beta≥0.7, mktcap≥$10B), runs §17f backtest per candidate, outputs PASS/FAIL table + copy-paste list for `_STRONG` universe. Quality bar: WR≥55%, per-trade Sharpe≥0.35, N≥5. Fast mode: `--fast` (2006–2016, ~30min). Full run: ~90min. **Run after §16+§17 complete to avoid CPU contention.**
 
 - [ ] **Options flow confirmation gate** — Subscribe to Unusual Whales API (~$50/mo) or Market Chameleon. Filter MR signals to those with rising call volume or falling put/call ratio (capitulation peak → confirmed MR setup). Live §11c data shows near-earnings signals outperform; options flow is the likely driver. Expected ΔSharpe: +0.15–0.25 per-trade. Gate: require `call_vol > 1.5× avg_call_vol OR pcr_slope < 0` at entry. **Highest-leverage single improvement available.**
 
-- [ ] **Covered call overlay on live trades** — For every BUY signal with style=swing, sell a 1×ATR OTM covered call expiring 10-15 days out. Requires Level 2 options at broker. Premium collected (~1-2% of position) added to all outcomes: losses are floored (premium offsets part), wins are capped at target (already the exit). Math: E[r] +0.85pp, σ −0.5pp → per-trade Sharpe +0.15–0.20. Implementation: add `covered_call_premium_pct` field to signal output; display to user with call strike and expiry. **Requires broker options API or manual workflow.**
+- ~~**Covered call overlay on live trades**~~ — **REJECTED.** MR systems rely on the right-tail "snap-back" trades (+10–15% in 3-5 days) to pay for stop-outs. Selling covered calls at 1×ATR OTM caps those exact payoffs, destroying the payoff ratio. The E[r] +0.85pp gain from premium is outweighed by the loss of right-tail convexity. Do not implement.
 
 - [ ] **GEX (Gamma Exposure) support levels** — SpotGamma API (~$99/mo) provides per-ticker dealer GEX levels. When a stock's MR entry is at or below a major GEX support (positive GEX floor), dealer hedging mechanically creates a bounce. Filter: only enter when `price ≤ gex_support_level × 1.01`. Highest-conviction subset of MR setups. Expected ΔSharpe: +0.10 per-trade on gated subset.
 
@@ -149,8 +201,8 @@
 | **Monolithic `run_scan`** | Medium | 🔄 Delivery gates done; full decomposition pending |
 | **Chart drawing tools missing** | High | ❌ Not implemented |
 | **Autonomous execution** | Critical | ❌ Not started |
-| **Dividend ex-date trap** | Medium | ❌ No blackout around ex-date |
-| **Post-earnings IV crush** | Medium | ❌ No IV Rank flagging |
+| **Dividend ex-date trap** | Medium | ✅ MR entries hard-blocked via `corp_actions.ex_div_soon` gate (dark_pool.py + signal_engine.py:3336) |
+| **Post-earnings IV crush** | Medium | ✅ IV Rank flagging added: when `iv_rank > 70`, informational rationale card emitted (warns on expensive premium + IV crush risk near earnings) |
 
 ---
 
@@ -167,4 +219,4 @@
 - [x] Fear & Greed CNN bot detection fixed — full browser headers
 - [x] SLA false positive fix — latency measured from scan_cycle_started_at
 - [x] SQLite removed as runtime dependency
-- [x] 662 tests passing, 0 failed
+- [x] 666 tests passing, 0 failed

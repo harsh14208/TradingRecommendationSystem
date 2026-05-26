@@ -3,7 +3,7 @@ import logging
 import asyncio
 import aiohttp
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 log = logging.getLogger("signal.trade.polygon")
 
@@ -37,7 +37,7 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
         multiplier, timespan = 1, "day"
 
     # Map yfinance period strings to date ranges
-    end_dt = datetime.utcnow()
+    end_dt = datetime.now(timezone.utc).replace(tzinfo=None)
     if period == "1d":
         start_dt = end_dt - timedelta(days=2) # Extra days to ensure we get data over weekends
     elif period == "5d":
@@ -220,7 +220,7 @@ async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame 
     if not api_key:
         return None
 
-    end_dt   = datetime.utcnow()
+    end_dt   = datetime.now(timezone.utc).replace(tzinfo=None)
     start_dt = end_dt - timedelta(weeks=weeks + 4)  # extra buffer for weekends/holidays
     url = (f"https://api.polygon.io/v2/aggs/ticker/{ticker.upper()}"
            f"/range/1/week/{start_dt.strftime('%Y-%m-%d')}/{end_dt.strftime('%Y-%m-%d')}")

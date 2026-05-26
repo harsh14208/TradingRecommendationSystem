@@ -10,7 +10,7 @@ import logging
 import os
 import ssl
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
 import certifi
@@ -80,7 +80,7 @@ def is_pre_long_weekend(holidays: list[dict]) -> tuple[bool, str]:
     is closed for 3 consecutive calendar days.
     Returns (False, "") otherwise.
     """
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     for h in holidays:
         try:
             hdate = datetime.strptime(h["date"], "%Y-%m-%d").date()

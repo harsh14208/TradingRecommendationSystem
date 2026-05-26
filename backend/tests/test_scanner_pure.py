@@ -12,7 +12,7 @@ at module level so the file can be imported without real infrastructure.
 import sys
 import os
 import pytest
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timezone
 from unittest.mock import MagicMock, patch, PropertyMock
 import pytz
 
@@ -360,5 +360,5 @@ class TestTodayStartUtc:
         """Midnight ET today should be before right now."""
         from datetime import timezone
         result = _mock_scanner_imports._today_start_utc()
-        now_utc_naive = datetime.utcnow()
+        now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         assert result <= now_utc_naive

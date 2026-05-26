@@ -450,13 +450,17 @@ function AdSlot({ user, slim = false }) {
   const tier = user?.subscription_tier || "free";
   const isPaid = tier !== "free" || user?.is_owner;
   const hasAdSense = typeof window !== "undefined" && window.adsbygoogle !== undefined;
+  const adsense = (typeof window !== "undefined" && window.SIGNAL_ADSENSE) || {};
+  const adClient = adsense.client || "";
+  const adSlot = slim ? adsense.slimSlot : adsense.rectangleSlot;
+  const canRenderAds = hasAdSense && adClient && adSlot;
 
   // Hook must always be called — conditional logic is inside the effect body
   React.useEffect(() => {
-    if (!isPaid && hasAdSense) {
+    if (!isPaid && canRenderAds) {
       try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch (_) {}
     }
-  }, [isPaid, hasAdSense]);
+  }, [isPaid, canRenderAds]);
 
   if (isPaid) return null;
 
@@ -464,9 +468,9 @@ function AdSlot({ user, slim = false }) {
     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
                   padding:"6px 14px", background:"var(--bg-2)", borderBottom:"1px solid var(--line)",
                   fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>
-      {hasAdSense ? (
+      {canRenderAds ? (
         <ins className="adsbygoogle" style={{ display:"inline-block", width:"100%", height:50 }}
-             data-ad-client="ca-pub-XXXXXXXXXXXXXXXX" data-ad-slot="XXXXXXXXXX" data-ad-format="horizontal"/>
+             data-ad-client={adClient} data-ad-slot={adSlot} data-ad-format="horizontal"/>
       ) : (
         <div style={{ width:"100%", textAlign:"center", opacity:0.5 }}>
           📢 Ad · <a href="/signup?plan=basic" style={{ color:"var(--accent)", textDecoration:"none" }}>
@@ -481,9 +485,9 @@ function AdSlot({ user, slim = false }) {
     <div style={{ margin:"6px 0", padding:"10px 14px", background:"var(--bg-2)",
                   border:"1px solid var(--line)", borderRadius:8,
                   display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
-      {hasAdSense ? (
+      {canRenderAds ? (
         <ins className="adsbygoogle" style={{ display:"block", width:"100%", height:90 }}
-             data-ad-client="ca-pub-XXXXXXXXXXXXXXXX" data-ad-slot="XXXXXXXXXX" data-ad-format="rectangle"/>
+             data-ad-client={adClient} data-ad-slot={adSlot} data-ad-format="rectangle"/>
       ) : (
         <>
           <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)",

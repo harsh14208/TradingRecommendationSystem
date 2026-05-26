@@ -5,7 +5,7 @@ All endpoints are under /api/auth.
 import hashlib
 import logging
 import secrets as _secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, EmailStr, field_validator
@@ -18,7 +18,7 @@ _limiter = Limiter(key_func=get_remote_address)
 
 from config import get_settings
 from database import get_db
-from models import RefreshToken, User
+from models import PasswordResetToken, RefreshToken, User
 from services.auth_svc import (
     create_access_token,
     decode_access_token,
@@ -101,11 +101,16 @@ class ResetPasswordIn(BaseModel):
     new_password: str
 
 
-# Token store: token → (email, expires_ts)
-_reset_tokens: dict[str, tuple[str, float]] = {}
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _utcnow_naive() -> datetime:
+    """UTC timestamp compatible with existing naive SQLAlchemy DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 def _set_refresh_cookie(response: Response, token: str):
     s = get_settings()
@@ -126,7 +131,7 @@ async def _create_tokens(user: User, db: AsyncSession, response: Response) -> di
     s = get_settings()
     access = create_access_token(user.id, user.subscription_tier, user.is_owner)
     raw_refresh, hashed_refresh = generate_refresh_token()
-    expire = datetime.utcnow() + timedelta(days=s.refresh_token_expire_days)
+    expire = _utcnow_naive() + timedelta(days=s.refresh_token_expire_days)
     db.add(RefreshToken(user_id=user.id, token_hash=hashed_refresh, expires_at=expire))
     await db.commit()
     _set_refresh_cookie(response, raw_refresh)
@@ -204,7 +209,7 @@ async def login(request: Request, body: LoginIn, response: Response, db: AsyncSe
     if not user.email_verified:
         raise HTTPException(403, detail={"code": "email_unverified", "message": "Please verify your email before logging in. Check your inbox or request a new link."})
 
-    user.last_seen_at = datetime.utcnow()
+    user.last_seen_at = _utcnow_naive()
     await db.commit()
 
     log.info(f"[auth] login {user.email}")
@@ -223,7 +228,7 @@ async def refresh_cookie(request: Request, response: Response, db: AsyncSession 
     if not raw:
         raise HTTPException(401, "No refresh token.")
     hashed = hashlib.sha256(raw.encode()).hexdigest()
-    now = datetime.utcnow()
+    now = _utcnow_naive()
     token_row = (await db.execute(
         select(RefreshToken).where(
             RefreshToken.token_hash == hashed,
@@ -367,17 +372,21 @@ async def unlink_telegram(
 @router.post("/forgot-password")
 @_limiter.limit("5/minute")
 async def forgot_password(request: Request, body: ForgotPasswordIn, db: AsyncSession = Depends(get_db)):
-    import time as _t
     email = body.email.lower().strip()
     user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
     # Always return 200 to prevent email enumeration
     if user:
         token = _secrets.token_urlsafe(32)
-        now = _t.time()
-        _reset_tokens[token] = (email, now + 3600)
-        # GC expired entries on every write so the dict stays small
-        for k in [k for k, (_, exp) in list(_reset_tokens.items()) if exp < now]:
-            del _reset_tokens[k]
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        expires = now + timedelta(hours=1)
+        # Invalidate prior reset tokens for this email before issuing a new one
+        await db.execute(
+            update(PasswordResetToken)
+            .where(PasswordResetToken.email == email, PasswordResetToken.used == False)
+            .values(used=True)
+        )
+        db.add(PasswordResetToken(token_hash=_hash_token(token), email=email, expires_at=expires))
+        await db.commit()
         reset_url = f"{get_settings().app_url}/reset-password?token={token}"
         try:
             from services.email_svc import send_password_reset
@@ -390,21 +399,26 @@ async def forgot_password(request: Request, body: ForgotPasswordIn, db: AsyncSes
 @router.post("/reset-password")
 @_limiter.limit("10/minute")
 async def reset_password(request: Request, body: ResetPasswordIn, db: AsyncSession = Depends(get_db)):
-    import time as _t
-    entry = _reset_tokens.get(body.token)
-    if not entry or _t.time() > entry[1]:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    row = (await db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token_hash == _hash_token(body.token),
+            PasswordResetToken.used == False,
+            PasswordResetToken.expires_at > now,
+        )
+    )).scalar_one_or_none()
+    if not row:
         raise HTTPException(400, "Invalid or expired reset token.")
-    email, _ = entry
-    user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.email == row.email))).scalar_one_or_none()
     if not user:
         raise HTTPException(400, "User not found.")
     if len(body.new_password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters.")
     user.password_hash = hash_password(body.new_password)
+    row.used = True
     # Revoke all refresh tokens so stolen sessions can't persist after reset
     await db.execute(update(RefreshToken).where(RefreshToken.user_id == user.id).values(revoked=True))
     await db.commit()
-    del _reset_tokens[body.token]
     return {"message": "Password reset successfully. Please log in."}
 
 

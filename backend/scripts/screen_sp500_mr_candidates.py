@@ -64,12 +64,13 @@ _MR_SECTORS = {
     "Consumer Cyclical",        # yfinance name for Consumer Discretionary
     "Financial Services",       # yfinance name for Financials
     "Communication Services",   # partial overlap — will backtest-gate individually
+    "Energy",                   # §16g: Ann=0.44, WR=75% with VIX≥15+thresh=40+hold=5d
 }
 
-# Confirmed-negative sectors from §16a — exclude regardless
+# Confirmed-negative sectors from §16g — exclude regardless
 _BLOCKED_SECTORS = {
     "Healthcare", "Industrials", "Real Estate",
-    "Energy", "Utilities", "Basic Materials",
+    "Utilities", "Basic Materials",
     "Consumer Defensive",  # XLP — low-beta, macro-driven
 }
 
@@ -79,7 +80,6 @@ _SKIP = set(_PRODUCTION_TICKERS) | {
     "MU", "MCD", "KO", "WMT", "PG", "PFE", "MRK", "ABBV", "TMO",
     "NKE", "TXN", "QCOM",   # removed from TICKERS for documented reasons
     "BRK-B", "BRK.B",       # Berkshire — no options, no MR edge
-    "EOG", "XOM", "CVX",    # Energy — §16a moderate but sub-sector unclear
 }
 
 MIN_MARKET_CAP_B = 10.0   # $10B minimum
@@ -91,11 +91,14 @@ MIN_TRADES       = 5      # minimum trade count (statistical significance)
 
 def _load_sp500_wiki() -> pd.DataFrame:
     """Fetch S&P 500 constituents from Wikipedia."""
+    import ssl, certifi, urllib.request
+    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     try:
-        tables = pd.read_html(
-            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-            attrs={"id": "constituents"},
-        )
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, context=ssl_ctx, timeout=15) as resp:
+            html = resp.read()
+        tables = pd.read_html(html, attrs={"id": "constituents"})
         df = tables[0]
         df.columns = df.columns.str.strip()
         return df
@@ -124,6 +127,7 @@ def _classify_sector(sector: str) -> str:
     if "Consumer Cyclical" in sector:     return "Consumer"
     if "Financial" in sector:             return "Financial"
     if "Communication" in sector:         return "Communication"
+    if "Energy" in sector:                return "Energy"
     return "Other"
 
 
@@ -144,26 +148,34 @@ def _backtest_candidate(
     spy_trend: dict,
     stlfsi4: dict,
 ) -> dict:
-    """Run §17f backtest on a single candidate. Returns stats dict."""
-    # Sector-appropriate params (mirrors §15f + §17f gates)
+    """
+    Run baseline discovery backtest on a single candidate. Returns stats dict.
+
+    Uses base config (MR=0.1, thresh=35, ATR≥20, no VIX floor, hold=10d) for discovery.
+    Sector-specific thresholds (40-42) + VIX floors collapse N to 0-2 trades in 20yr
+    for new candidates — insufficient for statistical screening.
+    The base config generates 3-8 trades per ticker, enough for the MIN_TRADES=5 bar.
+    Top candidates (WR≥55%, Sh≥0.35, N≥5) should be validated with §15f+§17f gates.
+    """
+    # Base discovery config: low thresh + no VIX floor generates enough N
+    # Sector hold days preserved (doesn't affect N, only which endpoint is measured)
     if sector_group == "Tech":
-        hold_days, vix_min, thresh, atr_min = 5, 13.0, 40, 20.0
+        hold_days = 5
     elif sector_group == "Financial":
-        hold_days, vix_min, thresh, atr_min = 7, 15.0, 42, 30.0
-    else:  # Consumer, Communication, Other
-        hold_days, vix_min, thresh, atr_min = 10, 13.0, 38, 20.0
+        hold_days = 7
+    elif sector_group == "Energy":
+        hold_days = 5
+    else:
+        hold_days = 10
 
     try:
         tdf = simulate_ticker(
             ticker, df, vix, spy_trend, stlfsi4,
             mr_only=True,
             hold_days_override=hold_days,
-            vix_min_override=vix_min,
-            buy_thresh_override=thresh,
-            atr_pct_rank_min_override=atr_min,
-            atr_pct_rank_max_override=70.0,
-            ret_jump_filter_override=-6.0,
-            ibs_sma20_streak_override=5,
+            buy_thresh_override=35,    # global base threshold for max N discovery
+            atr_pct_rank_min_override=20.0,  # ATR≥20 quality gate (always on)
+            # No VIX floor, no ATR ceiling, no jump filter — discovery pass
         )
         if tdf.empty:
             return {"n": 0, "wr": 0.0, "avg": 0.0, "sharpe": 0.0, "ann": 0.0, "maxdd": 0.0}
@@ -177,11 +189,15 @@ def _backtest_candidate(
 
 def main(fast: bool = False) -> None:
     period_label = "2006–2016 (fast)" if fast else f"2006–{END}"
+    # §17f gates generate ~1.5 trades/ticker/20yr on strong sectors.
+    # Fast mode (10yr) = ~0.75 trades/ticker → use N≥3 to surface candidates.
+    # Full mode (20yr) uses the standard N≥5 bar for statistical significance.
+    min_trades = 3 if fast else MIN_TRADES
     print(f"# S&P 500 MR Candidate Screener\n")
-    print(f"> Target: Tech + Consumer Disc + Financials, mktcap ≥ $10B, beta ≥ 0.7")
-    print(f"> Backtest: §17f gates (ATR [20,70], jump<−6%, IBS-streak≥5)")
+    print(f"> Target: Tech + Consumer Disc + Financials + Energy + Comm, mktcap ≥ $10B, beta ≥ 0.7")
+    print(f"> Backtest: base discovery (thresh=35, ATR≥20, sector hold, no VIX/ceiling/jump). PASS needs §15f+§17f validation.")
     print(f"> Period: {period_label}")
-    print(f"> Quality bar: WR ≥ {MIN_WR*100:.0f}%, per-trade Sharpe ≥ {MIN_SHARPE}, N ≥ {MIN_TRADES}\n")
+    print(f"> Quality bar: WR ≥ {MIN_WR*100:.0f}%, per-trade Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades}\n")
 
     # ── 1. Get S&P 500 constituent list ───────────────────────────────────────
     _section("1. Loading S&P 500 constituents from Wikipedia")
@@ -309,7 +325,7 @@ def main(fast: bool = False) -> None:
 
     # ── 7. Run §17f backtest on each candidate ─────────────────────────────────
     _section("7. Running §17f backtest on all candidates")
-    print(f"\n  Config: ATR [20,70], jump<−6%, IBS-streak≥5, sector-matched hold/thresh/vix.\n")
+    print(f"\n  Config: base discovery — thresh=35, ATR≥20, sector hold. PASS tickers need §15f+§17f validation.\n")
 
     results = []
     total = len(pre_dfs)
@@ -326,9 +342,14 @@ def main(fast: bool = False) -> None:
         })
         results.append(sv)
         if i % 10 == 0 or i == total:
-            print(f"  [{i}/{total}] {ticker}: N={sv['n']}, WR={sv.get('wr',0)*100:.0f}%, Sh={sv.get('sharpe',0):.2f}")
+            _sh = sv.get('sharpe') or 0.0
+            _wr = sv.get('wr') or 0.0
+            print(f"  [{i}/{total}] {ticker}: N={sv['n']}, WR={_wr*100:.0f}%, Sh={_sh:.2f}")
 
-    results_df = pd.DataFrame(results).sort_values("ann", ascending=False)
+    results_df = pd.DataFrame(results)
+    for _col in ("wr", "avg", "sharpe", "ann", "maxdd"):
+        results_df[_col] = pd.to_numeric(results_df[_col], errors="coerce").fillna(0.0)
+    results_df = results_df.sort_values("ann", ascending=False)
 
     # ── 8. Print full results table ────────────────────────────────────────────
     _section("8. Full Candidate Results (ranked by Ann.Sharpe)")
@@ -338,12 +359,12 @@ def main(fast: bool = False) -> None:
         n = r.get("n", 0)
         if n < 1:
             continue
-        wr_s    = f"{r.get('wr',0)*100:.0f}%"
-        avg_s   = f"{r.get('avg',0)*100:.2f}%"
-        sh_s    = fmt_sharpe(r.get("sharpe", 0))
-        ann_s   = f"{r.get('ann', 0):.2f}"
-        dd_s    = f"{r.get('maxdd', 0)*100:.1f}%"
-        flag    = " ✓" if (r.get("wr",0) >= MIN_WR and r.get("sharpe",0) >= MIN_SHARPE and n >= MIN_TRADES) else ""
+        wr_s    = f"{(r.get('wr') or 0)*100:.0f}%"
+        avg_s   = f"{(r.get('avg') or 0)*100:.2f}%"
+        sh_s    = fmt_sharpe(r.get("sharpe") or 0)
+        ann_s   = f"{r.get('ann') or 0:.2f}"
+        dd_s    = f"{(r.get('maxdd') or 0)*100:.1f}%"
+        flag    = " ✓" if ((r.get("wr") or 0) >= MIN_WR and (r.get("sharpe") or 0) >= MIN_SHARPE and n >= min_trades) else ""
         print(f"{r['ticker']:<8} {r['sector_grp']:<12} {r['beta']:>5.2f} {r['mkt_cap_b']:>7.0f}B {n:>4} {wr_s:>6} {avg_s:>7} {sh_s:>8} {ann_s:>8} {dd_s:>7}{flag}")
 
     # ── 9. PASS / FAIL summary ─────────────────────────────────────────────────
@@ -351,19 +372,19 @@ def main(fast: bool = False) -> None:
     pass_df = results_df[
         (results_df["wr"]     >= MIN_WR)     &
         (results_df["sharpe"] >= MIN_SHARPE) &
-        (results_df["n"]      >= MIN_TRADES)
+        (results_df["n"]      >= min_trades)
     ].copy()
 
     fail_df = results_df[
-        (results_df["n"] >= MIN_TRADES) &
+        (results_df["n"] >= min_trades) &
         ~((results_df["wr"] >= MIN_WR) & (results_df["sharpe"] >= MIN_SHARPE))
     ].copy()
 
-    insufficient_df = results_df[results_df["n"] < MIN_TRADES].copy()
+    insufficient_df = results_df[results_df["n"] < min_trades].copy()
 
-    print(f"\n  PASS: {len(pass_df)} tickers (WR ≥ {MIN_WR*100:.0f}%, Sharpe ≥ {MIN_SHARPE}, N ≥ {MIN_TRADES})")
+    print(f"\n  PASS: {len(pass_df)} tickers (WR ≥ {MIN_WR*100:.0f}%, Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades})")
     print(f"  FAIL: {len(fail_df)} tickers (tested but below quality bar)")
-    print(f"  SKIP: {len(insufficient_df)} tickers (N < {MIN_TRADES} — insufficient signal history)")
+    print(f"  SKIP: {len(insufficient_df)} tickers (N < {min_trades} — insufficient signal history)")
 
     if not pass_df.empty:
         print(f"\n### PASS — Copy into _STRONG universe:\n")
@@ -405,7 +426,7 @@ def main(fast: bool = False) -> None:
     print(f"  Conservative (0.60 per-trade):  {0.60 * (new_trades_est/20)**0.5:.2f}")
     print(f"\n  Note: Run §17f backtest on PASS tickers against full 20yr period before")
     print(f"  adding to production. Validate per-ticker Sharpe ≥ 0.35 individually.")
-    print(f"\n*S&P 500 MR Candidate Screener · §17f gates · {period_label}*")
+    print(f"\n*S&P 500 MR Candidate Screener · base discovery (thresh=35, ATR≥20) · {period_label}*")
 
 
 if __name__ == "__main__":

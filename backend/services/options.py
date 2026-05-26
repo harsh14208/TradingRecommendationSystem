@@ -469,9 +469,9 @@ def _fetch_options(ticker: str) -> dict:
             if chains:
                 exp_str, c_df, p_df = chains[0]
                 # Approximate time to expiry in years
-                from datetime import datetime
+                from datetime import datetime, timezone
                 exp_dt = datetime.strptime(exp_str, "%Y-%m-%d")
-                T = max((exp_dt - datetime.utcnow()).days / 365.0, 1 / 365)
+                T = max((exp_dt - datetime.now(timezone.utc).replace(tzinfo=None)).days / 365.0, 1 / 365)
                 spot = None
                 # Fallback: use median strike as spot proxy
                 if spot is None:

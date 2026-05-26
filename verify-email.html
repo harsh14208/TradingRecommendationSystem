@@ -80,31 +80,51 @@ async function verify() {
 
 function showSuccess(email) {
   spinner.style.display = 'none';
-  card.innerHTML = `
-    <div class="icon">✅</div>
-    <h2>Email verified!</h2>
-    <p>Your account${email ? ' (' + email + ')' : ''} is now active. You're being redirected to the dashboard…</p>
-    <a href="/app" class="btn">Open Dashboard →</a>
-    <p style="margin-top:14px;font-size:11px;color:var(--faint)">⚠️ Not financial advice · For informational purposes only</p>
-  `;
+  card.replaceChildren();
+  const icon = document.createElement('div');
+  icon.className = 'icon';
+  icon.textContent = '✅';
+  const heading = document.createElement('h2');
+  heading.textContent = 'Email verified!';
+  const body = document.createElement('p');
+  body.textContent = `Your account${email ? ' (' + email + ')' : ''} is now active. You're being redirected to the dashboard…`;
+  const link = document.createElement('a');
+  link.href = '/app';
+  link.className = 'btn';
+  link.textContent = 'Open Dashboard →';
+  const disclaimer = document.createElement('p');
+  disclaimer.textContent = '⚠️ Not financial advice · For informational purposes only';
+  disclaimer.style.cssText = 'margin-top:14px;font-size:11px;color:var(--faint)';
+  card.append(icon, heading, body, link, disclaimer);
   setTimeout(() => window.location.replace('/app'), 1800);
 }
 
 function showAlreadyVerified() {
   spinner.style.display = 'none';
-  card.innerHTML = `
-    <div class="icon">✅</div>
-    <h2>Already verified</h2>
-    <p>This email address has already been verified. Sign in to access your dashboard.</p>
-    <a href="/login" class="btn">Sign in →</a>
-  `;
+  card.replaceChildren();
+  const icon = document.createElement('div');
+  icon.className = 'icon';
+  icon.textContent = '✅';
+  const heading = document.createElement('h2');
+  heading.textContent = 'Already verified';
+  const body = document.createElement('p');
+  body.textContent = 'This email address has already been verified. Sign in to access your dashboard.';
+  const link = document.createElement('a');
+  link.href = '/login';
+  link.className = 'btn';
+  link.textContent = 'Sign in →';
+  card.append(icon, heading, body, link);
 }
 
 function showError(msg) {
   spinner.style.display = 'none';
   title.textContent = 'Verification failed';
   title.classList.add('error');
-  message.innerHTML = msg + '<br/><br/>Request a new verification link:';
+  message.textContent = '';
+  message.appendChild(document.createTextNode(msg));
+  message.appendChild(document.createElement('br'));
+  message.appendChild(document.createElement('br'));
+  message.appendChild(document.createTextNode('Request a new verification link:'));
 
   const emailInput = document.createElement('input');
   emailInput.type = 'email';

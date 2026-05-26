@@ -89,22 +89,27 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        if _IS_POSTGRES:
-            return  # PostgreSQL schema is fully managed by create_all
-        # SQLite-only additive migrations — used by the test suite
-        _migrations = [
-            "ALTER TABLE users ADD COLUMN min_confidence_override REAL",
-            "ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
-            "ALTER TABLE users ADD COLUMN referral_rewarded INTEGER DEFAULT 0",
-            "ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20)",
-            "ALTER TABLE users ADD COLUMN oauth_sub VARCHAR(255)",
-            "ALTER TABLE users ADD COLUMN discord_webhook_url VARCHAR(500)",
-            "ALTER TABLE users ADD COLUMN webhook_url VARCHAR(500)",
-            "ALTER TABLE signals ADD COLUMN expires_at DATETIME",
-            "ALTER TABLE performance_snapshots ADD COLUMN alpha REAL",
+        # Additive column migrations — applied to both Postgres and SQLite so
+        # production deployments pick up new columns without a full Alembic run.
+        # Each statement is safe to re-run: duplicate-column errors are swallowed.
+        # Postgres syntax: "ADD COLUMN IF NOT EXISTS" is preferred but the except
+        # block catches the duplicate-column error on older Postgres too.
+        _migrations: list[tuple[str, str]] = [
+            # users table
+            ("users", "ALTER TABLE users ADD COLUMN min_confidence_override REAL"),
+            ("users", "ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+            ("users", "ALTER TABLE users ADD COLUMN referral_rewarded INTEGER DEFAULT 0"),
+            ("users", "ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20)"),
+            ("users", "ALTER TABLE users ADD COLUMN oauth_sub VARCHAR(255)"),
+            ("users", "ALTER TABLE users ADD COLUMN discord_webhook_url VARCHAR(500)"),
+            ("users", "ALTER TABLE users ADD COLUMN webhook_url VARCHAR(500)"),
+            # signals table
+            ("signals", "ALTER TABLE signals ADD COLUMN expires_at DATETIME"),
+            # performance_snapshots table
+            ("performance_snapshots", "ALTER TABLE performance_snapshots ADD COLUMN alpha REAL"),
         ]
-        for sql in _migrations:
+        for _tbl, sql in _migrations:
             try:
-                await conn.execute(__import__("sqlalchemy").text(sql))
+                await conn.execute(text(sql))
             except Exception:
-                pass  # column already exists — ignore
+                pass  # column already exists — safe to ignore

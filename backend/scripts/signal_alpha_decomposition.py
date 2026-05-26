@@ -216,7 +216,7 @@ _DECOMP_EXPANSION = [
 
 ]
 
-TICKERS = _BASE_TICKERS + _DECOMP_EXPANSION
+TICKERS = list(dict.fromkeys(_BASE_TICKERS + _DECOMP_EXPANSION))  # preserve order, no dupes
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Status-tracking helpers
@@ -1673,7 +1673,7 @@ def run_atr_research(all_dfs, vix, spy_trend, stlfsi4,
     ticker_list = list(pre_dfs.keys())
 
     SECTOR_MAP = {
-        "Tech/FAANG":  {"NVDA","MSFT","AAPL","GOOGL","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU"},
+        "Tech/FAANG":  {"NVDA","MSFT","AAPL","GOOGL","GOOG","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU"},
         "Semis":       {"INTC","AMD","AVGO","AMAT","LRCX","KLAC","TSM","QCOM","TXN","MRVL"},
         "Software/IT": {"CSCO","ORCL","ADSK","CDNS","SNPS","CTSH","FTNT","NOW","PANW","WDAY","ACN","AKAM"},
         "Financials":  {"JPM","WFC","BAC","GS","V","MA","BLK","SCHW","CME","SPGI","MCO","ICE","MSCI","FIS","FISV"},
@@ -1872,7 +1872,7 @@ def run_tech_optimization(all_dfs, vix, spy_trend, stlfsi4,
 
     # Established large-cap tech only (post-2019 growth names removed after §14 validation)
     TECH_FAANG = {
-        "NVDA","MSFT","AAPL","GOOGL","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU",
+        "NVDA","MSFT","AAPL","GOOGL","GOOG","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU",
     }
 
     N_WORKERS = min(8, os.cpu_count() or 4)
@@ -1954,7 +1954,7 @@ def run_sector_research(all_dfs, vix, spy_trend, stlfsi4,
     print("> Research: §15a pruning · §15b hold · §15c VIX · §15d thresh · §15e ATR · §15f best combo\n")
 
     SECTOR_MAP = {
-        "Tech/FAANG":  {"NVDA","MSFT","AAPL","GOOGL","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU"},
+        "Tech/FAANG":  {"NVDA","MSFT","AAPL","GOOGL","GOOG","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU"},
         "Financials":  {"JPM","WFC","BAC","GS","V","MA","BLK","SCHW","CME","SPGI","MCO","ICE","MSCI","FIS","FISV"},
         "Consumer":    {"HD","F","LOW","TJX","ROST","LULU","MAR","HLT","RCL","CHTR","GM","COST","SBUX","TGT","PYPL"},
         "Semis":       {"INTC","AMD","AVGO","AMAT","LRCX","KLAC","TSM","QCOM","TXN","MRVL"},
@@ -2242,7 +2242,7 @@ def run_full_sector_research(all_dfs, vix, spy_trend, stlfsi4,
     print("> §16 extends to all sectors; each dimension swept independently then combined.\n")
 
     SECTOR_MAP: dict[str, set] = {
-        "Tech/FAANG":   {"NVDA","MSFT","AAPL","GOOGL","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU"},
+        "Tech/FAANG":   {"NVDA","MSFT","AAPL","GOOGL","GOOG","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU"},
         "Semis":        {"INTC","AMD","AVGO","AMAT","LRCX","KLAC","TSM","QCOM","TXN","MRVL"},
         "Software/IT":  {"CSCO","ORCL","ADSK","CDNS","SNPS","CTSH","FTNT","NOW","PANW","WDAY","ACN","AKAM","VRSK"},
         "Financials":   {"JPM","WFC","BAC","GS","V","MA","BLK","SCHW","CME","SPGI","MCO","ICE","MSCI","FIS","FISV"},
@@ -2559,7 +2559,7 @@ def run_gate_research_v17(all_dfs, vix, spy_trend, stlfsi4,
     print(f"> Period: {START} → {END}\n")
 
     STRONG_TICKERS = [
-        "NVDA","MSFT","AAPL","GOOGL","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU",
+        "NVDA","MSFT","AAPL","GOOGL","GOOG","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU",
         "JPM","WFC","BAC","GS","V","MA","BLK","SCHW","CME","SPGI","MCO","ICE","MSCI","FIS","FISV",
         "HD","F","LOW","TJX","ROST","LULU","MAR","HLT","RCL","CHTR","GM","COST","SBUX","TGT","PYPL",
     ]
@@ -2592,7 +2592,7 @@ def run_gate_research_v17(all_dfs, vix, spy_trend, stlfsi4,
         _section("17. Baseline — §15f Reproduced")
         print("\n### §17 Baseline — §15f Best Combined\n")
 
-        TECH   = [t for t in ["NVDA","MSFT","AAPL","GOOGL","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU"] if t in (pre_dfs or all_dfs)]
+        TECH   = [t for t in ["NVDA","MSFT","AAPL","GOOGL","GOOG","META","AMZN","NFLX","ADBE","TSLA","BKNG","EBAY","INTU"] if t in (pre_dfs or all_dfs)]
         FIN    = [t for t in ["JPM","WFC","BAC","GS","V","MA","BLK","SCHW","CME","SPGI","MCO","ICE","MSCI","FIS","FISV"] if t in (pre_dfs or all_dfs)]
         CONS   = [t for t in ["HD","F","LOW","TJX","ROST","LULU","MAR","HLT","RCL","CHTR","GM","COST","SBUX","TGT","PYPL"] if t in (pre_dfs or all_dfs)]
 

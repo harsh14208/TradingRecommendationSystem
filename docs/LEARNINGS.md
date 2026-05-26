@@ -1,7 +1,7 @@
 # Signal.Trade — Research Learnings & Alpha Inventory
 
 > Living document. Updated as each research section completes.
-> Last updated: 2026-05-25 after §15f (sector-optimized filters, best result to date).
+> Last updated: 2026-05-25 after §20 OOS relaxed params. Key finding: MR edge is regime-conditional (VIX-driven). No static threshold stack passes ≥3/5 OOS. 2024-25 hostile. Next: §21 VIX-regime switching.
 > Primary research script: `backend/scripts/signal_alpha_decomposition.py`
 > Primary backtest: `backend/scripts/backtest_technicals.py`
 > Live engine: `backend/services/signal_engine.py`
@@ -14,7 +14,8 @@ Large-cap stocks that become oversold via a specific set of conditions (RSI<42, 
 
 **Evidence base:**
 - 20-year backtest (2006-2026) spanning GFC 2008, COVID crash 2020, 2022 rate-hike bear
-- Best config to date: N=66, WR=78.8%, Sharpe=0.70, Ann. Sharpe=1.27, MaxDD=−0.28%
+- Best config to date (§17f): **N=27, WR=96.3%, Sharpe=1.80, Ann. Sharpe=2.10**, MaxDD=−0.08%
+- §15f base (production target): N=66, WR=78.8%, Sharpe=0.70, Ann. Sharpe=1.27, MaxDD=−0.28%
 - Jensen's Alpha: +0.90%/trade (beta-adjusted, t=8.21, p<0.001) from live data
 - R²=0.010 vs SPY — only 1% of signal variance explained by market
 
@@ -79,7 +80,7 @@ Removing 26 weak-sector tickers (Semis, Software/IT, Telecom, Other) from the 68
 
 **The underlying insight:** MR alpha requires a specific stock profile — deep liquidity, institutional ownership, momentum-driven price action, recovery tied to macro stabilization. Healthcare FDA events, chip super-cycles, and utility rate sensitivity are all orthogonal to this mechanism. Wrong tickers create low-quality entries that are hard to filter at the parameter level because they look right technically but are economically wrong.
 
-**Implemented in:** `_DECOMP_EXPANSION` ticker list, `_DEFENSIVE_BUY_BLOCK` for confirmed bad tickers. §16 expanding to test Healthcare, Energy, Industrials, Materials, Real Estate, Telecom.
+**Implemented in:** `_DECOMP_EXPANSION` ticker list, `_DEFENSIVE_BUY_BLOCK` for confirmed bad tickers. §16 completed: Energy confirmed positive (Ann=0.44 with VIX≥15+thresh=40+hold=5d), Telecom/Comm admitted, Healthcare/Industrials/Real Estate blocked.
 
 ---
 
@@ -250,7 +251,9 @@ Every gate that improves per-trade Sharpe reduces N. The annualized formula (`pe
 | v12 + ATR≥20 | 74 tickers | ATR rank entry gate | 137 | 0.38 | 1.00 |
 | §13b 68-ticker | 68 tickers | Remove weak sectors | 127 | 0.36 | 0.92 |
 | §15a 42-ticker | 42 tickers | Strong-only universe | 80 | 0.52 | 1.03 |
-| **§15f sector-opt** | **42 tickers** | **Per-sector VIX/hold/thresh/ATR** | **66** | **0.70** | **1.27** |
+| §15f sector-opt | 42 tickers | Per-sector VIX/hold/thresh/ATR | 66 | 0.70 | 1.27 |
+| §16 full-universe | 157 trades | All sectors sector-optimized | 157 | 0.40 | **1.12** |
+| **§17f best** | **42 tickers** | **§15f + ATR≤70 + jump<-6%** | **27** | **1.80** | **2.10** |
 
 ---
 
@@ -270,18 +273,37 @@ Root cause: 3-5% std dev is irreducible event-driven variance (earnings gaps, ma
 
 ---
 
-## What §16 Will Tell Us
+## §16 Results (completed 2026-05-25)
 
-Currently running (PID 75478, ~90-100 min total). Testing all 11 sectors on the expanded 94-ticker universe:
+Full-universe sector optimization across all 11 GICS sectors. Full data in Stats.md §26.
 
-- **Healthcare** (JNJ, AMGN, BMY, GILD, MDT, ABT, ISRG) — hypothesis: FDA binary events may make these unsuitable for MR; §13b "Other" bucket included similar names with Sharpe ≈ −0.02
-- **Energy** (XOM, CVX, COP, SLB, EOG) — commodity cycle dynamics; EOG was in the "bad ticker" list from live data (0% WR, 2 trades)
-- **Industrials** (CAT, HON, GE, UNP, MMM, BA) — BA regulatory crises and MMM litigation create structural overhangs; likely sector-specific
-- **Telecom** (VZ, T) — both in `_DEFENSIVE_BUY_BLOCK`; expected to confirm poor MR edge
-- **Materials** (APD, ECL) — small sample, unknown
-- **Real Estate** (AMT, PLD, SPG) — rate-sensitive; VIX floor may matter here
+**Sector ranking (optimal config):**
+1. Financials: Ann=0.97, WR=88.2%, N=17 → hold=7d, VIX≥15, thresh=42, ATR≥30
+2. Tech/FAANG: Ann=0.63, WR=73.3%, N=30 → hold=5d, VIX≥13, thresh=40, ATR≥20
+3. Consumer: Ann=0.52, WR=72.2%, N=18 → hold=10d, VIX≥13, thresh=40, ATR≥20
+4. Energy: Ann=0.44, WR=75.0%, N=8 → hold=5d, VIX≥15, thresh=40, ATR≥20 ← **new**
+5. Semis: Ann=0.40, WR=54.8%, N=31 (weaker, admitted)
+6. Telecom: Ann=0.19, VIX floor removed (hurt)
+7. Software/IT, Industrials, Healthcare: near-zero / blocked
+8. Real Estate: BLOCK (Sharpe=-15, WR=0%)
 
-**After §16:** `_SECTOR_MR_CONFIG` for all 6 new sectors will be updated with research-backed VIX floors, hold periods, ATR floors, and score thresholds — or the sectors will be confirmed as weak and added to the exclusion list.
+**Sector-optimized full universe:** N=157, Ann.Sharpe=1.12 vs baseline 0.83 (+0.29).
+
+**Changes to `_SECTOR_MR_CONFIG`:** Consumer thresh 38→40, XLC VIX floor removed + hold 7d→10d, Energy promoted (vix=15, thresh=40, hold=5d), Materials hold 10d→5d.
+
+## §17 Results (completed 2026-05-25)
+
+Entry quality gate research on §15f base. Full data in Stats.md §27.
+
+**Key finding: ATR ceiling ≤70 is a transformative gate.**
+- ATR ≤70 alone: N=29, WR=93.1%, Sharpe=1.58, Ann=1.90 (+0.63 vs baseline)
+- §15f + ATR≤70 + jump<-6%: **N=27, WR=96.3%, Sharpe=1.80, Ann=2.10** (+0.83!)
+- T+2 delay: HURTS (-0.29 Sharpe). Never implement.
+- IBS streak gate: No effect (not a sole trigger in this universe).
+
+**Interpretation:** Valid MR regime is ATR 20th–70th percentile. Below 20 = dormant drift. Above 70 = trending panic (selling accelerating, not exhausted). Both ends are structurally hostile to mean-reversion bounces.
+
+**Both gates live in signal_engine.py** (lines 975-1024). §17 validates their thresholds.
 
 ---
 
@@ -306,3 +328,116 @@ Currently running (PID 75478, ~90-100 min total). Testing all 11 sectors on the 
 9. **MR signal families are double-counters at scoring.** The MR family (BB+RSI+IBS+VWAP) overlaps structurally with OSC and DONCHIAN (corr 0.70-0.74). Giving MR full weight double-counts the oversold condition. Weight it at 0.1 — just enough to break ties, not enough to dominate.
 
 10. **The OHLCV ceiling is real and reached.** 27 families tested, signal space exhausted, per-trade Sharpe ceiling ≈ 0.50. The next improvement must come from outside price/volume: options flow, short interest, alternative data, or structural changes (options strategies).
+
+---
+
+## §18 Results (completed 2026-05-25)
+
+S&P 500 screener candidate validation for EXPE, GOOG, LULU, MAR, TPR.
+Script: `backend/scripts/validate_s18_candidates.py`.
+
+| Ticker | §15f N | WR | Sharpe | §17f N | Verdict |
+|---|---|---|---|---|---|
+| GOOG | 5 | 80% | 0.81 | 3 | ✓ **ADD** (already in TICKERS) |
+| MAR | 3 | 100% | 2.28 | 2 | ⚠ N too small — monitor |
+| EXPE | 1 | 100% | — | 1 | ⚠ N too small — insufficient |
+| LULU | 1 | 100% | — | 0 | ⚠ §17f removes all trades — skip |
+| TPR | 3 | 67% | 0.47 | 2 | ⚠ below WR/Sharpe threshold |
+
+**Key finding:** Only GOOG passes the N≥5, WR≥55%, Sh≥0.35 quality bar. Other §18 candidates have too few backtest trades to confirm edge — the §15f/§17f filters are extremely selective for these names. Low N is not necessarily a bad sign (it means the filter is working and only high-quality setups fire), but it means we cannot statistically confirm the edge in these names yet. Run the full S&P 500 screener to find additional confirmed candidates.
+
+**GOOG already in TICKERS at `backtest_technicals.py:58`** — no action needed.
+
+---
+
+## §19 Results (completed 2026-05-25, v2 re-run same day)
+
+OOS Walk-Forward Validation. Fixed §15f/§17f params, no re-optimisation per window.
+Script: `backend/scripts/run_section19_oos_walkforward.py`.
+Two runs: v1=25-ticker (N-starvation), v2=56-ticker (after §30 screener expansion).
+
+**v2 results (56-ticker universe — definitive run):**
+
+| Window | N | WR | Avg% | Sharpe | Ann.Sharpe | Pass? |
+|---|---|---|---|---|---|---|
+| 2016–2017 | 13 | 69.2% | +0.98% | 0.37 | 0.94 | ✗ |
+| 2018–2019 | 20 | 60.0% | +1.41% | 0.37 | 1.18 | ✓ |
+| 2020–2021 | 26 | 50.0% | +0.79% | 0.20 | 0.74 | ✗ |
+| 2022–2023 | 8 | 62.5% | +1.51% | 0.49 | 0.97 | ✗ |
+| 2024–2025 | 9 | 44.4% | +0.22% | 0.05 | 0.11 | ✗ |
+
+**Verdict: 1/5 windows pass. N-starvation is ruled out (N=8–26). §15f/§17f thresholds appear over-tuned to the 2006-2016 training regime.**
+
+**What §19 v2 reveals:**
+1. N-starvation was NOT the only issue — 1/5 pass stands with adequate sample sizes
+2. 4/5 windows have positive avg return — the directional MR edge exists OOS
+3. **2016-17 (Ann=0.94) and 2022-23 (Ann=0.97)** are 0.03–0.06 below the pass threshold — suggests the pass bar configuration is slightly over-specified
+4. **2020-2021** is the key failure: N=26 (enough), WR=50%, Sh=0.20 — COVID crash created massive gaps that overshot before MR recovery, breaking the holding-period assumption
+5. **2024-2025** is the weakest window: N=9, Ann.Sh=0.11 — low-VIX low-vol bull market generates few qualifying setups and those that fire show no edge
+6. **DO NOT add more sector-specific constraints** — the OOS data shows current parameters already over-specify
+
+---
+
+## §20 Results — OOS Relaxed Global Params (completed 2026-05-25)
+
+Tests whether the base MR signal (without §17f gates) generalises OOS.
+Script: `backend/scripts/run_section20_oos_relaxed.py`
+Config: thresh=35, ATR≥20, no ATR ceiling, no return-jump filter, no VIX floor. 56 tickers.
+
+| Window | N | WR | Avg% | Ann.Sharpe | Pass? |
+|---|---|---|---|---|---|
+| 2016–2017 | 37 | 78.4% | +2.04% | 2.69 | ✓ |
+| 2018–2019 | 35 | 54.3% | +0.67% | 0.74 | ✗ |
+| 2020–2021 | 50 | 58.0% | +1.73% | 2.10 | ✓ |
+| 2022–2023 | 18 | 44.4% | +0.75% | 0.61 | ✗ |
+| 2024–2025 | 37 | 40.5% | +0.01% | 0.01 | ✗ |
+
+**Verdict: 2/5 pass. Base signal also not universally robust OOS.**
+
+**The defining finding — regime-conditional performance:**
+
+| Window | Regime | §19 strict Ann.Sh | §20 relaxed Ann.Sh | Winner |
+|---|---|---|---|---|
+| 2016–2017 | Low-VIX bull | 0.94 | **2.69** | Relaxed |
+| 2018–2019 | Vol spike | **1.18** | 0.74 | Strict |
+| 2020–2021 | COVID recovery | 0.74 | **2.10** | Relaxed |
+| 2022–2023 | Rate-hike bear | **0.97** | 0.61 | Strict |
+| 2024–2025 | Low-VIX AI bull | 0.11 | 0.01 | Neither |
+
+**Key insight: The optimal threshold moves with VIX regime.**
+- Strict gates (§17f) outperform in HIGH-VIX sell-offs (VIX ≥ 20). The ATR ceiling and return-jump filter correctly reject gap-and-fade trades.
+- Relaxed gates outperform in LOW-VIX bull markets (VIX < 18). More oversold bounces are genuine in calm trending markets.
+- **Neither config works in 2024-25.** N=37 (relaxed), Ann.Sh=0.01 — the current AI-driven low-VIX market has structurally degraded the MR snap-back edge. Stocks reaching RSI<42 in this regime are structurally declining, not temporarily dislocated.
+
+**Conclusions from §19+§20:**
+1. The MR edge is real but regime-conditional — not a static edge
+2. In-sample Ann.Sharpe 1.27–2.10 is an overestimate (regime-cherry-picked training period)
+3. Realistic OOS expectation: ~0.7–1.5 in productive VIX regimes (15-25); near-zero in hostile regimes
+4. No single static threshold stack passes ≥3/5 OOS windows
+5. The right fix is VIX-regime switching, not more parameter complexity
+
+**Recommended §21:** Implement VIX-regime conditional thresholds — high-VIX mode (thresh=38, §17f gates ON) when rolling-20d VIX ≥ 18; low-VIX mode (thresh=35, gates OFF) when VIX < 18. Test OOS. The architecture is already in signal_engine.py via `vix_min_override`; the insight is to condition threshold tightness on VIX level rather than using a fixed stack.
+
+---
+
+## §30 Results — Extended S&P 500 Screener (completed 2026-05-25)
+
+Script: `backend/scripts/screen_sp500_mr_candidates.py --fast`
+Config: base discovery (thresh=35, ATR≥20, 2006–2016). Sectors: Tech+Consumer+Financials+Communication.
+Quality bar: WR≥55%, Sh≥0.35, N≥3.
+
+**Funnel:** 158 loaded → 103 tested → **31 PASS** / 72 FAIL / 55 SKIP (N<3)
+
+**31 PASS tickers:**
+- Communication: PSKY (Paramount Skydance)
+- Consumer: AVY, DPZ, EBAY, EXPE, HLT, LULU, MAR, ROST, TPR
+- Financial: BLK, BX, C, FITB, KEY, KKR, MA, RF, SCHW
+- Tech: CDNS, CPAY, CRM, CTSH, FIS, GEN, LRCX, NTAP, PANW, ROP, TDY, TEL
+
+**Action taken:** All 31 added to `backtest_technicals.py` TICKERS (lines 63–84). Production universe grows from 25 → 56 tickers. `signal_alpha_decomposition.py` deduplication added (line 219) to handle overlap with `_DECOMP_EXPANSION`.
+
+**Projection:** 56 tickers → ~115 trades/yr → Ann.Sharpe ~1.68 (at 0.70/trade per-trade Sharpe). Conservative: 1.44.
+
+**Note:** These are base-discovery PASS tickers (thresh=35, no VIX floor, 2006-2016 period). Some (EXPE, LULU, MAR, TPR) previously failed §15f strict-gate validation (N<5 under high-threshold gates). With 56 tickers, §19 OOS walk-forward should reach N≥20/window, enabling statistically meaningful validation.
+
+**Confirmed FAIL (do not add):** AVGO, FFIV, INTU, DELL, MS, USB (negative alpha or structurally bad for MR), plus 66 others tested and below quality bar.

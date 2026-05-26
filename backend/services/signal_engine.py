@@ -7,7 +7,7 @@ EDGAR insider activity) is fetched concurrently for each ticker.
 """
 import asyncio
 import logging
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timezone
 from typing import NamedTuple, Optional
 import numpy as _np
 import pytz
@@ -32,6 +32,7 @@ class _TickerData(NamedTuple):
     df_1h: object
     massive_sigs: object
     sector_rs: object
+    data_warnings: list[dict]
 
 
 from services.google_trends import get_google_trends
@@ -58,20 +59,27 @@ _ANALYST_CACHE_TTL = 1800  # 30 minutes — fresher analyst targets
 # atr_rank_min: minimum ATR%rank for MR entries (§15e). 20 = global default.
 # buy_thresh:   minimum composite score for MR BUY signals (§15d). None = global 35.
 # Sectors with None calibration = pending §16 research; global defaults apply.
+#
+# CURVE-FIT WARNING: per-sector thresholds (vix_min, buy_thresh, atr_rank_min)
+# are tuned on N=4–24 tickers per sector.  These parameters likely over-fit
+# in-sample; treat sector-specific values as soft priors, not hard truths.
+# Validate via OOS walk-forward before tightening further.  The global ATR≥20
+# gate is the most robust signal; sector-specific overlays add marginal lift.
 _SECTOR_MR_CONFIG: dict[str, dict] = {
-    "XLK":  {"vix_min": 13.0, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 40},  # Tech/FAANG — §15b/c/d
-    "XLF":  {"vix_min": 15.0, "hold_days": 7,  "atr_rank_min": 30, "buy_thresh": 42},  # Financials — §15b/c/d/e
-    "XLY":  {"vix_min": 13.0, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 38},  # Consumer Disc — §15b/c/d
-    "XLP":  {"vix_min": 13.0, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 38},  # Consumer Staples — §15c/d
-    "XLC":  {"vix_min": 13.0, "hold_days": 7,  "atr_rank_min": 20, "buy_thresh": 38},  # Comm. Services — §15c/d
-    # §16a confirmed-negative sectors — buy_thresh=999 blocks all MR entries:
-    "XLV":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 999},  # Healthcare: §16a Sharpe −0.17, WR 29.4%
-    "XLI":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 999},  # Industrials: §16a Sharpe −0.48, WR 28.6%
-    "XLRE": {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 999},  # Real Estate: §16a Sharpe −15, N=2
-    # §16a inconclusive or pending deeper sub-sector analysis:
-    "XLE":  {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": None},  # Energy: §16a Sharpe 0.52, WR 70% — viable, hold_days=5
-    "XLB":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Materials: §16a N=4 only — inconclusive
-    "XLU":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Utilities: pending §16 final results
+    # ── §15+§16 fully-optimized sectors (Ann.Sharpe ≥ 0.44) ─────────────────────
+    "XLK":  {"vix_min": 13.0, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 40},  # Tech/FAANG — §15b/c/d: Ann=0.63
+    "XLF":  {"vix_min": 15.0, "hold_days": 7,  "atr_rank_min": 30, "buy_thresh": 42},  # Financials — §15b/c/d/e+§16: Ann=0.97 WR=88%
+    "XLY":  {"vix_min": 13.0, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 40},  # Consumer Disc — §16d: thresh 38→40; Ann=0.52
+    "XLP":  {"vix_min": 13.0, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 40},  # Consumer Staples — §16: thresh→40 (same Consumer config)
+    "XLE":  {"vix_min": 15.0, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 40},  # Energy — §16: vix≥15 + thresh=40; Ann=0.44 WR=75%
+    # ── §16 moderate sectors (Ann < 0.40) — admitted with default thresholds ─────
+    "XLC":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 38},  # Telecom/Comm — §16: VIX none (floor hurts), hold=10d; Ann=0.19
+    "XLB":  {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 38},  # Materials — §16: N=4, hold=5d; Ann=— (small sample, live cautiously)
+    "XLU":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Utilities — not in §16 universe; pending research
+    # ── §16 confirmed-negative sectors — buy_thresh=999 blocks all MR entries ────
+    "XLV":  {"vix_min": 15.0, "hold_days": 7,  "atr_rank_min": 30, "buy_thresh": 999},  # Healthcare — §16g: Ann=0.05 near-zero; blocked
+    "XLI":  {"vix_min": 15.0, "hold_days": 7,  "atr_rank_min": 20, "buy_thresh": 999},  # Industrials — §16g: Ann=0.06 near-zero; blocked
+    "XLRE": {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 999},  # Real Estate — §16g: Sharpe −15, WR=0%; hard block
 }
 
 def _current_session() -> str:
@@ -275,6 +283,31 @@ def _make_plain_english(action: str, ticker: str, style: str, rationale: list,
     }
 
 
+def _collect_fetch_results(
+    ticker: str,
+    source_names: list[str],
+    raw_results: list,
+) -> tuple[list, list[dict]]:
+    """Convert gather results to values plus structured provider warnings."""
+    values = []
+    warnings: list[dict] = []
+    for source, result in zip(source_names, raw_results):
+        if isinstance(result, BaseException):
+            warnings.append({
+                "source": source,
+                "error": type(result).__name__,
+                "message": str(result)[:160],
+            })
+            log.debug(
+                "[signal_engine] %s: %s fetch failed: %s: %s",
+                ticker, source, type(result).__name__, str(result)[:160],
+            )
+            values.append(None)
+        else:
+            values.append(result)
+    return values, warnings
+
+
 async def _fetch_ticker_data(
     ticker: str,
     prefetched_df: Optional[pd.DataFrame],
@@ -287,6 +320,12 @@ async def _fetch_ticker_data(
     if prefetched_df is not None:
         df   = prefetched_df
         info = prefetched_info or {}
+        _source_names = [
+            "company_news", "scraped_news", "insider_activity", "analyst_recs",
+            "earnings_calendar", "earnings_surprise", "options_flow", "fundamentals",
+            "social_sentiment", "google_trends", "congress_signal", "history_1h",
+            "extended_hours",
+        ]
         _raw = await asyncio.gather(
             get_company_news(ticker, days=7),
             get_scraped_news(ticker, (prefetched_info or {}).get("company", ticker), days=7),
@@ -303,11 +342,25 @@ async def _fetch_ticker_data(
             get_extended_hours_data(ticker),
             return_exceptions=True,
         )
-        news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = [
-            None if isinstance(r, BaseException) else r for r in _raw
-        ]
-        sector_rs = await get_sector_relative_strength(ticker, df)
+        _values, data_warnings = _collect_fetch_results(ticker, _source_names, list(_raw))
+        news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = _values
+        try:
+            sector_rs = await get_sector_relative_strength(ticker, df)
+        except Exception as exc:
+            sector_rs = None
+            data_warnings.append({
+                "source": "sector_relative_strength",
+                "error": type(exc).__name__,
+                "message": str(exc)[:160],
+            })
+            log.debug("[signal_engine] %s: sector_relative_strength fetch failed: %s", ticker, exc)
     else:
+        _source_names = [
+            "history_daily", "ticker_info", "company_news", "scraped_news",
+            "insider_activity", "analyst_recs", "earnings_calendar",
+            "earnings_surprise", "options_flow", "fundamentals", "social_sentiment",
+            "google_trends", "congress_signal", "history_1h", "extended_hours",
+        ]
         _raw = await asyncio.gather(
             get_history(ticker, period="1y", interval="1d"),
             get_info(ticker),
@@ -326,13 +379,23 @@ async def _fetch_ticker_data(
             get_extended_hours_data(ticker),
             return_exceptions=True,
         )
-        df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = [
-            None if isinstance(r, BaseException) else r for r in _raw
-        ]
-        sector_rs = await get_sector_relative_strength(ticker, df)
+        _values, data_warnings = _collect_fetch_results(ticker, _source_names, list(_raw))
+        df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = _values
+        try:
+            sector_rs = await get_sector_relative_strength(ticker, df)
+        except Exception as exc:
+            sector_rs = None
+            data_warnings.append({
+                "source": "sector_relative_strength",
+                "error": type(exc).__name__,
+                "message": str(exc)[:160],
+            })
+            log.debug("[signal_engine] %s: sector_relative_strength fetch failed: %s", ticker, exc)
 
     if df is None or len(df) < 30:
+        log.debug("[signal_engine] %s: insufficient daily history; signal skipped", ticker)
         return None
+    info = info or {}
 
     return _TickerData(
         df=df, info=info, news=news, scraped_news=scraped_news,
@@ -341,6 +404,7 @@ async def _fetch_ticker_data(
         opt_flow=opt_flow, fundamentals=fundamentals,
         social=social, trends=trends, congress=congress,
         df_1h=df_1h, massive_sigs=massive_sigs, sector_rs=sector_rs,
+        data_warnings=data_warnings,
     )
 
 
@@ -365,6 +429,7 @@ def _assemble_signal(
     days_to_earnings: Optional[int],
     opt_flow: Optional[dict] = None,
     _is_lev_etf: bool = False,
+    data_warnings: Optional[list[dict]] = None,
 ) -> Optional[dict]:
     """
     Apply risk gates, calibrate confidence, derive style, and build
@@ -383,6 +448,23 @@ def _assemble_signal(
     # the ±25 BUY/SELL threshold. The flag survives all subsequent scoring.
     if _force_hold:
         score = 0.0  # ensure no stale residual from post-zero signals
+
+    data_warnings = data_warnings or []
+    if data_warnings:
+        sources.add("Data Quality")
+        affected = ", ".join(w.get("source", "unknown") for w in data_warnings[:4])
+        extra = "" if len(data_warnings) <= 4 else f" and {len(data_warnings) - 4} more"
+        rationale.append({
+            "src": "Data Quality",
+            "head": "Partial Data Degradation",
+            "body": (
+                f"{ticker} signal generated with partial provider coverage. "
+                f"Unavailable source(s): {affected}{extra}. Technical scoring still ran, "
+                "but confidence should be interpreted with this data gap in mind."
+            ),
+            "sentiment": "neu",
+            "meta": "missing_sources=" + ",".join(w.get("source", "unknown") for w in data_warnings),
+        })
 
     # Agreement count excludes meta-signals that are artifacts of the scoring
     # machinery rather than independent evidence (Risk Gate, Orthogonalization,
@@ -415,7 +497,7 @@ def _assemble_signal(
             "meta": f"Win rate {ticker_wr*100:.0f}% < 45%"})
 
     # ── True Orthogonality Minimum ──────────────────────────────────────
-    _core_families = {"Technical", "Options", "13F", "SEC EDGAR", "Fundamentals", "Macro", "Dark Pool", "Short Interest", "Analyst", "Social"}
+    _core_families = {"Technical", "Options", "13F", "SEC EDGAR", "Congress", "Fundamentals", "Macro", "Dark Pool", "Short Interest", "Analyst", "Social"}
     _active_families = len([s for s in sources if s in _core_families])
     if action == "BUY" and _active_families < 3 and score < 50:
         action = "HOLD"
@@ -433,7 +515,7 @@ def _assemble_signal(
     # Require at least one non-technical confirmation (Options, Macro, News, etc.)
     _alt_data_sources = {
         "Options", "Macro", "13F", "SEC EDGAR", "Dark Pool", 
-        "Insider", "Analyst", "Fundamentals", "Earnings", 
+        "Insider", "Congress", "Analyst", "Fundamentals", "Earnings", 
         "Benzinga", "Finnhub", "Reuters", "Finviz", "Social"
     }
     _has_alt = any(s in _alt_data_sources for s in sources)
@@ -1109,6 +1191,44 @@ def _assemble_signal(
                 "meta": (f"pc_ratio={float(_of_pc):.2f} gex={float(_of_gex):.0f} uv={_of_uv_s} "
                          f"| options_unconfirmed=True")})
 
+    # ── IV Rank flag (post-earnings IV crush awareness) ──────────────────────
+    # IV Rank > 70 means current implied volatility is in the top 30% of its
+    # trailing 252-day range. Elevated IV has two implications for MR trades:
+    #   1. Option premium buying (calls/puts) is expensive — unfavourable entry.
+    #   2. If earnings have just passed (days_since 0-7), IV crush will rapidly
+    #      deflate premium — directional options trades lose even on correct moves.
+    # No score change — informational flag only so traders can size accordingly.
+    _iv_rank = opt_flow.get("iv_rank") if opt_flow else None
+    if _iv_rank is not None and float(_iv_rank) > 70:
+        _iv_days_since = earnings_cal.get("days_since_earnings")
+        _iv_days_to    = earnings_cal.get("days_to_earnings")
+        _near_earnings = (
+            (_iv_days_since is not None and 0 <= _iv_days_since <= 7)
+            or (_iv_days_to is not None and 0 <= _iv_days_to <= 14)
+        )
+        _iv_head = (
+            f"Elevated IV Rank {float(_iv_rank):.0f} — Post-Earnings IV Crush Risk"
+            if _iv_days_since is not None and 0 <= (_iv_days_since or 999) <= 7
+            else f"Elevated IV Rank {float(_iv_rank):.0f} — Options Premium Is Expensive"
+        )
+        _iv_body = (
+            f"IV Rank of {float(_iv_rank):.0f} (top {100 - float(_iv_rank):.0f}% of trailing year) "
+            f"with earnings {_iv_days_since}d ago: implied volatility will deflate rapidly (IV crush) "
+            f"— options premium buyers lose value even on correct directional moves. "
+            f"Favour stock entry over options; size equity positions accordingly."
+            if _iv_days_since is not None and 0 <= (_iv_days_since or 999) <= 7
+            else
+            f"IV Rank of {float(_iv_rank):.0f} means implied volatility is elevated relative to the past year. "
+            f"Buying calls or puts here means paying rich premium — a significant move is needed just to break even. "
+            f"Consider stock entry instead of options, or wait for IV to normalise."
+        )
+        sources.add("Options")
+        rationale.append({"src": "Options",
+            "head": _iv_head,
+            "body": _iv_body,
+            "sentiment": "neg",
+            "meta": f"iv_rank={float(_iv_rank):.1f} | near_earnings={_near_earnings}"})
+
     # ── Per-sector MR score threshold gate (§15d alpha-decomp) ──────────────
     # §15d: Each strong sector has an optimal minimum score for MR BUY entries.
     #   Tech (XLK): thresh=40 — quality boundary (lower hurts Ann: 0.60→0.55)
@@ -1651,7 +1771,7 @@ def _assemble_signal(
         "style":               style,
         "sources":             sorted(sources),
         "rationale":           rationale,
-        "ts":                  datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "ts":                  datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "session":             _current_session(),
         "daysToEarnings":      days_to_earnings,
         "nextEarningsDate":    earnings_cal.get("next_earnings_date"),
@@ -1659,6 +1779,7 @@ def _assemble_signal(
         "rsVsSector":          sector_rs["rs_vs_sector"] if sector_rs else None,
         "plain_english":       plain_english,
         "beta":                info.get("beta"),
+        "dataWarnings":        data_warnings,
         "recommendedHoldDays": (_SECTOR_MR_CONFIG.get(
                                     (sector_rs or {}).get("sector_etf", ""), {}
                                 ).get("hold_days", 10) if _has_mr else 10),
@@ -1694,7 +1815,7 @@ async def generate_signal(
         _fetched = await _fetch_ticker_data(ticker, prefetched_df, prefetched_info)
         if _fetched is None:
             return None
-        df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs, sector_rs = _fetched
+        df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs, sector_rs, data_warnings = _fetched
         ext_hours = massive_sigs  # unified: both branches fetch get_extended_hours_data
 
         # Leveraged/inverse ETFs: company fundamentals, earnings, and insider
@@ -4576,7 +4697,7 @@ async def generate_signal(
             "TA":      any(r.get("src") == "Technical"        for r in rationale if r.get("sentiment") == agree_dir),
             "OPT":     any(r.get("src") == "Options"          for r in rationale if r.get("sentiment") == agree_dir),
             "INST":    any(r.get("src") in ("13F", "Dark Pool") for r in rationale if r.get("sentiment") == agree_dir),
-            "INSIDE":  any(r.get("src") in ("Insider","SEC EDGAR") for r in rationale if r.get("sentiment") == agree_dir),
+            "INSIDE":  any(r.get("src") in ("Insider","SEC EDGAR","Congress") for r in rationale if r.get("sentiment") == agree_dir),
             "AN":      any(r.get("src") == "Analyst"          for r in rationale if r.get("sentiment") == agree_dir),
             "MACRO":   any(r.get("src") == "Macro"            for r in rationale if r.get("sentiment") == agree_dir),
             "SENT":    any(r.get("src") in ("Market Sentiment","Fear&Greed","Market Breadth") for r in rationale if r.get("sentiment") == agree_dir),
@@ -4618,11 +4739,10 @@ async def generate_signal(
         _indep = {
             "13F":       any(r.get("src") == "13F"       and r.get("sentiment") == _agree for r in rationale),
             "Insider":   any(r.get("src") == "SEC EDGAR" and r.get("sentiment") == _agree for r in rationale),
-            "Congress":  any(r.get("src") == "Insider"   and r.get("sentiment") == _agree for r in rationale),
+            "Congress":  any(r.get("src") == "Congress"  and r.get("sentiment") == _agree for r in rationale),
             "Piotroski": any("Piotroski" in r.get("head","") and r.get("sentiment") == _agree for r in rationale),
             "Social":    any(r.get("src") == "Social"    and r.get("sentiment") == _agree for r in rationale),
             "Macro":     any(r.get("src") == "Macro"     and r.get("sentiment") == _agree for r in rationale),
-            "Dark Pool": any(r.get("src") == "Dark Pool" and r.get("sentiment") == _agree for r in rationale),
             "Dark Pool": any(r.get("src") == "Dark Pool" and r.get("sentiment") == _agree for r in rationale),
         }
         _n_indep = sum(_indep.values())
@@ -4792,10 +4912,10 @@ async def generate_signal(
         cg_net   = congress.get("net", 0)
         if cg_score != 0:
             score += cg_score
-            sources.add("Insider")
+            sources.add("Congress")
             if cg_score > 0:
                 recent_reps = ", ".join(b["rep"] for b in congress.get("recent_buys", [])[:2])
-                rationale.append({"src": "Insider",
+                rationale.append({"src": "Congress",
                     "head": f"Congressional Buying — {cg_buys} Purchase{'s' if cg_buys>1 else ''} (90d)",
                     "body": (f"{cg_buys} congressional purchase{'s' if cg_buys>1 else ''} vs {cg_sells} sale{'s' if cg_sells!=1 else ''} in the past 90 days. "
                              + (f"Buyers include: {recent_reps}. " if recent_reps else "")
@@ -4803,7 +4923,7 @@ async def generate_signal(
                     "sentiment": "pos",
                     "meta": f"Congress: {cg_buys} buys, {cg_sells} sells (90d)"})
             elif cg_score < 0:
-                rationale.append({"src": "Insider",
+                rationale.append({"src": "Congress",
                     "head": f"Congressional Selling — {cg_sells} Sale{'s' if cg_sells>1 else ''} (90d)",
                     "body": f"{cg_sells} congressional sale{'s' if cg_sells!=1 else ''} vs {cg_buys} purchase{'s' if cg_buys!=1 else ''} in the past 90 days. Net selling by politicians — who often have policy insight — is a caution flag.",
                     "sentiment": "neg",
@@ -5088,6 +5208,7 @@ async def generate_signal(
             sector_rs=sector_rs, days_to_earnings=days_to_earnings,
             opt_flow=opt_flow,
             _is_lev_etf=_is_lev_etf,
+            data_warnings=data_warnings,
         )
 
     except Exception:

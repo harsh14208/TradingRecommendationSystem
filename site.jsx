@@ -2,8 +2,9 @@
 const { useState, useEffect } = React;
 
 /* ── Auth helpers ─────────────────────────────────────────────────────────── */
-const AUTH_KEY = "st_auth_token";
-const getToken = () => localStorage.getItem(AUTH_KEY);
+// Access token in module memory only — the HTTP-only refresh cookie persists sessions.
+let _accessToken = null;
+const getToken = () => _accessToken;
 
 async function apiPost(path, body, token) {
   const headers = { "Content-Type": "application/json" };
@@ -413,20 +414,22 @@ function AuthPage({ kind, go }) {
     const body = isSignup ? { email, password, full_name: name } : { email, password };
     const { ok, data } = await apiPost(path, body).catch(() => ({ ok: false, data: { detail: "Network error." } }));
     if (!ok) { setError(data.detail || "Something went wrong."); setLoading(false); return; }
-    localStorage.setItem(AUTH_KEY, data.access_token);
+    const tok = data.access_token; // in-memory only; refresh cookie persists the session
     // If paid plan selected (set via query param), go to checkout
     const plan = new URLSearchParams(window.location.search).get("plan");
     if (isSignup && plan && plan !== "free") {
-      const { ok: cok, data: cd } = await apiPost(`/api/billing/checkout/${plan}`, {}, data.access_token).catch(() => ({ ok: false, data: {} }));
+      const { ok: cok, data: cd } = await apiPost(`/api/billing/checkout/${plan}`, {}, tok).catch(() => ({ ok: false, data: {} }));
       if (cok && cd.checkout_url) { window.location.href = cd.checkout_url; return; }
     }
     window.location.href = "/app";
   };
 
-  // Already logged in?
+  // Already logged in? Silently refresh from the HTTP-only cookie.
   useEffect(() => {
-    const tok = getToken();
-    if (tok) fetch("/api/auth/me", { headers: { Authorization: `Bearer ${tok}` } }).then(r => r.ok && window.location.replace("/app")).catch(() => {});
+    fetch("/api/auth/refresh-cookie", { method: "POST", credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.access_token) window.location.replace("/app"); })
+      .catch(() => {});
   }, []);
 
   return (

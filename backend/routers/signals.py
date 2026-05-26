@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import math
 import time as _time
 
@@ -26,6 +26,11 @@ router = APIRouter(prefix="/api/signals", tags=["signals"])
 # the database with repeated heavy queries.
 _analytics_cache: dict[str, dict] = {}
 _ANALYTICS_TTL = 300   # 5 minutes
+
+
+def _utcnow_naive() -> datetime:
+    """UTC timestamp compatible with existing naive SQLAlchemy DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 def _cache_get(key: str):
     entry = _analytics_cache.get(key)
@@ -179,7 +184,7 @@ async def send_signal(
     detail = "" if success else _raw_detail
 
     _ET = pytz.timezone("America/New_York")
-    now    = datetime.utcnow()
+    now    = _utcnow_naive()
     now_et = datetime.now(_ET)
     emoji  = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(sig.action, "⚪")
     status = "sent" if success else "fail"
@@ -568,17 +573,16 @@ async def confidence_history(ticker: str, db: AsyncSession = Depends(get_db), _u
     ]
 
 
-from pydantic import BaseModel as _BaseModel
+from pydantic import BaseModel as _BaseModel, ConfigDict as _ConfigDict
 
 class _NotesIn(_BaseModel):
+    model_config = _ConfigDict(str_max_length=2000)
+
     notes: str = ""
 
     @classmethod
     def __get_validators__(cls):
         yield cls
-
-    class Config:
-        str_max_length = 2000
 
 
 @router.patch("/{signal_id}/notes")
@@ -1261,7 +1265,7 @@ async def backfill_outcomes(db: AsyncSession = Depends(get_db), _user: User = De
 
     updated = 0
     errors = []
-    now = datetime.utcnow()
+    now = _utcnow_naive()
 
     for ticker, sigs in by_ticker.items():
         try:

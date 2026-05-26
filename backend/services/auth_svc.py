@@ -4,7 +4,7 @@ FastAPI dependencies for authentication and tier-gating.
 """
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import bcrypt as _bcrypt_lib
 from fastapi import Depends, HTTPException, status
@@ -43,9 +43,14 @@ def _algo() -> str:
     return get_settings().jwt_algorithm
 
 
+def _utcnow_naive() -> datetime:
+    """UTC timestamp compatible with existing naive DB/JWT datetime usage."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def create_access_token(user_id: int, tier: str, is_owner: bool) -> str:
     s = get_settings()
-    expire = datetime.utcnow() + timedelta(minutes=s.access_token_expire_minutes)
+    expire = _utcnow_naive() + timedelta(minutes=s.access_token_expire_minutes)
     return jwt.encode(
         {"sub": str(user_id), "tier": tier, "owner": is_owner, "exp": expire},
         _secret(), algorithm=_algo(),

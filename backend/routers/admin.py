@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import get_settings
+from config import TIER_PRICES_CENTS, get_settings
 from database import get_db
 from models import Signal, SignalDelivery, User, PerformanceSnapshot
 from services.auth_svc import get_current_user
@@ -30,6 +30,12 @@ def _require_owner(user: User = Depends(get_current_user)) -> User:
 async def setup_status(owner: User = Depends(_require_owner)):
     """Returns which critical .env vars are configured — no secrets exposed."""
     s = get_settings()
+    owner_password_ok = bool(
+        s.owner_email
+        and s.owner_password
+        and s.owner_password != "ChangeMe123!"
+        and len(s.owner_password) >= 16
+    )
     checks = [
         {
             "key":     "JWT_SECRET",
@@ -41,8 +47,11 @@ async def setup_status(owner: User = Depends(_require_owner)):
         {
             "key":     "OWNER_EMAIL",
             "label":   "Owner Account",
-            "ok":      bool(s.owner_email),
-            "note":    "Set OWNER_EMAIL + OWNER_PASSWORD in .env",
+            "ok":      owner_password_ok,
+            "note":    (
+                "Set OWNER_EMAIL and a 16+ char OWNER_PASSWORD; never use ChangeMe123!."
+                if not owner_password_ok else "Set ✓"
+            ),
             "critical": True,
         },
         {
@@ -177,8 +186,11 @@ async def admin_stats(
         select(func.count()).select_from(User).where(User.telegram_chat_id.isnot(None))
     )).scalar()
 
-    # MRR estimate (Basic $9.99 + Pro $19.99)
-    mrr = round(basic_count * 9.99 + pro_count * 19.99, 2)
+    # MRR estimate from the same source of truth used by billing/pricing.
+    mrr = round(
+        (basic_count * TIER_PRICES_CENTS["basic"] + pro_count * TIER_PRICES_CENTS["pro"]) / 100,
+        2,
+    )
 
     # Signal stats
     total_signals = (await db.execute(select(func.count()).select_from(Signal))).scalar()

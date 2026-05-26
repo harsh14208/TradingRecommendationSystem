@@ -181,7 +181,7 @@ async def resolve_outcomes() -> int:
                 changed = True
             if age >= 7 and sig.outcome_pct is None and not already_closed:
                 sig.outcome_pct = _pct(current, sig.entry, sig.action)
-                sig.outcome_at  = datetime.utcnow()
+                sig.outcome_at  = datetime.now(timezone.utc).replace(tzinfo=None)
                 changed = True
             if age >= 14 and sig.outcome_14d is None:
                 sig.outcome_14d = _pct(current, sig.entry, sig.action)
@@ -331,11 +331,11 @@ async def resolve_mae_mfe() -> int:
                     ):
                         raw = (sig.stop - entry) / entry * 100
                         sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
-                        sig_db.outcome_at  = datetime.utcnow()
+                        sig_db.outcome_at  = datetime.now(timezone.utc).replace(tzinfo=None)
                     elif exit_type == "target" and sig_db.outcome_pct is None and sig.target and entry > 0:
                         raw = (sig.target - entry) / entry * 100
                         sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
-                        sig_db.outcome_at  = datetime.utcnow()
+                        sig_db.outcome_at  = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     updated += 1
 

@@ -35,6 +35,14 @@ from models import Signal
 
 FRICTION_PCT = 0.50   # round-trip transaction cost (0.25% entry + 0.25% exit)
 
+# Risk-free rate used in Sharpe, Sortino, and Jensen's alpha calculations.
+# Approximates long-run average Fed Funds/SOFR over a 20-year backtest window.
+# 2006-2007 and 2022-2026 had material risk-free rates (4-5%); the decade of
+# ZIRP (2009-2019) drags the true average below this.  Set to 0.0 to restore
+# the old Rf=0 behaviour.
+RF_ANNUAL = 0.04           # 4% annualised
+RF_DAILY  = RF_ANNUAL / 252  # per-trade risk-free hurdle (same units as mu, in %pt)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Core statistics
@@ -82,7 +90,12 @@ def _kurtosis(xs: list[float]) -> float:
     return (n * (n + 1) * m4) / ((n - 1) * (n - 2) * (n - 3) * s ** 4) - (3.0 * (n - 1) ** 2) / ((n - 2) * (n - 3))
 
 def _t_stat(xs: list[float]) -> tuple[float, float]:
-    """Two-sided t-test: mean != 0. Returns (t, p_approx)."""
+    """Two-sided t-test: mean != 0. Returns (t, p).
+
+    Uses scipy.stats.t for exact p-values when available — critical for sector
+    subsets where N drops to 15-25 and normal approximations under-report p.
+    Falls back to a conservative Chebyshev bound for n < 30 without scipy.
+    """
     n = len(xs)
     if n < 2:
         return float("nan"), float("nan")
@@ -90,19 +103,20 @@ def _t_stat(xs: list[float]) -> tuple[float, float]:
     if s == 0:
         return float("nan"), float("nan")
     t = m / (s / math.sqrt(n))
-    # Approximation via incomplete beta function (avoids scipy dependency)
-    # Uses the Abramowitz & Stegun approximation for the t CDF
     df = n - 1
-    x = df / (df + t * t)
-    # Regularized incomplete beta approximation
     try:
-        # Simple approximation good to ~1% for df > 5
-        z = abs(t) / math.sqrt(df / (df - 2)) if df > 2 else abs(t)
-        # Two-tailed p via normal approximation for large n, else crude bound
+        from scipy.stats import t as _scipy_t
+        p_approx = float(_scipy_t.sf(abs(t), df=df) * 2)
+        return t, p_approx
+    except ImportError:
+        pass
+    # Fallback: normal approximation for n ≥ 30 (good to ~1%); Chebyshev bound otherwise.
+    # Chebyshev is conservative (overestimates p) — harder to reach significance without scipy.
+    try:
         if n >= 30:
+            z = abs(t) / math.sqrt(df / (df - 2)) if df > 2 else abs(t)
             p_approx = 2.0 * (1.0 - _norm_cdf(z))
         else:
-            # Crude upper bound via Chebyshev
             p_approx = min(1.0, 2.0 / (1.0 + t * t / df))
     except Exception:
         p_approx = float("nan")
@@ -172,29 +186,37 @@ def risk_metrics(returns: list[float], date_range_days: int = 18) -> dict:
     # ann is already sqrt(252) — apply directly, do NOT sqrt again
     ann = _annualize_factor(n, date_range_days)
 
-    # Sharpe (trade-level, annualized at sqrt(252), risk-free rate = 0)
-    sharpe = (mu / sigma * ann) if sigma > 0 else float("nan")
+    # Sharpe (trade-level, annualized at sqrt(252); excess return over Rf=RF_ANNUAL)
+    sharpe = ((mu - RF_DAILY) / sigma * ann) if sigma > 0 else float("nan")
 
-    # Sortino — semi-deviation: RMS of negative returns measured from target (0%)
-    # Padding with zeros and calling _std() is wrong: _std() shifts the mean,
-    # measuring deviations from a skewed average instead of from the target return.
-    # Divisor is n (full sample), not n-1: we measure against a fixed target (0%),
-    # so no parameter is being estimated — no degree-of-freedom correction needed.
+    # Sortino — semi-deviation from 0% target; Rf-adjusted numerator.
+    # Divisor is n (full sample): measuring against a fixed target, no df correction.
     downside_sum_sq = sum(r ** 2 for r in returns if r < 0)
     sigma_d = math.sqrt(downside_sum_sq / n) if n > 0 else 0.0
-    sortino  = (mu / sigma_d * ann) if sigma_d > 0 else float("nan")
+    sortino  = ((mu - RF_DAILY) / sigma_d * ann) if sigma_d > 0 else float("nan")
 
-    # Max drawdown (5% position sizing)
+    # Max drawdown (5% position sizing on sequential equity curve)
     capital, peak, max_dd = 10_000.0, 10_000.0, 0.0
     for r in returns:
         capital += capital * 0.05 * (r / 100)
         peak     = max(peak, capital)
         max_dd   = max(max_dd, (peak - capital) / peak * 100)
 
-    # Calmar = annualized avg return / max drawdown
-    # Annualize using sqrt(252) consistently (same basis as Sharpe numerator)
-    ann_return = mu * 252   # daily return × trading days/year
+    # Custom Calmar: annualised per-trade return at 5% sizing / portfolio max_dd.
+    # Non-standard: sequential 5% sizing understates concurrent portfolio drawdown.
+    # Do NOT compare this value to published Calmar ratios.
+    ann_return = mu * 252
     calmar = ((ann_return * 0.05) / max_dd) if max_dd > 0 else float("nan")
+
+    # Standard Calmar: CAGR of the 5% equity curve / max_dd of same curve.
+    # Comparable to external benchmarks.  Requires ≥ 252 calendar days of history
+    # to be meaningful — annualising a 27-day equity curve produces nonsense.
+    if date_range_days >= 252 and max_dd > 0 and capital > 0:
+        _years = date_range_days / 365.25
+        _cagr_pct = ((capital / 10_000.0) ** (1.0 / _years) - 1.0) * 100
+        calmar_std = _cagr_pct / max_dd
+    else:
+        calmar_std = float("nan")
 
     # Omega ratio = E[max(R-threshold,0)] / E[max(threshold-R,0)] (threshold=0)
     gains  = sum(max(r, 0) for r in returns)
@@ -248,7 +270,8 @@ def risk_metrics(returns: list[float], date_range_days: int = 18) -> dict:
         max_l = max(max_l, cur_l)
 
     return {
-        "sharpe":    sharpe,   "sortino":   sortino,  "calmar":    calmar,
+        "sharpe":    sharpe,   "sortino":    sortino,
+        "calmar":    calmar,   "calmar_std": calmar_std,
         "omega":     omega,    "ann_return": ann_return,
         "var_95":    var_95,   "var_99":    var_99,
         "cvar_95":   cvar_95,  "cvar_99":   cvar_99,
@@ -290,8 +313,8 @@ async def fetch_spy_bars(earliest: datetime | None = None, latest: datetime | No
         pass
 
     # ── Check if cache already covers the needed range ─────────────────────────
-    start_dt = (earliest - timedelta(days=21)) if earliest else (datetime.utcnow() - timedelta(days=90))
-    end_dt   = (latest   + timedelta(days=14)) if latest   else datetime.utcnow()
+    start_dt = (earliest - timedelta(days=21)) if earliest else (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=90))
+    end_dt   = (latest   + timedelta(days=14)) if latest   else datetime.now(timezone.utc).replace(tzinfo=None)
     need_from = start_dt.strftime("%Y-%m-%d")
     need_to   = end_dt.strftime("%Y-%m-%d")
 
@@ -386,11 +409,11 @@ def alpha_metrics(signal_returns: list[float], spy_returns: list[float]) -> dict
     mu_s = _mean(signal_returns)
     mu_m = _mean(spy_returns)
 
-    # OLS slope (beta) and intercept (Jensen's alpha per trade)
+    # OLS beta and Jensen's alpha, Rf-adjusted: alpha = (R_s - Rf) - beta*(R_m - Rf)
     cov_sm = sum((signal_returns[i] - mu_s) * (spy_returns[i] - mu_m) for i in range(n)) / (n - 1)
     var_m  = _std(spy_returns) ** 2
     beta   = cov_sm / var_m if var_m > 0 else 0.0
-    alpha_pt = mu_s - beta * mu_m          # per-trade Jensen's alpha
+    alpha_pt = (mu_s - RF_DAILY) - beta * (mu_m - RF_DAILY)  # per-trade Jensen's alpha
 
     # Residuals → tracking error, R²
     residuals     = [signal_returns[i] - (alpha_pt + beta * spy_returns[i]) for i in range(n)]
@@ -486,7 +509,7 @@ async def analyze_db(snapshot_tag: str | None = None, since_days: int | None = N
     try:
         q = select(Signal).where(Signal.outcome_pct.isnot(None))
         if since_days:
-            cutoff = datetime.utcnow() - timedelta(days=since_days)
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=since_days)
             q = q.where(Signal.created_at >= cutoff)
         rows = (await db.execute(q.order_by(Signal.created_at.asc()))).scalars().all()
     except Exception as db_err:
@@ -664,10 +687,19 @@ async def analyze_db(snapshot_tag: str | None = None, since_days: int | None = N
         am = alpha_metrics(alpha_signal_rets, alpha_spy_rets)
 
         # ══════════════════════════════════════════════════════════════════════
+        _scipy_avail = True
+        try:
+            import scipy.stats  # noqa: F401
+        except ImportError:
+            _scipy_avail = False
+        _rf_note = f"Rf={RF_ANNUAL*100:.0f}% annualised ({RF_DAILY:.4f}%/trade)"
+        _scipy_note = "scipy t-distribution (exact)" if _scipy_avail else "Chebyshev bound (install scipy for exact p-values)"
+
         print(f"# Signal.Trade — Institutional Performance Report\n")
         print(f"> **Coverage:** {date_range_str} · **{gm['count']} resolved trades**\n"
-              f"> _Sharpe/Sortino use sqrt(252) scaling (one-trade-per-day assumption). "
-              f"These are per-signal quality metrics, not portfolio equity-curve Sharpe._\n")
+              f"> _Sharpe/Sortino: sqrt(252) scaling, {_rf_note}. "
+              f"Per-signal quality metrics, not portfolio equity-curve Sharpe._\n"
+              f"> _p-values via {_scipy_note}._\n")
 
         # ── 1. Return summary ─────────────────────────────────────────────────
         print("## 1. Return Summary\n")
@@ -708,13 +740,14 @@ async def analyze_db(snapshot_tag: str | None = None, since_days: int | None = N
         print_table(
             ["Metric", "Value", "Benchmark"],
             [
-                ["Sharpe Ratio",   _fmt(rm.get("sharpe"), ".2f"),   "> 1.0 = good, > 2.0 = excellent"],
-                ["Sortino Ratio",  _fmt(rm.get("sortino"), ".2f"),  "> 1.5 = good (downside-only σ)"],
-                ["Calmar Ratio",   _fmt(rm.get("calmar"), ".2f"),   "annualized_ret/max_DD — inflated: 5% sequential sizing understates concurrent portfolio drawdown"],
-                ["Omega Ratio",    _fmt(rm.get("omega"), ".2f"),    "> 1.0 = edge exists"],
-                ["Max Drawdown",   f"-{rm.get('max_dd', 0):.2f}%", "5% position sizing"],
-                ["Recovery Factor",_fmt(rm.get("recovery"), ".2f"),"net return / max DD"],
-                ["Ulcer Index",    _fmt(rm.get("ulcer"), ".2f"),    "< 5 = low drawdown stress"],
+                ["Sharpe Ratio",   _fmt(rm.get("sharpe"), ".2f"),     f"> 1.0 = good, > 2.0 = excellent ({_rf_note})"],
+                ["Sortino Ratio",  _fmt(rm.get("sortino"), ".2f"),    f"> 1.5 = good (downside-only σ; {_rf_note})"],
+                ["Calmar (standard)",  _fmt(rm.get("calmar_std"), ".2f"), "CAGR of equity curve / max_dd — comparable to external benchmarks"],
+                ["Calmar (custom)",    _fmt(rm.get("calmar"), ".2f"),     "ann_ret×5% sizing / max_dd — not standard; do not compare externally"],
+                ["Omega Ratio",    _fmt(rm.get("omega"), ".2f"),      "> 1.0 = edge exists"],
+                ["Max Drawdown",   f"-{rm.get('max_dd', 0):.2f}%",   "5% sequential position sizing"],
+                ["Recovery Factor",_fmt(rm.get("recovery"), ".2f"),  "net return / max DD"],
+                ["Ulcer Index",    _fmt(rm.get("ulcer"), ".2f"),      "< 5 = low drawdown stress"],
             ]
         )
 
@@ -1237,13 +1270,14 @@ async def analyze_db(snapshot_tag: str | None = None, since_days: int | None = N
                     "kelly":     round(gm["kelly"], 2),
                 },
                 "risk": {
-                    "sharpe":   round(rm.get("sharpe",  0) or 0, 3),
-                    "sortino":  round(rm.get("sortino", 0) or 0, 3),
-                    "calmar":   round(rm.get("calmar",  0) or 0, 3),
-                    "omega":    round(rm.get("omega",   0) or 0, 3),
-                    "max_dd":   round(rm.get("max_dd",  0) or 0, 3),
-                    "recovery": round(rm.get("recovery",0) or 0, 3),
-                    "ulcer":    round(rm.get("ulcer",   0) or 0, 3),
+                    "sharpe":      round(rm.get("sharpe",      0) or 0, 3),
+                    "sortino":     round(rm.get("sortino",     0) or 0, 3),
+                    "calmar":      round(rm.get("calmar",      0) or 0, 3),
+                    "calmar_std":  round(rm.get("calmar_std",  0) or 0, 3),
+                    "omega":       round(rm.get("omega",       0) or 0, 3),
+                    "max_dd":      round(rm.get("max_dd",      0) or 0, 3),
+                    "recovery":    round(rm.get("recovery",    0) or 0, 3),
+                    "ulcer":       round(rm.get("ulcer",       0) or 0, 3),
                 },
                 "tail": {
                     "var_95":  round(rm.get("var_95",  0) or 0, 3),

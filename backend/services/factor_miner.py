@@ -14,7 +14,7 @@ import logging
 import math
 import os
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
 from typing import Optional
@@ -67,7 +67,7 @@ async def run_factor_mining() -> dict:
 
     if len(rows) < _MIN_SIGNALS * 2:
         log.info(f"[factor_miner] Only {len(rows)} resolved signals — too few to mine.")
-        return {"run_at": datetime.utcnow().isoformat(), "rows": len(rows), "skipped": True}
+        return {"run_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "rows": len(rows), "skipped": True}
 
     # Sort by created_at (oldest first) for temporal train/test split
     rows.sort(key=lambda r: r["created_at"])
@@ -96,14 +96,14 @@ async def run_factor_mining() -> dict:
 
     if not results:
         log.info("[factor_miner] No combinations met the minimum signal threshold.")
-        return {"run_at": datetime.utcnow().isoformat(), "combinations_tested": 0}
+        return {"run_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "combinations_tested": 0}
 
     # Rank by OOS Sharpe (descending)
     results.sort(key=lambda x: x.get("oos_sharpe") or -99, reverse=True)
     top = results[:_TOP_N]
 
     summary = {
-        "run_at":               datetime.utcnow().isoformat(),
+        "run_at":               datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         "signals_used":         len(rows),
         "sources_found":        sorted(all_sources),
         "combinations_tested":  len(results),

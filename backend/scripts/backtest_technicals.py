@@ -55,6 +55,7 @@ TICKERS = [
     "MSFT",   # Enterprise cloud; clean MR (Sharpe 0.35)
     "AAPL",   # Consumer tech; mean-reverts around SMA50
     "GOOGL",  # Search/cloud; systematic MR on ad-cycle weakness
+    "GOOG",   # Alphabet class C — §18 validated: N=5, WR=80%, Sh=0.81, Ann=0.41
     "META",   # Social; big pullbacks recover within 10 days
     "AMZN",   # Retail/AWS; deep pullbacks → strong bounces (Sharpe 0.44)
     "NFLX",   # Streaming; high-beta with reliable MR bounces (added v5.12)
@@ -67,11 +68,32 @@ TICKERS = [
     "TXN",    # Analog semi, consistent
     "MRVL",   # Infrastructure semi
     "CSCO",   # Networking; slow but reliable MR
+    "LRCX",   # Lam Research — §18 screener PASS: WR 75%, Sh 0.48, N=4
+    "CDNS",   # Cadence Design — §18 screener PASS: EDA, very low idiosyncratic risk
+    "CRM",    # Salesforce — §18 screener PASS: enterprise SaaS MR
+    "CTSH",   # Cognizant — §18 screener PASS: IT services sector MR
+    "PANW",   # Palo Alto Networks — §18 screener PASS: cybersecurity MR
+    "NTAP",   # NetApp — §18 screener PASS: storage infrastructure MR
+    "GEN",    # Gen Digital — §18 screener PASS: cybersecurity
+    "CPAY",   # Corpay — §18 screener PASS: B2B payments
+    "ROP",    # Roper Technologies — §18 screener PASS: diversified tech
+    "TDY",    # Teledyne — §18 screener PASS: defense/industrial tech
+    "TEL",    # TE Connectivity — §18 screener PASS: electronic components
+    "FIS",    # Fidelity National Info — §18 screener PASS: payment processing
     # ── Financials ───────────────────────────────────────────────────────────
     "JPM",    # Largest US bank; MR around rate expectations
     "WFC",    # Regional/diversified; MR in rate cycle (Sharpe 0.20)
     "BAC",    # Similar MR profile to JPM/WFC (added)
     "GS",     # Investment bank; high-vol, vol-cluster MR
+    "BLK",    # BlackRock — §18 screener PASS: AUM-driven asset manager MR
+    "BX",     # Blackstone — §18 screener PASS: alt-asset manager MR
+    "C",      # Citigroup — §18 screener PASS: global bank MR
+    "MA",     # Mastercard — §18 screener PASS: payment network toll road
+    "SCHW",   # Charles Schwab — §18 screener PASS: brokerage MR on rate cycles
+    "KKR",    # KKR — §18 screener PASS: alt-asset manager
+    "FITB",   # Fifth Third Bancorp — §18 screener PASS: regional bank MR
+    "KEY",    # KeyCorp — §18 screener PASS: regional bank MR
+    "RF",     # Regions Financial — §18 screener PASS: regional bank MR
     # ── Consumer (staples + discretionary) ───────────────────────────────────
     "HD",     # Home improvement; systematic pullbacks recover (Sharpe 0.37)
     "F",      # Ford; automotive cyclical, high-volume, strong MR bounces (added)
@@ -80,6 +102,17 @@ TICKERS = [
     # MCD removed: 33.3% WR, -0.36% — too slow for 10-day MR holds
     "TGT",    # Target retail; systematic earnings-driven pullbacks + MR (added)
     "TSLA",   # High-beta EV; volatile but bounces off capitulation levels
+    "EBAY",   # eBay — §18 screener PASS: marketplace MR on sentiment swings
+    "EXPE",   # Expedia — §18 screener PASS: travel recovery MR
+    "HLT",    # Hilton — §18 screener PASS: hospitality MR
+    "MAR",    # Marriott — §18 screener PASS: hospitality MR
+    "LULU",   # Lululemon — §18 screener PASS: premium athletic MR
+    "ROST",   # Ross Stores — §18 screener PASS: off-price retail MR
+    "TPR",    # Tapestry — §18 screener PASS: luxury goods MR
+    "DPZ",    # Domino's Pizza — §18 screener PASS: consumer MR
+    "AVY",    # Avery Dennison — §18 screener PASS: materials/consumer MR
+    # ── Communication ────────────────────────────────────────────────────────
+    "PSKY",   # Paramount Skydance (fmr PARA) — §18 screener PASS: media MR
 ]
 
 START        = "2006-01-01"
@@ -1411,7 +1444,8 @@ def simulate_ticker(
                     exit_price = day_close; exit_reason = "time_loss"; exit_day = j; break
                 # ── Adaptive exit: MR bounce completion ─────────────────────────
                 # Exit when indicators show the bounce is done and we're profitable.
-                # Captures peak-of-bounce return; avoids giving back gains.
+                # No look-ahead bias: all indicators (RSI, MACD, VWAP) use the
+                # same bar's close, and exit is booked at that same day_close.
                 # Requires: profitable > 0.5% AND ≥ 2 days elapsed (noise filter).
                 if j >= 2 and day_close > entry_price * 1.005:
                     _rsi_now  = float(bar.get("rsi",        50)) if pd.notna(bar.get("rsi"))        else 50.0

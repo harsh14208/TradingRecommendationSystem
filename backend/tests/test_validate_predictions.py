@@ -145,7 +145,7 @@ class TestAgeDays:
     def test_naive_datetime_treated_as_utc(self):
         """Naive (timezone-unaware) created_at is treated as UTC."""
         # Naive datetime 1 day ago
-        created_naive = datetime.utcnow() - timedelta(days=1)
+        created_naive = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
         sig = self._make_sig(created_naive)
         age = _age_days(sig)
         assert 0.99 < age < 1.01

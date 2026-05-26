@@ -2,7 +2,7 @@ import asyncio
 import logging
 import ssl
 import certifi
-from datetime import datetime, timedelta, time as dtime
+from datetime import datetime, timedelta, time as dtime, timezone
 from time import monotonic
 
 import pytz
@@ -209,7 +209,7 @@ def _pct(current, entry, action):
 
 async def _update_outcomes(quotes: list[dict]):
     """Record % return at 1d, 3d, 7d, and 14d horizons for sent signals."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     price_map = {q["t"]: q["p"] for q in quotes}
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
@@ -270,7 +270,7 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
     # Multiple same-ticker sends within one session count as one market view but
     # inflate the "sent signals" count and the win-rate denominator. Cap at 1
     # regardless of direction flip or confidence changes within the same day.
-    _today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    _today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
     _today_sent  = (await db.execute(
         select(Signal)
         .where(Signal.ticker  == sig_dict["ticker"])
@@ -285,7 +285,7 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
     if force_resend:
         # Direction flip: only enforce a short anti-spam window (the daily cap above
         # already prevents same-day repeats; this guards cross-day rapid flips)
-        cutoff = datetime.utcnow() - timedelta(minutes=30)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=30)
         result = await db.execute(
             select(Signal)
             .where(Signal.ticker  == sig_dict["ticker"])
@@ -327,7 +327,7 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
         except Exception:
             pass
 
-        cutoff = datetime.utcnow() - timedelta(hours=base_hours)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=base_hours)
         result = await db.execute(
             select(Signal)
             .where(Signal.ticker  == sig_dict["ticker"])
@@ -513,7 +513,7 @@ async def _compute_adaptive_weights() -> dict:
                 ticker_outcomes[ticker].append((pct < 0, outcome_at))
 
         weights: dict = {}
-        now_utc = datetime.utcnow()
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Global win rates — recency-weighted (exponential decay, halflife 60 days)
         for action, outcomes_raw in action_buckets.items():
@@ -708,7 +708,7 @@ _scan_status: dict = {
 
 
 def _utc_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
 
 def _mark_scan_stage(stage: str) -> None:
@@ -824,7 +824,7 @@ async def _precompute_analytics() -> None:
                  "avg_return": round(r.avg_ret, 3) if r.avg_ret is not None else None}
                 for r in rows
             ],
-            "computed_at": datetime.utcnow().isoformat() + "Z",
+            "computed_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z",
         }
         await cache_set("analytics:backtest_summary", summary, ttl=_ANALYTICS_COMPUTE_INTERVAL)
         log.debug(f"[analytics] backtest summary cached (n={total_n})")
@@ -846,7 +846,7 @@ async def _run_scan_impl(broadcast_fn=None):
       8. Update outcomes for old sent signals.
       9. Broadcast via WebSocket.
     """
-    scan_cycle_started_at = datetime.utcnow()  # used for SLA measurement
+    scan_cycle_started_at = datetime.now(timezone.utc).replace(tzinfo=None)  # used for SLA measurement
     settings = get_settings()
     tickers  = await _get_scan_tickers(settings)
     _mark_scan_stage("load_tickers")
@@ -859,7 +859,7 @@ async def _run_scan_impl(broadcast_fn=None):
     global _diff_state
     _diff_state = {t: _diff_state[t] for t in tickers if t in _diff_state}
 
-    stale_cutoff = datetime.utcnow() - timedelta(hours=8)
+    stale_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=8)
 
     # ── Step 1: market-wide context + adaptive weights ───────────────────
     _mark_scan_stage("market_context")
@@ -1105,7 +1105,7 @@ async def _run_scan_impl(broadcast_fn=None):
             await send_telegram({"action": "DATA_ALERT", "ticker": "SYSTEM",
                                  "confidence": 0, "headline": _alert_msg,
                                  "price": 0, "sentiment": 0, "style": "swing",
-                                 "sources": [], "rationale": [], "ts": datetime.utcnow().isoformat() + "Z"})
+                                 "sources": [], "rationale": [], "ts": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"})
         except Exception:
             pass
 
@@ -1154,7 +1154,7 @@ async def _run_scan_impl(broadcast_fn=None):
     # Stable = price moved < 0.5% AND volume < 1.3× avg AND active signal < 2h old.
     # Skipped tickers get their price + timestamp updated in-place in the DB.
     # Expected: skip 80-100 of 154 tickers per cycle → ~5× throughput increase.
-    _two_hr_ago = datetime.utcnow() - timedelta(hours=_DIFF_SIGNAL_MAX_AGE_H)
+    _two_hr_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=_DIFF_SIGNAL_MAX_AGE_H)
     try:
         async with AsyncSessionLocal() as _diff_db:
             _recent_sig_tickers = set((await _diff_db.execute(
@@ -1216,7 +1216,7 @@ async def _run_scan_impl(broadcast_fn=None):
     for t in tickers:
         q = quote_map.get(t)
         if q:
-            _diff_state[t] = {"price": q["p"], "ts": datetime.utcnow()}
+            _diff_state[t] = {"price": q["p"], "ts": datetime.now(timezone.utc).replace(tzinfo=None)}
 
     # ── Step 5: generate signals ─────────────────────────────────────────
     _mark_scan_stage("signal_generation")
@@ -1316,9 +1316,9 @@ async def _run_scan_impl(broadcast_fn=None):
                     _close_et += timedelta(days=1)
                 _expires = _close_et.astimezone(pytz.utc).replace(tzinfo=None)
             elif _style == "position":
-                _expires = datetime.utcnow() + timedelta(days=30)
+                _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
             else:  # swing
-                _expires = datetime.utcnow() + timedelta(days=10)
+                _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=10)
 
             row = Signal(
                 ticker     = sig["ticker"],

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import TIER_LABELS, TIER_PLAN_FEATURES, TIER_PRICES_CENTS, TIERS, get_settings
 from database import get_db
-from models import User
+from models import StripeEvent, User
 from services.auth_svc import get_current_user, user_to_dict
 from services.email_svc import (
     send_payment_failed,
@@ -24,9 +24,6 @@ from services.email_svc import (
 log = logging.getLogger("signal.trade.billing")
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
-from collections import OrderedDict
-_processed_events: OrderedDict[str, None] = OrderedDict()
-_MAX_PROCESSED_EVENTS = 10_000
 
 PLAN_TIERS = {
     "basic": "basic",
@@ -202,13 +199,14 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(400, "Invalid signature")
 
     event_id = event.get("id", "")
-    if event_id and event_id in _processed_events:
-        return Response(status_code=200)
     if event_id:
-        _processed_events[event_id] = None
-        # Evict oldest entry when the dedup cache is full (FIFO, not full-clear)
-        while len(_processed_events) > _MAX_PROCESSED_EVENTS:
-            _processed_events.popitem(last=False)
+        existing = (await db.execute(
+            select(StripeEvent).where(StripeEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if existing:
+            return Response(status_code=200)
+        db.add(StripeEvent(event_id=event_id))
+        await db.flush()
 
     etype = event["type"]
     data  = event["data"]["object"]

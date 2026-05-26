@@ -378,7 +378,7 @@ document.getElementById('signup-form').addEventListener('submit', async (e) => {
 
     // Owner auto-verified → got access_token → go straight in
     if (data.access_token) {
-      localStorage.setItem('st_auth_token', data.access_token);
+      // access_token used inline only — not persisted; refresh cookie maintains session
       if (selectedPlan !== 'free') {
         document.getElementById('btn-text').textContent = 'Redirecting to Stripe…';
         const checkoutRes = await fetch(`/api/billing/checkout/${selectedPlan}`, {
@@ -410,26 +410,54 @@ function showCheckEmail(email, plan) {
 
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;max-width:460px;width:100%;text-align:center';
-  wrap.innerHTML = `
-    <div style="font-size:56px;margin-bottom:20px">✉️</div>
-    <h2 style="font-size:24px;font-weight:800;letter-spacing:-0.03em;margin-bottom:10px">Check your email</h2>
-    <p style="font-size:14px;color:var(--dim);line-height:1.7;margin-bottom:6px">
-      We sent a verification link to<br/>
-      <strong style="color:var(--text)">${email}</strong>
-    </p>
-    <p style="font-size:13px;color:var(--faint);margin-bottom:28px">Click the link in the email to activate your account. The link expires in 24 hours.</p>
-    <div style="background:var(--bg1);border:1px solid var(--line);border-radius:12px;padding:20px;width:100%;margin-bottom:20px">
-      <div style="font-size:12px;color:var(--dim);margin-bottom:14px">Didn't receive it? Check your spam folder, or</div>
-      <button id="resend-btn" onclick="resendVerification('${email}')"
-        style="width:100%;padding:11px;background:var(--bg2);border:1px solid var(--line2);border-radius:8px;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans)">
-        Resend verification email
-      </button>
-      <div id="resend-msg" style="font-size:12px;color:var(--up);margin-top:10px;display:none"></div>
-    </div>
-    ${plan !== 'free' ? `<p style="font-size:12px;color:var(--faint);margin-bottom:16px">After verifying your email, you'll be able to upgrade to ${plan.charAt(0).toUpperCase()+plan.slice(1)}.</p>` : ''}
-    <a href="/login" style="font-size:14px;color:var(--up);font-weight:600;text-decoration:none">Already verified? Sign in →</a>
-    <p style="font-size:11px;color:var(--faint);margin-top:20px">⚠️ Not financial advice · For informational purposes only</p>
-  `;
+  const icon = document.createElement('div');
+  icon.textContent = '✉️';
+  icon.style.cssText = 'font-size:56px;margin-bottom:20px';
+  const heading = document.createElement('h2');
+  heading.textContent = 'Check your email';
+  heading.style.cssText = 'font-size:24px;font-weight:800;letter-spacing:-0.03em;margin-bottom:10px';
+  const sent = document.createElement('p');
+  sent.style.cssText = 'font-size:14px;color:var(--dim);line-height:1.7;margin-bottom:6px';
+  sent.appendChild(document.createTextNode('We sent a verification link to'));
+  sent.appendChild(document.createElement('br'));
+  const emailEl = document.createElement('strong');
+  emailEl.textContent = email;
+  emailEl.style.color = 'var(--text)';
+  sent.appendChild(emailEl);
+  const instructions = document.createElement('p');
+  instructions.textContent = 'Click the link in the email to activate your account. The link expires in 24 hours.';
+  instructions.style.cssText = 'font-size:13px;color:var(--faint);margin-bottom:28px';
+  const resendBox = document.createElement('div');
+  resendBox.style.cssText = 'background:var(--bg1);border:1px solid var(--line);border-radius:12px;padding:20px;width:100%;margin-bottom:20px';
+  const resendHint = document.createElement('div');
+  resendHint.textContent = "Didn't receive it? Check your spam folder, or";
+  resendHint.style.cssText = 'font-size:12px;color:var(--dim);margin-bottom:14px';
+  const resendBtn = document.createElement('button');
+  resendBtn.id = 'resend-btn';
+  resendBtn.type = 'button';
+  resendBtn.textContent = 'Resend verification email';
+  resendBtn.style.cssText = 'width:100%;padding:11px;background:var(--bg2);border:1px solid var(--line2);border-radius:8px;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans)';
+  resendBtn.addEventListener('click', () => resendVerification(email));
+  const resendMsg = document.createElement('div');
+  resendMsg.id = 'resend-msg';
+  resendMsg.style.cssText = 'font-size:12px;color:var(--up);margin-top:10px;display:none';
+  resendBox.append(resendHint, resendBtn, resendMsg);
+  wrap.append(icon, heading, sent, instructions, resendBox);
+  if (plan !== 'free') {
+    const upgrade = document.createElement('p');
+    const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+    upgrade.textContent = `After verifying your email, you'll be able to upgrade to ${planLabel}.`;
+    upgrade.style.cssText = 'font-size:12px;color:var(--faint);margin-bottom:16px';
+    wrap.appendChild(upgrade);
+  }
+  const signIn = document.createElement('a');
+  signIn.href = '/login';
+  signIn.textContent = 'Already verified? Sign in →';
+  signIn.style.cssText = 'font-size:14px;color:var(--up);font-weight:600;text-decoration:none';
+  const disclaimer = document.createElement('p');
+  disclaimer.textContent = '⚠️ Not financial advice · For informational purposes only';
+  disclaimer.style.cssText = 'font-size:11px;color:var(--faint);margin-top:20px';
+  wrap.append(signIn, disclaimer);
   document.body.appendChild(wrap);
 }
 

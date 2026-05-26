@@ -2,16 +2,16 @@
 Extended tests for routers/auth.py — focuses on the password reset flow.
 
 Endpoints tested:
-  - POST /api/auth/request-password-reset  (actually: /api/auth/forgot-password)
+  - POST /api/auth/forgot-password
   - POST /api/auth/reset-password
 
 Uses FastAPI TestClient with dependency_overrides[get_db].
-Does NOT modify existing test_routers_auth.py.
+Reset tokens are now DB-backed (PasswordResetToken table, SHA-256 hashed).
 """
 import sys
 import os
-import time
 import pytest
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -21,9 +21,9 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from routers.auth import router, _reset_tokens
+from routers.auth import router, _hash_token
 from database import get_db
-from models import User, RefreshToken
+from models import PasswordResetToken, User, RefreshToken
 
 # Isolated app for auth router tests
 app = FastAPI()
@@ -32,10 +32,19 @@ app.include_router(router, prefix="")
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+def _make_execute_result(value=None):
+    """Return a MagicMock whose .scalar_one_or_none() returns value."""
+    r = MagicMock()
+    r.scalar_one_or_none.return_value = value
+    return r
+
+
 @pytest.fixture
 def mock_db():
     """An AsyncMock that simulates an async SQLAlchemy session."""
-    return AsyncMock()
+    db = AsyncMock()
+    db.execute.return_value = _make_execute_result(None)
+    return db
 
 
 @pytest.fixture
@@ -62,16 +71,24 @@ def _mock_user(email="reset@example.com", password_hash="old_hash", user_id=42):
     )
 
 
+def _mock_reset_row(token: str, email: str, expired: bool = False, used: bool = False):
+    """Return a PasswordResetToken mock with correct hash and expiry."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    row = MagicMock(spec=PasswordResetToken)
+    row.token_hash = _hash_token(token)
+    row.email = email
+    row.expires_at = now - timedelta(seconds=10) if expired else now + timedelta(hours=1)
+    row.used = used
+    return row
+
+
 # ── forgot-password tests ─────────────────────────────────────────────────────
 
 class TestForgotPassword:
 
     def test_forgot_password_known_email_returns_200(self, client, mock_db):
-        """Known email stores a token and returns 200 with a generic message."""
         user = _mock_user()
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = user
-        mock_db.execute.return_value = result
+        mock_db.execute.return_value = _make_execute_result(user)
 
         with patch("services.email_svc.send_password_reset", new=AsyncMock()), \
              patch("routers.auth._secrets.token_urlsafe", return_value="TEST_TOKEN_ABC"):
@@ -82,173 +99,158 @@ class TestForgotPassword:
 
     def test_forgot_password_unknown_email_returns_200(self, client, mock_db):
         """Unknown email still returns 200 (prevents email enumeration)."""
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = result
+        mock_db.execute.return_value = _make_execute_result(None)
 
         resp = client.post("/api/auth/forgot-password", json={"email": "unknown@example.com"})
         assert resp.status_code == 200
         assert "message" in resp.json()
 
-    def test_forgot_password_stores_token_in_dict(self, client, mock_db):
-        """After a valid forgot-password call the token is stored in _reset_tokens."""
-        _reset_tokens.clear()
+    def test_forgot_password_adds_token_to_db(self, client, mock_db):
+        """After a valid forgot-password call, db.add is called with a PasswordResetToken."""
         user = _mock_user()
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = user
-        mock_db.execute.return_value = result
+        mock_db.execute.return_value = _make_execute_result(user)
 
         fixed_token = "FIXED_TOKEN_XYZ"
         with patch("services.email_svc.send_password_reset", new=AsyncMock()), \
              patch("routers.auth._secrets.token_urlsafe", return_value=fixed_token):
             client.post("/api/auth/forgot-password", json={"email": "reset@example.com"})
 
-        assert fixed_token in _reset_tokens
-        stored_email, _ = _reset_tokens[fixed_token]
-        assert stored_email == "reset@example.com"
+        assert mock_db.add.called
+        added = mock_db.add.call_args[0][0]
+        assert isinstance(added, PasswordResetToken)
+        assert added.token_hash == _hash_token(fixed_token)
+        assert added.email == "reset@example.com"
 
 
 # ── reset-password tests ───────────────────────────────────────────────────────
 
 class TestResetPassword:
 
-    def _seed_token(self, token: str, email: str, ttl_seconds: float = 3600):
-        _reset_tokens[token] = (email, time.time() + ttl_seconds)
-
-    def teardown_method(self, _method):
-        _reset_tokens.clear()
+    def _seed_token(self, mock_db, token: str, email: str,
+                    expired: bool = False, used: bool = False,
+                    user: User | None = None):
+        """Configure mock_db.execute to return a valid PasswordResetToken for this token,
+        then a user on the second execute call."""
+        row = _mock_reset_row(token, email, expired=expired, used=used)
+        if expired or used:
+            mock_db.execute.return_value = _make_execute_result(None)
+        else:
+            mock_db.execute.side_effect = [
+                _make_execute_result(row),                          # token lookup
+                _make_execute_result(user or _mock_user(email=email)),  # user lookup
+                MagicMock(),                                        # RefreshToken revoke UPDATE
+            ]
 
     def test_valid_token_resets_password(self, client, mock_db):
-        """Valid token + strong password → 200 and password hash updated."""
         token = "VALID_TOKEN_001"
-        self._seed_token(token, "reset@example.com")
-
-        user = _mock_user()
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = user
-        mock_db.execute.return_value = result
+        self._seed_token(mock_db, token, "reset@example.com")
 
         with patch("routers.auth.hash_password", return_value="new_hash"):
             resp = client.post("/api/auth/reset-password", json={
-                "token": token,
-                "new_password": "NewStr0ngPass!",
+                "token": token, "new_password": "NewStr0ngPass!",
             })
 
         assert resp.status_code == 200
         assert "successfully" in resp.json()["message"].lower()
 
     def test_valid_token_revokes_refresh_tokens(self, client, mock_db):
-        """On successful reset, update(RefreshToken) is called to revoke sessions."""
         token = "VALID_TOKEN_002"
-        self._seed_token(token, "reset@example.com")
-
-        user = _mock_user()
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = user
-        mock_db.execute.return_value = result
+        self._seed_token(mock_db, token, "reset@example.com")
 
         with patch("routers.auth.hash_password", return_value="new_hash"):
             resp = client.post("/api/auth/reset-password", json={
-                "token": token,
-                "new_password": "NewStr0ngPass!",
+                "token": token, "new_password": "NewStr0ngPass!",
             })
 
         assert resp.status_code == 200
-        # db.execute must have been called (for the UPDATE statement)
-        assert mock_db.execute.called
+        # db.execute called for: token lookup, user lookup, refresh token revoke
+        assert mock_db.execute.call_count >= 2
 
-    def test_token_consumed_after_use(self, client, mock_db):
-        """Token is deleted from _reset_tokens after a successful reset."""
+    def test_token_marked_used_after_reset(self, client, mock_db):
+        """row.used is set to True after a successful reset."""
         token = "ONE_TIME_TOKEN"
-        self._seed_token(token, "reset@example.com")
-
-        user = _mock_user()
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = user
-        mock_db.execute.return_value = result
+        row = _mock_reset_row(token, "reset@example.com")
+        mock_db.execute.side_effect = [
+            _make_execute_result(row),
+            _make_execute_result(_mock_user()),
+            MagicMock(),                        # RefreshToken revoke UPDATE
+        ]
 
         with patch("routers.auth.hash_password", return_value="new_hash"):
             client.post("/api/auth/reset-password", json={
-                "token": token,
-                "new_password": "NewStr0ngPass!",
+                "token": token, "new_password": "NewStr0ngPass!",
             })
 
-        assert token not in _reset_tokens
+        assert row.used is True
 
     def test_invalid_token_returns_400(self, client, mock_db):
         """Non-existent token → 400."""
+        mock_db.execute.return_value = _make_execute_result(None)
+
         resp = client.post("/api/auth/reset-password", json={
-            "token": "DOES_NOT_EXIST",
-            "new_password": "SomePassword1!",
+            "token": "DOES_NOT_EXIST", "new_password": "SomePassword1!",
         })
         assert resp.status_code == 400
-        assert "invalid" in resp.json()["detail"].lower() or "expired" in resp.json()["detail"].lower()
+        detail = resp.json()["detail"].lower()
+        assert "invalid" in detail or "expired" in detail
 
     def test_expired_token_returns_400(self, client, mock_db):
-        """Token that is past its expiry returns 400."""
-        token = "EXPIRED_TOKEN"
-        # Seed with a past timestamp (already expired)
-        _reset_tokens[token] = ("reset@example.com", time.time() - 10)
+        """Expired token is filtered by DB query → 400."""
+        # DB returns None because expires_at condition filters it out
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
         resp = client.post("/api/auth/reset-password", json={
-            "token": token,
-            "new_password": "SomePassword1!",
+            "token": "EXPIRED_TOKEN", "new_password": "SomePassword1!",
         })
         assert resp.status_code == 400
 
     def test_password_too_short_returns_400(self, client, mock_db):
-        """Password shorter than 8 characters → 400."""
         token = "SHORT_PW_TOKEN"
-        self._seed_token(token, "reset@example.com")
-
-        user = _mock_user()
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = user
-        mock_db.execute.return_value = result
+        row = _mock_reset_row(token, "reset@example.com")
+        mock_db.execute.side_effect = [
+            _make_execute_result(row),
+            _make_execute_result(_mock_user()),
+        ]
 
         resp = client.post("/api/auth/reset-password", json={
-            "token": token,
-            "new_password": "short",
+            "token": token, "new_password": "short",
         })
         assert resp.status_code == 400
         assert "8" in resp.json()["detail"]
 
     def test_user_not_found_returns_400(self, client, mock_db):
-        """Valid token but no matching user in DB → 400."""
         token = "NO_USER_TOKEN"
-        self._seed_token(token, "ghost@example.com")
-
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = result
+        row = _mock_reset_row(token, "ghost@example.com")
+        mock_db.execute.side_effect = [
+            _make_execute_result(row),
+            _make_execute_result(None),  # user not found
+        ]
 
         resp = client.post("/api/auth/reset-password", json={
-            "token": token,
-            "new_password": "ValidPass123!",
+            "token": token, "new_password": "ValidPass123!",
         })
         assert resp.status_code == 400
 
     def test_second_use_of_consumed_token_fails(self, client, mock_db):
-        """After a successful reset, reusing the same token should fail."""
+        """After a successful reset, reusing the same token fails (row.used=True filtered by DB)."""
         token = "REUSE_TOKEN"
-        self._seed_token(token, "reset@example.com")
-
-        user = _mock_user()
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = user
-        mock_db.execute.return_value = result
+        mock_db.execute.side_effect = [
+            _make_execute_result(_mock_reset_row(token, "reset@example.com")),
+            _make_execute_result(_mock_user()),
+            MagicMock(),                        # RefreshToken revoke UPDATE
+        ]
 
         with patch("routers.auth.hash_password", return_value="new_hash"):
             first = client.post("/api/auth/reset-password", json={
-                "token": token,
-                "new_password": "ValidPass123!",
+                "token": token, "new_password": "ValidPass123!",
             })
         assert first.status_code == 200
 
-        # Second use — token no longer in dict
+        # Second use — DB now returns None (row.used=True is filtered out)
+        mock_db.execute.side_effect = None
+        mock_db.execute.return_value = _make_execute_result(None)
         second = client.post("/api/auth/reset-password", json={
-            "token": token,
-            "new_password": "ValidPass123!",
+            "token": token, "new_password": "ValidPass123!",
         })
         assert second.status_code == 400
 
@@ -272,7 +274,6 @@ class TestAuthMiscEndpoints:
         app.dependency_overrides.clear()
 
     def test_register_short_password_422(self, client, mock_db):
-        """Password shorter than 8 chars → 422 validation error."""
         result = MagicMock()
         result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = result
@@ -285,7 +286,6 @@ class TestAuthMiscEndpoints:
         assert resp.status_code == 422
 
     def test_register_name_too_long_422(self, client, mock_db):
-        """Full name over 60 chars → 422 validation error."""
         result = MagicMock()
         result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = result
@@ -298,10 +298,8 @@ class TestAuthMiscEndpoints:
         assert resp.status_code == 422
 
     def test_login_inactive_account_403(self, client, mock_db):
-        """Login with inactive account → 403."""
         mock_user = _mock_user()
         mock_user.is_active = False
-
         result = MagicMock()
         result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = result
@@ -314,10 +312,8 @@ class TestAuthMiscEndpoints:
         assert resp.status_code == 403
 
     def test_login_unverified_email_403(self, client, mock_db):
-        """Login with unverified email → 403."""
         mock_user = _mock_user()
         mock_user.email_verified = False
-
         result = MagicMock()
         result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = result
@@ -328,15 +324,12 @@ class TestAuthMiscEndpoints:
                 "password": "correct_pass",
             })
         assert resp.status_code == 403
-        body = resp.json()
-        assert body["detail"]["code"] == "email_unverified"
+        assert resp.json()["detail"]["code"] == "email_unverified"
 
     def test_signal_prefs_update_valid(self, client, mock_db):
-        """PATCH /api/auth/signal-prefs with valid threshold."""
         from services.auth_svc import get_current_user
         mock_user = _mock_user()
         mock_user.min_confidence_override = None
-
         app.dependency_overrides[get_current_user] = lambda: mock_user
         mock_db.commit = AsyncMock()
 
@@ -344,7 +337,6 @@ class TestAuthMiscEndpoints:
         assert resp.status_code == 200
 
     def test_signal_prefs_out_of_range_400(self, client, mock_db):
-        """PATCH /api/auth/signal-prefs with confidence > 100 → 400."""
         from services.auth_svc import get_current_user
         mock_user = _mock_user()
         app.dependency_overrides[get_current_user] = lambda: mock_user
@@ -353,7 +345,6 @@ class TestAuthMiscEndpoints:
         assert resp.status_code == 400
 
     def test_signal_prefs_null_reverts_to_global(self, client, mock_db):
-        """PATCH /api/auth/signal-prefs with null → reverts to global."""
         from services.auth_svc import get_current_user
         mock_user = _mock_user()
         app.dependency_overrides[get_current_user] = lambda: mock_user

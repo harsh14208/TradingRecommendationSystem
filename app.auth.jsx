@@ -2,10 +2,13 @@
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
 /* ─── Auth helpers ─────────────────────────────────────────────────────────── */
-const AUTH_KEY = "st_auth_token";
-const getToken   = () => localStorage.getItem(AUTH_KEY);
-const saveToken  = t  => localStorage.setItem(AUTH_KEY, t);
-const clearToken = () => localStorage.removeItem(AUTH_KEY);
+// Access token stored in module memory only — never persisted to localStorage.
+// The HTTP-only refresh cookie provides persistence across page loads; the first
+// 401 triggers an automatic silent refresh before retrying the original request.
+let _accessToken = null;
+const getToken   = () => _accessToken;
+const saveToken  = t  => { _accessToken = t; };
+const clearToken = () => { _accessToken = null; };
 
 // Prevent concurrent refresh attempts from racing
 let _refreshPromise = null;
