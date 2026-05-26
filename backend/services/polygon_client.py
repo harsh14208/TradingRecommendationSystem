@@ -81,10 +81,7 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
                     return pd.DataFrame()
                 
                 df = pd.DataFrame(results)
-                # Convert ms timestamp to datetime and set as index
-                df["Datetime"] = pd.to_datetime(df["t"], unit="ms", utc=True)
-                # Convert to ET timezone exactly like yfinance does by default
-                df["Datetime"] = df["Datetime"].dt.tz_convert("America/New_York")
+                df.loc[:, "Datetime"] = pd.to_datetime(df["t"], unit="ms", utc=True).dt.tz_convert("America/New_York")
                 df.set_index("Datetime", inplace=True)
                 
                 # Rename to match yfinance output exactly
@@ -238,7 +235,7 @@ async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame 
                 if not results:
                     return pd.DataFrame()
                 df = pd.DataFrame(results)
-                df["Datetime"] = pd.to_datetime(df["t"], unit="ms", utc=True)
+                df.loc[:, "Datetime"] = pd.to_datetime(df["t"], unit="ms", utc=True)
                 df.set_index("Datetime", inplace=True)
                 df.rename(columns={"o": "Open", "h": "High", "l": "Low",
                                    "c": "Close", "v": "Volume"}, inplace=True)
