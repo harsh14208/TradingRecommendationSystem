@@ -28,17 +28,17 @@ def test_score_to_action():
     assert 40 <= conf <= 55
 
 def test_levels():
-    # High volatility swing (atr_pct=3%>2.5%): 1.5s/2.0t
+    # High volatility swing (atr_pct=3%>2.5%): 2.0s/2.5t (widened §31)
     entry, stop, tgt, rr = _levels(100.0, 3.0, "BUY")
     assert entry == 100.0
-    assert stop == 95.5    # 100 - 1.5*3
-    assert tgt == 106.0    # 100 + 2.0*3
+    assert stop == 94.0    # 100 - 2.0*3
+    assert tgt == 107.5    # 100 + 2.5*3
 
-    # Low volatility swing (atr_pct=0.5%<1.0%): 2.0s/2.5t (SELL)
+    # Low volatility swing (atr_pct=0.5%<1.0%): 2.5s/3.0t (SELL)
     entry, stop, tgt, rr = _levels(100.0, 0.5, "SELL")
     assert entry == 100.0
-    assert stop == 101.0   # 100 + 2.0*0.5
-    assert tgt == 98.75    # 100 - 2.5*0.5
+    assert stop == 101.25  # 100 + 2.5*0.5
+    assert tgt == 98.5     # 100 - 3.0*0.5
 
     # HOLD action
     entry, stop, tgt, rr = _levels(100.0, 2.0, "HOLD")

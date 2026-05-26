@@ -495,7 +495,7 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
         </div>
       </div>
       <div style={{ display:"flex", gap:0, borderBottom:"1px solid var(--line)", padding:"0 28px", background:"var(--bg-1)" }}>
-        {[["summary","Summary"],["sources","By Source"],["tickers","By Ticker"],["track","Track Record"],["corr","Correlation"],["calib","Calibration"],["decay","Alpha Decay"]].map(([id,label]) => (
+        {[["summary","Summary"],["sources","By Source"],["tickers","By Ticker"],["track","Track Record"],["corr","Correlation"],["calib","Calibration"],["decay","Alpha Decay"],["model","ML Model"]].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{ padding:"10px 14px", fontSize:11, fontFamily:"var(--font-mono)", fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", background:"none", border:"none", cursor:"pointer", borderBottom: tab===id ? "2px solid var(--accent)" : "2px solid transparent", color: tab===id ? "var(--accent)" : "var(--text-faint)", marginBottom:-1 }}>
             {label}
@@ -671,7 +671,98 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
             ) : <EmptyBt msg="No alpha decay data yet. Backfill outcomes first, then return here." />}
           </div>
         )}
+
+        {!loading && tab === "model" && <MLModelTab online={online}/>}
       </div>
+    </div>
+  );
+}
+
+/* ─── ML Model feature-importance tab ───────────────────────────────────────── */
+function MLModelTab({ online }) {
+  const [mlData, setMlData]   = useState(null);
+  const [mlLoad, setMlLoad]   = useState(false);
+  const [mlErr,  setMlErr]    = useState("");
+  const [training, setTraining] = useState(false);
+  const [trainMsg, setTrainMsg] = useState("");
+
+  useEffect(() => {
+    if (!online) return;
+    setMlLoad(true);
+    apiFetch("/api/ml/status")
+      .then(d => { setMlData(d); setMlLoad(false); })
+      .catch(() => { setMlErr("Could not load ML model status."); setMlLoad(false); });
+  }, [online]);
+
+  const triggerTrain = async () => {
+    setTraining(true); setTrainMsg("");
+    try {
+      const d = await apiFetch("/api/ml/train", { method:"POST" });
+      setMlData(d);
+      setTrainMsg("Model retrained successfully.");
+    } catch (e) {
+      setTrainMsg("Training failed — " + (e?.message || "check server logs"));
+    } finally { setTraining(false); }
+  };
+
+  if (mlLoad) return <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>Loading model status…</div>;
+  if (mlErr)  return <div style={{ padding:20, color:"var(--down)", fontSize:12 }}>{mlErr}</div>;
+  if (!mlData) return null;
+
+  const fi = mlData.feature_importances || [];
+  const maxImp = fi.length > 0 ? Math.max(...fi.map(f => f.importance || 0)) : 1;
+
+  return (
+    <div style={{ paddingTop:20, maxWidth:680 }}>
+      {/* ── Status header ── */}
+      <div style={{ display:"flex", gap:16, marginBottom:20, flexWrap:"wrap" }}>
+        {[
+          ["Status",      mlData.model_exists ? "Trained" : "Not trained", mlData.model_exists ? "var(--up)" : "var(--down)"],
+          ["Trained at",  mlData.trained_at ? mlData.trained_at.slice(0,16).replace("T"," ") : "—", "var(--text)"],
+          ["N signals",   mlData.n_signals ?? "—", "var(--text)"],
+          ["OOS WR",      mlData.oos_win_rate != null ? `${mlData.oos_win_rate.toFixed(1)}%` : "—", "var(--accent)"],
+          ["OOS P/F",     mlData.oos_profit_factor != null ? `${mlData.oos_profit_factor.toFixed(2)}×` : "—", "var(--accent)"],
+        ].map(([label, val, color]) => (
+          <div key={label} style={{ background:"var(--bg-1)", border:"1px solid var(--line)", borderRadius:8, padding:"10px 14px", minWidth:110 }}>
+            <div style={{ fontSize:9, fontFamily:"var(--font-mono)", color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:4 }}>{label}</div>
+            <div style={{ fontSize:15, fontWeight:700, color }}>{val}</div>
+          </div>
+        ))}
+        <button className="btn primary" onClick={triggerTrain} disabled={training}
+          style={{ fontSize:11, padding:"10px 16px", alignSelf:"flex-end" }}>
+          {training ? "Training…" : "Retrain"}
+        </button>
+      </div>
+      {trainMsg && <div style={{ fontSize:11, color: trainMsg.includes("fail") ? "var(--down)" : "var(--up)", marginBottom:12, fontFamily:"var(--font-mono)" }}>{trainMsg}</div>}
+
+      {/* ── Feature importances ── */}
+      {fi.length > 0 ? (
+        <div>
+          <div style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:12 }}>
+            Feature Importances (XGBoost gain)
+          </div>
+          {fi.slice(0, 20).map((f, i) => (
+            <div key={f.feature} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+              <div style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--text-faint)", width:14, textAlign:"right" }}>{i+1}</div>
+              <div style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--text)", width:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}
+                title={f.feature}>{f.feature}</div>
+              <div style={{ flex:1, height:8, background:"var(--bg-2)", borderRadius:4, overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${((f.importance || 0) / maxImp) * 100}%`,
+                  background: i < 5 ? "var(--accent)" : i < 10 ? "rgba(16,185,129,0.5)" : "var(--bg-card)",
+                  borderRadius:4, transition:"width 0.3s" }}/>
+              </div>
+              <div style={{ fontSize:10, fontFamily:"var(--font-mono)", color:"var(--text-faint)", width:50, textAlign:"right" }}>
+                {(f.importance || 0).toFixed(4)}
+              </div>
+            </div>
+          ))}
+          <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", marginTop:8 }}>
+            Top-20 of {fi.length} features · Green = top 5 · Dim = lower importance
+          </div>
+        </div>
+      ) : (
+        <EmptyBt msg={mlData.model_exists ? "Feature importances not recorded — retrain to generate." : "No model trained yet. Click Retrain after ≥50 resolved signals are available."}/>
+      )}
     </div>
   );
 }
