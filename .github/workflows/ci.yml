@@ -26,7 +26,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov pip-audit
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout pip-audit
 
       - name: Syntax check (all .py files)
         run: python3 -c "
@@ -47,23 +47,22 @@ jobs:
         run: python3 tests/test_imports_smoke.py
 
       - name: Unit tests
-        run: pytest tests/ -x -q --timeout=30 2>&1 | tail -20
+        run: pytest tests/ -x -q --timeout=30
 
       - name: Signal accuracy regression gate
         run: |
           # Only run if validate_predictions.py exists and DB has ≥30 resolved signals
-          python3 -c "
-          import sqlite3, sys, os
-          if not os.path.exists('trading.db'):
-              print('No DB found — skipping accuracy gate'); sys.exit(0)
-          conn = sqlite3.connect('trading.db')
-          n = conn.execute(\"SELECT COUNT(*) FROM signals WHERE outcome_pct IS NOT NULL\").fetchone()[0]
-          conn.close()
-          if n < 30:
-              print(f'Only {n} resolved signals — skipping accuracy gate (need ≥30)'); sys.exit(0)
-          print(f'{n} resolved signals — running accuracy gate')
-          " && python3 validate_predictions.py --gate-win-rate 0.52 --gate-sharpe 1.0 || echo "Accuracy gate: insufficient data or gate passed"
+          if [ ! -f trading.db ]; then
+            echo "No DB found — skipping accuracy gate"
+            exit 0
+          fi
+          resolved=$(python3 -c "import sqlite3; conn = sqlite3.connect('trading.db'); print(conn.execute('SELECT COUNT(*) FROM signals WHERE outcome_pct IS NOT NULL').fetchone()[0]); conn.close()")
+          if [ "$resolved" -lt 30 ]; then
+            echo "Only $resolved resolved signals — skipping accuracy gate (need ≥30)"
+            exit 0
+          fi
+          echo "$resolved resolved signals — running accuracy gate"
+          python3 validate_predictions.py --gate-win-rate 0.52 --gate-sharpe 1.0
 
       - name: Dependency security audit
-        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2022-42969 || true
-        # '|| true' so CVEs in transitive deps don't block CI; review output manually
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2022-42969
