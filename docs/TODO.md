@@ -163,10 +163,11 @@
 
 ### Pillar 3 — UI/UX
 
-- [x] **Custom screener builder (backend)** — 8 filter fields, 8 operators. Frontend UI pending.
+- [x] **Custom screener builder** — 8 filter fields, 8 operators. `ScreenerView` in `app.modals.jsx`: rule builder, preview against live signals, save/load/delete named presets, run saved presets. Sidebar entry under Configure.
 - [x] **DOM feed pagination hardening** — suppressed rows paginated 20 at a time.
-- [ ] **Chart drawing tools** — annotation layer above LightweightCharts (trend lines, rectangles). Most-requested feature.
-- [x] **Alert customisation UI (backend)** — `SignalAlert` model + CRUD router at `/api/alerts/signals/` (GET/POST/PATCH/DELETE). Per-ticker rule overrides global threshold; supports `action_filter` (BUY/SELL/any). Scanner fanout checks rules before delivery. 13 tests added. Frontend UI pending.
+- [x] **Chart drawing tools** — annotation layer above LightweightCharts: click to place horizontal price levels, right-click to remove nearest, localStorage persistence per ticker. Implemented in `app.ui.jsx`.
+- [x] **Alert customisation UI** — `AlertsView` in `app.modals.jsx`: add/edit/delete/pause per-ticker confidence + direction rules. Sidebar entry under Configure. Backend: `SignalAlert` model + CRUD router. Scanner fanout applies rules before delivery. 13 tests.
+- [x] **Chart drawing tools** — annotation layer above LightweightCharts: click to place horizontal price levels, right-click to remove nearest, localStorage persistence per ticker, draw-mode toggle + clear button toolbar. Implemented in `app.ui.jsx`.
 - [x] **Mobile-responsive main app** — 768px breakpoint with single-column layout, hidden sidebar, mobile-nav bottom bar (5 tabs), and tablet layout at 769–1024px already implemented in `styles.css:568-622` and `app.jsx:1477-1490`.
 
 ### Pillar 4 — Execution & Delivery Mechanics
@@ -199,7 +200,7 @@
 | **Confidence gap +11pp overconfident** | High | 🔄 Calibration tightened; monitor next training run |
 | **Default owner password in source** | Critical | ❌ Must change before first paid signup |
 | **Monolithic `run_scan`** | Medium | 🔄 Delivery gates done; full decomposition pending |
-| **Chart drawing tools missing** | High | ❌ Not implemented |
+| **Chart drawing tools missing** | High | ✅ Implemented: horizontal price levels, click/right-click, localStorage persistence |
 | **Autonomous execution** | Critical | ❌ Not started |
 | **Dividend ex-date trap** | Medium | ✅ MR entries hard-blocked via `corp_actions.ex_div_soon` gate (dark_pool.py + signal_engine.py:3336) |
 | **Post-earnings IV crush** | Medium | ✅ IV Rank flagging added: when `iv_rank > 70`, informational rationale card emitted (warns on expensive premium + IV crush risk near earnings) |

@@ -918,3 +918,452 @@ function TweaksPanel({ open, onClose, state, set }) {
     </div>
   );
 }
+
+/* ─── AlertsView — per-ticker signal alert rules ────────────────────────────── */
+function AlertsView({ open, onClose }) {
+  const [rules, setRules]       = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState("");
+  const [ticker, setTicker]     = useState("");
+  const [minConf, setMinConf]   = useState("70");
+  const [action, setAction]     = useState("any");
+  const [editId, setEditId]     = useState(null);
+  const [editConf, setEditConf] = useState("");
+  const [editAction, setEditAction] = useState("any");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await authFetch("/api/alerts/signals/");
+      const data = await res.json();
+      setRules(data.alerts || []);
+    } catch { setError("Could not load alerts."); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { if (open) { setError(""); load(); } }, [open]);
+
+  if (!open) return null;
+
+  const create = async () => {
+    const t = ticker.trim().toUpperCase();
+    if (!t || !/^[A-Z]{1,5}$/.test(t)) { setError("Invalid ticker (1–5 letters)."); return; }
+    const conf = parseFloat(minConf);
+    if (isNaN(conf) || conf < 0 || conf > 100) { setError("Confidence must be 0–100."); return; }
+    setSaving(true); setError("");
+    try {
+      const res = await authFetch("/api/alerts/signals/", {
+        method: "POST",
+        body: JSON.stringify({ ticker: t, min_confidence: conf, action_filter: action }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Could not create rule."); return; }
+      setRules(prev => [...prev, data.alert]);
+      setTicker(""); setMinConf("70"); setAction("any");
+    } catch { setError("Network error."); }
+    finally { setSaving(false); }
+  };
+
+  const saveEdit = async (id) => {
+    const conf = parseFloat(editConf);
+    if (isNaN(conf) || conf < 0 || conf > 100) { setError("Confidence must be 0–100."); return; }
+    setSaving(true); setError("");
+    try {
+      const res = await authFetch(`/api/alerts/signals/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ min_confidence: conf, action_filter: editAction }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Could not update rule."); return; }
+      setRules(prev => prev.map(r => r.id === id ? data.alert : r));
+      setEditId(null);
+    } catch { setError("Network error."); }
+    finally { setSaving(false); }
+  };
+
+  const toggleActive = async (rule) => {
+    try {
+      const res = await authFetch(`/api/alerts/signals/${rule.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: !rule.is_active }),
+      });
+      const data = await res.json();
+      if (res.ok) setRules(prev => prev.map(r => r.id === rule.id ? data.alert : r));
+    } catch {}
+  };
+
+  const deleteRule = async (id) => {
+    try {
+      await authFetch(`/api/alerts/signals/${id}`, { method: "DELETE" });
+      setRules(prev => prev.filter(r => r.id !== id));
+    } catch {}
+  };
+
+  const inputS = { background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:6, padding:"7px 10px",
+    fontSize:12, color:"var(--text)", outline:"none", fontFamily:"var(--font-mono)" };
+  const selS = { ...inputS };
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose}>
+      <div style={{ maxWidth:640, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:20, lineHeight:1, padding:0 }}>←</button>
+          <h2 style={{ fontSize:18, fontWeight:700, margin:0 }}>Per-Ticker Alert Rules</h2>
+        </div>
+        <p style={{ fontSize:12, color:"var(--text-faint)", marginBottom:24, lineHeight:1.6 }}>
+          Override the global confidence threshold for specific tickers. When a rule matches, only signals above
+          your rule's threshold and matching the direction filter will be delivered.
+        </p>
+
+        {/* ── Add rule form ── */}
+        <div style={{ background:"var(--bg-1)", border:"1px solid var(--line)", borderRadius:10, padding:"16px 18px", marginBottom:20 }}>
+          <div style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:12 }}>
+            Add Rule
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
+            <div style={{ flex:"0 0 90px" }}>
+              <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", marginBottom:4 }}>TICKER</div>
+              <input value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())}
+                placeholder="AAPL" maxLength={5}
+                onKeyDown={e => { if (e.key === "Enter") create(); }}
+                style={{ ...inputS, width:"100%", textTransform:"uppercase" }}/>
+            </div>
+            <div style={{ flex:"0 0 110px" }}>
+              <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", marginBottom:4 }}>MIN CONF %</div>
+              <input type="number" min={0} max={100} value={minConf}
+                onChange={e => setMinConf(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") create(); }}
+                style={{ ...inputS, width:"100%" }}/>
+            </div>
+            <div style={{ flex:"0 0 100px" }}>
+              <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", marginBottom:4 }}>DIRECTION</div>
+              <select value={action} onChange={e => setAction(e.target.value)} style={{ ...selS, width:"100%" }}>
+                <option value="any">Any</option>
+                <option value="BUY">BUY only</option>
+                <option value="SELL">SELL only</option>
+              </select>
+            </div>
+            <button className="btn primary" onClick={create} disabled={saving}
+              style={{ padding:"7px 14px", fontSize:12, flexShrink:0 }}>
+              {saving ? "…" : "+ Add"}
+            </button>
+          </div>
+          {error && <div style={{ fontSize:11, color:"var(--down)", marginTop:8, fontFamily:"var(--font-mono)" }}>{error}</div>}
+        </div>
+
+        {/* ── Rule list ── */}
+        {loading ? (
+          <div style={{ textAlign:"center", color:"var(--text-faint)", fontSize:12, padding:20 }}>Loading…</div>
+        ) : rules.length === 0 ? (
+          <div style={{ textAlign:"center", color:"var(--text-faint)", fontSize:12, padding:20 }}>
+            No rules yet. Add one above to override the global threshold for specific tickers.
+          </div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {rules.map(rule => (
+              <div key={rule.id} style={{ background:"var(--bg-1)", border:`1px solid ${rule.is_active ? "var(--line)" : "var(--bg-2)"}`,
+                borderRadius:8, padding:"12px 14px", display:"flex", alignItems:"center", gap:10,
+                opacity: rule.is_active ? 1 : 0.55 }}>
+                <div style={{ fontFamily:"var(--font-mono)", fontWeight:700, fontSize:14, color:"var(--text)", width:50 }}>
+                  {rule.ticker}
+                </div>
+                {editId === rule.id ? (
+                  <>
+                    <input type="number" min={0} max={100} value={editConf}
+                      onChange={e => setEditConf(e.target.value)}
+                      style={{ ...inputS, width:70, padding:"4px 8px" }}/>
+                    <select value={editAction} onChange={e => setEditAction(e.target.value)}
+                      style={{ ...selS, padding:"4px 8px" }}>
+                      <option value="any">Any</option>
+                      <option value="BUY">BUY</option>
+                      <option value="SELL">SELL</option>
+                    </select>
+                    <button className="btn primary" onClick={() => saveEdit(rule.id)} disabled={saving}
+                      style={{ fontSize:11, padding:"4px 10px" }}>Save</button>
+                    <button className="btn ghost" onClick={() => setEditId(null)}
+                      style={{ fontSize:11, padding:"4px 10px" }}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ flex:1, display:"flex", gap:8, alignItems:"center" }}>
+                      <span style={{ fontSize:12, fontFamily:"var(--font-mono)", color:"var(--accent)", fontWeight:600 }}>
+                        ≥{rule.min_confidence}%
+                      </span>
+                      <span style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--text-faint)",
+                        background:"var(--bg-2)", padding:"2px 7px", borderRadius:4 }}>
+                        {rule.action_filter === "any" ? "ANY" : rule.action_filter}
+                      </span>
+                      {!rule.is_active && (
+                        <span style={{ fontSize:10, fontFamily:"var(--font-mono)", color:"var(--text-faint)" }}>PAUSED</span>
+                      )}
+                    </div>
+                    <button title="Edit" onClick={() => { setEditId(rule.id); setEditConf(String(rule.min_confidence)); setEditAction(rule.action_filter); }}
+                      style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:14, padding:0 }}>✏</button>
+                    <button title={rule.is_active ? "Pause rule" : "Resume rule"} onClick={() => toggleActive(rule)}
+                      style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:14, padding:0 }}>
+                      {rule.is_active ? "⏸" : "▶"}
+                    </button>
+                    <button title="Delete rule" onClick={() => deleteRule(rule.id)}
+                      style={{ background:"none", border:"none", color:"var(--down)", cursor:"pointer", fontSize:14, padding:0 }}>✕</button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── ScreenerView — custom signal screener builder ─────────────────────────── */
+const _SCREENER_FIELDS = [
+  { value:"confidence",  label:"Confidence %",    type:"number" },
+  { value:"sentiment",   label:"Sentiment score", type:"number" },
+  { value:"rr",         label:"R:R ratio",        type:"number" },
+  { value:"n_sources",  label:"# Sources",        type:"number" },
+  { value:"action",     label:"Action",           type:"choice", choices:["BUY","SELL","HOLD"] },
+  { value:"style",      label:"Style",            type:"choice", choices:["swing","position"] },
+  { value:"ticker",     label:"Ticker",           type:"text" },
+  { value:"has_source", label:"Has source",       type:"text" },
+];
+const _OPS_FOR = {
+  number: [["gt",">"],["gte","≥"],["lt","<"],["lte","≤"],["eq","="],["neq","≠"]],
+  choice: [["eq","="],["neq","≠"],["in","in"]],
+  text:   [["eq","="],["neq","≠"],["contains","contains"]],
+};
+
+function ScreenerView({ open, onClose }) {
+  const [presets,  setPresets]  = useState([]);
+  const [name,     setName]     = useState("");
+  const [rules,    setRules]    = useState([{ field:"confidence", op:"gte", value:"70" }]);
+  const [results,  setResults]  = useState(null);
+  const [loading,  setLoading]  = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState("");
+  const [activePreset, setActivePreset] = useState(null);
+
+  const loadPresets = async () => {
+    try {
+      const res = await authFetch("/api/screener");
+      const data = await res.json();
+      setPresets(Array.isArray(data) ? data : []);
+    } catch {}
+  };
+
+  useEffect(() => { if (open) { setError(""); setResults(null); loadPresets(); } }, [open]);
+
+  if (!open) return null;
+
+  const addRule = () => setRules(prev => [...prev, { field:"confidence", op:"gte", value:"70" }]);
+  const removeRule = (i) => setRules(prev => prev.filter((_, idx) => idx !== i));
+  const updateRule = (i, patch) => setRules(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+
+  const parseValue = (field, op, raw) => {
+    const fdef = _SCREENER_FIELDS.find(f => f.value === field);
+    if (!fdef) return raw;
+    if (fdef.type === "number") {
+      const n = parseFloat(raw);
+      return isNaN(n) ? raw : n;
+    }
+    if (op === "in") return raw.split(",").map(s => s.trim()).filter(Boolean);
+    return raw;
+  };
+
+  const buildPayload = () => ({
+    name: name.trim() || "Unnamed",
+    rules: rules.map(r => ({ field: r.field, op: r.op, value: parseValue(r.field, r.op, r.value) })),
+  });
+
+  const preview = async () => {
+    setLoading(true); setError(""); setResults(null);
+    try {
+      const res = await authFetch("/api/screener/preview", { method:"POST", body: JSON.stringify(buildPayload()) });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Preview failed."); return; }
+      setResults(data);
+    } catch { setError("Network error."); }
+    finally { setLoading(false); }
+  };
+
+  const save = async () => {
+    const n = name.trim();
+    if (!n) { setError("Enter a screener name first."); return; }
+    setSaving(true); setError("");
+    try {
+      const res = await authFetch("/api/screener", { method:"POST", body: JSON.stringify(buildPayload()) });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Save failed."); return; }
+      await loadPresets();
+    } catch { setError("Network error."); }
+    finally { setSaving(false); }
+  };
+
+  const runPreset = async (pname) => {
+    setLoading(true); setError(""); setResults(null); setActivePreset(pname);
+    try {
+      const res = await authFetch(`/api/screener/${encodeURIComponent(pname)}/run`);
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Run failed."); return; }
+      setResults(data);
+    } catch { setError("Network error."); }
+    finally { setLoading(false); }
+  };
+
+  const deletePreset = async (pname) => {
+    try {
+      await authFetch(`/api/screener/${encodeURIComponent(pname)}`, { method:"DELETE" });
+      if (activePreset === pname) { setResults(null); setActivePreset(null); }
+      await loadPresets();
+    } catch {}
+  };
+
+  const loadPresetIntoEditor = (preset) => {
+    setName(preset.name);
+    setRules(preset.rules.map(r => ({ ...r, value: Array.isArray(r.value) ? r.value.join(", ") : String(r.value) })));
+    setResults(null);
+  };
+
+  const inputS = { background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:5, padding:"6px 9px",
+    fontSize:12, color:"var(--text)", outline:"none", fontFamily:"var(--font-mono)" };
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose}>
+      <div style={{ maxWidth:740, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:20, lineHeight:1, padding:0 }}>←</button>
+          <h2 style={{ fontSize:18, fontWeight:700, margin:0 }}>Custom Screener</h2>
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"220px 1fr", gap:20 }}>
+          {/* ── Saved presets panel ── */}
+          <div>
+            <div style={{ fontSize:10, fontFamily:"var(--font-mono)", color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:10 }}>
+              Saved Screeners
+            </div>
+            {presets.length === 0 ? (
+              <div style={{ fontSize:11, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>None saved yet.</div>
+            ) : presets.map(p => (
+              <div key={p.name} style={{ background:"var(--bg-1)", border:"1px solid var(--line)", borderRadius:7, padding:"8px 10px",
+                marginBottom:6, display:"flex", alignItems:"center", gap:6 }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:12, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</div>
+                  <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>{p.rules.length} rule{p.rules.length !== 1 ? "s" : ""}</div>
+                </div>
+                <button title="Run" onClick={() => runPreset(p.name)}
+                  style={{ background:"none", border:"none", color:"var(--accent)", cursor:"pointer", fontSize:13, padding:0 }}>▶</button>
+                <button title="Load into editor" onClick={() => loadPresetIntoEditor(p)}
+                  style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:13, padding:0 }}>✏</button>
+                <button title="Delete" onClick={() => deletePreset(p.name)}
+                  style={{ background:"none", border:"none", color:"var(--down)", cursor:"pointer", fontSize:13, padding:0 }}>✕</button>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Builder ── */}
+          <div>
+            <div style={{ fontSize:10, fontFamily:"var(--font-mono)", color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:10 }}>
+              Builder (AND logic — all rules must pass)
+            </div>
+
+            <div style={{ marginBottom:10 }}>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Screener name"
+                style={{ ...inputS, width:"100%", marginBottom:8 }}/>
+            </div>
+
+            {rules.map((rule, i) => {
+              const fdef = _SCREENER_FIELDS.find(f => f.value === rule.field) || _SCREENER_FIELDS[0];
+              const ops  = _OPS_FOR[fdef.type] || _OPS_FOR.text;
+              return (
+                <div key={i} style={{ display:"flex", gap:6, marginBottom:8, alignItems:"center" }}>
+                  <select value={rule.field} onChange={e => {
+                    const newField = e.target.value;
+                    const newFdef  = _SCREENER_FIELDS.find(f => f.value === newField);
+                    const newOps   = _OPS_FOR[newFdef?.type || "text"];
+                    const defaultOp = newOps[0][0];
+                    const defaultVal = newFdef?.type === "number" ? "70" : (newFdef?.choices?.[0] || "");
+                    updateRule(i, { field: newField, op: defaultOp, value: defaultVal });
+                  }} style={{ ...inputS, flex:"0 0 140px" }}>
+                    {_SCREENER_FIELDS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  </select>
+                  <select value={rule.op} onChange={e => updateRule(i, { op: e.target.value })}
+                    style={{ ...inputS, flex:"0 0 90px" }}>
+                    {ops.map(([val, lbl]) => <option key={val} value={val}>{lbl}</option>)}
+                  </select>
+                  {fdef.type === "choice" && rule.op !== "in" ? (
+                    <select value={rule.value} onChange={e => updateRule(i, { value: e.target.value })}
+                      style={{ ...inputS, flex:1 }}>
+                      {fdef.choices.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  ) : (
+                    <input value={rule.value} onChange={e => updateRule(i, { value: e.target.value })}
+                      placeholder={rule.op === "in" ? "comma-separated" : fdef.type === "number" ? "number" : "text"}
+                      style={{ ...inputS, flex:1 }}/>
+                  )}
+                  <button onClick={() => removeRule(i)} disabled={rules.length === 1}
+                    style={{ background:"none", border:"none", color:"var(--down)", cursor:"pointer", fontSize:16, padding:0 }}>✕</button>
+                </div>
+              );
+            })}
+
+            <button className="btn ghost" onClick={addRule} style={{ fontSize:11, padding:"5px 12px", marginBottom:14 }}>
+              + Add rule
+            </button>
+
+            {error && <div style={{ fontSize:11, color:"var(--down)", fontFamily:"var(--font-mono)", marginBottom:8 }}>{error}</div>}
+
+            <div style={{ display:"flex", gap:8 }}>
+              <button className="btn ghost" onClick={preview} disabled={loading}
+                style={{ fontSize:12, padding:"8px 16px" }}>
+                {loading ? "Running…" : "Preview"}
+              </button>
+              <button className="btn primary" onClick={save} disabled={saving}
+                style={{ fontSize:12, padding:"8px 16px" }}>
+                {saving ? "Saving…" : "Save screener"}
+              </button>
+            </div>
+
+            {/* ── Results ── */}
+            {results && (
+              <div style={{ marginTop:20 }}>
+                <div style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--text-faint)", marginBottom:10 }}>
+                  {activePreset ? `"${activePreset}" · ` : ""}{results.matched} signal{results.matched !== 1 ? "s" : ""} matched
+                </div>
+                {(results.signals || []).length === 0 ? (
+                  <div style={{ fontSize:11, color:"var(--text-faint)" }}>No signals match these rules right now.</div>
+                ) : (
+                  <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                    {(results.signals || []).map(sig => (
+                      <div key={sig.id} style={{ background:"var(--bg-1)", border:"1px solid var(--line)", borderRadius:7,
+                        padding:"10px 12px", display:"flex", gap:10, alignItems:"center" }}>
+                        <span style={{ fontFamily:"var(--font-mono)", fontWeight:700, fontSize:13, color:"var(--text)", width:45 }}>
+                          {sig.ticker}
+                        </span>
+                        <span style={{ fontSize:11, fontFamily:"var(--font-mono)", fontWeight:700,
+                          color: sig.action === "BUY" ? "var(--up)" : sig.action === "SELL" ? "var(--down)" : "var(--text-faint)" }}>
+                          {sig.action}
+                        </span>
+                        <span style={{ fontSize:12, fontFamily:"var(--font-mono)", color:"var(--accent)", fontWeight:600 }}>
+                          {sig.confidence}%
+                        </span>
+                        <span style={{ flex:1, fontSize:11, color:"var(--text-faint)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {sig.headline}
+                        </span>
+                        {sig.price != null && (
+                          <span style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--text-faint)", flexShrink:0 }}>
+                            ${sig.price.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -758,6 +758,15 @@ function App() {
           <Icon name="rules" size={15}/>
           <span>Rules &amp; filters</span>
         </div>
+        <div className={`nav-item ${nav==="alerts"?"active":""}`} onClick={() => setNav("alerts")}>
+          <Icon name="bell" size={15}/>
+          <span>Alert rules</span>
+          {/* per-ticker alert count badge rendered when rules exist */}
+        </div>
+        <div className={`nav-item ${nav==="screener"?"active":""}`} onClick={() => setNav("screener")}>
+          <Icon name="filter" size={15}/>
+          <span>Screener</span>
+        </div>
         <div className="nav-item" style={{ gap:6, cursor:"default" }}>
           <Icon name="slider" size={15}/>
           <span style={{ flex:1 }}>Threshold</span>
@@ -1465,6 +1474,8 @@ function App() {
         <CalendarView open={nav==="calendar"} onClose={() => setNav("feed")}/>
         <PaperView open={nav==="paper"} onClose={() => setNav("feed")} online={online}/>
         <HistoryView open={nav==="history"} onClose={() => setNav("feed")} online={online}/>
+        <AlertsView open={nav==="alerts"} onClose={() => setNav("feed")}/>
+        <ScreenerView open={nav==="screener"} onClose={() => setNav("feed")}/>
         <BacktestView open={nav==="backtest"} onClose={() => setNav("feed")} online={online}
           btCache={btCacheRef.current}
           onBtCache={d => { btCacheRef.current = d; }}/>
