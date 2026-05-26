@@ -14,7 +14,7 @@ log = logging.getLogger("scanner")
 import aiohttp
 
 from database import AsyncSessionLocal
-from models import AppSettings, SendLog, Signal, SignalDelivery, User
+from models import AppSettings, SendLog, Signal, SignalAlert, SignalDelivery, User
 from services.aaii import get_aaii_sentiment
 from services.breadth import get_market_breadth
 from services.cot import get_cot_signal
@@ -98,6 +98,16 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
         )).scalars().all()
         delivered_user_ids = set(rows)
 
+    # Load per-ticker signal alert rules for this ticker → {user_id: SignalAlert}
+    ticker = sig_dict.get("ticker", "")
+    _alert_rows = (await db.execute(
+        select(SignalAlert).where(
+            SignalAlert.ticker == ticker,
+            SignalAlert.is_active == True,
+        )
+    )).scalars().all()
+    ticker_rules: dict[int, SignalAlert] = {a.user_id: a for a in _alert_rows}
+
     message_text = format_signal(sig_dict)
     url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
     any_success = False
@@ -111,11 +121,22 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
             if user.telegram_chat_id in sent_chat_ids:
                 log.info(f" [fanout] skipped user={user.id} — chat {user.telegram_chat_id} already received this signal")
                 continue
-            # Apply per-user confidence threshold (falls back to global setting)
-            user_min = user.min_confidence_override if user.min_confidence_override is not None else global_min_conf
-            if sig_dict.get("confidence", 0) < user_min:
-                log.info(f" [fanout] user={user.id} threshold {user_min:.0f}% > conf {sig_dict['confidence']:.0f}% — skipped")
-                continue
+            # Per-ticker signal alert rules override the global confidence threshold.
+            # If the user has an active rule for this ticker, apply it; otherwise
+            # fall back to the user's global override or the system default.
+            rule = ticker_rules.get(user.id)
+            if rule is not None:
+                if sig_dict.get("confidence", 0) < rule.min_confidence:
+                    log.info(f" [fanout] user={user.id} ticker rule {ticker}>={rule.min_confidence:.0f}% not met — skipped")
+                    continue
+                if rule.action_filter != "any" and sig_dict.get("action") != rule.action_filter:
+                    log.info(f" [fanout] user={user.id} ticker rule action_filter={rule.action_filter} != {sig_dict.get('action')} — skipped")
+                    continue
+            else:
+                user_min = user.min_confidence_override if user.min_confidence_override is not None else global_min_conf
+                if sig_dict.get("confidence", 0) < user_min:
+                    log.info(f" [fanout] user={user.id} threshold {user_min:.0f}% > conf {sig_dict['confidence']:.0f}% — skipped")
+                    continue
             try:
                 resp = await session.post(url, json={
                     "chat_id": user.telegram_chat_id,

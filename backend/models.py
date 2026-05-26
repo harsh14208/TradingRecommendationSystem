@@ -187,6 +187,25 @@ class PasswordResetToken(Base):
     created_at  = Column(DateTime, server_default=func.now())
 
 
+class SignalAlert(Base):
+    """Per-ticker signal confidence alert rules.
+
+    Overrides the user's global min_confidence_override for a specific ticker.
+    When a signal for `ticker` is generated:
+      - If the user has a matching active SignalAlert, the rule's min_confidence
+        and action_filter are used instead of the global threshold.
+      - action_filter "any" matches both BUY and SELL.
+    """
+    __tablename__ = "signal_alerts"
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    user_id        = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    ticker         = Column(String(10), nullable=False, index=True)
+    min_confidence = Column(Float, nullable=False)       # 0–100
+    action_filter  = Column(String(10), default="any")   # "BUY", "SELL", or "any"
+    is_active      = Column(Boolean, default=True)
+    created_at     = Column(DateTime, server_default=func.now())
+
+
 class PerformanceSnapshot(Base):
     """Immutable point-in-time record of system performance metrics.
 

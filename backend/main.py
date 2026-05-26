@@ -67,11 +67,12 @@ from routers.signals import router as signals_router
 from routers.sources import router as sources_router
 from routers.paper_router import router as paper_router
 from routers.price_alerts import router as price_alerts_router
+from routers.signal_alerts import router as signal_alerts_router
 from routers.telegram_webhook import router as telegram_webhook_router
 from routers.watchlist_router import router as watchlist_router
 from routers.websocket_router import manager, router as ws_router
 from routers.delivery_router import router as delivery_router
-from services.scanner import get_scan_status, run_scan, _alert_telegram
+from services.scanner import get_scan_status, run_scan, _alert_telegram, _data_quality
 from services.auth_svc import get_current_user
 from models import User
 from services import alpaca_ws
@@ -1037,6 +1038,7 @@ app.include_router(market_router)
 app.include_router(watchlist_router)
 app.include_router(paper_router)
 app.include_router(price_alerts_router)
+app.include_router(signal_alerts_router)
 app.include_router(ws_router)
 app.include_router(screener_router)
 
@@ -1060,12 +1062,18 @@ async def health_check():
             for name, entry in _bg_tasks.items()
         }
         degraded = [n for n, e in bg_status.items() if not e["alive"] and e["status"] not in ("done", "cancelled", "starting")]
+        # Data-quality counters: tickers with consecutive null fetches ≥ 1
+        data_quality_alerts = {t: n for t, n in _data_quality.items() if n > 0}
         return {
             "status": "degraded" if degraded else "ok",
             "db": "connected",
             "scan": scan,
             "background_tasks": bg_status,
             "degraded_tasks": degraded,
+            "data_quality": {
+                "null_streak_by_ticker": data_quality_alerts,
+                "degraded_tickers": [t for t, n in data_quality_alerts.items() if n >= 5],
+            },
             "ts": datetime.now(_tz.utc).isoformat(),
         }
     except Exception as e:

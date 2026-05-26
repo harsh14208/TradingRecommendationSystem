@@ -177,13 +177,29 @@ function InfoPop({ title, children }) {
 /* ─── Interactive OHLCV Chart (LightweightCharts v4) ────────────────────────── */
 const PERIOD_API = { "1D": "1d", "5D": "5d", "1M": "1mo", "3M": "3mo", "1Y": "1y" };
 
+// ── Drawing tools helpers ─────────────────────────────────────────────────────
+const _DRAW_KEY = ticker => `chart_drawings_v1_${ticker}`;
+
+function _loadDrawings(ticker) {
+  try { return JSON.parse(localStorage.getItem(_DRAW_KEY(ticker)) || "[]"); }
+  catch { return []; }
+}
+function _saveDrawings(ticker, prices) {
+  try { localStorage.setItem(_DRAW_KEY(ticker), JSON.stringify(prices)); }
+  catch {}
+}
+
 function Chart({ signal, style, period = "3M" }) {
   const containerRef = useRef(null);
   const chartRef     = useRef(null);
+  const priceSeriesRef = useRef(null);
+  const priceLinesRef  = useRef([]);   // [{price, lineObj}]
   const [ohlcv,        setOhlcv]       = useState(null);
   const [loading,      setLoading]     = useState(true);
   const [error,        setError]       = useState(false);
   const [needsUpgrade, setNeedsUpgrade] = useState(false);
+  const [drawMode,    setDrawMode]    = useState(false);
+  const [lineCount,   setLineCount]   = useState(0);  // triggers re-render on change
 
   useEffect(() => {
     if (!signal?.ticker) return;
@@ -311,17 +327,117 @@ function Chart({ signal, style, period = "3M" }) {
     })));
 
     chart.timeScale().fitContent();
-    chartRef.current = chart;
+    chartRef.current  = chart;
+    priceSeriesRef.current = priceSeries;
+    priceLinesRef.current  = [];
+
+    // Restore saved drawings for this ticker
+    const ticker = signal?.ticker || "";
+    const savedPrices = _loadDrawings(ticker);
+    savedPrices.forEach(price => {
+      const lineObj = priceSeries.createPriceLine({
+        price, color: "#a78bfa", lineWidth: 1, lineStyle: 2,
+        axisLabelVisible: true, title: "─",
+      });
+      priceLinesRef.current.push({ price, lineObj });
+    });
+    setLineCount(savedPrices.length);
 
     const ro = new ResizeObserver(() => {
       if (chartRef.current) chartRef.current.applyOptions({ width: el.clientWidth });
     });
     ro.observe(el);
-    return () => { ro.disconnect(); if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; } };
+    return () => {
+      ro.disconnect();
+      if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
+      priceSeriesRef.current = null;
+      priceLinesRef.current  = [];
+    };
   }, [ohlcv, style, period, signal?.entry, signal?.stop, signal?.target, signal?.change]);
+
+  // Drawing tool handlers
+  const handleChartClick = e => {
+    if (!drawMode || !priceSeriesRef.current || !chartRef.current) return;
+    const rect  = e.currentTarget.getBoundingClientRect();
+    const y     = e.clientY - rect.top;
+    const price = priceSeriesRef.current.coordinateToPrice(y);
+    if (price == null) return;
+    const rounded = +price.toFixed(2);
+    const lineObj = priceSeriesRef.current.createPriceLine({
+      price: rounded, color: "#a78bfa", lineWidth: 1, lineStyle: 2,
+      axisLabelVisible: true, title: "─",
+    });
+    const updated = [...priceLinesRef.current, { price: rounded, lineObj }];
+    priceLinesRef.current = updated;
+    _saveDrawings(signal?.ticker || "", updated.map(l => l.price));
+    setLineCount(updated.length);
+  };
+
+  const handleChartRightClick = e => {
+    e.preventDefault();
+    if (!priceSeriesRef.current || priceLinesRef.current.length === 0) return;
+    const rect  = e.currentTarget.getBoundingClientRect();
+    const y     = e.clientY - rect.top;
+    const clickPrice = priceSeriesRef.current.coordinateToPrice(y);
+    if (clickPrice == null) return;
+    // Remove the price line closest to the right-click y position
+    let closest = null, minDist = Infinity;
+    priceLinesRef.current.forEach(l => {
+      const d = Math.abs(l.price - clickPrice);
+      if (d < minDist) { minDist = d; closest = l; }
+    });
+    if (closest && minDist < Math.abs(clickPrice) * 0.02) {
+      priceSeriesRef.current.removePriceLine(closest.lineObj);
+      priceLinesRef.current = priceLinesRef.current.filter(l => l !== closest);
+      _saveDrawings(signal?.ticker || "", priceLinesRef.current.map(l => l.price));
+      setLineCount(priceLinesRef.current.length);
+    }
+  };
+
+  const clearDrawings = () => {
+    if (!priceSeriesRef.current) return;
+    priceLinesRef.current.forEach(l => priceSeriesRef.current.removePriceLine(l.lineObj));
+    priceLinesRef.current = [];
+    _saveDrawings(signal?.ticker || "", []);
+    setLineCount(0);
+  };
 
   return (
     <div style={{ position:"relative", width:"100%" }}>
+      {/* Drawing toolbar */}
+      {!loading && !needsUpgrade && !error && (
+        <div style={{ display:"flex", gap:6, marginBottom:4, alignItems:"center" }}>
+          <button
+            onClick={() => setDrawMode(m => !m)}
+            title={drawMode ? "Click chart to place level · Right-click to remove" : "Toggle draw mode"}
+            style={{
+              padding:"2px 8px", fontSize:10, fontFamily:"var(--font-mono)",
+              background: drawMode ? "var(--accent)" : "var(--bg-1)",
+              color: drawMode ? "#fff" : "var(--text-dim)",
+              border: "1px solid " + (drawMode ? "var(--accent)" : "var(--line)"),
+              borderRadius:4, cursor:"pointer", letterSpacing:"0.05em",
+            }}>
+            {drawMode ? "✏ DRAWING" : "✏ DRAW"}
+          </button>
+          {lineCount > 0 && (
+            <button
+              onClick={clearDrawings}
+              title="Clear all drawn levels"
+              style={{
+                padding:"2px 8px", fontSize:10, fontFamily:"var(--font-mono)",
+                background:"var(--bg-1)", color:"var(--text-faint)",
+                border:"1px solid var(--line)", borderRadius:4, cursor:"pointer",
+              }}>
+              CLEAR ({lineCount})
+            </button>
+          )}
+          {drawMode && (
+            <span style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>
+              click = add · right-click = remove
+            </span>
+          )}
+        </div>
+      )}
       {loading && (
         <div style={{ position:"absolute", inset:0, display:"grid", placeItems:"center",
           color:"var(--text-faint)", fontSize:11, zIndex:2, pointerEvents:"none" }}>
@@ -350,8 +466,16 @@ function Chart({ signal, style, period = "3M" }) {
           Chart data unavailable
         </div>
       )}
-      <div ref={containerRef} style={{ width:"100%", height:300,
-        opacity: loading ? 0.2 : 1, transition:"opacity 0.2s" }}/>
+      <div
+        ref={containerRef}
+        onClick={handleChartClick}
+        onContextMenu={handleChartRightClick}
+        style={{
+          width:"100%", height:300,
+          opacity: loading ? 0.2 : 1, transition:"opacity 0.2s",
+          cursor: drawMode ? "crosshair" : "default",
+        }}
+      />
     </div>
   );
 }

@@ -61,8 +61,7 @@ async function verify() {
     const data = await res.json();
 
     if (res.ok && data.access_token) {
-      // Success — store token and go to dashboard
-      localStorage.setItem('st_auth_token', data.access_token);
+      // Success — refresh cookie is set by the server; redirect to dashboard
       showSuccess(data.user?.email || '');
       return;
     }

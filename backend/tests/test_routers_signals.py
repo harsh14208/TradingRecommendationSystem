@@ -265,3 +265,116 @@ def test_signals_send_success_sets_sent_and_commits():
                 assert sig.is_sent is True
                 mock_db_session.commit.assert_awaited()
                 assert body["detail"] in ("", None)
+
+
+# ── execution-confirm tests ───────────────────────────────────────────────────
+
+@pytest.mark.skipif(router is None, reason="routers.signals import failed")
+class TestExecutionConfirm:
+
+    def _app(self, user, db):
+        a = FastAPI()
+        a.include_router(router, prefix="")
+        a.dependency_overrides[get_current_user] = lambda: user
+        async def _db():
+            yield db
+        a.dependency_overrides[get_db] = _db
+        return a
+
+    def _mock_signal(self, signal_id=10, ticker="AAPL", entry=148.0):
+        s = MagicMock(spec=Signal)
+        s.id = signal_id
+        s.ticker = ticker
+        s.entry = entry
+        s.sent_at = None
+        return s
+
+    def test_owner_can_confirm(self):
+        user = User(id=1, email="owner@x.com", is_owner=True)
+        db = AsyncMock()
+        sig = self._mock_signal()
+        db.get = AsyncMock(return_value=sig)
+        # delivered_to query
+        r = MagicMock()
+        r.scalars.return_value.all.return_value = []
+        db.execute = AsyncMock(return_value=r)
+
+        with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
+            resp = c.post("/api/signals/execution-confirm", json={
+                "signal_id": 10, "fill_price": 150.25,
+            })
+        assert resp.status_code == 200
+        assert sig.entry == 150.25
+
+    def test_recipient_can_confirm(self):
+        user = User(id=5, email="trader@x.com", is_owner=False)
+        db = AsyncMock()
+        sig = self._mock_signal()
+        db.get = AsyncMock(return_value=sig)
+        r = MagicMock()
+        r.scalars.return_value.all.return_value = [5]  # user 5 is a recipient
+        db.execute = AsyncMock(return_value=r)
+
+        with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
+            resp = c.post("/api/signals/execution-confirm", json={
+                "signal_id": 10, "fill_price": 149.00,
+            })
+        assert resp.status_code == 200
+
+    def test_non_recipient_gets_403(self):
+        user = User(id=99, email="stranger@x.com", is_owner=False)
+        db = AsyncMock()
+        sig = self._mock_signal()
+        db.get = AsyncMock(return_value=sig)
+        r = MagicMock()
+        r.scalars.return_value.all.return_value = [1, 2]  # user 99 NOT in list
+        db.execute = AsyncMock(return_value=r)
+
+        with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
+            resp = c.post("/api/signals/execution-confirm", json={
+                "signal_id": 10, "fill_price": 149.00,
+            })
+        assert resp.status_code == 403
+
+    def test_signal_not_found_returns_404(self):
+        user = User(id=1, email="owner@x.com", is_owner=True)
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=None)
+
+        with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
+            resp = c.post("/api/signals/execution-confirm", json={
+                "signal_id": 999, "fill_price": 150.0,
+            })
+        assert resp.status_code == 404
+
+    def test_negative_fill_price_returns_400(self):
+        user = User(id=1, email="owner@x.com", is_owner=True)
+        db = AsyncMock()
+        sig = self._mock_signal()
+        db.get = AsyncMock(return_value=sig)
+        r = MagicMock()
+        r.scalars.return_value.all.return_value = []
+        db.execute = AsyncMock(return_value=r)
+
+        with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
+            resp = c.post("/api/signals/execution-confirm", json={
+                "signal_id": 10, "fill_price": -5.0,
+            })
+        assert resp.status_code == 400
+
+    def test_filled_at_updates_sent_at(self):
+        user = User(id=1, email="owner@x.com", is_owner=True)
+        db = AsyncMock()
+        sig = self._mock_signal()
+        db.get = AsyncMock(return_value=sig)
+        r = MagicMock()
+        r.scalars.return_value.all.return_value = []
+        db.execute = AsyncMock(return_value=r)
+
+        with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
+            resp = c.post("/api/signals/execution-confirm", json={
+                "signal_id": 10, "fill_price": 150.0,
+                "filled_at": "2026-05-25T14:30:00Z",
+            })
+        assert resp.status_code == 200
+        assert sig.sent_at is not None

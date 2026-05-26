@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from database import get_db
-from models import SendLog, Signal, User
+from models import SendLog, Signal, SignalDelivery, User
 from services.auth_svc import get_current_user
 from services.telegram_svc import format_signal, send_telegram
 
@@ -1634,3 +1634,62 @@ async def alpha_decay(
 
     _cache_set(_ck, result)
     return result
+
+
+# ── Execution-confirm webhook ─────────────────────────────────────────────────
+# Allows a broker or paper-trade adapter to POST back the actual fill price
+# after a signal has been acted on.  The signal's entry_price is updated so
+# that future outcome calculations (MAE/MFE, stop-enforced WR) use the real
+# fill rather than the signal-generation price.
+
+from pydantic import BaseModel as _BM
+
+class _ExecutionConfirm(_BM):
+    signal_id: int
+    fill_price: float
+    filled_at: Optional[str] = None   # ISO-8601; defaults to now
+
+
+@router.post("/execution-confirm", tags=["signals"])
+async def execution_confirm(
+    body: _ExecutionConfirm,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Broker/adapter callback to confirm a trade was filled.
+
+    Updates the signal's `entry` price so downstream P&L calculations
+    (MAE/MFE, stop-enforced WR) use the actual fill rather than the
+    indicative price at signal generation.
+    Only the platform owner or a user who received the signal may confirm.
+    """
+    sig = await db.get(Signal, body.signal_id)
+    if sig is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    # Only the owner or a recipient of this signal may confirm
+    delivered_to = (await db.execute(
+        select(SignalDelivery.user_id).where(SignalDelivery.signal_id == sig.id)
+    )).scalars().all()
+    if not user.is_owner and user.id not in delivered_to:
+        raise HTTPException(status_code=403, detail="Not authorised to confirm this signal")
+
+    if body.fill_price <= 0:
+        raise HTTPException(status_code=400, detail="fill_price must be positive")
+
+    sig.entry = round(body.fill_price, 4)
+    if body.filled_at:
+        try:
+            sig.sent_at = datetime.fromisoformat(body.filled_at.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="filled_at must be ISO-8601")
+
+    await db.commit()
+    return {
+        "ok": True,
+        "signal_id": sig.id,
+        "ticker": sig.ticker,
+        "entry": sig.entry,
+        "message": f"Fill confirmed for {sig.ticker} signal at ${sig.entry:.4f}",
+    }

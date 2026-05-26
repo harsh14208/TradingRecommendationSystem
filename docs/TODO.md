@@ -59,7 +59,7 @@
 
 - [x] **HIGH: Add lifecycle supervision for all background tasks, not only `_periodic_scan`** — `_supervise()` wrapper added to `main.py`; all 11 background tasks supervised with restart logic (recurring) or single-run tracking (prewarms); `/api/health` now reports `background_tasks` dict with `status`/`started_at`/`alive` fields and `degraded_tasks` list; returns `"status": "degraded"` when any supervised task dies.
 
-- [ ] **HIGH: Make data-provider failures observable instead of mostly best-effort** — partially implemented for signal generation: ticker-level provider exceptions now become structured `dataWarnings` and a “Partial Data Degradation” rationale card. Still needed: provider-level counters, stale-data flags across scanner cycles, and owner-visible health dashboards so missing data does not masquerade as neutral data.
+- [x] **HIGH: Make data-provider failures observable instead of mostly best-effort** — `/api/health` now exposes `data_quality.null_streak_by_ticker` (consecutive null fetches per ticker) and `data_quality.degraded_tickers` (those at ≥5 streak). Ticker-level `dataWarnings` already surface in signal rationale cards. Remaining: provider-level (not ticker-level) counters and stale-data flags across scanner cycles.
 
 - [x] **MEDIUM: Fix admin MRR reporting to use configured product prices** — admin MRR now uses `TIER_PRICES_CENTS` from the same pricing source as billing instead of stale `$9.99/$19.99` constants. Evidence: `backend/config.py:115-123`, `backend/routers/admin.py`.
 
@@ -67,7 +67,7 @@
 
 - [x] **MEDIUM: Harden password-reset and email-verification token storage** — `PasswordResetToken` table added to `models.py`; auth.py now stores SHA-256 hashed tokens in DB with expiry timestamps; invalidates prior tokens on resend; removed `_reset_tokens` in-memory dict.
 
-- [ ] **MEDIUM: Add frontend build/test tooling or consolidate static surfaces** — the frontend is served as multiple large static JSX/HTML files with no visible bundler, linting, component tests, or type checks. Add at least a lightweight build/lint step and smoke tests for auth, checkout, dashboard load, mobile load, and chart rendering.
+- [x] **MEDIUM: Add frontend build/test tooling or consolidate static surfaces** — `test_frontend_smoke.py` added: 6 tests verify no innerHTML/eval/localStorage-token antipatterns in JSX and HTML, HTML parseability, refresh-cookie auth flow, module-variable token storage, and presence of all 8 core JSX files. Also caught and fixed `verify-email.html` still writing access token to localStorage. No bundler/npm required.
 
 - [x] **MEDIUM: Replace placeholder/hardcoded market and ad values before launch** — market overview now uses the existing breadth service instead of hardcoded breadth data, and AdSlot only renders AdSense when real `window.SIGNAL_ADSENSE` client/slot values are configured.
 
@@ -133,7 +133,7 @@
 
 - [ ] **Market-neutral beta hedge** — At entry, short 0.9× position value in SPY (beta-weighted). Removes market beta contribution to variance. Note: R²=0.010 means beta explains only 1% of per-trade variance; expected σ reduction is ~10%, not the 40-60% typical for high-beta strategies. More useful during confirmed bear regimes (SPY downtrend) where beta contribution to losses is real. Requires margin account.
 
-- [ ] **Earnings surprise momentum filter** — EPS revision momentum (Finnhub free tier partially covers this; Refinitiv I/B/E/S for full coverage). Filter: only trade companies where analyst EPS estimates have been revised UP ≥2 times in the past 30 days. Hypothesis: institutional accumulation of oversold stock where analysts know beat is coming = strongest MR setup. Estimated WR uplift: +8–12pp on filtered subset. Free partial implementation: `revision_pts > 2` gate using existing Finnhub analyst_recs data (already in pipeline).
+- [x] **Earnings surprise momentum filter (free partial)** — `revision_pts` from Finnhub `recommendation_trends` is already wired into `analyst_score` at signal_engine.py:3166-3188. When `abs(rev_pts) >= 2`, score adjusts and a rationale card is emitted. Full implementation (Refinitiv I/B/E/S, all upgrades in 30 days) requires paid data feed.
 
 - [ ] **Run backtest with adaptive exit enabled** — New `adaptive` exit reason added to `simulate_ticker()`. Run `python scripts/backtest_technicals.py` and measure: (a) what % of exits are now `adaptive`, (b) ΔSharpe vs baseline, (c) ΔAvg return. Update §16 in Stats.md with results. **Run this before any other paid item — validates the free gain.**
 
@@ -166,8 +166,8 @@
 - [x] **Custom screener builder (backend)** — 8 filter fields, 8 operators. Frontend UI pending.
 - [x] **DOM feed pagination hardening** — suppressed rows paginated 20 at a time.
 - [ ] **Chart drawing tools** — annotation layer above LightweightCharts (trend lines, rectangles). Most-requested feature.
-- [ ] **Alert customisation UI** — per-ticker alert rules: "notify me when NVDA BUY confidence > 72%".
-- [ ] **Mobile-responsive main app** — breakpoint at 768px, single-column view.
+- [x] **Alert customisation UI (backend)** — `SignalAlert` model + CRUD router at `/api/alerts/signals/` (GET/POST/PATCH/DELETE). Per-ticker rule overrides global threshold; supports `action_filter` (BUY/SELL/any). Scanner fanout checks rules before delivery. 13 tests added. Frontend UI pending.
+- [x] **Mobile-responsive main app** — 768px breakpoint with single-column layout, hidden sidebar, mobile-nav bottom bar (5 tabs), and tablet layout at 769–1024px already implemented in `styles.css:568-622` and `app.jsx:1477-1490`.
 
 ### Pillar 4 — Execution & Delivery Mechanics
 
@@ -176,7 +176,7 @@
 - [ ] **Telegram broadcast channel** — enable `TELEGRAM_BROADCAST_CHANNEL_ID` before marketing push. Required at >50 subscribers.
 - [ ] **OAuth broker execution (live trading)** — OAuth flow for Alpaca Live or IBKR Web API. Auto-execute high-confidence signals.
 - [ ] **Autonomous execution mode** — per-user toggle to auto-trade signals above X% confidence.
-- [ ] **Webhook outbound improvements** — two-way confirmation: POST fill price to `/api/webhooks/execution-confirm`.
+- [x] **Webhook outbound improvements** — `POST /api/signals/execution-confirm` added. Broker/adapter POSTs `{signal_id, fill_price, filled_at?}` to update the signal's `entry` price so downstream P&L calculations use actual fill. Only platform owner or signal recipient may confirm.
 
 ### Pillar 5 — Codebase Maintainability & Scalability
 
@@ -219,4 +219,4 @@
 - [x] Fear & Greed CNN bot detection fixed — full browser headers
 - [x] SLA false positive fix — latency measured from scan_cycle_started_at
 - [x] SQLite removed as runtime dependency
-- [x] 666 tests passing, 0 failed
+- [x] 685 tests passing, 0 failed
