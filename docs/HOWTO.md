@@ -2,7 +2,7 @@
 
 Everything you need to set up, configure, and use the system day-to-day.
 
-> **Version: v5.8** · Last updated: 2026-05-17
+> **Version: v6.1** · Last updated: 2026-05-25
 
 cd backend
 source venv/bin/activate

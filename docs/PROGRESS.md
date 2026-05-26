@@ -1,6 +1,6 @@
 # Signal.Trade — Development Progress
 
-> **Version: v5.12** · Updated: 2026-05-18 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v6.1** · Updated: 2026-05-25 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
 > ~210 tickers (incl. 52 leveraged ETFs) · 70+ signal blocks · 116 API endpoints · Max confidence: 72% (empirically calibrated)
 > **Data: Polygon.io/Massive-first (bulk OHLCV + quotes + reference info) · yfinance fallback · Massive WebSocket (dark pool) · FRED (macro + credit spreads)**
 > **Database: PostgreSQL 16 (primary) · SQLite removed · 7,015+ signals · 8 users**
@@ -23,25 +23,71 @@
 | Confidence gap | +11.0pp overconfident (raw) |
 | XGBoost training samples | 529 |
 
-## 🏅 Quality Ratings — v5.12 (Latest)
+## 🏅 Quality Ratings — v6.1 (Latest)
 
 | Aspect | Score | Grade | Notes |
 |--------|-------|-------|-------|
-| **Signal Accuracy** | 9.0/10 | A | 59% WR (7d mark), 42% stop-enforced. v5.12: 4 new backtest-validated risk gates. Backtest Sharpe 0.04→0.27 (+575%). |
-| **Signal Engine** | 9.1/10 | A | 70+ signal blocks, 11 scoring families, 15 risk gates. MR entry condition, deep-bear RSI, price-SMA20, day-of-week gates added. |
+| **Signal Accuracy** | 9.2/10 | A | §16a confirmed-negative sectors blocked. §17b/c/e entry-quality gates. Fundamental value-trap gate. 5 live-validated 0% WR tickers blocked. |
+| **Signal Engine** | 9.4/10 | A | Per-sector MR config (_SECTOR_MR_CONFIG). ATR ceiling ≤70, jump filter <−6%, VIX slope, IBS streak gates. Full Polygon options chain. |
 | **Frontend UX** | 8.8/10 | A− | Live WebSocket price, visual R:R zones, DOM pagination. Keyboard shortcuts. |
-| **Code Maintainability** | 7.8/10 | B+ | Delivery gates extracted to `services/delivery_gates.py`. Scanner decoupling in progress. |
+| **Code Maintainability** | 8.0/10 | B+ | Continuous intraday scanner. Delivery gates, dark_pool migrated to real Polygon endpoints. |
 | **Security** | 7.0/10 | B− | JWT + HTTP-only cookies, bcrypt. Risk: default owner password. |
-| **Backend Architecture** | 9.0/10 | A | Performance snapshot system. Single-flight scan, Redis distributed locks, stop_monitor, nightly resolution. |
-| **Data Pipeline** | 9.0/10 | A+ | Polygon/Massive-first. yfinance fallback. Fear & Greed live (CNN bot detection fixed). |
+| **Backend Architecture** | 9.1/10 | A | Continuous market-hours scanner (09:30–16:00 ET). RLIMIT_NOFILE raised. Single-flight scan, Redis locks, stop_monitor. |
+| **Data Pipeline** | 9.2/10 | A+ | Polygon full options chain (8-page pagination, 403 fallback). Corporate actions via real Polygon reference endpoints. |
 | **Deployment Readiness** | 6.5/10 | C+ | Railway/Fly ready. Blockers: owner password, SMTP, Stripe webhook, HTTPS. |
-| **Test Coverage** | 8.8/10 | A | 662 passing tests, 0 failures. Delivery gates, quant metrics, snapshot diff all covered. |
+| **Test Coverage** | 8.8/10 | A | 660 passing tests, 0 failures. |
 
-**Overall: 8.7 / 10 — A**
+**Overall: 8.9 / 10 — A**
 
 ---
 
 ## ✅ Implemented
+
+### v6.1 (2026-05-25) — §16/§17 Sector Gates, Polygon Options Chain, Entry-Quality Filters
+
+**Signal engine (`signal_engine.py`):**
+- [x] **`_SECTOR_MR_CONFIG`** — per-sector MR calibration from §15b/c/d/e + §16a research. Healthcare (Sharpe −0.17, WR 29.4%), Industrials (Sharpe −0.48, WR 28.6%), Real Estate (Sharpe −15) blocked via `buy_thresh: 999`. Energy `hold_days: 5` (§16a WR 70%).
+- [x] **Fundamental value-trap gate** — blocks BUY when revenue <−20% YoY AND FCF yield <−5% (yfinance free data)
+- [x] **5 live-validated 0% WR tickers blocked** — APH (0/4, avg −8.70%), EOG (0/2, avg −7.00%), SYK, CVX, UPS added to defensive_ticker_block (§11b ticker analysis, May 2026)
+- [x] **ATR%rank ceiling ≤70 gate (§17b)** — trending-panic entries blocked; Quantpedia finding: MR in very-high-ATR regimes produces weaker bounces
+- [x] **Single-day return jump filter <−6% (§17c)** — large single-day drops blocked as fundamental repricing; Alpha Architect: filtering return jumps tripled cumulative returns
+- [x] **VIX 3-day slope gate** — blocks MR entry when VIX rising >+3pts over 3 days AND VIX>16; `vix_3d_slope` added to `macro.py`
+- [x] **IBS + SMA20 multi-day streak gate (§17e)** — Pagonidis 2013: IBS<0.15 now requires ≥5 consecutive days below SMA20; N=3/5/7 streak variants in backtest
+- [x] **Near-earnings revision soft-gate** — −4pp confidence haircut for 8-14d pre-earnings signals without positive analyst revision
+- [x] **`opt_flow` param added to `_assemble_signal()`** — wired for future options-flow hard gate
+- [x] **Analyst cache TTL 3600→1800s**
+
+**Options service (`options.py`):**
+- [x] **Full Polygon options chain** — `_fetch_options_polygon()` with 8-page pagination (up to 2000 contracts); accurate GEX/PCR from full chain; graceful 403 fallback to yfinance
+- [x] **Options executor 3→8 workers; cache TTL 2400→300s** — intraday freshness for fast-moving options flow
+
+**Dark pool / corporate actions (`dark_pool.py`):**
+- [x] **Migrated to real Polygon endpoints** — `/v3/reference/dividends`, `/v3/reference/splits`, `/v2/reference/ftd`; returns `ex_div_soon`/`split_soon` instead of stale Massive API stubs
+
+**Main (`main.py`):**
+- [x] **Continuous intraday scanner** — replaces fixed-slot scheduler; fires at 09:30, then every `scan_interval_min` minutes until 16:00, plus a 16:02 close-of-day scan; legacy fixed-slot mode preserved when `scan_interval_min == 0`
+- [x] **`RLIMIT_NOFILE` raised to 65536 at startup** — prevents socket exhaustion on long scan cycles
+
+**Backtest / research:**
+- [x] **Gate 17b (ATR ceiling), 17c (jump filter), 17e (IBS streak) added to backtest**
+- [x] **Entry delay T+2 override and adaptive exit mode** in `simulate_ticker()`
+- [x] **`run_section13/15/16/17.py` runners** — targeted research sweeps per alpha section
+- [x] **`screen_sp500_mr_candidates.py`** — screens full S&P 500; quality bar: WR≥55%, per-trade Sharpe≥0.35, N≥5; `--fast` mode (~30min)
+- [x] **`_bt_2w.py`** — 2-week rolling backtest helper
+
+**Docs:**
+- [x] **`docs/LEARNINGS.md` created** — full alpha inventory: 11 alpha sources, negative findings, timeline, best result §15f (Ann. Sharpe 1.27, WR 78.8%, N=66)
+- [x] **`docs/Stats.md` updated** — §16/§17 findings
+
+---
+
+### v6.0 (2026-05-24) — Signal Alpha Decomp v8, Calibration Backfill, Live Gap Analysis
+
+- [x] **Signal alpha decomposition v8** (`signal_alpha_decomposition.py`) — §13–§17 research framework; per-gate sweep, full universe analysis, live gap reporting
+- [x] **Calibration backfill** — historical outcome data retroactively populates calibration curves; reduces cold-start miscalibration
+- [x] **Live gap analysis** — identifies signals generated in live engine not covered by backtest universe; highlights blind spots
+
+---
 
 ### v5.12 (2026-05-18) — MR-Only Backtest Optimization + 4 New Signal Engine Gates
 

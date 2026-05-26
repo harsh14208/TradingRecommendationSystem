@@ -1,6 +1,6 @@
 # Signal.Trade — Scoring Weights & Signal Gates Reference
 
-> **Version: v5.12** · Updated: 2026-05-18
+> **Version: v6.1** · Updated: 2026-05-25
 > Source of truth: `backend/services/signal_scoring.py` + `backend/services/signal_engine.py`
 
 ---
@@ -205,7 +205,7 @@ If BUY signal AND volume dry-up (<50% avg) AND RSI ≥ 30: `score ×0.70`.
 | **RSI Overbought + Weak Trend (v5.10)** | RSI>70 AND ADX<28 AND bull mkt AND score<40 | BUY → HOLD |
 | ATR Minimum | ATR < 0.7% of price | BUY → HOLD |
 | Low-Vol Stock | ATR < 0.8% AND (score<35 OR macro<0) | BUY → HOLD |
-| Defensive Ticker Block | ticker in {KO, PEP, T, NEE, PG, USB, PNC, C, AIG, WM, MCO, TT, DE, TJX, ABBV, MRK, PFE, LLY, TMO, TXN, NKE, V, PM, WMT} — BAC and TGT removed in v5.12 | BUY → HOLD |
+| Defensive Ticker Block | ticker in {KO, PEP, T, NEE, PG, USB, PNC, C, AIG, WM, MCO, TT, DE, TJX, ABBV, MRK, PFE, LLY, TMO, TXN, NKE, V, PM, WMT, APH, EOG, SYK, CVX, UPS} — BAC/TGT removed v5.12; APH/EOG/SYK/CVX/UPS added v6.1 (live 0% WR) | BUY → HOLD |
 | Dollar Volume | < $5M/day | −4–8pp confidence penalty |
 | STLFSI4 + VIX stress | STLFSI4>1.5 AND VIX>30 | BUY → HOLD |
 | STLFSI4 + VIX elevated | STLFSI4>1.0 AND VIX>25 AND score<50 | BUY → HOLD |
@@ -221,6 +221,13 @@ If BUY signal AND volume dry-up (<50% avg) AND RSI ≥ 30: `score ×0.70`.
 | **Deep-Bear RSI (v5.12)** | VIX>28 AND SPY<SMA200×0.95 AND RSI≥35 | BUY → HOLD |
 | **Price-SMA20 Distance (v5.12)** | score<65 AND price ≥ SMA20×0.98 (less than 2% below 20-DMA) | BUY → HOLD |
 | **Day-of-Week (v5.12)** | Friday AND score<65 | BUY → HOLD |
+| **Sector MR Block (v6.1 — §16a)** | Sector in {XLV, XLI, XLRE} (buy_thresh=999); calibrated hold_days/vix_min for XLK/XLF/XLY/XLP/XLC/XLE via `_SECTOR_MR_CONFIG` | BUY → HOLD (blocked sectors) |
+| **Fundamental Value-Trap (v6.1)** | revenue_growth < −20% YoY AND FCF yield < −5% of market cap (yfinance) | BUY → HOLD |
+| **ATR%rank Ceiling (v6.1 — §17b)** | ATR%rank > 70th percentile at MR entry | BUY → HOLD |
+| **Single-Day Jump Filter (v6.1 — §17c)** | Single-day return < −6% | BUY → HOLD |
+| **VIX Slope Gate (v6.1 — §17)** | VIX 3-day slope > +3pts AND VIX > 16 | BUY → HOLD |
+| **IBS + SMA20 Streak (v6.1 — §17e)** | IBS < 0.15 as sole MR trigger requires ≥5 consecutive days below SMA20 (Pagonidis 2013) | BUY → HOLD |
+| **Near-Earnings Revision Soft-Gate (v6.1)** | 8-14d pre-earnings AND no positive analyst revision | −4pp confidence haircut |
 
 ---
 

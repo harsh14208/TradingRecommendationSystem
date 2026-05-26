@@ -2,7 +2,7 @@
 
 **Institutional-grade trading signals — 70+ independent indicators across 15 categories, real-time options sweeps, 13F institutional flow with QoQ trend tracking, structural market invariants, multi-user Telegram delivery, full subscription stack, and institutional performance analytics.**
 
-> **v5.8** · 662 tests passing · PostgreSQL primary · 7,015+ signals · 529 resolved trades
+> **v6.1** · 660 tests passing · PostgreSQL primary · 7,015+ signals · 529 resolved trades
 > Not financial advice. For informational and educational purposes only.
 
 ---
@@ -11,8 +11,8 @@
 
 Signal.Trade is a personal quant desk that:
 
-- **Scans 154 tickers** every 60 seconds using 50+ independent signals across 15 categories
-- **Scores each signal** into a calibrated confidence rating (40–84%) with a hard empirical ceiling
+- **Scans ~210 tickers** continuously (09:30–16:00 ET) using 70+ independent signals across 15 categories
+- **Scores each signal** into a calibrated confidence rating (40–72%) with a hard empirical ceiling
 - **Classifies trading style** (intraday / swing / position) from the actual rationale composition — not a heuristic flag
 - **Delivers high-confidence BUY/SELL signals** via Telegram with entry, stop, target, R:R, and plain-English explanation
 - **Applies structural market invariants** — VIX hard floor, risk-free rate yield dampener, VWAP liquidity filter, earnings blackout, sector peer confirmation, and correlation-based portfolio limits
