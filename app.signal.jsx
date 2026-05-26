@@ -33,6 +33,22 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
                 ⚠ {s.daysToEarnings}d ERN
               </span>
             )}
+            {s.expiresAt && (() => {
+              const minsLeft = Math.round((new Date(s.expiresAt) - Date.now()) / 60000);
+              if (minsLeft > 0 && minsLeft <= 1440) {
+                const label = minsLeft < 60 ? `${minsLeft}m` : `${Math.round(minsLeft / 60)}h`;
+                return (
+                  <span title={`Signal expires at ${s.expiresAt}`}
+                    style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700,
+                      color:"var(--down)", background:"rgba(239,68,68,0.1)",
+                      border:"1px solid rgba(239,68,68,0.3)", borderRadius:3,
+                      padding:"1px 4px", whiteSpace:"nowrap", letterSpacing:"0.04em" }}>
+                    ⏱ {label}
+                  </span>
+                );
+              }
+              return null;
+            })()}
             {s.session && s.session !== "regular" && s.session !== "closed" && (
               <span title={s.session === "pre" ? "Generated during pre-market session" : "Generated after market close"}
                 style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700,

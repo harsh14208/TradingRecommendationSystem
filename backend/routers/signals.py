@@ -87,6 +87,8 @@ def _to_dict(s: Signal) -> dict:
         "outcome3d":   s.outcome_3d,
         "outcome14d":  s.outcome_14d,
         "outcomeAt":   s.outcome_at.strftime("%Y-%m-%d") if s.outcome_at else None,
+        # Expiry
+        "expiresAt":   s.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if s.expires_at else None,
     }
 
 
