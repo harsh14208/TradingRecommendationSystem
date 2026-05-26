@@ -47,7 +47,7 @@
 
 ### Major Issues Found — Add To Execution Queue
 
-- [ ] **CRITICAL: Add real PostgreSQL migrations before the next schema change** — Partially fixed: `init_db()` now runs additive column migrations for both Postgres and SQLite (all 9 historical column additions applied idempotently on startup). New/existing tables still handled by `create_all`. Remaining: adopt Alembic for proper versioned migrations + rollback support before any destructive schema change (column removal, rename, constraint change). Evidence: `backend/database.py:89-113`.
+- [x] **CRITICAL: Add real PostgreSQL migrations before the next schema change** — Alembic installed and configured. `backend/alembic/env.py` wired to app `Base.metadata` + DATABASE_URL; psycopg2-binary added to requirements.txt. Initial migration `20260526_0826_7a9277e42dc3_initial_schema.py` captures all 13 tables. Workflow documented in `database.py:89-107`. Existing prod DBs: `alembic stamp head`. New columns: `alembic revision --autogenerate -m "..." && alembic upgrade head`.
 
 - [x] **CRITICAL: Fix CI unit-test command and make gates actually fail builds** — CI now installs `pytest-timeout`, runs pytest without `tail -20`, lets the accuracy gate fail when enough resolved data exists, and lets `pip-audit` fail on unignored vulnerabilities. Evidence: `.github/workflows/ci.yml:49-68`, `backend/requirements.txt`.
 
@@ -55,7 +55,7 @@
 
 - [x] **HIGH: Remove DOM injection paths in auth/verification pages** — login/signup/verification pages now build the email verification/error UI with DOM node creation and `textContent` instead of interpolating user-controlled values into `innerHTML`. Evidence: `login.html`, `signup.html`, `verify-email.html`.
 
-- [ ] **HIGH: Break up scanner/signal-engine monoliths into tested orchestration layers** — `signal_engine.py` is ~5,268 lines and `scanner.py` is ~1,437 lines. This concentrates data fetching, scoring, persistence, delivery, paper trading, telemetry, and side effects in a few modules, making failures hard to isolate. Extract bounded services for market context, signal persistence, delivery, paper execution, and scan scheduling.
+- [ ] **HIGH: Break up scanner/signal-engine monoliths into tested orchestration layers** — `signal_engine.py` is ~5,268 lines and `scanner.py` is ~1,437 lines. Progress: `fetch_market_context()` extracted from `_run_scan_impl` into a standalone public async function (4 tests). Delivery gates already extracted. Remaining: signal persistence, paper execution, scan scheduling.
 
 - [x] **HIGH: Add lifecycle supervision for all background tasks, not only `_periodic_scan`** — `_supervise()` wrapper added to `main.py`; all 11 background tasks supervised with restart logic (recurring) or single-run tracking (prewarms); `/api/health` now reports `background_tasks` dict with `status`/`started_at`/`alive` fields and `degraded_tasks` list; returns `"status": "degraded"` when any supervised task dies.
 
@@ -99,10 +99,10 @@
 - [x] **_SECTOR_MR_CONFIG confirmed-negative sectors blocked** — §16a data: Healthcare (Sharpe −0.17, WR 29.4%), Industrials (Sharpe −0.48, WR 28.6%), Real Estate (Sharpe −15) all set to `buy_thresh: 999` (blocks all MR entries). Energy calibrated to `hold_days: 5` (§16a WR 70%). Rationale message updated for blocked sectors.
 
 **Pending (after §16 + §17 complete):**
-- [ ] **Run §17 and read results** — Currently running at PID 98699 (`/tmp/decomp_§17.log`). Will produce §17a/b/c/e/f results on ATR ceiling, jump filter, entry delay, IBS streak.
+- [x] **Run §17 and read results** — Results in `/tmp/decomp_s17.log` and recorded in Stats.md §27. Key: §17d best combined (ATR≤70 + jump<−6%) → Ann.Sharpe 2.10, WR 96.3%, N=27. T+2 delay harmful (−0.29 Sharpe). IBS streak gate neutral (no N effect). Both live gates already deployed in signal_engine.py.
 - [ ] **Options flow confirmation gate** — Unusual Whales / FlowAlgo API (~$50-99/mo). Concurrent large call sweeps on oversold stocks = institutional accumulation confirmation. Estimated WR uplift to 85%+. See Pillar 0 for full spec.
 - [ ] **Energy sub-sector split** — §16a showed Energy Sharpe 0.52, WR 70%. EOG in bad-ticker list. Isolate EOG; re-test XOM/CVX/COP/SLB as 4-ticker energy subgroup after §16 completes.
-- [ ] **Update _SECTOR_MR_CONFIG for XLB/XLU/XLC/XLE** — after §16 full results, fill in Materials, Utilities, Telecom, and finalize Energy with sub-sector split data.
+- [ ] **Update _SECTOR_MR_CONFIG for XLU** — XLB (hold=5d, thresh=38), XLC (hold=10d, no VIX floor), XLE (vix≥15, thresh=40) already applied in signal_engine.py from §16. XLU still pending — not in §16 universe. Run §16-style research on XLU tickers (NEE, DUK, SO, AEP) before enabling.
 
 ### Pillar 0 — Per-Trade Sharpe → 1.0 (Research Roadmap, 2026-05-24)
 

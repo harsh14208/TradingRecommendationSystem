@@ -742,6 +742,230 @@ def get_scan_status() -> dict:
     return dict(_scan_status)
 
 
+async def fetch_market_context(tickers: list[str], settings) -> dict:
+    """
+    Fetch all market-wide signals and context needed for a scan cycle.
+
+    Returns a dict with keys: fear_greed, macro, put_call, breadth, aaii, cot,
+    adaptive_weights, calibration_map, hmm_regime, supply_chain, institutional_signals,
+    dark_pool, corporate_events, etf_flows, massive_economy, portfolio_ctx, pairs_signals,
+    weight_overrides, factor_weights, buy_sell_ratio, buy_saturated.
+
+    All sub-fetches are best-effort; failures are logged and the key is omitted or
+    given a safe default. Callers must treat every key as Optional.
+    """
+    market_ctx: dict = {}
+
+    # ── Core macro / sentiment signals (concurrent) ───────────────────────────
+    try:
+        fg, macro, pc, breadth, aaii, cot = await asyncio.gather(
+            get_fear_greed(), get_macro_context(), get_put_call_ratio(), get_market_breadth(),
+            get_aaii_sentiment(), get_cot_signal()
+        )
+        market_ctx.update({"fear_greed": fg, "macro": macro, "put_call": pc,
+                           "breadth": breadth, "aaii": aaii, "cot": cot})
+        fg_label   = fg["label"] if fg else "unknown"
+        breadth_str = f"{breadth['pct_above_200d']:.0f}% >200d" if breadth else "?"
+        aaii_str    = f"AAII {aaii['spread']:+.0f}% ({aaii['signal']})" if aaii and aaii.get("spread") is not None else "AAII N/A"
+        log.info(f" F&G = {fg['score'] if fg else '?'} ({fg_label}) | "
+                 f"VIX = {macro.get('vix', '?') if macro else '?'} | "
+                 f"Macro score = {macro.get('macro_score', 0) if macro else 0} | "
+                 f"Breadth = {breadth_str} | {aaii_str}")
+    except Exception as e:
+        log.info(f" market context failed: {e}")
+
+    try:
+        market_ctx["adaptive_weights"] = await _compute_adaptive_weights()
+    except Exception:
+        pass
+
+    try:
+        from services.calibration import load_calibration
+        market_ctx["calibration_map"] = load_calibration()
+    except Exception:
+        pass
+
+    # ── HMM Macro Regime (cached 1h) ─────────────────────────────────────────
+    try:
+        from services.macro_regime import get_macro_regime
+        regime_data = await get_macro_regime()
+        market_ctx["hmm_regime"] = regime_data
+        log.info(f" HMM regime: {regime_data.get('regime','?')} "
+                 f"bull={regime_data.get('bull_prob',0):.0%} "
+                 f"trans_risk={regime_data.get('transition_risk',0):.0%}")
+    except Exception as e:
+        log.debug(f" HMM regime failed (non-critical): {e}")
+
+    # ── Supply Chain signals (cached 4h) ─────────────────────────────────────
+    try:
+        from services.supply_chain import get_supply_chain_signals
+        market_ctx["supply_chain"] = await get_supply_chain_signals()
+    except Exception as e:
+        log.debug(f" Supply chain data failed (non-critical): {e}")
+
+    # ── 13F institutional flow (quarterly, cached 6h) ────────────────────────
+    try:
+        from services.institutional import get_institutional_signals
+        inst_list = await get_institutional_signals(settings.tickers)
+        market_ctx["institutional_signals"] = {s["ticker"]: s for s in inst_list}
+        if inst_list:
+            log.info(f" 13F: {len(inst_list)} watchlist tickers with institutional activity")
+    except Exception as e:
+        log.debug(f" 13F fetch failed (non-critical): {e}")
+
+    # ── Dark Pool Block Prints (cached 1h) ───────────────────────────────────
+    try:
+        from services.dark_pool import get_dark_pool_flow
+        market_ctx["dark_pool"] = await get_dark_pool_flow(settings.tickers)
+    except Exception as e:
+        log.debug(f" Dark pool fetch failed (non-critical): {e}")
+
+    # ── Corporate Events (cached 4h) ─────────────────────────────────────────
+    try:
+        from services.corporate_events import get_corporate_events
+        corp_events = await get_corporate_events()
+        market_ctx["corporate_events"] = corp_events
+        n_ev = len(corp_events.get("events", []))
+        if n_ev:
+            log.info(f" Corporate events: {n_ev} upcoming across {len(corp_events.get('by_ticker', {}))} tickers")
+    except Exception as e:
+        log.debug(f" Corporate events fetch failed (non-critical): {e}")
+
+    # ── ETF Fund Flows (cached 4h) ───────────────────────────────────────────
+    try:
+        from services.etf_flows import get_etf_flows
+        market_ctx["etf_flows"] = await get_etf_flows()
+    except Exception as e:
+        log.debug(f" ETF flows fetch failed (non-critical): {e}")
+
+    # ── Economy data from Massive (cached 1h) ────────────────────────────────
+    try:
+        from services.massive_economy import get_economy_data
+        eco = await get_economy_data()
+        if eco:
+            market_ctx["massive_economy"] = eco
+    except Exception as e:
+        log.debug(f" Massive economy fetch failed (non-critical): {e}")
+
+    # ── ETF Constituents preload (cached 24h) ────────────────────────────────
+    try:
+        from services.etf_constituents import preload_all
+        await preload_all()
+    except Exception as e:
+        log.debug(f" ETF constituents preload failed (non-critical): {e}")
+
+    # ── Paper portfolio sector exposure + PCA risk ───────────────────────────
+    if settings.alpaca_api_key and settings.alpaca_api_secret:
+        try:
+            from services import alpaca_rest
+            from services.sector import SECTOR_MAP as SECTOR_ETF_MAP
+            positions_list = await alpaca_rest.get_positions(
+                settings.alpaca_api_key, settings.alpaca_api_secret
+            )
+            if positions_list:
+                total_mv = sum(abs(float(p.get("market_value") or 0)) for p in positions_list)
+                sector_exposure: dict[str, float] = {}
+                if total_mv > 0:
+                    for p in positions_list:
+                        sym = p.get("symbol", "").upper()
+                        mv  = abs(float(p.get("market_value") or 0))
+                        etf = SECTOR_ETF_MAP.get(sym)
+                        if etf:
+                            sector_exposure[etf] = sector_exposure.get(etf, 0) + mv / total_mv * 100
+                market_ctx["portfolio_ctx"] = {
+                    "sector_exposure": sector_exposure,
+                    "total_positions": len(positions_list),
+                    "total_mv": round(total_mv, 2),
+                }
+                log.info(
+                    f" Portfolio: {len(positions_list)} open positions, "
+                    f"sector exposure: {', '.join(f'{k} {v:.0f}%' for k,v in sector_exposure.items())}"
+                )
+                if len(positions_list) >= 3:
+                    try:
+                        from services.pca_risk import compute_pca_risk
+                        pos_values = {
+                            p.get("symbol", "").upper(): abs(float(p.get("market_value") or 0))
+                            for p in positions_list
+                        }
+                        pca_result = await compute_pca_risk(pos_values)
+                        if pca_result:
+                            market_ctx["portfolio_ctx"]["pca_risk"] = pca_result
+                            if pca_result.get("concentration_warning"):
+                                log.info(
+                                    f" PCA: concentrated on '{pca_result['dominant_factor']}' "
+                                    f"({pca_result['dominant_exposure']:.0%}) — "
+                                    f"haircut={pca_result['haircut_pct']:.0f}%"
+                                )
+                    except Exception as pca_e:
+                        log.debug(f" PCA risk model failed (non-critical): {pca_e}")
+        except Exception as e:
+            log.debug(f" Portfolio context failed (non-critical): {e}")
+
+    # ── Cointegration / pairs trading signals (cached 2h) ────────────────────
+    try:
+        from services.cointegration import get_pairs_signals
+        pairs_signals = await get_pairs_signals(settings.tickers)
+        market_ctx["pairs_signals"] = pairs_signals
+        if pairs_signals:
+            log.info(f" Pairs: {len(pairs_signals)} divergence signals detected")
+    except Exception as e:
+        log.debug(f" Pairs signal fetch failed (non-critical): {e}")
+
+    # ── Weight overrides + factor mining weights ──────────────────────────────
+    try:
+        db_settings_now = await _load_db_settings()
+        wo = db_settings_now.get("weight_overrides") or {}
+        market_ctx["weight_overrides"] = wo
+        if wo:
+            log.debug(f" Weight overrides active: {wo}")
+    except Exception as e:
+        log.debug(f" Weight overrides load failed: {e}")
+
+    try:
+        from services.factor_miner import load_factor_weights
+        fw = load_factor_weights()
+        if fw and not fw.get("skipped"):
+            market_ctx["factor_weights"] = fw
+            log.debug(f" Factor weights loaded: {fw.get('combinations_tested', '?')} combos")
+    except Exception as e:
+        log.debug(f" Factor weights load failed: {e}")
+
+    # ── BUY:SELL saturation circuit breaker (7-day ratio) ────────────────────
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import text as _sa_text
+            _ratio_row = (await db.execute(_sa_text("""
+                SELECT
+                    SUM(CASE WHEN action='BUY'  THEN 1 ELSE 0 END) AS buys,
+                    SUM(CASE WHEN action='SELL' THEN 1 ELSE 0 END) AS sells
+                FROM signals
+                WHERE date(created_at) >= date('now', '-7 days')
+                  AND action IN ('BUY', 'SELL')
+            """))).fetchone()
+        _buys  = _ratio_row[0] or 0
+        _sells = _ratio_row[1] or 1
+        _buy_sell_ratio = round(_buys / _sells, 2)
+        market_ctx["buy_sell_ratio"] = _buy_sell_ratio
+        market_ctx["buy_saturated"]  = _buy_sell_ratio > 4.0
+        if _buy_sell_ratio > 4.0:
+            log.info(f" BUY:SELL circuit breaker ACTIVE — 7d ratio {_buy_sell_ratio:.1f}:1 (>4.0 threshold). BUY threshold raised to 42.")
+        else:
+            log.info(f" BUY:SELL ratio (7d): {_buy_sell_ratio:.1f}:1 — within normal range.")
+    except Exception as e:
+        log.debug(f" BUY:SELL ratio check failed (non-critical): {e}")
+        market_ctx["buy_saturated"] = False
+
+    # ── News batch prefetch ───────────────────────────────────────────────────
+    try:
+        from services.benzinga_news import prefetch_news_batch
+        await prefetch_news_batch(tickers)
+    except Exception as e:
+        log.debug(f" news batch prefetch failed (non-critical): {e}")
+
+    return market_ctx
+
+
 async def run_scan(broadcast_fn=None):
     """Single-flight scan wrapper with status tracking and Redis-aware lock."""
     if _scan_lock.locked():
@@ -882,231 +1106,9 @@ async def _run_scan_impl(broadcast_fn=None):
 
     stale_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=8)
 
-    # ── Step 1: market-wide context + adaptive weights ───────────────────
+    # ── Steps 1–1l: market-wide context ─────────────────────────────────
     _mark_scan_stage("market_context")
-    try:
-        fg, macro, pc, breadth, aaii, cot = await asyncio.gather(
-            get_fear_greed(), get_macro_context(), get_put_call_ratio(), get_market_breadth(),
-            get_aaii_sentiment(), get_cot_signal()
-        )
-        market_ctx = {"fear_greed": fg, "macro": macro, "put_call": pc, "breadth": breadth,
-                      "aaii": aaii, "cot": cot}
-        fg_label = fg["label"] if fg else "unknown"
-        breadth_str = f"{breadth['pct_above_200d']:.0f}% >200d" if breadth else "?"
-        aaii_str = f"AAII {aaii['spread']:+.0f}% ({aaii['signal']})" if aaii and aaii.get("spread") is not None else "AAII N/A"
-        log.info(f" F&G = {fg['score'] if fg else '?'} ({fg_label}) | "
-              f"VIX = {macro.get('vix', '?') if macro else '?'} | "
-              f"Macro score = {macro.get('macro_score', 0) if macro else 0} | "
-              f"Breadth = {breadth_str} | {aaii_str}")
-    except Exception as e:
-        log.info(f" market context failed: {e}")
-        market_ctx = {}
-
-    try:
-        market_ctx["adaptive_weights"] = await _compute_adaptive_weights()
-    except Exception:
-        pass
-
-    # Load calibration map (fit weekly, applied every scan from disk cache)
-    try:
-        from services.calibration import load_calibration
-        market_ctx["calibration_map"] = load_calibration()
-    except Exception:
-        pass
-
-    # ── HMM Macro Regime (cached 1h — expensive fit) ─────────────────────────
-    try:
-        from services.macro_regime import get_macro_regime
-        regime_data = await get_macro_regime()
-        market_ctx["hmm_regime"] = regime_data
-        log.info(f" HMM regime: {regime_data.get('regime','?')} "
-                 f"bull={regime_data.get('bull_prob',0):.0%} "
-                 f"trans_risk={regime_data.get('transition_risk',0):.0%}")
-    except Exception as e:
-        log.debug(f" HMM regime failed (non-critical): {e}")
-
-    # ── Supply Chain signals (cached 4h) ──────────────────────────────────────
-    try:
-        from services.supply_chain import get_supply_chain_signals
-        market_ctx["supply_chain"] = await get_supply_chain_signals()
-    except Exception as e:
-        log.debug(f" Supply chain data failed (non-critical): {e}")
-
-    # ── Step 1b: 13F institutional flow (quarterly, cached 6h) ──────────────
-    try:
-        from services.institutional import get_institutional_signals
-        inst_list = await get_institutional_signals(settings.tickers)
-        # Index by ticker for O(1) lookup in signal_engine
-        market_ctx["institutional_signals"] = {
-            s["ticker"]: s for s in inst_list
-        }
-        if inst_list:
-            log.info(f" 13F: {len(inst_list)} watchlist tickers with institutional activity")
-    except Exception as e:
-        log.debug(f" 13F fetch failed (non-critical): {e}")
-
-    # ── Step 1g: Dark Pool Block Prints (cached 1h) ──────────────
-    try:
-        from services.dark_pool import get_dark_pool_flow
-        market_ctx["dark_pool"] = await get_dark_pool_flow(settings.tickers)
-    except Exception as e:
-        log.debug(f" Dark pool fetch failed (non-critical): {e}")
-
-    # ── Step 1h: Corporate Events (Wall Street Horizon, cached 4h) ───────────
-    try:
-        from services.corporate_events import get_corporate_events
-        corp_events = await get_corporate_events()
-        market_ctx["corporate_events"] = corp_events
-        n_ev = len(corp_events.get("events", []))
-        if n_ev:
-            log.info(f" Corporate events: {n_ev} upcoming across {len(corp_events.get('by_ticker', {}))} tickers")
-    except Exception as e:
-        log.debug(f" Corporate events fetch failed (non-critical): {e}")
-
-    # ── Step 1i: ETF Fund Flows (cached 4h) ───────────────────────────────────
-    try:
-        from services.etf_flows import get_etf_flows
-        market_ctx["etf_flows"] = await get_etf_flows()
-    except Exception as e:
-        log.debug(f" ETF flows fetch failed (non-critical): {e}")
-
-    # ── Step 1j: Economy data from Massive (cached 1h, no FRED key needed) ───
-    try:
-        from services.massive_economy import get_economy_data
-        eco = await get_economy_data()
-        if eco:
-            market_ctx["massive_economy"] = eco
-    except Exception as e:
-        log.debug(f" Massive economy fetch failed (non-critical): {e}")
-
-    # ── Step 1k: ETF Constituents preload (cached 24h) ────────────────────────
-    try:
-        from services.etf_constituents import preload_all
-        await preload_all()  # warms the constituent cache silently
-    except Exception as e:
-        log.debug(f" ETF constituents preload failed (non-critical): {e}")
-
-    # ── Step 1d: Paper portfolio sector exposure (for correlation limits) ────
-    if settings.alpaca_api_key and settings.alpaca_api_secret:
-        try:
-            from services import alpaca_rest
-            from services.sector import SECTOR_MAP as SECTOR_ETF_MAP
-            positions_list = await alpaca_rest.get_positions(
-                settings.alpaca_api_key, settings.alpaca_api_secret
-            )
-            if positions_list:
-                total_mv = sum(
-                    abs(float(p.get("market_value") or 0)) for p in positions_list
-                )
-                sector_exposure: dict[str, float] = {}
-                if total_mv > 0:
-                    for p in positions_list:
-                        sym = p.get("symbol", "").upper()
-                        mv  = abs(float(p.get("market_value") or 0))
-                        # Map ticker → sector ETF via the static SECTOR_ETF_MAP
-                        etf = SECTOR_ETF_MAP.get(sym)
-                        if etf:
-                            sector_exposure[etf] = sector_exposure.get(etf, 0) + mv / total_mv * 100
-                market_ctx["portfolio_ctx"] = {
-                    "sector_exposure": sector_exposure,  # {sector_etf: pct_of_portfolio}
-                    "total_positions": len(positions_list),
-                    "total_mv": round(total_mv, 2),
-                }
-                log.info(
-                    f" Portfolio: {len(positions_list)} open positions, "
-                    f"sector exposure: {', '.join(f'{k} {v:.0f}%' for k,v in sector_exposure.items())}"
-                )
-
-                # ── PCA Risk Model — detect latent factor concentration ────────────
-                # Runs concurrently after basic sector context is set.
-                if len(positions_list) >= 3:
-                    try:
-                        from services.pca_risk import compute_pca_risk
-                        pos_values = {
-                            p.get("symbol", "").upper(): abs(float(p.get("market_value") or 0))
-                            for p in positions_list
-                        }
-                        pca_result = await compute_pca_risk(pos_values)
-                        if pca_result:
-                            market_ctx["portfolio_ctx"]["pca_risk"] = pca_result
-                            if pca_result.get("concentration_warning"):
-                                log.info(
-                                    f" PCA: concentrated on '{pca_result['dominant_factor']}' "
-                                    f"({pca_result['dominant_exposure']:.0%}) — "
-                                    f"haircut={pca_result['haircut_pct']:.0f}%"
-                                )
-                    except Exception as pca_e:
-                        log.debug(f" PCA risk model failed (non-critical): {pca_e}")
-        except Exception as e:
-            log.debug(f" Portfolio context failed (non-critical): {e}")
-
-    # ── Step 1c: Cointegration / pairs trading signals (cached 2h) ──────────
-    try:
-        from services.cointegration import get_pairs_signals
-        pairs_signals = await get_pairs_signals(settings.tickers)
-        market_ctx["pairs_signals"] = pairs_signals
-        if pairs_signals:
-            log.info(f" Pairs: {len(pairs_signals)} divergence signals detected")
-    except Exception as e:
-        log.debug(f" Pairs signal fetch failed (non-critical): {e}")
-
-    # ── Step 1e: Weight overrides from app_settings + factor mining output ───
-    # weight_overrides lets the owner permanently cap cluster/orthogonality boosts
-    # without touching the codebase — survives the Sunday factor mining job.
-    # factor_weights gives the engine the mined OOS-Sharpe rankings for source combos.
-    try:
-        db_settings_now = await _load_db_settings()
-        wo = db_settings_now.get("weight_overrides") or {}
-        market_ctx["weight_overrides"] = wo
-        if wo:
-            log.debug(f" Weight overrides active: {wo}")
-    except Exception as e:
-        log.debug(f" Weight overrides load failed: {e}")
-
-    try:
-        from services.factor_miner import load_factor_weights
-        fw = load_factor_weights()
-        if fw and not fw.get("skipped"):
-            market_ctx["factor_weights"] = fw
-            log.debug(f" Factor weights loaded: {fw.get('combinations_tested', '?')} combos, top={fw.get('top_factors', [{}])[0].get('label', '?') if fw.get('top_factors') else '?'}")
-    except Exception as e:
-        log.debug(f" Factor weights load failed: {e}")
-
-    # ── Step 1f: BUY:SELL saturation circuit breaker ────────────────────
-    # If the rolling 7-day BUY:SELL ratio exceeds 4:1, the system is in a
-    # structurally over-optimistic state. Pass this flag so the signal engine
-    # raises its effective BUY threshold to 42 for the current scan cycle,
-    # suppressing marginal BUY signals until the ratio normalises.
-    try:
-        async with AsyncSessionLocal() as db:
-            from sqlalchemy import text as _sa_text
-            _ratio_row = (await db.execute(_sa_text("""
-                SELECT
-                    SUM(CASE WHEN action='BUY'  THEN 1 ELSE 0 END) AS buys,
-                    SUM(CASE WHEN action='SELL' THEN 1 ELSE 0 END) AS sells
-                FROM signals
-                WHERE date(created_at) >= date('now', '-7 days')
-                  AND action IN ('BUY', 'SELL')
-            """))).fetchone()
-        _buys  = _ratio_row[0] or 0
-        _sells = _ratio_row[1] or 1  # avoid div-by-zero
-        _buy_sell_ratio = round(_buys / _sells, 2)
-        market_ctx["buy_sell_ratio"]  = _buy_sell_ratio
-        market_ctx["buy_saturated"]   = _buy_sell_ratio > 4.0
-        if _buy_sell_ratio > 4.0:
-            log.info(f" BUY:SELL circuit breaker ACTIVE — 7d ratio {_buy_sell_ratio:.1f}:1 (>4.0 threshold). BUY threshold raised to 42.")
-        else:
-            log.info(f" BUY:SELL ratio (7d): {_buy_sell_ratio:.1f}:1 — within normal range.")
-    except Exception as e:
-        log.debug(f" BUY:SELL ratio check failed (non-critical): {e}")
-        market_ctx["buy_saturated"] = False
-
-    # ── Step 1l: news batch prefetch (154 tickers → 3 API calls) ────────────────
-    try:
-        from services.benzinga_news import prefetch_news_batch
-        await prefetch_news_batch(tickers)
-    except Exception as e:
-        log.debug(f" news batch prefetch failed (non-critical): {e}")
+    market_ctx = await fetch_market_context(tickers, settings)
 
     # ── Step 2: batch history ────────────────────────────────────────────
     _mark_scan_stage("history_batch")
