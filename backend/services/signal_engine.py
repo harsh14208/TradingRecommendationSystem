@@ -2692,6 +2692,7 @@ async def generate_signal(
             pass
         bb_upper = tech.get("bb_upper")
         bb_lower = tech.get("bb_lower")
+        _bb_pct_b = tech.get("bb_pct_b")  # 0=lower band, 1=upper band; used for tiered MR scoring
         volume = tech.get("volume", 0)
         avg_vol = tech.get("avg_volume", 1) or 1
 
@@ -2829,12 +2830,80 @@ async def generate_signal(
             # cap lets the MA family dominate when price is strongly above/below trend.
             score += max(-30, min(30, ma_score))
 
-        # ── Bollinger Bands ─────────────────────────────────────────────
-        if bb_lower and bb_upper:
+        # ── Bollinger Bands — tiered BB%B + RSI confluence ─────────────────
+        # Matches backtest score_row() research baseline (WR=60.3%, Sharpe=0.17,
+        # 23yr IS). Flat +4 was an over-correction; BB+RSI confluence at extreme
+        # oversold (BB%B<0.05+RSI<35=+18) is the primary MR driver in the backtest.
+        _bb_rsi = rsi if isinstance(rsi, (int, float)) else 50.0
+        if _bb_pct_b is not None:
+            if _bb_pct_b < 0.05:
+                if _bb_rsi < 35:
+                    _bb_pts = 18
+                    _bb_body = f"BB%B={_bb_pct_b:.2f} + RSI={_bb_rsi:.0f} — deep oversold confluence. Highest-probability MR setup."
+                elif _bb_rsi < 45:
+                    _bb_pts = 12
+                    _bb_body = f"BB%B={_bb_pct_b:.2f} at lower extreme, RSI={_bb_rsi:.0f} confirming oversold."
+                else:
+                    _bb_pts = 6
+                    _bb_body = f"BB%B={_bb_pct_b:.2f} at lower extreme — price statistically stretched."
+                mean_rev_score += _bb_pts
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "BB Extreme Oversold",
+                        "body": _bb_body,
+                        "sentiment": "pos",
+                        "meta": f"BB%B={_bb_pct_b:.2f} | RSI={_bb_rsi:.0f}",
+                    }
+                )
+            elif _bb_pct_b < 0.15:
+                if _bb_rsi < 35:
+                    mean_rev_score += 10
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": "BB Oversold + RSI Confirmed",
+                            "body": f"BB%B={_bb_pct_b:.2f}, RSI={_bb_rsi:.0f} — both in oversold territory.",
+                            "sentiment": "pos",
+                            "meta": f"BB%B={_bb_pct_b:.2f}",
+                        }
+                    )
+                elif _bb_rsi < 45:
+                    mean_rev_score += 5
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": "BB Near Lower Band",
+                            "body": f"BB%B={_bb_pct_b:.2f} — approaching oversold, RSI={_bb_rsi:.0f} softening.",
+                            "sentiment": "pos",
+                            "meta": f"BB%B={_bb_pct_b:.2f}",
+                        }
+                    )
+            elif _bb_pct_b > 0.95:
+                if _bb_rsi > 65:
+                    mean_rev_score -= 14
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": "BB Extreme Overbought",
+                            "body": f"BB%B={_bb_pct_b:.2f} + RSI={_bb_rsi:.0f} — both overbought. High distribution risk.",
+                            "sentiment": "neg",
+                            "meta": f"BB%B={_bb_pct_b:.2f}",
+                        }
+                    )
+                elif _bb_rsi > 55:
+                    mean_rev_score -= 8
+                elif bb_upper:
+                    mean_rev_score -= 4
+            elif _bb_pct_b > 0.85:
+                if _bb_rsi > 65:
+                    mean_rev_score -= 8
+                elif _bb_rsi > 55:
+                    mean_rev_score -= 4
+        elif bb_lower and bb_upper:
+            # Fallback if bb_pct_b unavailable — use absolute price vs band
             if price <= bb_lower * 1.005:
-                # Contribution reduced ±10→±4: Auckland Univ. research found Bollinger
-                # Bands lost predictive ability post-2002 due to market adaptation.
-                mean_rev_score += 4
+                mean_rev_score += 6
                 rationale.append(
                     {
                         "src": "Technical",
@@ -2845,7 +2914,7 @@ async def generate_signal(
                     }
                 )
             elif price >= bb_upper * 0.995:
-                mean_rev_score -= 4
+                mean_rev_score -= 6
                 rationale.append(
                     {
                         "src": "Technical",
@@ -3691,21 +3760,21 @@ async def generate_signal(
                     }
                 )
         elif bb_pct_b is not None:
-            if bb_pct_b < 0.05:
-                mean_rev_score += 5
-            elif bb_pct_b > 0.95:
-                mean_rev_score -= 5
+            # bb_pct_b <0.05/0.95 extremes without squeeze — already handled by
+            # the tiered BB%B section above (_bb_pct_b). This block is kept only
+            # for the squeeze path (bb_pct_b loaded at line 3689); no extra addition.
+            pass
 
-        # ── Combined "Stretched Price" cap — separate family caps ────────────
-        # SCTR research: oscillators should carry ~15% of composite score weight.
-        # Mean-reversion (Bollinger) lost predictive ability post-2002.
-        # Separate caps: osc ±18, mean_rev ±8 (was unified ±30).
+        # ── Combined "Stretched Price" cap — MR cap raised ±8→±18 ────────────
+        # OSC weight=0.3 confirmed by alpha decomp (§12): OSC×0.3 optimal.
+        # MR cap was ±8 (set by Auckland Univ. BB post-2002 study), but the 23yr
+        # backtest (§42-§45) shows MR is the *primary* driver at WR=60.3% when
+        # BB%B+RSI confluence fires. Raising to ±18 matches backtest score_row()
+        # where mean_rev_score can reach ±18 before regime-layer adjustments.
         # Regime adjustment: in bull trend, suppress bearish mean-rev (dip-buy valid).
-        # OSC weight=0.3 (§12 alpha decomp): OSC×0.3 optimal — Sharpe 0.33 vs 0.24 at 0.1, N=26.
-        # Non-monotonic: 0.1 and 0.3 are peaks, 0.2 is a trough. 0.3 confirmed across two runs.
         if _is_trending_bull and mean_rev_score < 0:
             mean_rev_score *= 0.20
-        score += (max(-18.0, min(18.0, osc_score)) * 0.3 + max(-8.0, min(8.0, mean_rev_score))) * 0.85
+        score += (max(-18.0, min(18.0, osc_score)) * 0.3 + max(-18.0, min(18.0, mean_rev_score))) * 0.85
 
         # ── Keltner Channels(20, 2×ATR) ──────────────────────────────────────
         # Backtest-validated (alpha decomp v3): below kc_lower on oversold RSI

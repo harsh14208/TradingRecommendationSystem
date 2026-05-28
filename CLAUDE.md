@@ -76,17 +76,17 @@ Steps: install deps → syntax check → import smoke → pytest → accuracy ga
 
 `ruff.toml` sets `target-version = "py311"` — run `ruff check` locally to catch these before push.
 
-## Research baseline (§45 rerun — post Donchian reduction + confidence sizing, BUY_THRESH=50)
+## Research baseline (§46 — BB/MR alignment, BUY_THRESH=50)
 
-Backtest IS metrics unchanged from §42/§43/§44 (Donchian/sizing changes are live-path only):
+Live engine BB scoring now matches backtest tiered structure (BB%B+RSI confluence). Backtest stable:
 
 | Universe | WR | Avg Ret | Sharpe |
 |---|---|---|---|
-| Main (48 tickers, MR-only) | 60.3% | +0.63% | 0.17 |
-| Sector-filtered (live-equivalent) | 59.0% | +0.64% | 0.17 |
+| Main (48 tickers, MR-only) | 60.3% | +0.68% | 0.18 |
+| Sector-filtered (live-equivalent) | 59.3% | +0.69% | 0.18 |
 | OOS (held-out tickers, thresh=50) | 50.0% | +0.00% | 0.00 |
 
-See `docs/Stats.md` §43 for full adversarial audit + fix log. Prior §42: same IS, OOS was 50.0%/+0.00%/0.00.
+See `docs/Stats.md` §46 for BB/MR alignment details. Monte Carlo MR-Only P5=0.04 → edge statistically confirmed.
 
 ## MCP servers (when Node.js is available)
 
