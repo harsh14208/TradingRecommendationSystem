@@ -19,6 +19,7 @@ ignore = [
     "SIM108", # ternary vs if/else — too aggressive for signal logic
     "SIM117", # nested with — style choice
     "UP007",  # use X | Y for union types — requires 3.10+ at call sites
+    "I001",   # import ordering — oscillates between pre-commit (repo root) and CI (backend/) contexts
     # ── Brownfield style — widespread, non-bug ──────────────────────────────────
     "E701",   # multiple statements on one line (colon) — `if ...: continue` pattern pervasive
     "E702",   # multiple statements on one line (semicolon) — intentional in backtest/scripts
