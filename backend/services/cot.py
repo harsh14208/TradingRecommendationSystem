@@ -17,6 +17,7 @@ Column order in the CFTC Financial Futures legacy report (positions line):
   9  Other Reportables Long
   10 Other Reportables Short
 """
+
 import re
 import ssl
 import time
@@ -38,15 +39,14 @@ async def get_cot_signal() -> dict | None:
     try:
         connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
         async with aiohttp.ClientSession(connector=connector) as s:
-            async with s.get(_URL, timeout=aiohttp.ClientTimeout(total=15),
-                             headers={"User-Agent": "Mozilla/5.0"}) as r:
+            async with s.get(_URL, timeout=aiohttp.ClientTimeout(total=15), headers={"User-Agent": "Mozilla/5.0"}) as r:
                 if r.status != 200:
                     return _cache.get("data")
                 text = await r.text()
 
         lines = text.split("\n")
         pos_line = None
-        as_of    = ""
+        as_of = ""
 
         for i, line in enumerate(lines):
             # Match E-MINI S&P 500 header (exclude sector ETF variants)
@@ -66,14 +66,14 @@ async def get_cot_signal() -> dict | None:
         if not pos_line or len(pos_line) < 9:
             return _cache.get("data")
 
-        lev_long  = pos_line[6]
+        lev_long = pos_line[6]
         lev_short = pos_line[7]
-        total     = lev_long + lev_short
-        net       = lev_long - lev_short
-        net_pct   = round(net / max(total, 1) * 100, 1)
+        total = lev_long + lev_short
+        net = lev_long - lev_short
+        net_pct = round(net / max(total, 1) * 100, 1)
 
         if net_pct < -40:
-            signal, score = "bullish", 10   # leveraged funds very short → contrarian bullish
+            signal, score = "bullish", 10  # leveraged funds very short → contrarian bullish
         elif net_pct < -20:
             signal, score = "bullish", 5
         elif net_pct > 60:
@@ -84,16 +84,16 @@ async def get_cot_signal() -> dict | None:
             signal, score = "neutral", 0
 
         result = {
-            "lev_long":     lev_long,
-            "lev_short":    lev_short,
+            "lev_long": lev_long,
+            "lev_short": lev_short,
             "net_contracts": net,
-            "net_pct":      net_pct,
-            "signal":       signal,
-            "score":        score,
-            "as_of":        as_of,
+            "net_pct": net_pct,
+            "signal": signal,
+            "score": score,
+            "as_of": as_of,
         }
         _cache["data"] = result
-        _cache["ts"]   = now
+        _cache["ts"] = now
         return result
     except Exception as e:
         print(f"[cot] {e}")

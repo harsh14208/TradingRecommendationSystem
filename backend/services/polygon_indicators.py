@@ -9,6 +9,7 @@ Endpoints used:
 
 Cache: 30 minutes per ticker (indicators are end-of-day stable during market hours)
 """
+
 import asyncio
 import logging
 import os
@@ -22,7 +23,7 @@ log = logging.getLogger("signal.trade.polygon_indicators")
 
 _cache: dict[str, dict] = {}
 _weekly_cache: dict[str, dict] = {}
-_TTL = 600          # 10 minutes — unlimited Polygon calls
+_TTL = 600  # 10 minutes — unlimited Polygon calls
 _WEEKLY_TTL = 3600  # 1 hour — weekly bars change once per week
 _BASE = "https://api.polygon.io"
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
@@ -35,8 +36,9 @@ def _get_key() -> str:
 async def _fetch_indicator(session: aiohttp.ClientSession, endpoint: str, params: dict) -> list:
     """Fetch a single indicator series. Returns list of {timestamp, value} or [] on error."""
     try:
-        async with session.get(f"{_BASE}/{endpoint}", params=params, ssl=_SSL_CTX,
-                               timeout=aiohttp.ClientTimeout(total=8)) as resp:
+        async with session.get(
+            f"{_BASE}/{endpoint}", params=params, ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=8)
+        ) as resp:
             if resp.status == 429:
                 log.debug(f"[polygon_indicators] rate limited on {endpoint}")
                 return []
@@ -63,20 +65,27 @@ async def get_indicators(ticker: str) -> dict:
     if not key:
         return {}
 
-    base_params = {"apiKey": key, "timespan": "day", "series_type": "close",
-                   "adjusted": "true", "limit": 3, "order": "desc"}
+    base_params = {
+        "apiKey": key,
+        "timespan": "day",
+        "series_type": "close",
+        "adjusted": "true",
+        "limit": 3,
+        "order": "desc",
+    }
     t = ticker.upper()
 
     result: dict = {}
     try:
         async with aiohttp.ClientSession() as session:
+
             async def _fetch_macd() -> list:
                 try:
                     async with session.get(
                         f"{_BASE}/v1/indicators/macd/{t}",
-                        params={**base_params, "short_window": 12,
-                                "long_window": 26, "signal_window": 9},
-                        ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=8)
+                        params={**base_params, "short_window": 12, "long_window": 26, "signal_window": 9},
+                        ssl=_SSL_CTX,
+                        timeout=aiohttp.ClientTimeout(total=8),
                     ) as resp:
                         if resp.status == 200:
                             d = await resp.json()
@@ -85,14 +94,13 @@ async def get_indicators(ticker: str) -> dict:
                     pass
                 return []
 
-            (rsi_vals, macd_data_raw, sma20_vals,
-             sma50_vals, sma200_vals, ema200_vals) = await asyncio.gather(
-                _fetch_indicator(session, f"v1/indicators/rsi/{t}",   {**base_params, "window": 14}),
+            (rsi_vals, macd_data_raw, sma20_vals, sma50_vals, sma200_vals, ema200_vals) = await asyncio.gather(
+                _fetch_indicator(session, f"v1/indicators/rsi/{t}", {**base_params, "window": 14}),
                 _fetch_macd(),
-                _fetch_indicator(session, f"v1/indicators/sma/{t}",   {**base_params, "window": 20}),
-                _fetch_indicator(session, f"v1/indicators/sma/{t}",   {**base_params, "window": 50}),
-                _fetch_indicator(session, f"v1/indicators/sma/{t}",   {**base_params, "window": 200}),
-                _fetch_indicator(session, f"v1/indicators/ema/{t}",   {**base_params, "window": 200}),
+                _fetch_indicator(session, f"v1/indicators/sma/{t}", {**base_params, "window": 20}),
+                _fetch_indicator(session, f"v1/indicators/sma/{t}", {**base_params, "window": 50}),
+                _fetch_indicator(session, f"v1/indicators/sma/{t}", {**base_params, "window": 200}),
+                _fetch_indicator(session, f"v1/indicators/ema/{t}", {**base_params, "window": 200}),
             )
 
         # Parse RSI
@@ -102,15 +110,15 @@ async def get_indicators(ticker: str) -> dict:
         # Parse MACD
         if macd_data_raw:
             m = macd_data_raw[0]
-            result["macd"]        = round(float(m.get("value", 0)), 4)
+            result["macd"] = round(float(m.get("value", 0)), 4)
             result["macd_signal"] = round(float(m.get("signal", 0)), 4)
-            result["macd_hist"]   = round(float(m.get("histogram", 0)), 4)
+            result["macd_hist"] = round(float(m.get("histogram", 0)), 4)
 
         # Parse SMAs
         if sma20_vals:
-            result["sma20"]  = round(float(sma20_vals[0].get("value", 0)), 2)
+            result["sma20"] = round(float(sma20_vals[0].get("value", 0)), 2)
         if sma50_vals:
-            result["sma50"]  = round(float(sma50_vals[0].get("value", 0)), 2)
+            result["sma50"] = round(float(sma50_vals[0].get("value", 0)), 2)
         if sma200_vals:
             result["sma200"] = round(float(sma200_vals[0].get("value", 0)), 2)
 
@@ -123,9 +131,11 @@ async def get_indicators(ticker: str) -> dict:
 
     _cache[ticker] = {"data": result, "ts": now}
     if result:
-        log.debug(f"[polygon_indicators] {ticker}: RSI={result.get('rsi','?')} "
-                  f"MACD={result.get('macd_hist','?')} SMA200={result.get('sma200','?')} "
-                  f"EMA200={result.get('ema200','?')}")
+        log.debug(
+            f"[polygon_indicators] {ticker}: RSI={result.get('rsi', '?')} "
+            f"MACD={result.get('macd_hist', '?')} SMA200={result.get('sma200', '?')} "
+            f"EMA200={result.get('ema200', '?')}"
+        )
     return result
 
 
@@ -143,8 +153,14 @@ async def get_weekly_indicators(ticker: str) -> dict:
     if not key:
         return {}
 
-    weekly_params = {"apiKey": key, "timespan": "week", "series_type": "close",
-                     "adjusted": "true", "limit": 3, "order": "desc"}
+    weekly_params = {
+        "apiKey": key,
+        "timespan": "week",
+        "series_type": "close",
+        "adjusted": "true",
+        "limit": 3,
+        "order": "desc",
+    }
     t = ticker.upper()
     result: dict = {}
 
@@ -180,15 +196,15 @@ def blend_rsi(pandas_rsi: float | None, polygon_rsi: float | None) -> float | No
 def polygon_sma_crossover(indicators: dict, price: float) -> dict:
     """Derive SMA-based signals from Polygon pre-computed values."""
     sma200 = indicators.get("sma200")
-    sma50  = indicators.get("sma50")
-    sma20  = indicators.get("sma20")
+    sma50 = indicators.get("sma50")
+    sma20 = indicators.get("sma20")
     if not any([sma200, sma50, sma20]):
         return {}
     return {
-        "above_200":           price > sma200 if sma200 else None,
-        "above_50":            price > sma50  if sma50  else None,
-        "above_20":            price > sma20  if sma20  else None,
-        "golden_cross_setup":  (sma50 and sma200 and sma50 > sma200 * 0.99) if (sma50 and sma200) else None,
-        "death_cross_setup":   (sma50 and sma200 and sma50 < sma200 * 1.01) if (sma50 and sma200) else None,
-        "pct_from_200":        round((price - sma200) / sma200 * 100, 2) if sma200 else None,
+        "above_200": price > sma200 if sma200 else None,
+        "above_50": price > sma50 if sma50 else None,
+        "above_20": price > sma20 if sma20 else None,
+        "golden_cross_setup": (sma50 and sma200 and sma50 > sma200 * 0.99) if (sma50 and sma200) else None,
+        "death_cross_setup": (sma50 and sma200 and sma50 < sma200 * 1.01) if (sma50 and sma200) else None,
+        "pct_from_200": round((price - sma200) / sma200 * 100, 2) if sma200 else None,
     }

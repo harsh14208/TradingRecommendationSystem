@@ -11,6 +11,7 @@ Improves short squeeze signal accuracy for SMCI, GME-style setups.
 
 Cache: 24 hours (share counts change quarterly, not intraday).
 """
+
 import logging
 import os
 import ssl
@@ -22,7 +23,7 @@ import certifi
 log = logging.getLogger("signal.trade.polygon_reference")
 
 _cache: dict[str, dict] = {}
-_TTL = 86400   # 24 hours
+_TTL = 86400  # 24 hours
 
 
 async def get_float_data(ticker: str) -> dict:
@@ -50,7 +51,8 @@ async def get_float_data(ticker: str) -> dict:
             async with session.get(
                 f"https://api.polygon.io/v3/reference/tickers/{ticker.upper()}",
                 params={"apiKey": api_key},
-                ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)
+                ssl=ssl_ctx,
+                timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
                 if resp.status == 200:
                     td = (await resp.json()).get("results") or {}
@@ -65,9 +67,15 @@ async def get_float_data(ticker: str) -> dict:
             # Step 2: insider shares from balance sheet (most recent quarterly)
             async with session.get(
                 "https://api.polygon.io/vX/reference/financials",
-                params={"ticker": ticker.upper(), "timeframe": "quarterly",
-                        "limit": 1, "order": "desc", "apiKey": api_key},
-                ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)
+                params={
+                    "ticker": ticker.upper(),
+                    "timeframe": "quarterly",
+                    "limit": 1,
+                    "order": "desc",
+                    "apiKey": api_key,
+                },
+                ssl=ssl_ctx,
+                timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
                 insider_shares = 0
                 if resp.status == 200:
@@ -96,6 +104,8 @@ async def get_float_data(ticker: str) -> dict:
 
     _cache[ticker] = {"data": result, "ts": now}
     if result:
-        log.debug(f"[polygon_reference] {ticker}: total={result.get('total_shares','?')} "
-                  f"float={result.get('float_shares','?')} ({result.get('float_pct','?')}%)")
+        log.debug(
+            f"[polygon_reference] {ticker}: total={result.get('total_shares', '?')} "
+            f"float={result.get('float_shares', '?')} ({result.get('float_pct', '?')}%)"
+        )
     return result

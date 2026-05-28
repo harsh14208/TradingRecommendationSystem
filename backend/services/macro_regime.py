@@ -20,6 +20,7 @@ Output per scan:
     "features":        {...},   # raw feature values used
   }
 """
+
 import asyncio
 import logging
 import time
@@ -34,6 +35,7 @@ _cache: dict = {"result": None, "ts": 0.0}
 _CACHE_TTL = 3600  # re-fit once per hour (data moves slowly)
 
 # ── HMM helpers (pure numpy) ─────────────────────────────────────────────────
+
 
 def _safe_chol(M: np.ndarray) -> np.ndarray:
     """Cholesky with jitter to handle near-singular matrices."""
@@ -55,14 +57,14 @@ def _log_gauss(x: np.ndarray, mean: np.ndarray, cov: np.ndarray) -> float:
     return -0.5 * (d * np.log(2.0 * np.pi) + log_det + float(v @ v))
 
 
-def _forward_scaled(X: np.ndarray, pi: np.ndarray, A: np.ndarray,
-                    means: list, covs: list) -> tuple[np.ndarray, np.ndarray]:
+def _forward_scaled(
+    X: np.ndarray, pi: np.ndarray, A: np.ndarray, means: list, covs: list
+) -> tuple[np.ndarray, np.ndarray]:
     T, K = len(X), len(pi)
     alpha = np.zeros((T, K))
     scales = np.zeros(T)
 
-    log_b = np.array([[_log_gauss(X[t], means[k], covs[k])
-                        for k in range(K)] for t in range(T)])
+    log_b = np.array([[_log_gauss(X[t], means[k], covs[k]) for k in range(K)] for t in range(T)])
     b = np.exp(log_b - log_b.max(axis=1, keepdims=True))  # stable exp
 
     alpha[0] = pi * b[0]
@@ -70,20 +72,18 @@ def _forward_scaled(X: np.ndarray, pi: np.ndarray, A: np.ndarray,
     alpha[0] /= scales[0]
 
     for t in range(1, T):
-        alpha[t] = (alpha[t-1] @ A) * b[t]
+        alpha[t] = (alpha[t - 1] @ A) * b[t]
         scales[t] = alpha[t].sum() or 1e-300
         alpha[t] /= scales[t]
 
     return alpha, scales
 
 
-def _backward_scaled(X: np.ndarray, A: np.ndarray, means: list, covs: list,
-                     scales: np.ndarray) -> np.ndarray:
+def _backward_scaled(X: np.ndarray, A: np.ndarray, means: list, covs: list, scales: np.ndarray) -> np.ndarray:
     T, K = len(X), A.shape[0]
     beta = np.ones((T, K))
 
-    log_b = np.array([[_log_gauss(X[t], means[k], covs[k])
-                        for k in range(K)] for t in range(T)])
+    log_b = np.array([[_log_gauss(X[t], means[k], covs[k]) for k in range(K)] for t in range(T)])
     b = np.exp(log_b - log_b.max(axis=1, keepdims=True))
 
     for t in range(T - 2, -1, -1):
@@ -109,9 +109,8 @@ def _fit_hmm(X: np.ndarray, n_states: int = 2, n_iter: int = 30) -> dict:
 
     sorted_idx = np.argsort(X[:, 0])
     split = T // K
-    means = [X[sorted_idx[k * split:(k + 1) * split]].mean(axis=0) for k in range(K)]
-    covs  = [np.cov(X[sorted_idx[k * split:(k + 1) * split]].T) + np.eye(D) * 1e-4
-              for k in range(K)]
+    means = [X[sorted_idx[k * split : (k + 1) * split]].mean(axis=0) for k in range(K)]
+    covs = [np.cov(X[sorted_idx[k * split : (k + 1) * split]].T) + np.eye(D) * 1e-4 for k in range(K)]
     # Ensure 2D covs
     covs = [c if c.ndim == 2 else np.diag(np.atleast_1d(c)) for c in covs]
 
@@ -124,8 +123,7 @@ def _fit_hmm(X: np.ndarray, n_states: int = 2, n_iter: int = 30) -> dict:
         row_sums = gamma.sum(axis=1, keepdims=True)
         gamma /= np.where(row_sums > 0, row_sums, 1.0)
 
-        log_b = np.array([[_log_gauss(X[t], means[k], covs[k])
-                            for k in range(K)] for t in range(T)])
+        log_b = np.array([[_log_gauss(X[t], means[k], covs[k]) for k in range(K)] for t in range(T)])
         b = np.exp(log_b - log_b.max(axis=1, keepdims=True))
 
         xi = np.zeros((T - 1, K, K))
@@ -149,14 +147,15 @@ def _fit_hmm(X: np.ndarray, n_states: int = 2, n_iter: int = 30) -> dict:
             gsum = g.sum() or 1.0
             means[k] = (g[:, np.newaxis] * X).sum(axis=0) / gsum
             diff = X - means[k]
-            covs[k] = (g[:, np.newaxis, np.newaxis] * diff[:, :, np.newaxis] * diff[:, np.newaxis, :]).sum(axis=0) / gsum
+            covs[k] = (g[:, np.newaxis, np.newaxis] * diff[:, :, np.newaxis] * diff[:, np.newaxis, :]).sum(
+                axis=0
+            ) / gsum
             covs[k] += np.eye(D) * 1e-4  # numerical jitter
 
     return {"pi": pi, "A": A, "means": means, "covs": covs}
 
 
-def _viterbi(X: np.ndarray, pi: np.ndarray, A: np.ndarray,
-             means: list, covs: list) -> tuple[np.ndarray, np.ndarray]:
+def _viterbi(X: np.ndarray, pi: np.ndarray, A: np.ndarray, means: list, covs: list) -> tuple[np.ndarray, np.ndarray]:
     """Viterbi decode — returns (state_seq, state_probs)."""
     T, K = len(X), len(pi)
     log_b = np.array([[_log_gauss(X[t], means[k], covs[k]) for k in range(K)] for t in range(T)])
@@ -164,7 +163,7 @@ def _viterbi(X: np.ndarray, pi: np.ndarray, A: np.ndarray,
     log_pi = np.log(pi + 1e-300)
 
     delta = np.full((T, K), -np.inf)
-    psi   = np.zeros((T, K), dtype=int)
+    psi = np.zeros((T, K), dtype=int)
 
     delta[0] = log_pi + log_b[0]
     for t in range(1, T):
@@ -185,6 +184,7 @@ def _viterbi(X: np.ndarray, pi: np.ndarray, A: np.ndarray,
 
 # ── Feature engineering ───────────────────────────────────────────────────────
 
+
 async def _build_feature_matrix() -> Optional[np.ndarray]:
     """
     Fetch 252 days of macro data and build a 4-feature observation matrix.
@@ -195,9 +195,9 @@ async def _build_feature_matrix() -> Optional[np.ndarray]:
       3: SPY 30-day realised vol — market turbulence
     """
     from services.market_data import get_histories_batch
+
     try:
-        hists = await get_histories_batch(["^VIX", "SPY", "^TNX", "^IRX"],
-                                          period="2y", interval="1d")
+        hists = await get_histories_batch(["^VIX", "SPY", "^TNX", "^IRX"], period="2y", interval="1d")
     except Exception:
         hists = {}
 
@@ -242,7 +242,7 @@ async def _build_feature_matrix() -> Optional[np.ndarray]:
 
     # Normalise each feature to zero-mean, unit-variance (using training set stats)
     means = X.mean(axis=0)
-    stds  = X.std(axis=0)
+    stds = X.std(axis=0)
     stds[stds < 1e-6] = 1.0
     X_norm = (X - means) / stds
 
@@ -250,6 +250,7 @@ async def _build_feature_matrix() -> Optional[np.ndarray]:
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 async def get_macro_regime() -> dict:
     """
@@ -286,10 +287,10 @@ async def get_macro_regime() -> dict:
         bull_state = int(np.argmin(vix_means))
         bear_state = 1 - bull_state
 
-        current_path   = int(path[-1])
-        current_probs  = alpha[-1]           # posterior at last observation
-        bull_prob      = float(current_probs[bull_state])
-        bear_prob      = float(current_probs[bear_state])
+        current_path = int(path[-1])
+        current_probs = alpha[-1]  # posterior at last observation
+        bull_prob = float(current_probs[bull_state])
+        bear_prob = float(current_probs[bear_state])
 
         # ── Transition risk: P(state changes at t+1) ─────────────────────────
         # = 1 - A[current_state, current_state]
@@ -306,7 +307,7 @@ async def get_macro_regime() -> dict:
         # ── VIX z-score (raw, unnormalised) ───────────────────────────────────
         vix_raw = last_raw[0]
         vix_mean = feat_means[0]
-        vix_std  = feat_stds[0]
+        vix_std = feat_stds[0]
         vix_z = float((vix_raw - vix_mean) / (vix_std or 1.0))
 
         # ── Recent regime sequence (last 10 days for trend) ───────────────────
@@ -314,18 +315,18 @@ async def get_macro_regime() -> dict:
         regime_streak = sum(1 for s in reversed(recent) if s == recent[-1])
 
         result = {
-            "regime":          regime,
-            "bull_prob":       round(bull_prob, 3),
-            "bear_prob":       round(bear_prob, 3),
+            "regime": regime,
+            "bull_prob": round(bull_prob, 3),
+            "bear_prob": round(bear_prob, 3),
             "transition_risk": round(transition_risk, 3),
-            "vix_z":           round(vix_z, 2),
+            "vix_z": round(vix_z, 2),
             "regime_streak_days": regime_streak,
-            "recent_regimes":  recent,
+            "recent_regimes": recent,
             "features": {
-                "vix":         round(float(vix_raw), 1),
+                "vix": round(float(vix_raw), 1),
                 "spy_ret_20d": round(float(last_raw[1]) * 100, 2),
                 "yield_curve": round(float(last_raw[2]), 2),
-                "rvol_30d":    round(float(last_raw[3]) * 100, 2),
+                "rvol_30d": round(float(last_raw[3]) * 100, 2),
             },
             "model": "2-state Gaussian HMM (Baum-Welch)",
             "train_obs": len(X_train),
@@ -333,8 +334,10 @@ async def get_macro_regime() -> dict:
 
         _cache["result"] = result
         _cache["ts"] = now
-        log.info(f"[macro_regime] Regime={regime} bull_p={bull_prob:.2f} bear_p={bear_prob:.2f} "
-                 f"trans_risk={transition_risk:.2f} VIX_z={vix_z:.2f}")
+        log.info(
+            f"[macro_regime] Regime={regime} bull_p={bull_prob:.2f} bear_p={bear_prob:.2f} "
+            f"trans_risk={transition_risk:.2f} VIX_z={vix_z:.2f}"
+        )
         return result
 
     except Exception as e:

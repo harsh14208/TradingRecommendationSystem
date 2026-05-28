@@ -2,6 +2,7 @@
 Email service — sends transactional emails via SMTP (aiosmtplib).
 Falls back to console logging if SMTP is not configured.
 """
+
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -11,6 +12,7 @@ log = logging.getLogger("signal.trade.email")
 
 def _settings():
     from config import get_settings
+
     return get_settings()
 
 
@@ -22,10 +24,11 @@ async def _send(to: str, subject: str, html: str, plain: str):
 
     try:
         import aiosmtplib
+
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"]    = f"{s.smtp_from_name} <{s.smtp_from}>"
-        msg["To"]      = to
+        msg["From"] = f"{s.smtp_from_name} <{s.smtp_from}>"
+        msg["To"] = to
         msg.attach(MIMEText(plain, "plain"))
         msg.attach(MIMEText(html, "html"))
         await aiosmtplib.send(
@@ -134,11 +137,25 @@ async def send_weekly_digest(
     worst_ret: float | None,
     spy_ret: float | None = None,
 ):
-    wr_row = f"<tr><td>Win rate</td><td><strong>{win_rate}%</strong> ({wins}/{resolved} resolved)</td></tr>" if win_rate is not None else ""
-    spy_str = f" <span style=\"color:#6b7280;font-size:12px\">(vs SPY {spy_ret:+.2f}%)</span>" if spy_ret is not None else ""
-    ar_row = f"<tr><td>Avg return</td><td><strong>{avg_ret:+.2f}%</strong>{spy_str}</td></tr>" if avg_ret is not None else ""
-    best_row = f"<tr><td>Best signal</td><td><strong>{best_ticker}</strong> +{best_ret:.1f}%</td></tr>" if best_ticker else ""
-    worst_row = f"<tr><td>Worst signal</td><td><strong>{worst_ticker}</strong> {worst_ret:.1f}%</td></tr>" if worst_ticker else ""
+    wr_row = (
+        f"<tr><td>Win rate</td><td><strong>{win_rate}%</strong> ({wins}/{resolved} resolved)</td></tr>"
+        if win_rate is not None
+        else ""
+    )
+    spy_str = (
+        f' <span style="color:#6b7280;font-size:12px">(vs SPY {spy_ret:+.2f}%)</span>' if spy_ret is not None else ""
+    )
+    ar_row = (
+        f"<tr><td>Avg return</td><td><strong>{avg_ret:+.2f}%</strong>{spy_str}</td></tr>" if avg_ret is not None else ""
+    )
+    best_row = (
+        f"<tr><td>Best signal</td><td><strong>{best_ticker}</strong> +{best_ret:.1f}%</td></tr>" if best_ticker else ""
+    )
+    worst_row = (
+        f"<tr><td>Worst signal</td><td><strong>{worst_ticker}</strong> {worst_ret:.1f}%</td></tr>"
+        if worst_ticker
+        else ""
+    )
     no_data = "<p>No resolved outcomes yet — check back next week.</p>" if win_rate is None else ""
     html = f"""
 <html><head><style>{_BASE_STYLE}
@@ -158,13 +175,17 @@ td:first-child{{color:#6b7280;width:40%}}
   <div class="footer">Signal.Trade · <a href="{{{{unsubscribe}}}}">Unsubscribe</a></div>
 </div>
 </body></html>"""
-    plain_lines = [f"Signal.Trade — Weekly Digest\nWeek ending {week_ending}\n",
-                   f"Signals sent: {sent}"]
-    if win_rate is not None: plain_lines.append(f"Win rate: {win_rate}% ({wins}/{resolved} resolved)")
+    plain_lines = [f"Signal.Trade — Weekly Digest\nWeek ending {week_ending}\n", f"Signals sent: {sent}"]
+    if win_rate is not None:
+        plain_lines.append(f"Win rate: {win_rate}% ({wins}/{resolved} resolved)")
     if avg_ret is not None:
-        plain_lines.append(f"Avg return: {avg_ret:+.2f}%" + (f" (vs SPY {spy_ret:+.2f}%)" if spy_ret is not None else ""))
-    if best_ticker:          plain_lines.append(f"Best: {best_ticker} +{best_ret:.1f}%")
-    if worst_ticker:         plain_lines.append(f"Worst: {worst_ticker} {worst_ret:.1f}%")
+        plain_lines.append(
+            f"Avg return: {avg_ret:+.2f}%" + (f" (vs SPY {spy_ret:+.2f}%)" if spy_ret is not None else "")
+        )
+    if best_ticker:
+        plain_lines.append(f"Best: {best_ticker} +{best_ret:.1f}%")
+    if worst_ticker:
+        plain_lines.append(f"Worst: {worst_ticker} {worst_ret:.1f}%")
     await _send(to, f"Signal.Trade — Weekly Digest ({week_ending})", html, "\n".join(plain_lines))
 
 

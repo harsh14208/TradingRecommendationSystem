@@ -12,6 +12,7 @@ Checks:
 4. Schema is compatible (all expected tables exist)
 5. Warns about SQLite-specific patterns that won't work in Postgres
 """
+
 import asyncio
 import os
 import sys
@@ -21,8 +22,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 EXPECTED_TABLES = {
-    "signals", "users", "refresh_tokens", "signal_deliveries",
-    "watchlist", "sources", "app_settings", "send_log",
+    "signals",
+    "users",
+    "refresh_tokens",
+    "signal_deliveries",
+    "watchlist",
+    "sources",
+    "app_settings",
+    "send_log",
 }
 
 PASS, WARN, FAIL = "✅", "⚠️ ", "❌"
@@ -54,6 +61,7 @@ async def main():
     # ── 2. asyncpg installed ──────────────────────────────────────────────────
     try:
         import asyncpg
+
         print(f"{PASS} asyncpg is installed (version: {asyncpg.__version__})")
     except ImportError:
         print(f"{FAIL} asyncpg is not installed")
@@ -76,10 +84,7 @@ async def main():
     try:
         conn = await asyncpg.connect(conn_url, timeout=10)
         existing = set(
-            r["tablename"]
-            for r in await conn.fetch(
-                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-            )
+            r["tablename"] for r in await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
         )
         await conn.close()
     except Exception as e:

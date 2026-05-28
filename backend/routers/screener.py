@@ -14,32 +14,38 @@ Supported fields:
 Supported ops:
   gt, gte, lt, lte, eq, neq, contains, in
 """
+
 from __future__ import annotations
 
 import re
 from typing import Any
 
+from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
+from models import AppSettings, Signal, User
 from pydantic import BaseModel, field_validator
+from services.auth_svc import get_current_user
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from database import get_db
-from models import AppSettings, Signal, User
-from services.auth_svc import get_current_user
 
 router = APIRouter(prefix="/api/screener", tags=["screener"])
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
 _ALLOWED_FIELDS = {
-    "confidence", "sentiment", "action", "style", "rr",
-    "n_sources", "ticker", "has_source",
+    "confidence",
+    "sentiment",
+    "action",
+    "style",
+    "rr",
+    "n_sources",
+    "ticker",
+    "has_source",
 }
 _ALLOWED_OPS = {"gt", "gte", "lt", "lte", "eq", "neq", "contains", "in"}
 _ALLOWED_ACTIONS = {"BUY", "SELL", "HOLD"}
-_ALLOWED_STYLES  = {"swing", "position"}
-_NAME_RE = re.compile(r'^[\w\s\-]{1,40}$')
+_ALLOWED_STYLES = {"swing", "position"}
+_NAME_RE = re.compile(r"^[\w\s\-]{1,40}$")
 
 
 class FilterRule(BaseModel):
@@ -86,6 +92,7 @@ class ScreenerPreset(BaseModel):
 
 # ── Rule evaluation ────────────────────────────────────────────────────────────
 
+
 def _rr_numeric(sig: dict) -> float:
     try:
         return float(str(sig.get("rr", "0")).replace(":", ""))
@@ -119,14 +126,22 @@ def _evaluate_rule(sig: dict, rule: FilterRule) -> bool:
         return False
 
     try:
-        if op == "gt":      return actual > value
-        if op == "gte":     return actual >= value
-        if op == "lt":      return actual < value
-        if op == "lte":     return actual <= value
-        if op == "eq":      return actual == value
-        if op == "neq":     return actual != value
-        if op == "contains":return str(value).lower() in str(actual).lower()
-        if op == "in":      return actual in (value if isinstance(value, list) else [value])
+        if op == "gt":
+            return actual > value
+        if op == "gte":
+            return actual >= value
+        if op == "lt":
+            return actual < value
+        if op == "lte":
+            return actual <= value
+        if op == "eq":
+            return actual == value
+        if op == "neq":
+            return actual != value
+        if op == "contains":
+            return str(value).lower() in str(actual).lower()
+        if op == "in":
+            return actual in (value if isinstance(value, list) else [value])
     except (TypeError, ValueError):
         return False
     return False
@@ -138,6 +153,7 @@ def apply_screener(signals: list[dict], rules: list[FilterRule]) -> list[dict]:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 async def _load_screeners(db: AsyncSession) -> dict[str, list]:
     row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
@@ -156,6 +172,7 @@ async def _save_screeners(db: AsyncSession, screeners: dict[str, list]) -> None:
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
+
 
 @router.get("")
 async def list_screeners(
@@ -211,29 +228,30 @@ async def run_screener(
     rules = [FilterRule(**r) for r in screeners[name]]
 
     # Fetch all active signals
-    rows = (await db.execute(
-        select(Signal)
-        .where(Signal.is_active == True)
-        .order_by(Signal.confidence.desc())
-        .limit(500)
-    )).scalars().all()
+    rows = (
+        (await db.execute(select(Signal).where(Signal.is_active == True).order_by(Signal.confidence.desc()).limit(500)))
+        .scalars()
+        .all()
+    )
 
     import json as _json
+
     signals = []
     for row in rows:
         sig = {
-            "id":         row.id,
-            "ticker":     row.ticker,
-            "action":     row.action,
+            "id": row.id,
+            "ticker": row.ticker,
+            "action": row.action,
             "confidence": row.confidence,
-            "sentiment":  row.sentiment,
-            "style":      row.style,
-            "rr":         row.rr,
-            "price":      row.price,
-            "sources":    row.sources if isinstance(row.sources, list) else
-                          (_json.loads(row.sources) if row.sources else []),
-            "headline":   row.headline,
-            "ts":         row.created_at.isoformat() + "Z" if row.created_at else None,
+            "sentiment": row.sentiment,
+            "style": row.style,
+            "rr": row.rr,
+            "price": row.price,
+            "sources": row.sources
+            if isinstance(row.sources, list)
+            else (_json.loads(row.sources) if row.sources else []),
+            "headline": row.headline,
+            "ts": row.created_at.isoformat() + "Z" if row.created_at else None,
         }
         signals.append(sig)
 
@@ -253,29 +271,30 @@ async def preview_screener(
     """
     rules = preset.rules
 
-    rows = (await db.execute(
-        select(Signal)
-        .where(Signal.is_active == True)
-        .order_by(Signal.confidence.desc())
-        .limit(500)
-    )).scalars().all()
+    rows = (
+        (await db.execute(select(Signal).where(Signal.is_active == True).order_by(Signal.confidence.desc()).limit(500)))
+        .scalars()
+        .all()
+    )
 
     import json as _json
+
     signals = []
     for row in rows:
         sig = {
-            "id":         row.id,
-            "ticker":     row.ticker,
-            "action":     row.action,
+            "id": row.id,
+            "ticker": row.ticker,
+            "action": row.action,
             "confidence": row.confidence,
-            "sentiment":  row.sentiment,
-            "style":      row.style,
-            "rr":         row.rr,
-            "price":      row.price,
-            "sources":    row.sources if isinstance(row.sources, list) else
-                          (_json.loads(row.sources) if row.sources else []),
-            "headline":   row.headline,
-            "ts":         row.created_at.isoformat() + "Z" if row.created_at else None,
+            "sentiment": row.sentiment,
+            "style": row.style,
+            "rr": row.rr,
+            "price": row.price,
+            "sources": row.sources
+            if isinstance(row.sources, list)
+            else (_json.loads(row.sources) if row.sources else []),
+            "headline": row.headline,
+            "ts": row.created_at.isoformat() + "Z" if row.created_at else None,
         }
         signals.append(sig)
 

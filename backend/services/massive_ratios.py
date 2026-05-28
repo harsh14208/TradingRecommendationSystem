@@ -7,6 +7,7 @@ and dividend aristocrat streak from raw financial statements + dividend history.
 
 Cache: 6 hours (quarterly earnings data).
 """
+
 import logging
 import os
 import ssl
@@ -20,8 +21,8 @@ log = logging.getLogger("signal.trade.polygon_financials")
 _cache: dict[str, dict] = {}
 _annual_cache: dict[str, dict] = {}
 _dividend_cache: dict[str, dict] = {}
-_TTL = 21600        # 6 hours
-_DIV_TTL = 86400    # 24 hours — dividend data changes rarely
+_TTL = 21600  # 6 hours
+_DIV_TTL = 86400  # 24 hours — dividend data changes rarely
 _BASE = "https://api.polygon.io/vX/reference/financials"
 
 
@@ -52,14 +53,12 @@ async def get_ratios(ticker: str) -> dict:
     if not api_key:
         return {}
 
-    params = {"ticker": ticker, "timeframe": "quarterly", "limit": 2,
-              "order": "desc", "apiKey": api_key}
+    params = {"ticker": ticker, "timeframe": "quarterly", "limit": 2, "order": "desc", "apiKey": api_key}
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(_BASE, params=params, ssl=ssl_ctx,
-                                   timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(_BASE, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
                     return {}
                 data = await resp.json()
@@ -71,48 +70,55 @@ async def get_ratios(ticker: str) -> dict:
         return {}
 
     latest = results[0].get("financials", {})
-    prev   = results[1].get("financials", {}) if len(results) > 1 else {}
+    prev = results[1].get("financials", {}) if len(results) > 1 else {}
 
-    inc  = latest.get("income_statement", {})
-    cf   = latest.get("cash_flow_statement", {})
-    bs   = latest.get("balance_sheet", {})
+    inc = latest.get("income_statement", {})
+    cf = latest.get("cash_flow_statement", {})
+    bs = latest.get("balance_sheet", {})
     inc0 = prev.get("income_statement", {}) if prev else {}
 
-    revenue     = _val(inc, "revenues")
-    gross_prof  = _val(inc, "gross_profit")
-    net_income  = _val(inc, "income_loss_from_continuing_operations_after_tax")
-    op_cf       = _val(cf,  "net_cash_flow_from_operating_activities_continuing") or \
-                  _val(cf,  "net_cash_flow_from_operating_activities")
-    inv_cf      = _val(cf,  "net_cash_flow_from_investing_activities_continuing") or \
-                  _val(cf,  "net_cash_flow_from_investing_activities")
+    revenue = _val(inc, "revenues")
+    gross_prof = _val(inc, "gross_profit")
+    net_income = _val(inc, "income_loss_from_continuing_operations_after_tax")
+    op_cf = _val(cf, "net_cash_flow_from_operating_activities_continuing") or _val(
+        cf, "net_cash_flow_from_operating_activities"
+    )
+    inv_cf = _val(cf, "net_cash_flow_from_investing_activities_continuing") or _val(
+        cf, "net_cash_flow_from_investing_activities"
+    )
     total_assets = _val(bs, "assets")
-    curr_assets  = _val(bs, "current_assets")
-    curr_liab    = _val(bs, "current_liabilities")
-    lt_debt      = _val(bs, "long_term_debt")
-    equity       = None
+    curr_assets = _val(bs, "current_assets")
+    curr_liab = _val(bs, "current_liabilities")
+    lt_debt = _val(bs, "long_term_debt")
+    equity = None
     if total_assets and curr_liab:
         equity = total_assets - (curr_liab + (lt_debt or 0))
 
     # Derived ratios
     fcf = (op_cf + inv_cf) if (op_cf is not None and inv_cf is not None) else None
     gross_margin = (gross_prof / revenue) if gross_prof and revenue else None
-    net_margin   = (net_income / revenue) if net_income and revenue else None
-    debt_equity  = (lt_debt / equity) if lt_debt and equity and equity > 0 else None
+    net_margin = (net_income / revenue) if net_income and revenue else None
+    debt_equity = (lt_debt / equity) if lt_debt and equity and equity > 0 else None
     current_ratio = (curr_assets / curr_liab) if curr_assets and curr_liab and curr_liab > 0 else None
 
     # Revenue QoQ growth
     prev_revenue = _val(inc0, "revenues")
-    revenue_growth = ((revenue - prev_revenue) / abs(prev_revenue) * 100
-                      if revenue and prev_revenue and prev_revenue != 0 else None)
+    revenue_growth = (
+        (revenue - prev_revenue) / abs(prev_revenue) * 100 if revenue and prev_revenue and prev_revenue != 0 else None
+    )
 
-    result = {k: v for k, v in {
-        "gross_margin":    round(gross_margin * 100, 2) if gross_margin is not None else None,
-        "net_margin":      round(net_margin   * 100, 2) if net_margin   is not None else None,
-        "debt_equity":     round(debt_equity,          2) if debt_equity  is not None else None,
-        "current_ratio":   round(current_ratio,         2) if current_ratio is not None else None,
-        "fcf_ttm":         round(fcf / 1e6,             1) if fcf           is not None else None,
-        "revenue_qoq":     round(revenue_growth,         1) if revenue_growth is not None else None,
-    }.items() if v is not None}
+    result = {
+        k: v
+        for k, v in {
+            "gross_margin": round(gross_margin * 100, 2) if gross_margin is not None else None,
+            "net_margin": round(net_margin * 100, 2) if net_margin is not None else None,
+            "debt_equity": round(debt_equity, 2) if debt_equity is not None else None,
+            "current_ratio": round(current_ratio, 2) if current_ratio is not None else None,
+            "fcf_ttm": round(fcf / 1e6, 1) if fcf is not None else None,
+            "revenue_qoq": round(revenue_growth, 1) if revenue_growth is not None else None,
+        }.items()
+        if v is not None
+    }
 
     _cache[ticker] = {"data": result, "ts": now}
     log.debug(f"[polygon_financials] {ticker}: {result}")
@@ -144,14 +150,12 @@ async def get_annual_revenue_acceleration(ticker: str) -> dict:
     if not api_key:
         return {}
 
-    params = {"ticker": ticker, "timeframe": "annual", "limit": 4,
-              "order": "desc", "apiKey": api_key}
+    params = {"ticker": ticker, "timeframe": "annual", "limit": 4, "order": "desc", "apiKey": api_key}
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(_BASE, params=params, ssl=ssl_ctx,
-                                   timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(_BASE, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
                     return {}
                 data = await resp.json()
@@ -184,12 +188,12 @@ async def get_annual_revenue_acceleration(ticker: str) -> dict:
     else:
         # Torpedo: all positive AND each year's growth is higher than next year's
         # growths[0] = most recent, growths[2] = oldest
-        all_positive    = all(g > 0 for g in growths)
-        accelerating    = growths[0] > growths[1] > growths[2]
+        all_positive = all(g > 0 for g in growths)
+        accelerating = growths[0] > growths[1] > growths[2]
         revenue_torpedo = all_positive and accelerating
         result = {
-            "revenue_torpedo":    revenue_torpedo,
-            "annual_rev_growth":  growths,  # [yr0_pct, yr1_pct, yr2_pct] newest→oldest
+            "revenue_torpedo": revenue_torpedo,
+            "annual_rev_growth": growths,  # [yr0_pct, yr1_pct, yr2_pct] newest→oldest
         }
 
     _annual_cache[ticker] = {"data": result, "ts": now}
@@ -222,7 +226,8 @@ async def get_polygon_dividend_data(ticker: str) -> dict:
             async with session.get(
                 "https://api.polygon.io/v3/reference/dividends",
                 params={"ticker": ticker, "order": "desc", "limit": 20, "apiKey": api_key},
-                ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)
+                ssl=ssl_ctx,
+                timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
                 if resp.status != 200:
                     _dividend_cache[ticker] = {"data": {}, "ts": now}
@@ -245,6 +250,7 @@ async def get_polygon_dividend_data(ticker: str) -> dict:
         # Consecutive annual increase streak
         # Group by year, sum per year, check for increases
         from collections import defaultdict
+
         year_totals: dict[int, float] = defaultdict(float)
         for p in payments:
             dt_str = p.get("ex_dividend_date") or p.get("pay_date") or ""
@@ -278,6 +284,8 @@ async def get_polygon_dividend_data(ticker: str) -> dict:
 
     _dividend_cache[ticker] = {"data": result, "ts": now}
     if result:
-        log.debug(f"[polygon_dividends] {ticker}: TTM={result.get('div_ttm_amount','?')} "
-                  f"streak={result.get('div_aristocrat_years','?')}yr")
+        log.debug(
+            f"[polygon_dividends] {ticker}: TTM={result.get('div_ttm_amount', '?')} "
+            f"streak={result.get('div_aristocrat_years', '?')}yr"
+        )
     return result

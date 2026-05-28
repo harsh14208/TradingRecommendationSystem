@@ -14,6 +14,7 @@ Signal value:
 
 4-hour cache per batch.
 """
+
 import asyncio
 import logging
 import os
@@ -27,33 +28,54 @@ import certifi
 log = logging.getLogger("signal.trade.corporate_events")
 
 _cache: dict = {"events": None, "by_ticker": None, "ts": 0.0}
-_TTL = 3600   # 1 hour — ex-div/split dates via Polygon (unlimited calls)
+_TTL = 3600  # 1 hour — ex-div/split dates via Polygon (unlimited calls)
 _BASE = "https://api.polygon.io"
 
-_MA_KEYWORDS   = {"acqui", "merger", "takeover", "buyout", "acquisition", "acquire"}
-_DIV_KEYWORDS  = {"divestiture", "spinoff", "spin-off", "divest"}
-_RAISE_KEYWORDS = {"raises guidance", "raised guidance", "raised outlook", "above expectations",
-                   "beat estimates", "beats estimates", "record revenue", "record earnings"}
-_CUT_KEYWORDS  = {"cuts guidance", "cut guidance", "lowered outlook", "below expectations",
-                  "missed estimates", "misses estimates", "warning", "profit warning"}
+_MA_KEYWORDS = {"acqui", "merger", "takeover", "buyout", "acquisition", "acquire"}
+_DIV_KEYWORDS = {"divestiture", "spinoff", "spin-off", "divest"}
+_RAISE_KEYWORDS = {
+    "raises guidance",
+    "raised guidance",
+    "raised outlook",
+    "above expectations",
+    "beat estimates",
+    "beats estimates",
+    "record revenue",
+    "record earnings",
+}
+_CUT_KEYWORDS = {
+    "cuts guidance",
+    "cut guidance",
+    "lowered outlook",
+    "below expectations",
+    "missed estimates",
+    "misses estimates",
+    "warning",
+    "profit warning",
+}
 
 
 async def _fetch_dividends(tickers: list[str], ssl_ctx, api_key: str) -> list[dict]:
-    today     = date.today()
-    end_date  = (today + timedelta(days=7)).isoformat()
+    today = date.today()
+    end_date = (today + timedelta(days=7)).isoformat()
     events = []
     async with aiohttp.ClientSession() as session:
+
         async def fetch_one(ticker):
             url = f"{_BASE}/v3/reference/dividends"
-            params = {"ticker": ticker, "ex_dividend_date.gte": today.isoformat(),
-                      "ex_dividend_date.lte": end_date, "limit": 3, "apiKey": api_key}
+            params = {
+                "ticker": ticker,
+                "ex_dividend_date.gte": today.isoformat(),
+                "ex_dividend_date.lte": end_date,
+                "limit": 3,
+                "apiKey": api_key,
+            }
             try:
-                async with session.get(url, params=params, ssl=ssl_ctx,
-                                       timeout=aiohttp.ClientTimeout(total=6)) as resp:
+                async with session.get(url, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=6)) as resp:
                     if resp.status != 200:
                         return
                     data = await resp.json()
-                    for r in (data.get("results") or []):
+                    for r in data.get("results") or []:
                         ex_date = r.get("ex_dividend_date", "")
                         if not ex_date:
                             continue
@@ -61,35 +83,45 @@ async def _fetch_dividends(tickers: list[str], ssl_ctx, api_key: str) -> list[di
                             days_away = (date.fromisoformat(ex_date) - today).days
                         except ValueError:
                             continue
-                        events.append({
-                            "ticker": ticker, "type": "ExDividendDate",
-                            "label": f"Ex-Dividend ${r.get('cash_amount', 0):.3f}",
-                            "date": ex_date, "days_away": days_away,
-                            "signal_pts": 2 if days_away <= 2 else 0,
-                            "within_window": days_away <= 2,
-                        })
+                        events.append(
+                            {
+                                "ticker": ticker,
+                                "type": "ExDividendDate",
+                                "label": f"Ex-Dividend ${r.get('cash_amount', 0):.3f}",
+                                "date": ex_date,
+                                "days_away": days_away,
+                                "signal_pts": 2 if days_away <= 2 else 0,
+                                "within_window": days_away <= 2,
+                            }
+                        )
             except Exception:
                 pass
+
         await asyncio.gather(*[fetch_one(t) for t in tickers])
     return events
 
 
 async def _fetch_splits(tickers: list[str], ssl_ctx, api_key: str) -> list[dict]:
-    today    = date.today()
+    today = date.today()
     end_date = (today + timedelta(days=14)).isoformat()
     events = []
     async with aiohttp.ClientSession() as session:
+
         async def fetch_one(ticker):
             url = f"{_BASE}/v3/reference/splits"
-            params = {"ticker": ticker, "execution_date.gte": today.isoformat(),
-                      "execution_date.lte": end_date, "limit": 2, "apiKey": api_key}
+            params = {
+                "ticker": ticker,
+                "execution_date.gte": today.isoformat(),
+                "execution_date.lte": end_date,
+                "limit": 2,
+                "apiKey": api_key,
+            }
             try:
-                async with session.get(url, params=params, ssl=ssl_ctx,
-                                       timeout=aiohttp.ClientTimeout(total=6)) as resp:
+                async with session.get(url, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=6)) as resp:
                     if resp.status != 200:
                         return
                     data = await resp.json()
-                    for r in (data.get("results") or []):
+                    for r in data.get("results") or []:
                         ex_date = r.get("execution_date", "")
                         if not ex_date:
                             continue
@@ -98,15 +130,20 @@ async def _fetch_splits(tickers: list[str], ssl_ctx, api_key: str) -> list[dict]
                         except ValueError:
                             continue
                         ratio = f"{r.get('split_from', 1)}:{r.get('split_to', 1)}"
-                        events.append({
-                            "ticker": ticker, "type": "StockSplit",
-                            "label": f"Stock Split {ratio}",
-                            "date": ex_date, "days_away": days_away,
-                            "signal_pts": 2 if days_away <= 7 else 0,
-                            "within_window": days_away <= 7,
-                        })
+                        events.append(
+                            {
+                                "ticker": ticker,
+                                "type": "StockSplit",
+                                "label": f"Stock Split {ratio}",
+                                "date": ex_date,
+                                "days_away": days_away,
+                                "signal_pts": 2 if days_away <= 7 else 0,
+                                "within_window": days_away <= 7,
+                            }
+                        )
             except Exception:
                 pass
+
         await asyncio.gather(*[fetch_one(t) for t in tickers])
     return events
 
@@ -116,44 +153,66 @@ async def _fetch_news_events(tickers: list[str], ssl_ctx, api_key: str) -> list[
     today = date.today().isoformat()
     events = []
     async with aiohttp.ClientSession() as session:
+
         async def fetch_one(ticker):
             url = f"{_BASE}/v2/reference/news"
-            params = {"ticker": ticker, "limit": 5, "order": "desc",
-                      "sort": "published_utc", "published_utc.gte": today, "apiKey": api_key}
+            params = {
+                "ticker": ticker,
+                "limit": 5,
+                "order": "desc",
+                "sort": "published_utc",
+                "published_utc.gte": today,
+                "apiKey": api_key,
+            }
             try:
-                async with session.get(url, params=params, ssl=ssl_ctx,
-                                       timeout=aiohttp.ClientTimeout(total=6)) as resp:
+                async with session.get(url, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=6)) as resp:
                     if resp.status != 200:
                         return
                     data = await resp.json()
-                    for art in (data.get("results") or []):
+                    for art in data.get("results") or []:
                         title = (art.get("title") or "").lower()
                         if any(k in title for k in _MA_KEYWORDS):
-                            events.append({
-                                "ticker": ticker, "type": "MaterialAgreement",
-                                "label": "M&A / Acquisition news",
-                                "date": today, "days_away": 0,
-                                "signal_pts": 6, "within_window": True,
-                            })
+                            events.append(
+                                {
+                                    "ticker": ticker,
+                                    "type": "MaterialAgreement",
+                                    "label": "M&A / Acquisition news",
+                                    "date": today,
+                                    "days_away": 0,
+                                    "signal_pts": 6,
+                                    "within_window": True,
+                                }
+                            )
                             break
                         if any(k in title for k in _RAISE_KEYWORDS):
-                            events.append({
-                                "ticker": ticker, "type": "GuidanceRaise",
-                                "label": "Guidance / earnings beat signal",
-                                "date": today, "days_away": 0,
-                                "signal_pts": 4, "within_window": True,
-                            })
+                            events.append(
+                                {
+                                    "ticker": ticker,
+                                    "type": "GuidanceRaise",
+                                    "label": "Guidance / earnings beat signal",
+                                    "date": today,
+                                    "days_away": 0,
+                                    "signal_pts": 4,
+                                    "within_window": True,
+                                }
+                            )
                             break
                         if any(k in title for k in _CUT_KEYWORDS):
-                            events.append({
-                                "ticker": ticker, "type": "GuidanceCut",
-                                "label": "Guidance cut / earnings miss signal",
-                                "date": today, "days_away": 0,
-                                "signal_pts": -4, "within_window": True,
-                            })
+                            events.append(
+                                {
+                                    "ticker": ticker,
+                                    "type": "GuidanceCut",
+                                    "label": "Guidance cut / earnings miss signal",
+                                    "date": today,
+                                    "days_away": 0,
+                                    "signal_pts": -4,
+                                    "within_window": True,
+                                }
+                            )
                             break
             except Exception:
                 pass
+
         await asyncio.gather(*[fetch_one(t) for t in tickers])
     return events
 
@@ -175,7 +234,8 @@ async def get_corporate_events(tickers: list[str] | None = None) -> dict:
     if not tickers:
         # Use a representative subset — fetching 154 tickers in parallel is fine
         from config import get_settings
-        tickers = get_settings().tickers[:50]   # top 50 to keep startup fast
+
+        tickers = get_settings().tickers[:50]  # top 50 to keep startup fast
 
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 
@@ -197,9 +257,9 @@ async def get_corporate_events(tickers: list[str] | None = None) -> dict:
     for ev in all_events:
         by_ticker.setdefault(ev["ticker"], []).append(ev)
 
-    _cache["events"]    = all_events
+    _cache["events"] = all_events
     _cache["by_ticker"] = by_ticker
-    _cache["ts"]        = now
+    _cache["ts"] = now
     log.info(f"[corp_events] {len(all_events)} events for {len(by_ticker)} tickers")
     return {"events": all_events, "by_ticker": by_ticker}
 

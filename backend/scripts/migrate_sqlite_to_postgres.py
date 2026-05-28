@@ -10,6 +10,7 @@ Run from the backend/ directory after starting Postgres:
 The script reads DATABASE_URL from .env (or the environment).
 It is safe to re-run — all destination tables are truncated before copy.
 """
+
 import asyncio
 import json
 import os
@@ -24,6 +25,7 @@ _DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}")
 _env = Path(__file__).parent.parent / ".env"
 if _env.exists():
     from dotenv import load_dotenv
+
     load_dotenv(_env)
 
 # ── Source ────────────────────────────────────────────────────────────────────
@@ -62,18 +64,18 @@ TABLES = [
 
 # Columns that SQLite stores as JSON text — must be parsed before PG insert
 _JSON_COLS: dict[str, set[str]] = {
-    "signals":      {"sources", "rationale", "plain_english"},
+    "signals": {"sources", "rationale", "plain_english"},
     "app_settings": {"data"},
 }
 
 # Columns that SQLite stores as 0/1 integers — convert to bool for PG
 _BOOL_COLS: dict[str, set[str]] = {
-    "signals":        {"is_active", "is_sent", "is_skipped", "reviewed", "confidence_warning"},
-    "users":          {"is_active", "is_owner", "referral_rewarded", "email_verified"},
+    "signals": {"is_active", "is_sent", "is_skipped", "reviewed", "confidence_warning"},
+    "users": {"is_active", "is_owner", "referral_rewarded", "email_verified"},
     "refresh_tokens": {"revoked"},
-    "price_alerts":   {"is_active"},
-    "watchlist":      {"is_active"},
-    "sources":        {"is_on"},
+    "price_alerts": {"is_active"},
+    "watchlist": {"is_active"},
+    "sources": {"is_on"},
 }
 
 
@@ -107,11 +109,12 @@ async def main() -> None:
     print(f"Target : {PG_URL.split('@')[-1]}\n")
 
     sqlite_eng = create_async_engine(SQLITE_URL, echo=False)
-    pg_eng     = create_async_engine(PG_URL,     echo=False)
+    pg_eng = create_async_engine(PG_URL, echo=False)
 
     # ── 1. Create schema on PG ────────────────────────────────────────────────
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from models import Base  # noqa: E402
+
     async with pg_eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("Schema created.\n")
@@ -121,7 +124,7 @@ async def main() -> None:
     async with sqlite_eng.connect() as src:
         for tname in TABLES:
             try:
-                res  = await src.execute(sa.text(f"SELECT * FROM {tname}"))
+                res = await src.execute(sa.text(f"SELECT * FROM {tname}"))
                 cols = list(res.keys())
                 rows = [_coerce(tname, dict(zip(cols, r))) for r in res.fetchall()]
                 data[tname] = rows
@@ -135,6 +138,7 @@ async def main() -> None:
 
     # Reflect PG schema so SQLAlchemy handles JSON/datetime serialization for us
     from sqlalchemy import MetaData as SAMeta
+
     pg_meta = SAMeta()
     async with pg_eng.connect() as c:
         await c.run_sync(pg_meta.reflect)
@@ -142,9 +146,7 @@ async def main() -> None:
     async with pg_eng.begin() as dst:
         # Single TRUNCATE CASCADE clears everything
         tables_sql = ", ".join(f'"{t}"' for t in TABLES)
-        await dst.execute(sa.text(
-            f"TRUNCATE TABLE {tables_sql} RESTART IDENTITY CASCADE"
-        ))
+        await dst.execute(sa.text(f"TRUNCATE TABLE {tables_sql} RESTART IDENTITY CASCADE"))
 
         # Disable RI triggers so we can insert in dependency order freely
         for tname in TABLES:
@@ -167,13 +169,15 @@ async def main() -> None:
     async with pg_eng.begin() as conn:
         for tname in TABLES:
             try:
-                await conn.execute(sa.text(f"""
+                await conn.execute(
+                    sa.text(f"""
                     SELECT setval(
                         pg_get_serial_sequence('{tname}', 'id'),
                         COALESCE((SELECT MAX(id) FROM "{tname}"), 0) + 1,
                         false
                     )
-                """))
+                """)
+                )
             except Exception:
                 pass  # table has no serial id column
 

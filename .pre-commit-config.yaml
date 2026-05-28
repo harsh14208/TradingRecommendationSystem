@@ -4,8 +4,10 @@ repos:
     rev: 0c7b6c989466a93942def1f84baf36ddfcd60c83  # frozen: v0.15.14
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [--fix]
+        files: ^backend/
       - id: ruff-format
+        files: ^backend/
 
   # ── Trailing whitespace / end-of-file ──────────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks

@@ -7,18 +7,18 @@ Setup:
   2. Users run /start <link_code> in their Telegram chat with the bot.
   3. The bot links their chat_id to their Signal.Trade account.
 """
+
 import logging
 import secrets as _secrets
 
 import aiohttp
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from config import get_settings
 from database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Request
 from models import User
 from services.auth_svc import get_current_user
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger("signal.trade.tg_webhook")
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
@@ -57,8 +57,8 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
     if not message:
         return {"ok": True}
 
-    chat_id  = str(message.get("chat", {}).get("id", ""))
-    text     = (message.get("text") or "").strip()
+    chat_id = str(message.get("chat", {}).get("id", ""))
+    text = (message.get("text") or "").strip()
     username = message.get("from", {}).get("username", "there")
 
     if not text.startswith("/start"):
@@ -67,49 +67,51 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
 
     parts = text.split()
     if len(parts) < 2:
-        await _reply(chat_id,
+        await _reply(
+            chat_id,
             "👋 Welcome to Signal.Trade!\n\n"
             "To connect your account, go to *Account Settings* in the app and copy your Telegram link code. "
-            "Then send:\n`/start YOUR_CODE`")
+            "Then send:\n`/start YOUR_CODE`",
+        )
         return {"ok": True}
 
     code = parts[1].strip().upper()
 
-    user = (await db.execute(
-        select(User).where(User.telegram_link_code == code)
-    )).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.telegram_link_code == code))).scalar_one_or_none()
 
     if not user:
-        await _reply(chat_id,
-            "❌ Invalid or expired link code.\n\n"
-            "Go to *Account Settings* in Signal.Trade to get a fresh code.")
+        await _reply(
+            chat_id, "❌ Invalid or expired link code.\n\nGo to *Account Settings* in Signal.Trade to get a fresh code."
+        )
         return {"ok": True}
 
     # Check if this chat is already linked to another account
-    existing = (await db.execute(
-        select(User).where(User.telegram_chat_id == chat_id)
-    )).scalar_one_or_none()
+    existing = (await db.execute(select(User).where(User.telegram_chat_id == chat_id))).scalar_one_or_none()
     if existing and existing.id != user.id:
-        await _reply(chat_id,
+        await _reply(
+            chat_id,
             "⚠️ This Telegram account is already linked to a different Signal.Trade account. "
-            "Unlink it first from Account Settings.")
+            "Unlink it first from Account Settings.",
+        )
         return {"ok": True}
 
     # Link the chat
-    user.telegram_chat_id   = chat_id
+    user.telegram_chat_id = chat_id
     user.telegram_link_code = None  # one-time use — clear it
     await db.commit()
 
     tier_msg = {
-        "free":  "You're on the *Free* plan — upgrade to Basic or Pro to receive signal alerts.",
+        "free": "You're on the *Free* plan — upgrade to Basic or Pro to receive signal alerts.",
         "basic": "You're on *Basic* — you'll now receive signal alerts here.",
-        "pro":   "You're on *Pro* — you'll now receive all signal alerts and weekly digests here.",
+        "pro": "You're on *Pro* — you'll now receive all signal alerts and weekly digests here.",
     }.get(user.subscription_tier, "")
 
-    await _reply(chat_id,
+    await _reply(
+        chat_id,
         f"✅ *Telegram linked to Signal.Trade!*\n\n"
         f"Account: `{user.email}`\n{tier_msg}\n\n"
-        "⚠️ _Signals are for informational purposes only. Not financial advice._")
+        "⚠️ _Signals are for informational purposes only. Not financial advice._",
+    )
 
     log.info(f"[tg_webhook] linked chat_id={chat_id} user={user.id} email={user.email}")
     return {"ok": True}
