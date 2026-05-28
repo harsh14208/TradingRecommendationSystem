@@ -2,25 +2,25 @@
 Auth service: JWT creation/validation, password hashing,
 FastAPI dependencies for authentication and tier-gating.
 """
+
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt as _bcrypt_lib
+from config import get_settings, tier_gte
+from database import get_db
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy import select
+from models import User
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from config import TIERS, get_settings, tier_gte
-from database import get_db
-from models import RefreshToken, User
 
 _bearer = HTTPBearer(auto_error=False)
 
 
 # ── Passwords ─────────────────────────────────────────────────────────────────
+
 
 def hash_password(plain: str) -> str:
     return _bcrypt_lib.hashpw(plain.encode()[:72], _bcrypt_lib.gensalt()).decode()
@@ -34,6 +34,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
+
 
 def _secret() -> str:
     return get_settings().jwt_secret_key
@@ -53,7 +54,8 @@ def create_access_token(user_id: int, tier: str, is_owner: bool) -> str:
     expire = _utcnow_naive() + timedelta(minutes=s.access_token_expire_minutes)
     return jwt.encode(
         {"sub": str(user_id), "tier": tier, "owner": is_owner, "exp": expire},
-        _secret(), algorithm=_algo(),
+        _secret(),
+        algorithm=_algo(),
     )
 
 
@@ -66,6 +68,7 @@ def decode_access_token(token: str) -> dict | None:
 
 # ── Refresh tokens ────────────────────────────────────────────────────────────
 
+
 def generate_refresh_token() -> tuple[str, str]:
     """Returns (raw_token_to_send_to_client, sha256_hash_to_store)."""
     raw = secrets.token_urlsafe(48)
@@ -75,11 +78,13 @@ def generate_refresh_token() -> tuple[str, str]:
 
 # ── Telegram link codes ───────────────────────────────────────────────────────
 
+
 def generate_link_code() -> str:
     return secrets.token_hex(8).upper()  # e.g. "A1B2C3D4E5F6A7B8"
 
 
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
+
 
 async def _get_user_from_token(
     creds: HTTPAuthorizationCredentials | None,
@@ -124,6 +129,7 @@ def require_tier(min_tier: str):
     Dependency factory.  Usage:
         @router.get("/feature", dependencies=[Depends(require_tier("pro"))])
     """
+
     async def _dep(user: User = Depends(get_current_user)):
         if user.is_owner:
             return user
@@ -133,28 +139,27 @@ def require_tier(min_tier: str):
                 detail=f"This feature requires the {min_tier.capitalize()} plan or higher.",
             )
         return user
+
     return _dep
 
 
 def user_to_dict(u: User) -> dict:
     return {
-        "id":                   u.id,
-        "email":                u.email,
-        "full_name":            u.full_name,
-        "is_owner":             u.is_owner,
-        "subscription_tier":    u.subscription_tier,
-        "subscription_status":  u.subscription_status,
-        "subscription_period_end": (
-            u.subscription_period_end.isoformat() if u.subscription_period_end else None
-        ),
-        "telegram_linked":           bool(u.telegram_chat_id),
-        "telegram_link_code":        u.telegram_link_code,
-        "min_confidence_override":   u.min_confidence_override,
-        "discord_webhook_url":       getattr(u, "discord_webhook_url", None),
-        "webhook_url":               getattr(u, "webhook_url", None),
-        "oauth_provider":            getattr(u, "oauth_provider", None),
-        "auto_execute":              getattr(u, "auto_execute", False),
-        "auto_execute_min_conf":     getattr(u, "auto_execute_min_conf", None),
-        "auto_execute_broker":       getattr(u, "auto_execute_broker", None),
-        "created_at":                u.created_at.isoformat() if u.created_at else None,
+        "id": u.id,
+        "email": u.email,
+        "full_name": u.full_name,
+        "is_owner": u.is_owner,
+        "subscription_tier": u.subscription_tier,
+        "subscription_status": u.subscription_status,
+        "subscription_period_end": (u.subscription_period_end.isoformat() if u.subscription_period_end else None),
+        "telegram_linked": bool(u.telegram_chat_id),
+        "telegram_link_code": u.telegram_link_code,
+        "min_confidence_override": u.min_confidence_override,
+        "discord_webhook_url": getattr(u, "discord_webhook_url", None),
+        "webhook_url": getattr(u, "webhook_url", None),
+        "oauth_provider": getattr(u, "oauth_provider", None),
+        "auto_execute": getattr(u, "auto_execute", False),
+        "auto_execute_min_conf": getattr(u, "auto_execute_min_conf", None),
+        "auto_execute_broker": getattr(u, "auto_execute_broker", None),
+        "created_at": u.created_at.isoformat() if u.created_at else None,
     }

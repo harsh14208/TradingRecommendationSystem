@@ -1,0 +1,30 @@
+repos:
+  # ── Ruff: lint + format (replaces flake8 + isort + black) ──────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 0c7b6c989466a93942def1f84baf36ddfcd60c83  # frozen: v0.15.14
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # ── Trailing whitespace / end-of-file ──────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+
+  # ── Security audit ──────────────────────────────────────────────────────────
+  - repo: https://github.com/pypa/pip-audit
+    rev: v2.9.0
+    hooks:
+      - id: pip-audit
+        args:
+          - -r
+          - backend/requirements.txt
+          - --ignore-vuln
+          - PYSEC-2022-42969

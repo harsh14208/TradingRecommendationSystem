@@ -6,28 +6,26 @@ Tests for §37 audit fixes in backtest_technicals.py:
   - Completed-week resample fix (weekly trend uses only closed weeks)
   - HELD_OUT_TICKERS list is populated and does not overlap with TICKERS
 """
-import sys
+
 import os
-import types
-import importlib
-from unittest.mock import patch, MagicMock
+import sys
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
-import pytest
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _load_backtest():
     """Import backtest_technicals (lives outside the package, no __init__)."""
-    scripts_dir = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "scripts"
-    )
+    scripts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
     import backtest_technicals as bt
+
     return bt
 
 
@@ -35,13 +33,18 @@ def _make_daily_df(n=300, start="2022-01-01", seed=42):
     """Generate synthetic OHLCV DataFrame with realistic price motion."""
     rng = np.random.default_rng(seed)
     closes = 100.0 * np.cumprod(1 + rng.normal(0.0005, 0.015, n))
-    opens  = closes * (1 + rng.normal(0, 0.003, n))
-    highs  = np.maximum(opens, closes) * (1 + rng.uniform(0, 0.008, n))
-    lows   = np.minimum(opens, closes) * (1 - rng.uniform(0, 0.008, n))
-    dates  = pd.date_range(start=start, periods=n, freq="B")
+    opens = closes * (1 + rng.normal(0, 0.003, n))
+    highs = np.maximum(opens, closes) * (1 + rng.uniform(0, 0.008, n))
+    lows = np.minimum(opens, closes) * (1 - rng.uniform(0, 0.008, n))
+    dates = pd.date_range(start=start, periods=n, freq="B")
     df = pd.DataFrame(
-        {"Open": opens, "High": highs, "Low": lows, "Close": closes,
-         "Volume": rng.integers(1_000_000, 10_000_000, n).astype(float)},
+        {
+            "Open": opens,
+            "High": highs,
+            "Low": lows,
+            "Close": closes,
+            "Volume": rng.integers(1_000_000, 10_000_000, n).astype(float),
+        },
         index=dates,
     )
     return df
@@ -50,6 +53,7 @@ def _make_daily_df(n=300, start="2022-01-01", seed=42):
 # ─────────────────────────────────────────────────────────────────────────────
 # fetch_earnings_dates_polygon
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_polygon_earnings_returns_set_on_success():
     """Happy path: Polygon returns two filing_date records → two Timestamps."""
@@ -143,6 +147,7 @@ def test_polygon_earnings_falls_back_to_start_date():
 # MFE (max favorable excursion) tracking in simulate_ticker
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _make_bt_df(n=500, seed=42):
     """Build a fully-computed indicator + score DataFrame for simulate_ticker."""
     bt = _load_backtest()
@@ -191,6 +196,7 @@ def test_mfe_at_least_gross_pct_for_winning_trades():
 # HELD_OUT_TICKERS — structure tests (no actual data download)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_held_out_tickers_populated():
     """HELD_OUT_TICKERS must have at least 5 tickers."""
     bt = _load_backtest()
@@ -201,9 +207,7 @@ def test_held_out_tickers_no_overlap_with_main_universe():
     """No ticker should appear in both TICKERS and HELD_OUT_TICKERS."""
     bt = _load_backtest()
     overlap = set(bt.TICKERS) & set(bt.HELD_OUT_TICKERS)
-    assert overlap == set(), (
-        f"Tickers appear in both TICKERS and HELD_OUT_TICKERS (data leakage!): {overlap}"
-    )
+    assert overlap == set(), f"Tickers appear in both TICKERS and HELD_OUT_TICKERS (data leakage!): {overlap}"
 
 
 def test_held_out_tickers_are_strings():
@@ -217,6 +221,7 @@ def test_held_out_tickers_are_strings():
 # Completed-week resample logic (unit test on the pure Python logic)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_weekly_resample_drops_incomplete_week():
     """The fix: weekly.iloc[:-1] must drop the current incomplete week so that
     mid-week daily closes don't broadcast into earlier days in the same week.
@@ -229,7 +234,7 @@ def test_weekly_resample_drops_incomplete_week():
     closes = pd.Series(np.linspace(100, 120, 22), index=dates)
 
     weekly_with_incomplete = closes.resample("W").last().dropna()
-    weekly_completed_only  = weekly_with_incomplete.iloc[:-1]
+    weekly_completed_only = weekly_with_incomplete.iloc[:-1]
 
     # Dropping last week must produce a shorter series
     assert len(weekly_completed_only) < len(weekly_with_incomplete), (

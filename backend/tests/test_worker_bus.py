@@ -6,9 +6,10 @@ Tests for services/worker_bus.py:
 
 No Redis is used — all tests run against the default asyncio.Queue backend.
 """
-import sys
+
 import os
-import asyncio
+import sys
+
 import pytest
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -16,19 +17,17 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from services.worker_bus import (
-    WorkerBus,
     ScoringResult,
+    WorkerBus,
     WorkerTask,
-    CircuitBreaker,
-    get_bus,
     collect_worker_stats,
+    get_bus,
 )
-
 
 # ── WorkerBus asyncio.Queue backend ──────────────────────────────────────────
 
-class TestWorkerBusAsyncioBackend:
 
+class TestWorkerBusAsyncioBackend:
     @pytest.mark.asyncio
     async def test_publish_and_consume(self):
         """Published payload can be consumed from the same stream."""
@@ -96,10 +95,11 @@ class TestWorkerBusAsyncioBackend:
 
 # ── get_bus singleton ─────────────────────────────────────────────────────────
 
-class TestGetBus:
 
+class TestGetBus:
     def test_returns_worker_bus_instance(self):
         from services import worker_bus as wb_module
+
         # Reset singleton so we get a clean state
         wb_module._bus = None
         bus = get_bus()
@@ -107,6 +107,7 @@ class TestGetBus:
 
     def test_returns_same_instance_on_repeated_calls(self):
         from services import worker_bus as wb_module
+
         wb_module._bus = None
         bus1 = get_bus()
         bus2 = get_bus()
@@ -114,6 +115,7 @@ class TestGetBus:
 
     def test_singleton_reset_gives_fresh_instance(self):
         from services import worker_bus as wb_module
+
         wb_module._bus = None
         bus1 = get_bus()
         wb_module._bus = None
@@ -123,14 +125,16 @@ class TestGetBus:
 
 # ── collect_worker_stats ──────────────────────────────────────────────────────
 
-class TestCollectWorkerStats:
 
+class TestCollectWorkerStats:
     def test_empty_list_returns_empty(self):
         result = collect_worker_stats([])
         assert result == []
 
     def test_function_without_task_attr_is_skipped(self):
-        def plain_fn(): pass
+        def plain_fn():
+            pass
+
         result = collect_worker_stats([plain_fn])
         assert result == []
 
@@ -172,8 +176,8 @@ class TestCollectWorkerStats:
 
 # ── WorkerTask retry logic ─────────────────────────────────────────────────────
 
-class TestWorkerTaskRetries:
 
+class TestWorkerTaskRetries:
     @pytest.mark.asyncio
     async def test_retries_on_failure_then_succeeds(self):
         """Worker fails once then succeeds — should return ok=True."""
@@ -195,6 +199,7 @@ class TestWorkerTaskRetries:
     @pytest.mark.asyncio
     async def test_all_retries_exhausted_returns_ok_false(self):
         """Worker fails every attempt — should return ok=False."""
+
         @WorkerTask(name="always_fail_w", timeout=5.0, retries=2)
         async def always_fail():
             raise RuntimeError("always fails")
@@ -205,6 +210,7 @@ class TestWorkerTaskRetries:
     @pytest.mark.asyncio
     async def test_non_scoring_result_return_becomes_empty(self):
         """Worker returning non-ScoringResult is wrapped in empty ScoringResult."""
+
         @WorkerTask(name="raw_ret_w", timeout=5.0, retries=1)
         async def raw_return():
             return {"not": "a ScoringResult"}

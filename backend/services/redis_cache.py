@@ -12,9 +12,9 @@ Usage:
         val = await expensive_fetch()
         await cache_set("macro:context", val, ttl=300)
 """
+
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -24,7 +24,7 @@ from typing import Any, Optional
 log = logging.getLogger("signal.trade.cache")
 
 # ── In-memory fallback (always active; used when Redis is unavailable) ─────────
-_mem: dict[str, tuple[Any, float]] = {}   # key → (value, expires_at)
+_mem: dict[str, tuple[Any, float]] = {}  # key → (value, expires_at)
 _mem_locks: dict[str, tuple[str, float]] = {}  # key → (token, expires_at)
 
 
@@ -36,6 +36,7 @@ _redis_init_tried: bool = False
 def _get_redis_url() -> str:
     try:
         from config import get_settings
+
         return get_settings().redis_url or ""
     except Exception:
         return ""
@@ -51,6 +52,7 @@ async def _get_redis() -> Optional[Any]:
         return None
     try:
         import redis.asyncio as aioredis
+
         client = aioredis.from_url(url, decode_responses=True, socket_connect_timeout=2)
         await client.ping()
         _redis_client = client

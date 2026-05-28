@@ -1,12 +1,12 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+from database import get_db
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch, MagicMock
-
+from models import User
 from routers.watchlist_router import router
 from services.auth_svc import get_current_user
-from database import get_db
-from models import User
 
 app = FastAPI()
 app.include_router(router, prefix="")
@@ -96,6 +96,7 @@ def test_get_watchlist_seeds_from_config_when_empty(client, mock_db_session):
     - db.add called for each ticker
     - db.commit called
     """
+
     class DummySettings:
         tickers = ["NVDA", "TSLA"]
 

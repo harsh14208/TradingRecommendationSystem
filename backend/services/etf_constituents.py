@@ -15,6 +15,7 @@ Also used to identify when a stock is at risk of ETF rebalancing
 
 Cache: 24 hours (ETF composition changes quarterly).
 """
+
 import asyncio
 import logging
 import os
@@ -29,19 +30,20 @@ _TTL = 86400  # 24 hours
 
 _BASE = "https://api.polygon.io"
 
-TRACKED_ETFS = ["XLK", "XLF", "XLY", "XLC", "XLV", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU",
-                "QQQ", "SPY", "IWM"]
+TRACKED_ETFS = ["XLK", "XLF", "XLY", "XLC", "XLV", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU", "QQQ", "SPY", "IWM"]
 
 
 async def _fetch_constituents(etf: str, api_key: str) -> list[dict]:
-    import ssl, certifi
+    import ssl
+
+    import certifi
+
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     # Polygon.io ETF constituents — requires Starter plan or higher
     url = f"{_BASE}/v3/reference/tickers?type=ETF&market=stocks&apiKey={api_key}&search={etf}&limit=1"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, ssl=ssl_ctx,
-                                   timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            async with session.get(url, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status != 200:  # 403 = premium — return empty, SECTOR_MAP fallback used
                     return []
                 data = await resp.json()
@@ -78,10 +80,8 @@ async def preload_all() -> dict[str, list[dict]]:
     api_key = os.getenv("MASSIVE_API_KEY")
     if not api_key:
         return {}
-    results = await asyncio.gather(*[get_etf_constituents(e) for e in TRACKED_ETFS],
-                                    return_exceptions=True)
-    return {etf: (r if isinstance(r, list) else [])
-            for etf, r in zip(TRACKED_ETFS, results)}
+    results = await asyncio.gather(*[get_etf_constituents(e) for e in TRACKED_ETFS], return_exceptions=True)
+    return {etf: (r if isinstance(r, list) else []) for etf, r in zip(TRACKED_ETFS, results)}
 
 
 def get_constituent_weight(ticker: str, etf: str) -> float:
@@ -101,8 +101,11 @@ def get_flow_amplifier(ticker: str, etf: str) -> float:
     cached = _cache.get(etf, {}).get("data") or []
     for rank, c in enumerate(cached, start=1):
         if c["ticker"] == ticker:
-            if rank <= 3:   return 1.5
-            if rank <= 10:  return 1.0
-            if rank <= 30:  return 0.5
+            if rank <= 3:
+                return 1.5
+            if rank <= 10:
+                return 1.0
+            if rank <= 30:
+                return 0.5
             return 0.0
     return 0.0

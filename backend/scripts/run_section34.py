@@ -19,41 +19,67 @@ Usage:
     cd backend
     python scripts/run_section34.py 2>&1 | tee /tmp/decomp_s34.log
 """
+
 from __future__ import annotations
-import os, sys, warnings
-from collections import defaultdict
+
+import os
+import sys
+import warnings
 
 import pandas as pd
 import yfinance as yf
 
 warnings.filterwarnings("ignore")
 
-_HERE   = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__))
 _PARENT = os.path.dirname(_HERE)
 for _p in [_PARENT, _HERE]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 from backtest_technicals import (
-    START, END, HOLD_DAYS, MAX_LOSS_DAYS,
-    compute_indicators, compute_scores,
+    END,
+    HOLD_DAYS,
+    MAX_LOSS_DAYS,
+    START,
+    compute_indicators,
+    compute_scores,
+    fetch_spy_trend,
+    fetch_stlfsi4,
+    fmt_sharpe,
+    print_table,
     simulate_ticker,
-    fetch_spy_trend, fetch_stlfsi4,
-    stats, print_table, fmt_sharpe, fmt_pf,
+    stats,
 )
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 
 # 24-ticker production universe (§19/§20)
 UNIVERSE = [
-    "AAPL", "MSFT", "AMZN", "GOOGL", "META",
-    "NVDA", "AMD",  "TSLA", "NFLX",  "CRM",
-    "JPM",  "GS",   "MA",   "V",
-    "XOM",  "COP",
-    "UNH",  "LLY",
-    "HD",   "NKE",
-    "BA",   "CAT",
-    "NEE",  "AMT",
+    "AAPL",
+    "MSFT",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "NVDA",
+    "AMD",
+    "TSLA",
+    "NFLX",
+    "CRM",
+    "JPM",
+    "GS",
+    "MA",
+    "V",
+    "XOM",
+    "COP",
+    "UNH",
+    "LLY",
+    "HD",
+    "NKE",
+    "BA",
+    "CAT",
+    "NEE",
+    "AMT",
 ]
 
 # MR-only base config matching live engine (§16 best)
@@ -67,9 +93,9 @@ BASE_CFG = dict(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _download(ticker: str) -> pd.DataFrame | None:
-    raw = yf.download(ticker, start=START, end=END, interval="1d",
-                      auto_adjust=True, progress=False)
+    raw = yf.download(ticker, start=START, end=END, interval="1d", auto_adjust=True, progress=False)
     if raw.empty or len(raw) < 250:
         return None
     if isinstance(raw.columns, pd.MultiIndex):
@@ -106,15 +132,15 @@ def _summary(label: str, df: pd.DataFrame, hold: int = HOLD_DAYS) -> dict:
     tl = reasons.get("time_loss", 0) + reasons.get("no_progress", 0)
     adapt = reasons.get("adaptive", 0)
     return {
-        "label":      label,
-        "n":          s["n"],
-        "wr":         s["wr"],
-        "avg":        s["avg"],
+        "label": label,
+        "n": s["n"],
+        "wr": s["wr"],
+        "avg": s["avg"],
         "ann_sharpe": ann,
-        "max_dd":     s["max_dd"],
-        "time_loss":  tl,
-        "adaptive":   adapt,
-        "tl_pct":     round(tl / s["n"] * 100, 1) if s["n"] else 0,
+        "max_dd": s["max_dd"],
+        "time_loss": tl,
+        "adaptive": adapt,
+        "tl_pct": round(tl / s["n"] * 100, 1) if s["n"] else 0,
     }
 
 
@@ -129,21 +155,24 @@ def _print_summary_table(rows: list[dict]) -> None:
         if r.get("n", 0) == 0:
             table.append([r["label"]] + ["—"] * 8)
             continue
-        table.append([
-            r["label"],
-            r["n"],
-            f"{r['wr']:.1f}%" if r["wr"] is not None else "—",
-            f"{r['avg']:+.2f}%" if r["avg"] is not None else "—",
-            fmt_sharpe(r["ann_sharpe"]),
-            f"-{r['max_dd']:.2f}%" if r["max_dd"] is not None else "—",
-            r.get("time_loss", "—"),
-            f"{r.get('tl_pct', 0):.1f}%",
-            r.get("adaptive", "—"),
-        ])
+        table.append(
+            [
+                r["label"],
+                r["n"],
+                f"{r['wr']:.1f}%" if r["wr"] is not None else "—",
+                f"{r['avg']:+.2f}%" if r["avg"] is not None else "—",
+                fmt_sharpe(r["ann_sharpe"]),
+                f"-{r['max_dd']:.2f}%" if r["max_dd"] is not None else "—",
+                r.get("time_loss", "—"),
+                f"{r.get('tl_pct', 0):.1f}%",
+                r.get("adaptive", "—"),
+            ]
+        )
     print_table(headers, table)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     print("# §34 — Time-Loss Reduction Experiments\n")
@@ -153,15 +182,14 @@ def main() -> None:
     # ── Alt data ─────────────────────────────────────────────────────────────
     print("Fetching VIX…", end=" ", flush=True)
     try:
-        v = yf.download("^VIX", start=START, end=END, interval="1d",
-                        auto_adjust=False, progress=False)
+        v = yf.download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
         if isinstance(v.columns, pd.MultiIndex):
             v.columns = v.columns.get_level_values(0)
-        vix = {pd.Timestamp(str(k)[:10]): float(val)
-               for k, val in v["Close"].items() if pd.notna(val)}
+        vix = {pd.Timestamp(str(k)[:10]): float(val) for k, val in v["Close"].items() if pd.notna(val)}
         print(f"ok ({len(vix)} bars)")
     except Exception as e:
-        vix = {}; print(f"failed ({e})")
+        vix = {}
+        print(f"failed ({e})")
 
     print("Fetching SPY trend…", end=" ", flush=True)
     spy = fetch_spy_trend(START, END)
@@ -207,12 +235,14 @@ def main() -> None:
             day_tbl = []
             for day in sorted(tl["exit_day"].unique()):
                 sub = tl[tl["exit_day"] == day]
-                day_tbl.append([
-                    f"Day {day}",
-                    len(sub),
-                    f"{sub['net_pct'].mean():+.2f}%",
-                    f"{(sub['net_pct'] > 0).mean()*100:.1f}%",
-                ])
+                day_tbl.append(
+                    [
+                        f"Day {day}",
+                        len(sub),
+                        f"{sub['net_pct'].mean():+.2f}%",
+                        f"{(sub['net_pct'] > 0).mean() * 100:.1f}%",
+                    ]
+                )
             print_table(["Exit Day", "N", "Avg Ret", "WR"], day_tbl)
 
         # Score bucket distribution
@@ -223,21 +253,28 @@ def main() -> None:
                 sub = tl[(tl["score"] >= lo) & (tl["score"] < hi)]
                 if sub.empty:
                     continue
-                score_tbl.append([
-                    label,
-                    len(sub),
-                    f"{len(sub)/len(tl)*100:.1f}%",
-                    f"{sub['net_pct'].mean():+.2f}%",
-                ])
+                score_tbl.append(
+                    [
+                        label,
+                        len(sub),
+                        f"{len(sub) / len(tl) * 100:.1f}%",
+                        f"{sub['net_pct'].mean():+.2f}%",
+                    ]
+                )
             print_table(["Score", "N", "% of TL", "Avg Ret"], score_tbl)
 
         # Ticker distribution (top 10 offenders)
         if "ticker" in tl.columns:
             print("\n#### Top 10 tickers by time_loss count")
-            tc = tl.groupby("ticker").agg(
-                n=("net_pct", "count"),
-                avg_ret=("net_pct", "mean"),
-            ).sort_values("n", ascending=False).head(10)
+            tc = (
+                tl.groupby("ticker")
+                .agg(
+                    n=("net_pct", "count"),
+                    avg_ret=("net_pct", "mean"),
+                )
+                .sort_values("n", ascending=False)
+                .head(10)
+            )
             ticker_tbl = []
             for ticker, row in tc.iterrows():
                 ticker_tbl.append([ticker, row["n"], f"{row['avg_ret']:+.2f}%"])
@@ -320,8 +357,7 @@ def main() -> None:
         # Now run the low-score group with hold=5
         lo_short_list = []
         for ticker, df in dfs.items():
-            t_short = simulate_ticker(ticker, df, vix, spy, stlfsi4,
-                                      **{**BASE_CFG, "hold_days_override": 5})
+            t_short = simulate_ticker(ticker, df, vix, spy, stlfsi4, **{**BASE_CFG, "hold_days_override": 5})
             if t_short.empty:
                 continue
             lo_short_list.append(t_short[t_short["score"] < 50])
@@ -333,7 +369,7 @@ def main() -> None:
         print("\n### Low-score (40-49) — baseline hold=10 vs shortened hold=5")
         seg_rows = [
             _summary("LO: hold=10 (baseline)", lo_df_base),
-            _summary("LO: hold=5  (shorter)",  lo_df_short),
+            _summary("LO: hold=5  (shorter)", lo_df_short),
         ]
         _print_summary_table(seg_rows)
 

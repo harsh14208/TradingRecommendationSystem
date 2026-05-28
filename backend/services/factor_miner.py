@@ -8,12 +8,10 @@ into a JSON file that signal_engine.py reads to apply adaptive source weights.
 Run weekly via `asyncio.create_task(run_factor_mining())`.
 Results written to backend/data/factor_weights.json.
 """
-import asyncio
+
 import json
 import logging
 import math
-import os
-from collections import defaultdict
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
@@ -67,7 +65,11 @@ async def run_factor_mining() -> dict:
 
     if len(rows) < _MIN_SIGNALS * 2:
         log.info(f"[factor_miner] Only {len(rows)} resolved signals — too few to mine.")
-        return {"run_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "rows": len(rows), "skipped": True}
+        return {
+            "run_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+            "rows": len(rows),
+            "skipped": True,
+        }
 
     # Sort by created_at (oldest first) for temporal train/test split
     rows.sort(key=lambda r: r["created_at"])
@@ -103,12 +105,12 @@ async def run_factor_mining() -> dict:
     top = results[:_TOP_N]
 
     summary = {
-        "run_at":               datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
-        "signals_used":         len(rows),
-        "sources_found":        sorted(all_sources),
-        "combinations_tested":  len(results),
-        "top_factors":          top,
-        "promoted_count":       len([t for t in top if (t.get("oos_sharpe") or 0) > 0.3]),
+        "run_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        "signals_used": len(rows),
+        "sources_found": sorted(all_sources),
+        "combinations_tested": len(results),
+        "top_factors": top,
+        "promoted_count": len([t for t in top if (t.get("oos_sharpe") or 0) > 0.3]),
     }
 
     # Persist — surface a clear error if the directory is not writable.
@@ -153,13 +155,13 @@ def _eval_factor(rows: list[dict], label: str) -> Optional[dict]:
     is_wr = _win_rate(is_returns) if is_returns else None
 
     return {
-        "label":        label,
+        "label": label,
         "total_signals": len(rows),
-        "oos_n":        len(test_rows),
-        "oos_sharpe":   oos_sharpe,
+        "oos_n": len(test_rows),
+        "oos_sharpe": oos_sharpe,
         "oos_win_rate": oos_wr,
-        "oos_avg_ret":  oos_avg,
-        "is_win_rate":  is_wr,
+        "oos_avg_ret": oos_avg,
+        "is_win_rate": is_wr,
     }
 
 
@@ -169,28 +171,30 @@ async def _load_resolved_signals() -> list[dict]:
     from sqlalchemy import select
 
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(
-            select(
-                Signal.ticker,
-                Signal.action,
-                Signal.confidence,
-                Signal.sources,
-                Signal.outcome_pct,
-                Signal.created_at,
+        rows = (
+            await db.execute(
+                select(
+                    Signal.ticker,
+                    Signal.action,
+                    Signal.confidence,
+                    Signal.sources,
+                    Signal.outcome_pct,
+                    Signal.created_at,
+                )
+                .where(Signal.is_sent == True)
+                .where(Signal.outcome_pct.isnot(None))
+                .order_by(Signal.created_at)
             )
-            .where(Signal.is_sent == True)
-            .where(Signal.outcome_pct.isnot(None))
-            .order_by(Signal.created_at)
-        )).all()
+        ).all()
 
     return [
         {
-            "ticker":      r.ticker,
-            "action":      r.action,
-            "confidence":  r.confidence,
-            "sources":     r.sources or [],
+            "ticker": r.ticker,
+            "action": r.action,
+            "confidence": r.confidence,
+            "sources": r.sources or [],
             "outcome_pct": r.outcome_pct,
-            "created_at":  r.created_at,
+            "created_at": r.created_at,
         }
         for r in rows
     ]

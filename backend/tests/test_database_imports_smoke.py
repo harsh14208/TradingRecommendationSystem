@@ -1,7 +1,5 @@
 import importlib
-import os
 import sys
-import pytest
 
 
 def test_database_imports_without_asyncpg(monkeypatch):
@@ -24,4 +22,3 @@ def test_database_imports_without_asyncpg(monkeypatch):
 
     assert hasattr(db, "DATABASE_URL")
     assert db.DATABASE_URL.startswith("sqlite+")
-

@@ -10,16 +10,17 @@ Coverage targets:
   - Rows ordered by created_at DESC (most-recent first)
 """
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from database import get_db
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from database import get_db
-
 try:
     from routers.delivery_router import router
+
     _ROUTER_OK = True
 except ImportError:
     _ROUTER_OK = False
@@ -64,7 +65,6 @@ def _override_db(rows):
 
 @pytest.mark.skipif(not _ROUTER_OK, reason="delivery_router import failed")
 class TestDeliveryLogEndpoint:
-
     def test_returns_200_with_correct_shape(self):
         ts = datetime(2024, 6, 1, 10, 30, 0)
         rows = [_make_log_row(created_at=ts)]
@@ -123,10 +123,7 @@ class TestDeliveryLogEndpoint:
         assert resp.json() == []
 
     def test_multiple_rows_all_returned(self):
-        rows = [
-            _make_log_row(time_val=f"0{i}:00:00", status="sent", message=f"msg{i}")
-            for i in range(5)
-        ]
+        rows = [_make_log_row(time_val=f"0{i}:00:00", status="sent", message=f"msg{i}") for i in range(5)]
         app = _make_app()
         app.dependency_overrides[get_db] = _override_db(rows)
 
@@ -138,12 +135,14 @@ class TestDeliveryLogEndpoint:
 
     def test_row_fields_passed_through_correctly(self):
         ts = datetime(2024, 3, 15, 14, 22, 11)
-        rows = [_make_log_row(
-            time_val="14:22:11",
-            status="fail",
-            message="Telegram API returned 400",
-            created_at=ts,
-        )]
+        rows = [
+            _make_log_row(
+                time_val="14:22:11",
+                status="fail",
+                message="Telegram API returned 400",
+                created_at=ts,
+            )
+        ]
         app = _make_app()
         app.dependency_overrides[get_db] = _override_db(rows)
 

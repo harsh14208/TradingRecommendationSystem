@@ -1,12 +1,13 @@
 import asyncio
 import logging
+
+from config import TIERS, get_settings
 from fastapi import APIRouter, Depends, HTTPException, Response
-from services.market_data import get_history, get_quotes
-from services.fear_greed import get_fear_greed, get_put_call_ratio
-from services.breadth import get_market_breadth
-from services.auth_svc import get_current_user
-from config import get_settings, TIERS
 from models import User
+from services.auth_svc import get_current_user
+from services.breadth import get_market_breadth
+from services.fear_greed import get_fear_greed, get_put_call_ratio
+from services.market_data import get_history, get_quotes
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["quotes"])
@@ -20,6 +21,7 @@ _DATA_LICENSE_HEADER = (
     "(confidence scores) under a commercial subscription licence."
 )
 
+
 def _require_basic(user: User):
     """Raise 402 if user is on free tier — raw OHLCV requires Basic subscription."""
     if user.is_owner:
@@ -29,10 +31,11 @@ def _require_basic(user: User):
         raise HTTPException(
             status_code=402,
             detail="Raw chart data requires a Basic subscription. "
-                   "Upgrade at /app#pricing to access interactive charts.",
+            "Upgrade at /app#pricing to access interactive charts.",
         )
 
-SECTOR_ETFS = ["XLK","XLF","XLY","XLC","XLV","XLP","XLE","XLI","XLB","XLRE","XLU"]
+
+SECTOR_ETFS = ["XLK", "XLF", "XLY", "XLC", "XLV", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
 
 
 @router.get("/quotes")
@@ -62,11 +65,11 @@ async def chart_data(
 
     return [
         {
-            "date":   idx.strftime("%Y-%m-%d %H:%M"),
-            "open":   round(float(row["Open"]),   2),
-            "high":   round(float(row["High"]),   2),
-            "low":    round(float(row["Low"]),    2),
-            "close":  round(float(row["Close"]),  2),
+            "date": idx.strftime("%Y-%m-%d %H:%M"),
+            "open": round(float(row["Open"]), 2),
+            "high": round(float(row["High"]), 2),
+            "low": round(float(row["Low"]), 2),
+            "close": round(float(row["Close"]), 2),
             "volume": int(row["Volume"]),
         }
         for idx, row in df.iterrows()
@@ -114,29 +117,41 @@ async def market_overview():
     This acts as a backend health check by touching multiple data services.
     """
     try:
+
         def _fetch_massive_indices():
             import os
             from datetime import datetime, timedelta
+
             try:
                 from massive import RESTClient
             except ImportError:
                 raise ImportError("massive-api-client is not installed. Run: pip install massive-api-client")
-                
+
             api_key = os.getenv("MASSIVE_API_KEY")
             if not api_key:
                 raise ValueError("MASSIVE_API_KEY not found in .env")
-                
+
             client = RESTClient(api_key)
             end_date = datetime.now()
             start_date = end_date - timedelta(days=30)
-            
+
             def process_aggs(ticker):
                 try:
-                    aggs = list(client.list_aggs(ticker, 1, "day", start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), limit=50))
-                    if not aggs or len(aggs) < 2: return None
+                    aggs = list(
+                        client.list_aggs(
+                            ticker, 1, "day", start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), limit=50
+                        )
+                    )
+                    if not aggs or len(aggs) < 2:
+                        return None
                     closes = [a.close for a in aggs]
                     latest, prev = closes[-1], closes[-2]
-                    return {"value": latest, "change": latest - prev, "change_pct": (latest - prev) / prev * 100, "history": closes}
+                    return {
+                        "value": latest,
+                        "change": latest - prev,
+                        "change_pct": (latest - prev) / prev * 100,
+                        "history": closes,
+                    }
                 except Exception:
                     return None
 
@@ -144,19 +159,19 @@ async def market_overview():
                 "spx": process_aggs("I:SPX"),
                 "ndx": process_aggs("I:NDX"),
                 "vix": process_aggs("I:VIX"),
-                "dxy": process_aggs("I:DXY")
+                "dxy": process_aggs("I:DXY"),
             }
 
         # Fetch Massive data and other web-scraped indicators concurrently
         massive_task = asyncio.to_thread(_fetch_massive_indices)
-        
+
         massive_res, tnx_df, fg, pc, breadth = await asyncio.gather(
             massive_task,
-            get_history("^TNX", period="1mo", interval="1d"),      # 10Y Yield
+            get_history("^TNX", period="1mo", interval="1d"),  # 10Y Yield
             get_fear_greed(),
             get_put_call_ratio(),
             get_market_breadth(),
-            return_exceptions=True
+            return_exceptions=True,
         )
 
         def process_df(df):
@@ -170,7 +185,7 @@ async def market_overview():
 
         if isinstance(massive_res, Exception):
             logging.getLogger(__name__).error(f"Massive API Error: {massive_res}")
-            massive_res = {} # Fallback to empty if Massive fails, so other cards still load
+            massive_res = {}  # Fallback to empty if Massive fails, so other cards still load
 
         overview = {
             "spx": massive_res.get("spx"),
@@ -178,16 +193,29 @@ async def market_overview():
             "vix": massive_res.get("vix"),
             "dxy": massive_res.get("dxy"),
             "yield_10y": process_df(tnx_df),
-            "fear_greed": None if isinstance(fg, Exception) or fg is None else {"score": fg.get("score"), "label": fg.get("label"), "history": fg.get("history", [])},
-            "put_call_ratio": None if isinstance(pc, Exception) or pc is None else {"ratio": pc.get("ratio"), "history": pc.get("history", [])},
+            "fear_greed": None
+            if isinstance(fg, Exception) or fg is None
+            else {"score": fg.get("score"), "label": fg.get("label"), "history": fg.get("history", [])},
+            "put_call_ratio": None
+            if isinstance(pc, Exception) or pc is None
+            else {"ratio": pc.get("ratio"), "history": pc.get("history", [])},
             "breadth": None if isinstance(breadth, Exception) or breadth is None else breadth,
         }
 
         # Filter out any failed data fetches. The boolean logic here is critical:
         # the `v is not None` check must apply before any `v.get()` calls to
         # prevent an AttributeError if a data source returned None or an exception.
-        successful_data = {k: v for k, v in overview.items() if v is not None and (
-            v.get("value") is not None or v.get("score") is not None or v.get("ratio") is not None or v.get("pct_above_200d") is not None)}
+        successful_data = {
+            k: v
+            for k, v in overview.items()
+            if v is not None
+            and (
+                v.get("value") is not None
+                or v.get("score") is not None
+                or v.get("ratio") is not None
+                or v.get("pct_above_200d") is not None
+            )
+        }
         if not successful_data:
             raise HTTPException(status_code=503, detail="Market overview data sources are currently unavailable.")
         return successful_data
@@ -200,17 +228,30 @@ async def market_overview():
 @router.get("/massive/endpoints")
 async def massive_endpoints():
     """Fetch the llms.txt index to expose all Massive functionalities."""
-    import aiohttp
     import re
+
+    import aiohttp
+
     async with aiohttp.ClientSession() as session:
         async with session.get("https://massive.com/docs/rest/llms.txt") as resp:
             if resp.status != 200:
-                return [{"name": "Error", "endpoints": [{"name": "Failed to fetch llms.txt", "url": "", "description": "Could not reach massive.com"}]}]
+                return [
+                    {
+                        "name": "Error",
+                        "endpoints": [
+                            {
+                                "name": "Failed to fetch llms.txt",
+                                "url": "",
+                                "description": "Could not reach massive.com",
+                            }
+                        ],
+                    }
+                ]
             text = await resp.text()
-    
+
     categories = []
     current_cat = None
-    
+
     for line in text.split("\n"):
         line = line.strip()
         if line.startswith("## "):
@@ -220,11 +261,7 @@ async def massive_endpoints():
             match = re.match(r"- \[(.+?)\]\((.+?)\):\s*(.*)", line)
             if match:
                 name, url, desc = match.groups()
-                current_cat["endpoints"].append({
-                    "name": name,
-                    "url": url,
-                    "description": desc
-                })
+                current_cat["endpoints"].append({"name": name, "url": url, "description": desc})
     return categories
 
 
@@ -232,16 +269,21 @@ async def massive_endpoints():
 async def massive_proxy(payload: dict):
     """Generic proxy to call any Massive REST API endpoint."""
     import os
+
     import aiohttp
+
     api_key = os.getenv("MASSIVE_API_KEY")
     if not api_key:
         raise HTTPException(503, "MASSIVE_API_KEY not set")
-        
+
     endpoint = payload.get("endpoint", "").lstrip("/")
     method = payload.get("method", "GET")
     params = payload.get("params", {})
-    
-    import ssl, certifi
+
+    import ssl
+
+    import certifi
+
     url = f"https://api.polygon.io/{endpoint}"
     params["apiKey"] = api_key
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
@@ -257,6 +299,7 @@ async def massive_proxy(payload: dict):
 
 _sector_cache: dict = {"data": None, "ts": 0}
 
+
 def _ret(closes, days: int) -> float | None:
     """Return % change over the last `days` trading days, or None if insufficient data."""
     if closes is None or len(closes) < 2:
@@ -267,11 +310,13 @@ def _ret(closes, days: int) -> float | None:
         return None
     return round((float(closes.iloc[-1]) / base - 1) * 100, 2)
 
+
 def _ytd_ret(df) -> float | None:
     """Return % change from the first trading day of the current calendar year."""
     if df is None or df.empty:
         return None
     from datetime import date
+
     jan1 = date.today().replace(month=1, day=1)
     ytd_df = df[df.index.date >= jan1]  # type: ignore[attr-defined]
     if ytd_df.empty or len(ytd_df) < 2:
@@ -281,6 +326,7 @@ def _ytd_ret(df) -> float | None:
         return None
     return round((float(ytd_df["Close"].iloc[-1]) / base - 1) * 100, 2)
 
+
 @router.get("/market/sectors")
 async def sector_heatmap():
     """Return multi-timeframe performance for all SPDR sector ETFs (batch fetched, 1hr cache)."""
@@ -289,11 +335,9 @@ async def sector_heatmap():
         return _sector_cache["data"]
 
     from services.market_data import get_histories_batch
+
     try:
-        histories = await asyncio.wait_for(
-            get_histories_batch(SECTOR_ETFS, period="1y", interval="1d"),
-            timeout=20.0
-        )
+        histories = await asyncio.wait_for(get_histories_batch(SECTOR_ETFS, period="1y", interval="1d"), timeout=20.0)
     except asyncio.TimeoutError:
         logging.getLogger(__name__).warning("sector_heatmap: yfinance batch fetch timed out.")
         return _sector_cache["data"] or []
@@ -309,90 +353,104 @@ async def sector_heatmap():
         closes = df["Close"].astype(float)
         if len(closes) < 2:
             continue
-        out.append({
-            "etf":    etf,
-            "ret_1d": _ret(closes, 1),
-            "ret_1w": _ret(closes, 5),
-            "ret_1m": _ret(closes, 21),
-            "ret_3m": _ret(closes, 63),
-            "ret_ytd": _ytd_ret(df),
-        })
+        out.append(
+            {
+                "etf": etf,
+                "ret_1d": _ret(closes, 1),
+                "ret_1w": _ret(closes, 5),
+                "ret_1m": _ret(closes, 21),
+                "ret_3m": _ret(closes, 63),
+                "ret_ytd": _ytd_ret(df),
+            }
+        )
 
     out.sort(key=lambda x: x["ret_1m"] or 0, reverse=True)
     _sector_cache["data"] = out
-    _sector_cache["ts"]   = now
+    _sector_cache["ts"] = now
     return out
 
 
 # FOMC decision dates (published by Fed a year in advance — update annually)
 _FOMC_DATES = [
-    "2025-01-29","2025-03-19","2025-05-07","2025-06-18",
-    "2025-07-30","2025-09-17","2025-10-29","2025-12-10",
-    "2026-01-28","2026-03-18","2026-05-06","2026-06-17",
-    "2026-07-29","2026-09-16","2026-10-28","2026-12-09",
+    "2025-01-29",
+    "2025-03-19",
+    "2025-05-07",
+    "2025-06-18",
+    "2025-07-30",
+    "2025-09-17",
+    "2025-10-29",
+    "2025-12-10",
+    "2026-01-28",
+    "2026-03-18",
+    "2026-05-06",
+    "2026-06-17",
+    "2026-07-29",
+    "2026-09-16",
+    "2026-10-28",
+    "2026-12-09",
 ]
 
 # FRED release IDs → enriched metadata
 # release_id: FRED numeric ID; impact: HIGH/MEDIUM/LOW; time: ET release time
 _FRED_RELEASES: dict[int, dict] = {
     10: {
-        "label":  "CPI",
-        "name":   "Consumer Price Index",
-        "color":  "#f59e0b",
-        "time":   "8:30 AM ET",
+        "label": "CPI",
+        "name": "Consumer Price Index",
+        "color": "#f59e0b",
+        "time": "8:30 AM ET",
         "impact": "HIGH",
-        "desc":   "Measures change in prices paid by consumers for goods and services. "
-                  "The Fed's primary inflation gauge alongside PCE. "
-                  "Hot print → rates stay higher for longer → equities fall.",
+        "desc": "Measures change in prices paid by consumers for goods and services. "
+        "The Fed's primary inflation gauge alongside PCE. "
+        "Hot print → rates stay higher for longer → equities fall.",
     },
     50: {
-        "label":  "NFP",
-        "name":   "Non-Farm Payrolls",
-        "color":  "#60a5fa",
-        "time":   "8:30 AM ET",
+        "label": "NFP",
+        "name": "Non-Farm Payrolls",
+        "color": "#60a5fa",
+        "time": "8:30 AM ET",
         "impact": "HIGH",
-        "desc":   "Monthly change in employment excluding farm workers. "
-                  "Strongest of the monthly labour reports. "
-                  "Strong jobs → Fed hawkish → yields rise → growth stocks under pressure.",
+        "desc": "Monthly change in employment excluding farm workers. "
+        "Strongest of the monthly labour reports. "
+        "Strong jobs → Fed hawkish → yields rise → growth stocks under pressure.",
     },
     19: {
-        "label":  "PCE",
-        "name":   "PCE Price Index",
-        "color":  "#a78bfa",
-        "time":   "8:30 AM ET",
+        "label": "PCE",
+        "name": "PCE Price Index",
+        "color": "#a78bfa",
+        "time": "8:30 AM ET",
         "impact": "HIGH",
-        "desc":   "Personal Consumption Expenditures price index — the Fed's preferred "
-                  "inflation measure (broader basket than CPI, chain-weighted). "
-                  "Directly drives FOMC rate decisions.",
+        "desc": "Personal Consumption Expenditures price index — the Fed's preferred "
+        "inflation measure (broader basket than CPI, chain-weighted). "
+        "Directly drives FOMC rate decisions.",
     },
     25: {
-        "label":  "PPI",
-        "name":   "Producer Price Index",
-        "color":  "#fb923c",
-        "time":   "8:30 AM ET",
+        "label": "PPI",
+        "name": "Producer Price Index",
+        "color": "#fb923c",
+        "time": "8:30 AM ET",
         "impact": "MEDIUM",
-        "desc":   "Measures change in selling prices received by domestic producers. "
-                  "Leading indicator of consumer inflation — PPI pressures eventually pass through to CPI.",
+        "desc": "Measures change in selling prices received by domestic producers. "
+        "Leading indicator of consumer inflation — PPI pressures eventually pass through to CPI.",
     },
     108: {
-        "label":  "RETAIL",
-        "name":   "Retail Sales",
-        "color":  "#34d399",
-        "time":   "8:30 AM ET",
+        "label": "RETAIL",
+        "name": "Retail Sales",
+        "color": "#34d399",
+        "time": "8:30 AM ET",
         "impact": "MEDIUM",
-        "desc":   "Monthly change in total sales at retail stores. "
-                  "Proxy for consumer spending (~70% of GDP). "
-                  "Beat → growth optimism → cyclical stocks outperform.",
+        "desc": "Monthly change in total sales at retail stores. "
+        "Proxy for consumer spending (~70% of GDP). "
+        "Beat → growth optimism → cyclical stocks outperform.",
     },
     175: {
-        "label":  "GDP",
-        "name":   "GDP (Advance Estimate)",
-        "color":  "#38bdf8",
-        "time":   "8:30 AM ET",
+        "label": "GDP",
+        "name": "GDP (Advance Estimate)",
+        "color": "#38bdf8",
+        "time": "8:30 AM ET",
         "impact": "HIGH",
-        "desc":   "First estimate of quarterly GDP growth. "
-                  "Revised twice over the following two months. "
-                  "Miss → recession fears → defensive rotation.",
+        "desc": "First estimate of quarterly GDP growth. "
+        "Revised twice over the following two months. "
+        "Miss → recession fears → defensive rotation.",
     },
 }
 
@@ -402,30 +460,37 @@ _cal_cache: dict = {"data": None, "ts": 0}
 @router.get("/market/calendar")
 async def economic_calendar():
     """Return upcoming economic events with enriched metadata (time, impact, description)."""
-    import time, ssl, certifi, aiohttp
+    import ssl
+    import time
+
+    import aiohttp
+    import certifi
+
     now = time.time()
     if _cal_cache["data"] is not None and now - _cal_cache["ts"] < 3600 * 12:
         return _cal_cache["data"]
 
     from datetime import date, timedelta
-    today   = date.today()
-    end     = (today + timedelta(days=180)).isoformat()
+
+    today = date.today()
+    end = (today + timedelta(days=180)).isoformat()
     today_s = today.isoformat()
 
     # FOMC hardcoded (most reliable — published a year in advance)
     events: list[dict] = [
         {
-            "date":   d,
-            "label":  "FOMC",
-            "name":   "FOMC Rate Decision",
-            "color":  "#ef4444",
-            "time":   "2:00 PM ET",
+            "date": d,
+            "label": "FOMC",
+            "name": "FOMC Rate Decision",
+            "color": "#ef4444",
+            "time": "2:00 PM ET",
             "impact": "HIGH",
-            "desc":   "Federal Open Market Committee announces the federal funds rate target. "
-                      "Market-moving for ALL asset classes. Press conference at 2:30 PM ET. "
-                      "Dot plot + Summary of Economic Projections released at quarterly meetings.",
+            "desc": "Federal Open Market Committee announces the federal funds rate target. "
+            "Market-moving for ALL asset classes. Press conference at 2:30 PM ET. "
+            "Dot plot + Summary of Economic Projections released at quarterly meetings.",
         }
-        for d in _FOMC_DATES if today_s <= d <= end
+        for d in _FOMC_DATES
+        if today_s <= d <= end
     ]
 
     settings = get_settings()
@@ -435,6 +500,7 @@ async def economic_calendar():
         # Share one session across all FRED requests — avoids 6 TCP handshakes
         async def fetch_all_releases():
             async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ctx)) as session:
+
                 async def fetch_one(release_id: int, meta: dict):
                     url = (
                         f"https://api.stlouisfed.org/fred/release/dates"
@@ -446,18 +512,20 @@ async def economic_calendar():
                         async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
                             if r.status == 200:
                                 d = await r.json()
-                                for item in (d.get("release_dates") or []):
+                                for item in d.get("release_dates") or []:
                                     dt = item.get("date")
                                     if dt:
-                                        events.append({
-                                            "date":   dt,
-                                            "label":  meta["label"],
-                                            "name":   meta["name"],
-                                            "color":  meta["color"],
-                                            "time":   meta["time"],
-                                            "impact": meta["impact"],
-                                            "desc":   meta["desc"],
-                                        })
+                                        events.append(
+                                            {
+                                                "date": dt,
+                                                "label": meta["label"],
+                                                "name": meta["name"],
+                                                "color": meta["color"],
+                                                "time": meta["time"],
+                                                "impact": meta["impact"],
+                                                "desc": meta["desc"],
+                                            }
+                                        )
                     except Exception:
                         pass
 
@@ -467,11 +535,12 @@ async def economic_calendar():
 
     events.sort(key=lambda e: e["date"])
     _cal_cache["data"] = events
-    _cal_cache["ts"]   = now
+    _cal_cache["ts"] = now
     return events
 
 
 _detail_cache: dict = {"data": None, "ts": 0}
+
 
 @router.get("/market/sectors/detail")
 async def sector_detail():
@@ -480,11 +549,12 @@ async def sector_detail():
     sorted by their individual 1-month performance.
     """
     import time
-    from sqlalchemy import select, desc
+
     from database import AsyncSessionLocal
     from models import Signal, WatchlistItem
     from services.market_data import get_histories_batch
     from services.sector import SECTOR_MAP, YFINANCE_TO_ETF
+    from sqlalchemy import desc, select
 
     now = time.time()
     if _detail_cache["data"] is not None and now - _detail_cache["ts"] < 1800:
@@ -498,18 +568,22 @@ async def sector_detail():
     # 2. Watchlist tickers
     try:
         async with AsyncSessionLocal() as db:
-            wl_rows = (await db.execute(
-                select(WatchlistItem).where(WatchlistItem.is_active == True)
-            )).scalars().all()
+            wl_rows = (await db.execute(select(WatchlistItem).where(WatchlistItem.is_active == True))).scalars().all()
             tickers = [r.ticker for r in wl_rows] if wl_rows else settings.tickers
 
             # Latest signal per ticker for action/confidence
-            sig_rows = (await db.execute(
-                select(Signal)
-                .where(Signal.ticker.in_(tickers))
-                .where(Signal.is_active == True)
-                .order_by(desc(Signal.created_at))
-            )).scalars().all()
+            sig_rows = (
+                (
+                    await db.execute(
+                        select(Signal)
+                        .where(Signal.ticker.in_(tickers))
+                        .where(Signal.is_active == True)
+                        .order_by(desc(Signal.created_at))
+                    )
+                )
+                .scalars()
+                .all()
+            )
     except Exception:
         tickers = settings.tickers
         sig_rows = []
@@ -530,6 +604,7 @@ async def sector_detail():
         try:
             import yfinance as yf
             from services.market_data import _session
+
             for t in unknown:
                 try:
                     info = yf.Ticker(t, session=_session).info or {}
@@ -555,12 +630,12 @@ async def sector_detail():
 
         sig = latest_sig.get(ticker)
         stock = {
-            "ticker":     ticker,
-            "company":    sig.company if sig else ticker,
-            "ret_1m":     ret_1m,
-            "action":     sig.action if sig else None,
+            "ticker": ticker,
+            "company": sig.company if sig else ticker,
+            "ret_1m": ret_1m,
+            "action": sig.action if sig else None,
             "confidence": sig.confidence if sig else None,
-            "price":      sig.price if sig else None,
+            "price": sig.price if sig else None,
         }
 
         etf = SECTOR_MAP.get(ticker) or yf_sectors.get(ticker)
@@ -571,37 +646,51 @@ async def sector_detail():
 
     # 6. Assemble result — all 11 sectors even if empty
     SECTOR_NAMES = {
-        "XLK": "Technology", "XLF": "Financials", "XLY": "Consumer Discretionary",
-        "XLC": "Communication Services", "XLV": "Healthcare", "XLP": "Consumer Staples",
-        "XLE": "Energy", "XLI": "Industrials", "XLB": "Materials",
-        "XLRE": "Real Estate", "XLU": "Utilities",
+        "XLK": "Technology",
+        "XLF": "Financials",
+        "XLY": "Consumer Discretionary",
+        "XLC": "Communication Services",
+        "XLV": "Healthcare",
+        "XLP": "Consumer Staples",
+        "XLE": "Energy",
+        "XLI": "Industrials",
+        "XLB": "Materials",
+        "XLRE": "Real Estate",
+        "XLU": "Utilities",
     }
 
     result = []
     for etf in SECTOR_ETFS:
         stocks = sector_stocks[etf]
         stocks.sort(key=lambda s: (s["ret_1m"] is None, -(s["ret_1m"] or 0)))
-        result.append({
-            "etf":    etf,
-            "name":   SECTOR_NAMES.get(etf, etf),
-            "ret_1m": etf_perf.get(etf),
-            "stocks": stocks,
-        })
+        result.append(
+            {
+                "etf": etf,
+                "name": SECTOR_NAMES.get(etf, etf),
+                "ret_1m": etf_perf.get(etf),
+                "stocks": stocks,
+            }
+        )
 
     result.sort(key=lambda x: (x["ret_1m"] is None, -(x["ret_1m"] or 0)))
 
     if uncategorised:
-        result.append({
-            "etf": "OTHER", "name": "Other / Unclassified",
-            "ret_1m": None, "stocks": uncategorised,
-        })
+        result.append(
+            {
+                "etf": "OTHER",
+                "name": "Other / Unclassified",
+                "ret_1m": None,
+                "stocks": uncategorised,
+            }
+        )
 
     _detail_cache["data"] = result
-    _detail_cache["ts"]   = now
+    _detail_cache["ts"] = now
     return result
 
 
 _sector_stocks_cache: dict[str, tuple[list, float]] = {}
+
 
 @router.get("/market/sectors/{etf}/stocks")
 async def sector_stocks(etf: str):
@@ -610,11 +699,12 @@ async def sector_stocks(etf: str):
     Fetched on-demand and cached per sector for 30 minutes.
     """
     import time
-    from sqlalchemy import select, desc
+
     from database import AsyncSessionLocal
     from models import Signal
     from services.market_data import get_histories_batch
     from services.sector import SECTOR_MAP
+    from sqlalchemy import desc, select
 
     etf = etf.upper()
     cached = _sector_stocks_cache.get(etf)
@@ -632,12 +722,18 @@ async def sector_stocks(etf: str):
     # Latest active signal per ticker for action/confidence/price
     try:
         async with AsyncSessionLocal() as db:
-            sig_rows = (await db.execute(
-                select(Signal)
-                .where(Signal.ticker.in_(tickers))
-                .where(Signal.is_active == True)
-                .order_by(desc(Signal.created_at))
-            )).scalars().all()
+            sig_rows = (
+                (
+                    await db.execute(
+                        select(Signal)
+                        .where(Signal.ticker.in_(tickers))
+                        .where(Signal.is_active == True)
+                        .order_by(desc(Signal.created_at))
+                    )
+                )
+                .scalars()
+                .all()
+            )
     except Exception:
         sig_rows = []
 
@@ -647,6 +743,7 @@ async def sector_stocks(etf: str):
             latest_sig[s.ticker] = s
 
     from services.market_data import COMPANY_NAMES
+
     result = []
     for ticker in tickers:
         df = histories.get(ticker)
@@ -656,14 +753,16 @@ async def sector_stocks(etf: str):
             ret_1m = round((float(closes.iloc[-1]) / float(closes.iloc[0]) - 1) * 100, 2)
 
         sig = latest_sig.get(ticker)
-        result.append({
-            "ticker":     ticker,
-            "company":    (sig.company if sig and sig.company else None) or COMPANY_NAMES.get(ticker, ticker),
-            "ret_1m":     ret_1m,
-            "action":     sig.action if sig else None,
-            "confidence": sig.confidence if sig else None,
-            "price":      sig.price if sig else None,
-        })
+        result.append(
+            {
+                "ticker": ticker,
+                "company": (sig.company if sig and sig.company else None) or COMPANY_NAMES.get(ticker, ticker),
+                "ret_1m": ret_1m,
+                "action": sig.action if sig else None,
+                "confidence": sig.confidence if sig else None,
+                "price": sig.price if sig else None,
+            }
+        )
 
     result.sort(key=lambda s: (s["ret_1m"] is None, -(s["ret_1m"] or 0)))
     _sector_stocks_cache[etf] = (result, time.time())

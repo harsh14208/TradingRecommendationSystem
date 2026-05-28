@@ -1,12 +1,12 @@
+from dataclasses import dataclass
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+from database import get_db
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime
-from dataclasses import dataclass
-
-from models import User, Signal
-from database import get_db
+from models import Signal, User
 from services.auth_svc import get_current_user
 
 try:
@@ -35,7 +35,6 @@ def test_signals_list_success():
     @dataclass
     class _Row:
         pass
-
 
     # Make db.execute(...).scalars().all() return signals
     sig1 = MagicMock(spec=Signal)
@@ -151,10 +150,12 @@ def test_signals_history_filters_and_404_not_found_on_send():
 
     # First execute for history (await db.execute(...))
     # Second execute for send_signal lookup (await db.execute(...)).scalar_one_or_none() -> None
-    mock_db_session.execute = AsyncMock(side_effect=[
-        mock_result,
-        MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-    ])
+    mock_db_session.execute = AsyncMock(
+        side_effect=[
+            mock_result,
+            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+        ]
+    )
 
     with TestClient(app) as c:
         # history endpoint should return list
@@ -228,12 +229,11 @@ def test_signals_send_success_sets_sent_and_commits():
     mock_db_session.execute = AsyncMock(return_value=mock_execute)
 
     # Patch telegram settings + HTTP client to avoid network calls
-    with patch("routers.signals.get_settings") as m_settings, \
-         patch("services.telegram_svc.aiohttp.ClientSession") as m_session:
-        m_settings.return_value = MagicMock(
-            telegram_bot_token="BOT",
-            telegram_chat_id="OWNER_CHAT"
-        )
+    with (
+        patch("routers.signals.get_settings") as m_settings,
+        patch("services.telegram_svc.aiohttp.ClientSession") as m_session,
+    ):
+        m_settings.return_value = MagicMock(telegram_bot_token="BOT", telegram_chat_id="OWNER_CHAT")
 
         # Telegram response ok
         m_resp = MagicMock()
@@ -269,15 +269,17 @@ def test_signals_send_success_sets_sent_and_commits():
 
 # ── execution-confirm tests ───────────────────────────────────────────────────
 
+
 @pytest.mark.skipif(router is None, reason="routers.signals import failed")
 class TestExecutionConfirm:
-
     def _app(self, user, db):
         a = FastAPI()
         a.include_router(router, prefix="")
         a.dependency_overrides[get_current_user] = lambda: user
+
         async def _db():
             yield db
+
         a.dependency_overrides[get_db] = _db
         return a
 
@@ -300,9 +302,13 @@ class TestExecutionConfirm:
         db.execute = AsyncMock(return_value=r)
 
         with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
-            resp = c.post("/api/signals/execution-confirm", json={
-                "signal_id": 10, "fill_price": 150.25,
-            })
+            resp = c.post(
+                "/api/signals/execution-confirm",
+                json={
+                    "signal_id": 10,
+                    "fill_price": 150.25,
+                },
+            )
         assert resp.status_code == 200
         assert sig.entry == 150.25
 
@@ -316,9 +322,13 @@ class TestExecutionConfirm:
         db.execute = AsyncMock(return_value=r)
 
         with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
-            resp = c.post("/api/signals/execution-confirm", json={
-                "signal_id": 10, "fill_price": 149.00,
-            })
+            resp = c.post(
+                "/api/signals/execution-confirm",
+                json={
+                    "signal_id": 10,
+                    "fill_price": 149.00,
+                },
+            )
         assert resp.status_code == 200
 
     def test_non_recipient_gets_403(self):
@@ -331,9 +341,13 @@ class TestExecutionConfirm:
         db.execute = AsyncMock(return_value=r)
 
         with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
-            resp = c.post("/api/signals/execution-confirm", json={
-                "signal_id": 10, "fill_price": 149.00,
-            })
+            resp = c.post(
+                "/api/signals/execution-confirm",
+                json={
+                    "signal_id": 10,
+                    "fill_price": 149.00,
+                },
+            )
         assert resp.status_code == 403
 
     def test_signal_not_found_returns_404(self):
@@ -342,9 +356,13 @@ class TestExecutionConfirm:
         db.get = AsyncMock(return_value=None)
 
         with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
-            resp = c.post("/api/signals/execution-confirm", json={
-                "signal_id": 999, "fill_price": 150.0,
-            })
+            resp = c.post(
+                "/api/signals/execution-confirm",
+                json={
+                    "signal_id": 999,
+                    "fill_price": 150.0,
+                },
+            )
         assert resp.status_code == 404
 
     def test_negative_fill_price_returns_400(self):
@@ -357,9 +375,13 @@ class TestExecutionConfirm:
         db.execute = AsyncMock(return_value=r)
 
         with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
-            resp = c.post("/api/signals/execution-confirm", json={
-                "signal_id": 10, "fill_price": -5.0,
-            })
+            resp = c.post(
+                "/api/signals/execution-confirm",
+                json={
+                    "signal_id": 10,
+                    "fill_price": -5.0,
+                },
+            )
         assert resp.status_code == 400
 
     def test_filled_at_updates_sent_at(self):
@@ -372,9 +394,13 @@ class TestExecutionConfirm:
         db.execute = AsyncMock(return_value=r)
 
         with TestClient(self._app(user, db), raise_server_exceptions=False) as c:
-            resp = c.post("/api/signals/execution-confirm", json={
-                "signal_id": 10, "fill_price": 150.0,
-                "filled_at": "2026-05-25T14:30:00Z",
-            })
+            resp = c.post(
+                "/api/signals/execution-confirm",
+                json={
+                    "signal_id": 10,
+                    "fill_price": 150.0,
+                    "filled_at": "2026-05-25T14:30:00Z",
+                },
+            )
         assert resp.status_code == 200
         assert sig.sent_at is not None

@@ -22,8 +22,12 @@ Usage:
     cd backend
     python scripts/run_section33.py 2>&1 | tee /tmp/decomp_s33.log
 """
+
 from __future__ import annotations
-import os, sys, warnings
+
+import os
+import sys
+import warnings
 from datetime import datetime
 
 import pandas as pd
@@ -31,37 +35,41 @@ import yfinance as yf
 
 warnings.filterwarnings("ignore")
 
-_HERE   = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__))
 _PARENT = os.path.dirname(_HERE)
 for _p in [_PARENT, _HERE]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 from backtest_technicals import (
-    START, END,
-    compute_indicators, compute_scores,
+    END,
+    START,
+    compute_indicators,
+    compute_scores,
+    fetch_spy_trend,
+    fetch_stlfsi4,
+    fmt_sharpe,
+    print_table,
     simulate_ticker,
-    fetch_spy_trend, fetch_stlfsi4,
-    stats, print_table, fmt_sharpe, fmt_pf,
+    stats,
 )
 
 # ── Universe ──────────────────────────────────────────────────────────────────
 
 ENERGY_TICKERS = ["XOM", "CVX", "COP", "SLB", "EOG"]
-XLU_TICKERS    = ["NEE", "DUK", "SO", "AEP"]
+XLU_TICKERS = ["NEE", "DUK", "SO", "AEP"]
 
 # XLE §16 best config
-XLE_CFG = dict(vix_min_override=15.0, hold_days_override=5, buy_thresh_override=40,
-               atr_pct_rank_min_override=20.0)
+XLE_CFG = dict(vix_min_override=15.0, hold_days_override=5, buy_thresh_override=40, atr_pct_rank_min_override=20.0)
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _download(ticker: str) -> pd.DataFrame | None:
-    raw = yf.download(ticker, start=START, end=END, interval="1d",
-                      auto_adjust=True, progress=False)
+    raw = yf.download(ticker, start=START, end=END, interval="1d", auto_adjust=True, progress=False)
     if raw.empty or len(raw) < 250:
         return None
     if isinstance(raw.columns, pd.MultiIndex):
@@ -79,8 +87,7 @@ def _download(ticker: str) -> pd.DataFrame | None:
     return df
 
 
-def _run(ticker: str, df: pd.DataFrame, vix: dict, spy: dict, stlfsi4: dict,
-         **kwargs) -> dict:
+def _run(ticker: str, df: pd.DataFrame, vix: dict, spy: dict, stlfsi4: dict, **kwargs) -> dict:
     t = simulate_ticker(ticker, df, vix, spy, stlfsi4, mr_only=True, **kwargs)
     if t.empty:
         return {"n": 0, "wr": None, "avg": None, "sharpe": None, "max_dd": None}
@@ -101,6 +108,7 @@ def _section(title: str) -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     print("# §33 — Energy Split · XLU Research · ATR Stop Sweep\n")
     print(f"> Period: {START} → {END}  |  MR-only  |  5% position size\n")
@@ -108,15 +116,14 @@ def main() -> None:
     # ── Alt data ─────────────────────────────────────────────────────────────
     print("Fetching VIX…", end=" ", flush=True)
     try:
-        v = yf.download("^VIX", start=START, end=END, interval="1d",
-                        auto_adjust=False, progress=False)
+        v = yf.download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
         if isinstance(v.columns, pd.MultiIndex):
             v.columns = v.columns.get_level_values(0)
-        vix = {pd.Timestamp(str(k)[:10]): float(val)
-               for k, val in v["Close"].items() if pd.notna(val)}
+        vix = {pd.Timestamp(str(k)[:10]): float(val) for k, val in v["Close"].items() if pd.notna(val)}
         print(f"ok ({len(vix)} bars)")
     except Exception as e:
-        vix = {}; print(f"failed ({e})")
+        vix = {}
+        print(f"failed ({e})")
 
     print("Fetching SPY trend…", end=" ", flush=True)
     spy = fetch_spy_trend(START, END)
@@ -153,14 +160,17 @@ def main() -> None:
             continue
         s = _run(t, dfs[t], vix, spy, stlfsi4, **XLE_CFG)
         flag = "⚠ bad-ticker" if t == "EOG" else ("⚠ bad-ticker" if t == "CVX" else "")
-        energy_rows.append([
-            t, s["n"],
-            f"{s['wr']:.1f}%" if s["wr"] is not None else "—",
-            f"{s['avg']:+.2f}%" if s["avg"] is not None else "—",
-            fmt_sharpe(s.get("ann_sharpe")),
-            f"-{s['max_dd']:.2f}%" if s["max_dd"] is not None else "—",
-            flag,
-        ])
+        energy_rows.append(
+            [
+                t,
+                s["n"],
+                f"{s['wr']:.1f}%" if s["wr"] is not None else "—",
+                f"{s['avg']:+.2f}%" if s["avg"] is not None else "—",
+                fmt_sharpe(s.get("ann_sharpe")),
+                f"-{s['max_dd']:.2f}%" if s["max_dd"] is not None else "—",
+                flag,
+            ]
+        )
 
     print_table(["Ticker", "N", "WR", "Avg", "Ann.Sharpe", "MaxDD", "Note"], energy_rows)
 
@@ -198,13 +208,16 @@ def main() -> None:
         if t not in dfs:
             continue
         s = _run(t, dfs[t], vix, spy, stlfsi4, atr_pct_rank_min_override=20.0)
-        xlu_base_rows.append([
-            t, s["n"],
-            f"{s['wr']:.1f}%" if s["wr"] is not None else "—",
-            f"{s['avg']:+.2f}%" if s["avg"] is not None else "—",
-            fmt_sharpe(s.get("ann_sharpe")),
-            f"-{s['max_dd']:.2f}%" if s["max_dd"] is not None else "—",
-        ])
+        xlu_base_rows.append(
+            [
+                t,
+                s["n"],
+                f"{s['wr']:.1f}%" if s["wr"] is not None else "—",
+                f"{s['avg']:+.2f}%" if s["avg"] is not None else "—",
+                fmt_sharpe(s.get("ann_sharpe")),
+                f"-{s['max_dd']:.2f}%" if s["max_dd"] is not None else "—",
+            ]
+        )
 
     print("#### Per-ticker baseline (default hold/thresh, ATR≥20)\n")
     print_table(["Ticker", "N", "WR", "Avg", "Ann.Sharpe", "MaxDD"], xlu_base_rows)
@@ -213,13 +226,13 @@ def main() -> None:
     print("\n#### §33b Parameter sweep (combined NEE+DUK+SO+AEP)\n")
 
     sweep_rows = []
-    HOLDS   = [5, 7, 10]
+    HOLDS = [5, 7, 10]
     VIX_MIN = [None, 13.0, 15.0]
-    THRESH  = [35, 38, 40]
+    THRESH = [35, 38, 40]
 
     best_ann = -999.0
     best_cfg: dict = {}
-    best_n   = 0
+    best_n = 0
 
     for hold in HOLDS:
         for vmin in VIX_MIN:
@@ -229,7 +242,12 @@ def main() -> None:
                     if t not in dfs:
                         continue
                     td = simulate_ticker(
-                        t, dfs[t], vix, spy, stlfsi4, mr_only=True,
+                        t,
+                        dfs[t],
+                        vix,
+                        spy,
+                        stlfsi4,
+                        mr_only=True,
                         hold_days_override=hold,
                         vix_min_override=vmin,
                         buy_thresh_override=thresh,
@@ -239,27 +257,34 @@ def main() -> None:
                         rets += td["net_pct"].tolist()
                 if not rets:
                     continue
-                s   = stats(rets)
+                s = stats(rets)
                 ann = round(s["sharpe"] * (252 / hold) ** 0.5, 2) if s["sharpe"] else None
                 vmin_str = f"≥{vmin:.0f}" if vmin is not None else "—"
-                sweep_rows.append([
-                    hold, vmin_str, thresh, s["n"],
-                    f"{s['wr']:.1f}%",
-                    f"{s['avg']:+.2f}%",
-                    fmt_sharpe(ann),
-                    f"-{s['max_dd']:.2f}%",
-                ])
+                sweep_rows.append(
+                    [
+                        hold,
+                        vmin_str,
+                        thresh,
+                        s["n"],
+                        f"{s['wr']:.1f}%",
+                        f"{s['avg']:+.2f}%",
+                        fmt_sharpe(ann),
+                        f"-{s['max_dd']:.2f}%",
+                    ]
+                )
                 if ann is not None and ann > best_ann and s["n"] >= 5:
                     best_ann = ann
                     best_cfg = {"vix_min": vmin, "hold_days": hold, "buy_thresh": thresh}
-                    best_n   = s["n"]
+                    best_n = s["n"]
 
     print_table(["Hold", "VIX≥", "Thresh", "N", "WR", "Avg", "Ann.Sharpe", "MaxDD"], sweep_rows)
 
     if best_cfg:
-        print(f"\n### XLU Best config: hold={best_cfg['hold_days']}d, "
-              f"vix_min={best_cfg['vix_min']}, thresh={best_cfg['buy_thresh']} "
-              f"→ Ann.Sharpe {best_ann:.2f} (N={best_n})")
+        print(
+            f"\n### XLU Best config: hold={best_cfg['hold_days']}d, "
+            f"vix_min={best_cfg['vix_min']}, thresh={best_cfg['buy_thresh']} "
+            f"→ Ann.Sharpe {best_ann:.2f} (N={best_n})"
+        )
         if best_ann >= 0.40:
             print("→ **ADMIT XLU** with calibrated config above.")
         elif best_ann >= 0.20:
@@ -287,10 +312,16 @@ def main() -> None:
     stop_rows = []
     for stop_m, tgt_m, label in STOP_VARIANTS:
         rets: list[float] = []
-        stop_hits = 0; total = 0
+        stop_hits = 0
+        total = 0
         for t in all_universe_tickers:
             td = simulate_ticker(
-                t, dfs[t], vix, spy, stlfsi4, mr_only=True,
+                t,
+                dfs[t],
+                vix,
+                spy,
+                stlfsi4,
+                mr_only=True,
                 atr_pct_rank_min_override=20.0,
                 stop_mult_override=stop_m,
                 target_mult_override=tgt_m,
@@ -299,19 +330,22 @@ def main() -> None:
                 rets += td["net_pct"].tolist()
                 if "exit_reason" in td.columns:
                     stop_hits += (td["exit_reason"] == "stop").sum()
-                    total     += len(td)
+                    total += len(td)
         if not rets:
             continue
         s = stats(rets)
-        stop_rate = f"{stop_hits/total*100:.1f}%" if total > 0 else "—"
-        stop_rows.append([
-            label, s["n"],
-            f"{s['wr']:.1f}%",
-            f"{s['avg']:+.2f}%",
-            fmt_sharpe(s["sharpe"]),
-            f"-{s['max_dd']:.2f}%",
-            stop_rate,
-        ])
+        stop_rate = f"{stop_hits / total * 100:.1f}%" if total > 0 else "—"
+        stop_rows.append(
+            [
+                label,
+                s["n"],
+                f"{s['wr']:.1f}%",
+                f"{s['avg']:+.2f}%",
+                fmt_sharpe(s["sharpe"]),
+                f"-{s['max_dd']:.2f}%",
+                stop_rate,
+            ]
+        )
 
     print_table(
         ["Config", "N", "WR", "Avg", "Sharpe", "MaxDD", "Stop%"],

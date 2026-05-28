@@ -1,5 +1,6 @@
 import json
 import math
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter()
@@ -12,9 +13,9 @@ def _json_default(obj):
     tn = t.__name__
     if tn in ("bool_",):
         return bool(obj)
-    if tn in ("int8","int16","int32","int64","uint8","uint16","uint32","uint64"):
+    if tn in ("int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64"):
         return int(obj)
-    if tn in ("float16","float32","float64","float128","float_"):
+    if tn in ("float16", "float32", "float64", "float128", "float_"):
         v = float(obj)
         return None if math.isnan(v) or math.isinf(v) else v
     # ndarray → list

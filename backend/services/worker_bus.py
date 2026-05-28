@@ -20,38 +20,42 @@ Design principles
      the bus transparently publishes/consumes from Redis Streams. Workers run in
      separate processes for true parallelism.
 """
+
 import asyncio
 import logging
 import os
 import time
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Callable, Coroutine
 
 log = logging.getLogger("signal.trade.worker_bus")
 
 
 # ── Typed result from every scoring worker ──────────────────────────────────
 
+
 @dataclass
 class ScoringResult:
-    score:     float = 0.0
-    sources:   set   = field(default_factory=set)
-    rationale: list  = field(default_factory=list)
-    ok:        bool  = True   # False = worker timed-out or circuit-broke
+    score: float = 0.0
+    sources: set = field(default_factory=set)
+    rationale: list = field(default_factory=list)
+    ok: bool = True  # False = worker timed-out or circuit-broke
 
 
 # ── Circuit Breaker ──────────────────────────────────────────────────────────
+
 
 class CircuitBreaker:
     """
     Simple per-source circuit breaker.
     Opens after `threshold` consecutive failures; resets after `reset_secs`.
     """
+
     def __init__(self, name: str, threshold: int = 3, reset_secs: float = 120.0):
-        self.name        = name
-        self.threshold   = threshold
-        self.reset_secs  = reset_secs
-        self._failures   = 0
+        self.name = name
+        self.threshold = threshold
+        self.reset_secs = reset_secs
+        self._failures = 0
         self._opened_at: float | None = None
 
     def is_open(self) -> bool:
@@ -59,13 +63,13 @@ class CircuitBreaker:
             return False
         if time.monotonic() - self._opened_at >= self.reset_secs:
             log.info("[circuit] %s: reset after %.0fs", self.name, self.reset_secs)
-            self._failures  = 0
+            self._failures = 0
             self._opened_at = None
             return False
         return True
 
     def record_success(self):
-        self._failures  = 0
+        self._failures = 0
         self._opened_at = None
 
     def record_failure(self):
@@ -77,6 +81,7 @@ class CircuitBreaker:
 
 
 # ── WorkerTask decorator ─────────────────────────────────────────────────────
+
 
 class WorkerTask:
     """
@@ -93,19 +98,20 @@ class WorkerTask:
             ...
             return ScoringResult(score=..., sources={...}, rationale=[...])
     """
+
     def __init__(
         self,
         name: str,
         timeout: float = 10.0,
-        retries: int   = 1,
-        cb_threshold: int   = 3,
+        retries: int = 1,
+        cb_threshold: int = 3,
         cb_reset_secs: float = 120.0,
     ):
-        self.name    = name
+        self.name = name
         self.timeout = timeout
         self.retries = retries
-        self._cb     = CircuitBreaker(name, cb_threshold, cb_reset_secs)
-        self._calls  = 0
+        self._cb = CircuitBreaker(name, cb_threshold, cb_reset_secs)
+        self._calls = 0
         self._errors = 0
 
     def __call__(self, fn: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
@@ -135,7 +141,7 @@ class WorkerTask:
                     log.debug("[worker] %s attempt %d: %s", task.name, attempt + 1, e)
 
                 if attempt < task.retries - 1:
-                    await asyncio.sleep(0.5 * (2 ** attempt))  # 0.5s, 1s, 2s…
+                    await asyncio.sleep(0.5 * (2**attempt))  # 0.5s, 1s, 2s…
 
             task._errors += 1
             task._cb.record_failure()
@@ -143,21 +149,22 @@ class WorkerTask:
             return ScoringResult(ok=False)
 
         wrapper.__name__ = fn.__name__
-        wrapper._task    = task  # expose for introspection
+        wrapper._task = task  # expose for introspection
         return wrapper
 
     @property
     def stats(self) -> dict:
         return {
-            "name":        self.name,
-            "calls":       self._calls,
-            "errors":      self._errors,
-            "error_rate":  round(self._errors / max(self._calls, 1) * 100, 1),
+            "name": self.name,
+            "calls": self._calls,
+            "errors": self._errors,
+            "error_rate": round(self._errors / max(self._calls, 1) * 100, 1),
             "circuit_open": self._cb.is_open(),
         }
 
 
 # ── Worker Bus ───────────────────────────────────────────────────────────────
+
 
 class WorkerBus:
     """
@@ -180,9 +187,11 @@ class WorkerBus:
     async def _get_redis(self):
         if self._redis is None:
             import redis.asyncio as aioredis
+
             self._redis = await aioredis.from_url(
                 os.getenv("REDIS_URL", "redis://localhost:6379"),
-                encoding="utf-8", decode_responses=True,
+                encoding="utf-8",
+                decode_responses=True,
             )
         return self._redis
 
@@ -195,11 +204,9 @@ class WorkerBus:
                 self._queues[stream] = asyncio.Queue(maxsize=200)
             await self._queues[stream].put(payload)
 
-    async def consume(
-        self, stream: str, timeout: float = 5.0
-    ) -> AsyncGenerator[dict, None]:
+    async def consume(self, stream: str, timeout: float = 5.0) -> AsyncGenerator[dict, None]:
         if self._use_redis:
-            r     = await self._get_redis()
+            r = await self._get_redis()
             group = "signal_engine"
             try:
                 await r.xgroup_create(stream, group, id="0", mkstream=True)
@@ -209,8 +216,7 @@ class WorkerBus:
             while time.monotonic() < deadline:
                 remaining = deadline - time.monotonic()
                 msgs = await r.xreadgroup(
-                    group, "worker-1", {stream: ">"}, count=1,
-                    block=int(min(remaining, 1.0) * 1000)
+                    group, "worker-1", {stream: ">"}, count=1, block=int(min(remaining, 1.0) * 1000)
                 )
                 if msgs:
                     for _, entries in msgs:
@@ -251,6 +257,7 @@ def get_bus() -> WorkerBus:
 
 
 # ── Worker stats endpoint helper ─────────────────────────────────────────────
+
 
 def collect_worker_stats(worker_fns: list) -> list[dict]:
     """Return circuit-breaker and call stats for all registered workers."""

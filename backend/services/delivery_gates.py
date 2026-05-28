@@ -9,10 +9,11 @@ Extracted from scanner._maybe_send() so that:
   - Live broker execution (OAuth path) can run the same gates
   - scanner.py stays focused on orchestration
 """
+
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 log = logging.getLogger("scanner")
 
@@ -20,6 +21,7 @@ log = logging.getLogger("scanner")
 def _utcnow_naive() -> datetime:
     """UTC timestamp compatible with existing naive SQLAlchemy DateTime columns."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 # ── Gate configuration ────────────────────────────────────────────────────────
 
@@ -30,9 +32,9 @@ def _utcnow_naive() -> datetime:
 # Swing floor raised 62→65 (2026-05-26): live alpha −1.028% confirms only
 # near-ceiling (65%+) swing setups carry positive expected value.
 STYLE_CONF_FLOORS: dict[str, float] = {
-    "intraday": 999.0,   # DISABLED — alpha −0.321%/trade, WR 30.4% (May 2026 live data)
-    "swing":    65.0,    # raised 62→65 — alpha −1.028%/trade; only ≥65% setups pass
-    "position": 0.0,     # no additional floor — driven by global min_confidence (57%)
+    "intraday": 999.0,  # DISABLED — alpha −0.321%/trade, WR 30.4% (May 2026 live data)
+    "swing": 65.0,  # raised 62→65 — alpha −1.028%/trade; only ≥65% setups pass
+    "position": 0.0,  # no additional floor — driven by global min_confidence (57%)
 }
 
 # Sectors with empirical PF < 0.40x blocked until per-sector models retrained.
@@ -43,7 +45,7 @@ BLOCKED_SECTORS: frozenset[str] = frozenset({"XLF", "XLP", "XLU"})
 # (and vice versa) — both are Alphabet equity, different share classes only.
 TICKER_ALIASES: dict[str, str] = {
     "GOOGL": "GOOG",
-    "GOOG":  "GOOGL",
+    "GOOG": "GOOGL",
 }
 
 
@@ -64,7 +66,7 @@ async def check_delivery_gates(
     """
     ticker = sig_dict["ticker"]
     action = sig_dict.get("action", "")
-    conf   = sig_dict.get("confidence", 0)
+    conf = sig_dict.get("confidence", 0)
 
     # ── Action guard ─────────────────────────────────────────────────────────
     if action not in ("BUY", "SELL"):
@@ -78,11 +80,10 @@ async def check_delivery_gates(
     try:
         from database import AsyncSessionLocal
         from models import AppSettings
+
         async with AsyncSessionLocal() as _adb:
-            _srow = (await _adb.execute(
-                select(AppSettings).where(AppSettings.id == 1)
-            )).scalar_one_or_none()
-        app_data   = (_srow.data or {}) if _srow else {}
+            _srow = (await _adb.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+        app_data = (_srow.data or {}) if _srow else {}
         ticker_wrs = app_data.get("adaptive_weights", {}).get("ticker_win_rates", {})
         twr = ticker_wrs.get(ticker)
         if twr is not None:
@@ -129,14 +130,18 @@ async def check_delivery_gates(
     # ── Sector concentration limit (max 2 BUY per sector per 24h) ────────────
     if sector and action == "BUY":
         from models import Signal
+
         cutoff = _utcnow_naive() - timedelta(hours=24)
-        count = (await db.execute(
-            select(func.count()).select_from(Signal)
-            .where(Signal.sector_etf == sector)
-            .where(Signal.action     == "BUY")
-            .where(Signal.is_sent    == True)
-            .where(Signal.sent_at    >= cutoff)
-        )).scalar_one()
+        count = (
+            await db.execute(
+                select(func.count())
+                .select_from(Signal)
+                .where(Signal.sector_etf == sector)
+                .where(Signal.action == "BUY")
+                .where(Signal.is_sent == True)
+                .where(Signal.sent_at >= cutoff)
+            )
+        ).scalar_one()
         if count >= 2:
             return f"sector {sector} already has {count} BUY sends in 24h (max 2)", sig_dict
 
@@ -147,14 +152,18 @@ async def check_delivery_gates(
     alias = TICKER_ALIASES.get(ticker)
     if alias and action == "BUY":
         from models import Signal
+
         cutoff = _utcnow_naive() - timedelta(hours=24)
-        alias_count = (await db.execute(
-            select(func.count()).select_from(Signal)
-            .where(Signal.ticker  == alias)
-            .where(Signal.action  == "BUY")
-            .where(Signal.is_sent == True)
-            .where(Signal.sent_at >= cutoff)
-        )).scalar_one()
+        alias_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(Signal)
+                .where(Signal.ticker == alias)
+                .where(Signal.action == "BUY")
+                .where(Signal.is_sent == True)
+                .where(Signal.sent_at >= cutoff)
+            )
+        ).scalar_one()
         if alias_count > 0:
             return (
                 f"{ticker} blocked — alias {alias} already sent as BUY within 24h (same underlying)",
@@ -164,8 +173,13 @@ async def check_delivery_gates(
     # ── Source independence gate ──────────────────────────────────────────────
     sources_set = set(sig_dict.get("sources") or [])
     non_ta = sources_set - {
-        "Technical", "Technicals", "Risk Gate", "Backtest",
-        "Cross-Sectional", "Orthogonalization", "Signal Cluster",
+        "Technical",
+        "Technicals",
+        "Risk Gate",
+        "Backtest",
+        "Cross-Sectional",
+        "Orthogonalization",
+        "Signal Cluster",
     }
     # Swing requires same independent corroboration as position (§33 live alpha:
     # swing −1.028%/trade at 65% floor; single non-TA source insufficient to
@@ -178,7 +192,7 @@ async def check_delivery_gates(
         )
 
     # ── Minimum profit filter ─────────────────────────────────────────────────
-    entry  = sig_dict.get("entry")
+    entry = sig_dict.get("entry")
     target = sig_dict.get("target")
     if entry and target and entry > 0:
         profit_pct = abs(target - entry) / entry * 100
@@ -188,23 +202,26 @@ async def check_delivery_gates(
     # ── Pre-long-weekend confidence haircut (-5pp, non-blocking) ─────────────
     try:
         from services.market_calendar import get_upcoming_holidays, is_pre_long_weekend
+
         holidays = await get_upcoming_holidays()
         is_long_wknd, holiday_name = is_pre_long_weekend(holidays)
         if is_long_wknd:
             sig_dict = dict(sig_dict)
             sig_dict["confidence"] = round(max(35.0, sig_dict["confidence"] - 5.0), 1)
             sig_dict.setdefault("rationale", [])
-            sig_dict["rationale"] = list(sig_dict["rationale"]) + [{
-                "src": "Risk Gate",
-                "head": f"Pre-{holiday_name} Haircut (−5pp)",
-                "body": (
-                    f"Signal is 2 trading days before {holiday_name} (3-day weekend). "
-                    "Lower liquidity, wider bid-ask spreads, and gap risk at open after "
-                    "the holiday reduce expected return. Confidence reduced by 5pp."
-                ),
-                "sentiment": "neg",
-                "meta": f"holiday={holiday_name} haircut=-5pp",
-            }]
+            sig_dict["rationale"] = list(sig_dict["rationale"]) + [
+                {
+                    "src": "Risk Gate",
+                    "head": f"Pre-{holiday_name} Haircut (−5pp)",
+                    "body": (
+                        f"Signal is 2 trading days before {holiday_name} (3-day weekend). "
+                        "Lower liquidity, wider bid-ask spreads, and gap risk at open after "
+                        "the holiday reduce expected return. Confidence reduced by 5pp."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"holiday={holiday_name} haircut=-5pp",
+                }
+            ]
     except Exception:
         pass
 

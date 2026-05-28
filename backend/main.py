@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 import resource
-import ssl
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -34,53 +33,54 @@ log = logging.getLogger("signal.trade")
 
 # Point both requests (yfinance) and ssl (aiohttp) at the certifi bundle.
 # Must happen before any network library is imported.
-os.environ.setdefault("SSL_CERT_FILE",        certifi.where())
-os.environ.setdefault("REQUESTS_CA_BUNDLE",   certifi.where())
-os.environ.setdefault("CURL_CA_BUNDLE",       certifi.where())
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+os.environ.setdefault("CURL_CA_BUNDLE", certifi.where())
 
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi import Depends, HTTPException, BackgroundTasks
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 limiter = Limiter(key_func=get_remote_address)
 
 from config import get_settings
 from database import init_db
+from models import User
 from routers.accuracy import router as accuracy_router
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.billing import router as billing_router
-from routers.ml import router as ml_router
-from routers.screener import router as screener_router
-from routers.oauth import router as oauth_router
-from routers.public import router as public_router
+from routers.delivery_router import router as delivery_router
 from routers.market import router as market_router
-from routers.quotes import router as quotes_router
-from routers.settings_router import router as settings_router
-from routers.signals import router as signals_router
-from routers.sources import router as sources_router
+from routers.ml import router as ml_router
+from routers.oauth import router as oauth_router
 from routers.paper_router import router as paper_router
 from routers.price_alerts import router as price_alerts_router
+from routers.public import router as public_router
+from routers.quotes import router as quotes_router
+from routers.screener import router as screener_router
+from routers.settings_router import router as settings_router
 from routers.signal_alerts import router as signal_alerts_router
+from routers.signals import router as signals_router
+from routers.sources import router as sources_router
 from routers.telegram_webhook import router as telegram_webhook_router
 from routers.watchlist_router import router as watchlist_router
-from routers.websocket_router import manager, router as ws_router
-from routers.delivery_router import router as delivery_router
-from services.scanner import get_scan_status, run_scan, _alert_telegram, _data_quality
-from services.auth_svc import get_current_user
-from models import User
+from routers.websocket_router import manager
+from routers.websocket_router import router as ws_router
 from services import alpaca_ws
+from services.auth_svc import get_current_user
+from services.scanner import _alert_telegram, _data_quality, get_scan_status, run_scan
 
 ROOT = Path(__file__).parent.parent  # project root (one level up from backend/)
 settings = get_settings()
 
 # ── PostgreSQL production warning ─────────────────────────────────────────────
-from database import DATABASE_URL as _DB_URL, _IS_POSTGRES as _USING_POSTGRES
+from database import _IS_POSTGRES as _USING_POSTGRES
+
 if not _USING_POSTGRES and settings.app_url.startswith("https"):
     log.warning(
         "⚠️  PRODUCTION RISK: Running SQLite in a deployed HTTPS environment. "
@@ -100,6 +100,7 @@ _bg_tasks: dict[str, dict] = {}
 
 
 _scan_fail_streak = 0
+
 
 async def _periodic_scan():
     """Continuous market-hours scanner (Mon–Fri, 09:30–16:00 ET).
@@ -131,6 +132,7 @@ async def _periodic_scan():
     # ── Legacy fixed-slot path (scan_interval_min == 0) ──────────────────────
     cfg = get_settings()
     if getattr(cfg, "scan_interval_min", 15) == 0 and cfg.scan_times.strip():
+
         def _next_fire() -> datetime:
             slots: list[tuple[int, int]] = []
             for part in cfg.scan_times.split(","):
@@ -176,7 +178,8 @@ async def _periodic_scan():
                 print(f"[scanner] periodic error (streak {_scan_fail_streak}): {type(e).__name__}: {e}")
                 if _scan_fail_streak == 1 or _scan_fail_streak % 5 == 0:
                     await _alert_telegram(
-                        f"⚠️ Scanner error (streak {_scan_fail_streak})\n{type(e).__name__}: {str(e)[:200]}")
+                        f"⚠️ Scanner error (streak {_scan_fail_streak})\n{type(e).__name__}: {str(e)[:200]}"
+                    )
             await asyncio.sleep(60)
         return  # unreachable but satisfies linter
 
@@ -188,14 +191,13 @@ async def _periodic_scan():
         if not _is_trading_day(now):
             next_open = _next_market_open()
             wait_s = (next_open - now).total_seconds()
-            log.info("[scanner] weekend — sleeping until %s ET (%.1fh)",
-                     next_open.strftime("%a %H:%M"), wait_s / 3600)
+            log.info("[scanner] weekend — sleeping until %s ET (%.1fh)", next_open.strftime("%a %H:%M"), wait_s / 3600)
             await asyncio.sleep(wait_s)
             continue
 
-        market_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
-        market_close = now.replace(hour=16, minute=0,  second=0, microsecond=0)
-        post_close   = now.replace(hour=16, minute=2,  second=0, microsecond=0)
+        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        post_close = now.replace(hour=16, minute=2, second=0, microsecond=0)
 
         if now < market_open:
             wait_s = (market_open - now).total_seconds()
@@ -206,8 +208,9 @@ async def _periodic_scan():
         if now > post_close:
             next_open = _next_market_open()
             wait_s = (next_open - now).total_seconds()
-            log.info("[scanner] after-hours — sleeping until %s ET (%.1fh)",
-                     next_open.strftime("%a %H:%M"), wait_s / 3600)
+            log.info(
+                "[scanner] after-hours — sleeping until %s ET (%.1fh)", next_open.strftime("%a %H:%M"), wait_s / 3600
+            )
             await asyncio.sleep(wait_s)
             continue
 
@@ -223,7 +226,8 @@ async def _periodic_scan():
             print(f"[scanner] error (streak {_scan_fail_streak}): {type(e).__name__}: {e}")
             if _scan_fail_streak == 1 or _scan_fail_streak % 5 == 0:
                 await _alert_telegram(
-                    f"⚠️ Scanner error (streak {_scan_fail_streak})\n{type(e).__name__}: {str(e)[:200]}")
+                    f"⚠️ Scanner error (streak {_scan_fail_streak})\n{type(e).__name__}: {str(e)[:200]}"
+                )
 
         # After close: one final scan at 16:02, then EOD batch at 16:10, then sleep
         now_after = datetime.now(ET)
@@ -244,6 +248,7 @@ async def _periodic_scan():
                 await asyncio.sleep(wait_eod)
             try:
                 from services.scanner import eod_batch_send
+
                 await eod_batch_send()
             except asyncio.CancelledError:
                 raise
@@ -252,8 +257,7 @@ async def _periodic_scan():
 
             next_open = _next_market_open()
             wait_s = (_next_market_open() - datetime.now(ET)).total_seconds()
-            log.info("[scanner] EOD batch done — sleeping until %s ET",
-                     next_open.strftime("%a %H:%M"))
+            log.info("[scanner] EOD batch done — sleeping until %s ET", next_open.strftime("%a %H:%M"))
             await asyncio.sleep(max(0, wait_s))
         else:
             await asyncio.sleep(interval_min * 60)
@@ -269,10 +273,12 @@ async def _nightly_signal_cleanup():
             target += timedelta(days=1)
         await asyncio.sleep((target - now_et).total_seconds())
         try:
+            from datetime import timezone as _tz
+
             from database import AsyncSessionLocal
             from models import Signal
-            from sqlalchemy import update, select
-            from datetime import timezone as _tz
+            from sqlalchemy import select, update
+
             cutoff = datetime.now(_tz.utc)
             async with AsyncSessionLocal() as db:
                 # 1. Deactivate expired signals
@@ -288,20 +294,26 @@ async def _nightly_signal_cleanup():
                 #    3pp per additional day beyond day 3, capped at −15pp total.
                 #    An RSI oversold from 4 days ago is no longer actionable.
                 day3_cutoff = cutoff - timedelta(days=3)
-                stale_rows = (await db.execute(
-                    select(Signal)
-                    .where(Signal.is_active   == True)
-                    .where(Signal.outcome_pct.is_(None))   # not yet resolved
-                    .where(Signal.created_at  <= day3_cutoff)
-                    .where(Signal.action.in_(["BUY", "SELL"]))
-                )).scalars().all()
+                stale_rows = (
+                    (
+                        await db.execute(
+                            select(Signal)
+                            .where(Signal.is_active == True)
+                            .where(Signal.outcome_pct.is_(None))  # not yet resolved
+                            .where(Signal.created_at <= day3_cutoff)
+                            .where(Signal.action.in_(["BUY", "SELL"]))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
 
                 decayed = 0
                 for sig in stale_rows:
                     age_days = (cutoff - sig.created_at).total_seconds() / 86400
                     extra_days = max(0, age_days - 3)
-                    decay_pp   = min(15.0, extra_days * 3.0)
-                    new_conf   = round(max(35.0, sig.confidence - decay_pp), 1)
+                    decay_pp = min(15.0, extra_days * 3.0)
+                    new_conf = round(max(35.0, sig.confidence - decay_pp), 1)
                     if new_conf != sig.confidence:
                         sig.confidence = new_conf
                         decayed += 1
@@ -330,14 +342,18 @@ async def _nightly_outcome_resolution():
         try:
             log.info("[nightly] running outcome resolution + calibration refresh…")
             # Reuse validate_predictions logic without starting a separate process
-            import sys, os
+            import os
+            import sys
+
             sys.path.insert(0, os.path.dirname(__file__))
-            from validate_predictions import resolve_outcomes, resolve_mae_mfe
+            from validate_predictions import resolve_mae_mfe, resolve_outcomes
+
             updated = await resolve_outcomes()
             mae_updated = await resolve_mae_mfe()
             log.info(f"[nightly] resolved {updated} outcomes, {mae_updated} MAE/MFE records")
             # Refresh Platt + isotonic calibration now that outcomes are up-to-date
             from services.calibration import run_calibration
+
             cal = await run_calibration()
             log.info(f"[nightly] calibration refreshed — {len(cal)} bins")
         except Exception as e:
@@ -350,15 +366,16 @@ async def _intraday_stop_monitor():
     Fires Telegram notification when a stop or target is breached and deactivates the signal.
     """
     from services.stop_monitor import check_stop_targets_and_notify
+
     ET = pytz.timezone("America/New_York")
     # Startup delay — let the first scan cycle complete before checking stops
     await asyncio.sleep(120)
     while True:
         now_et = datetime.now(ET)
         is_market_hours = (
-            now_et.weekday() < 5 and
-            now_et.time() >= __import__("datetime").time(9, 30) and
-            now_et.time() <= __import__("datetime").time(16, 15)
+            now_et.weekday() < 5
+            and now_et.time() >= __import__("datetime").time(9, 30)
+            and now_et.time() <= __import__("datetime").time(16, 15)
         )
         if is_market_hours:
             try:
@@ -384,34 +401,43 @@ async def _nightly_reflection_learning():
         await asyncio.sleep((target - now_et).total_seconds())
         try:
             from services.local_llm import get_llm_client
+
             llm = get_llm_client()
             if not llm:
                 continue  # LLM not available — skip reflection
 
+            from datetime import timezone as _tz
+
             from database import AsyncSessionLocal
             from models import Signal
-            from sqlalchemy import select
             from services.vector_store import store_reflection
+            from sqlalchemy import select
 
-            from datetime import timezone as _tz
             cutoff = datetime.now(_tz.utc) - timedelta(days=7)
             async with AsyncSessionLocal() as db:
-                losses = (await db.execute(
-                    select(Signal)
-                    .where(Signal.outcome_pct.isnot(None))
-                    .where(Signal.outcome_pct <= 0)
-                    .where(Signal.is_sent == True)
-                    .where(Signal.created_at >= cutoff)
-                    .order_by(Signal.created_at.desc())
-                    .limit(10)
-                )).scalars().all()
+                losses = (
+                    (
+                        await db.execute(
+                            select(Signal)
+                            .where(Signal.outcome_pct.isnot(None))
+                            .where(Signal.outcome_pct <= 0)
+                            .where(Signal.is_sent == True)
+                            .where(Signal.created_at >= cutoff)
+                            .order_by(Signal.created_at.desc())
+                            .limit(10)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
 
             reflected = 0
             for sig in losses:
                 try:
-                    rationale_heads = "; ".join(
-                        r.get("head", "") for r in (sig.rationale or [])[:5] if r.get("head")
-                    ) or "no rationale stored"
+                    rationale_heads = (
+                        "; ".join(r.get("head", "") for r in (sig.rationale or [])[:5] if r.get("head"))
+                        or "no rationale stored"
+                    )
                     prompt = (
                         f"Signal: {sig.action} {sig.ticker} at {sig.confidence:.0f}% confidence. "
                         f"Outcome: {sig.outcome_pct:+.1f}% (LOSS). "
@@ -422,17 +448,15 @@ async def _nightly_reflection_learning():
                     lesson = llm.generate(
                         prompt,
                         system_prompt=(
-                            "You are a quantitative trading risk analyst. "
-                            "Be specific, concise, and actionable."
-                        )
+                            "You are a quantitative trading risk analyst. Be specific, concise, and actionable."
+                        ),
                     )
                     if lesson and len(lesson) > 30:
                         features = {
                             "confidence": sig.confidence / 100,
                             "outcome_pct": sig.outcome_pct,
                         }
-                        store_reflection(sig.ticker, sig.action, sig.outcome_pct,
-                                         features, lesson[:500])
+                        store_reflection(sig.ticker, sig.action, sig.outcome_pct, features, lesson[:500])
                         reflected += 1
                 except Exception:
                     pass
@@ -457,11 +481,11 @@ async def _weekly_ml_retrain():
         await asyncio.sleep((next_run - now_et).total_seconds())
         try:
             from services.signal_ml import train_model
+
             result = await asyncio.to_thread(train_model)
             if result:
                 log.info(
-                    f"[ml] retrain OK: OOS AUC={result.get('oos_auc') or '?'}  "
-                    f"n_train={result.get('n_train', '?')}"
+                    f"[ml] retrain OK: OOS AUC={result.get('oos_auc') or '?'}  n_train={result.get('n_train', '?')}"
                 )
             else:
                 log.info("[ml] retrain skipped (insufficient resolved signals).")
@@ -484,6 +508,7 @@ async def _weekly_factor_mining():
         await asyncio.sleep((next_run - now_et).total_seconds())
         try:
             from services.factor_miner import run_factor_mining
+
             result = await run_factor_mining()
             n = result.get("combinations_tested", 0)
             promoted = result.get("promoted_count", 0)
@@ -492,6 +517,7 @@ async def _weekly_factor_mining():
             log.warning(f"[factor_miner] weekly run failed: {e}")
         try:
             from services.calibration import run_calibration
+
             await run_calibration()
         except Exception as e:
             log.warning(f"[calibration] weekly run failed: {e}")
@@ -500,27 +526,35 @@ async def _weekly_factor_mining():
 async def _run_weekly_digest():
     ET = pytz.timezone("America/New_York")
     try:
+        from datetime import timezone as _tz
+
         from database import AsyncSessionLocal
         from models import Signal
-        from sqlalchemy import select, desc
-        from datetime import timezone as _tz
+        from sqlalchemy import select
+
         now = datetime.now(_tz.utc)
         week_ago = now - timedelta(days=7)
         two_weeks_ago = now - timedelta(days=14)
 
         async with AsyncSessionLocal() as db:
-            sent_this_week = (await db.execute(
-                select(Signal)
-                .where(Signal.is_sent == True)
-                .where(Signal.sent_at >= week_ago)
-            )).scalars().all()
+            sent_this_week = (
+                (await db.execute(select(Signal).where(Signal.is_sent == True).where(Signal.sent_at >= week_ago)))
+                .scalars()
+                .all()
+            )
 
-            resolved_past_week = (await db.execute(
-                select(Signal)
-                .where(Signal.is_sent == True)
-                .where(Signal.sent_at >= two_weeks_ago)
-                .where(Signal.sent_at < week_ago)
-            )).scalars().all()
+            resolved_past_week = (
+                (
+                    await db.execute(
+                        select(Signal)
+                        .where(Signal.is_sent == True)
+                        .where(Signal.sent_at >= two_weeks_ago)
+                        .where(Signal.sent_at < week_ago)
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
         def get_best_outcome(sig):
             for f in ("outcome_pct", "outcome_14d", "outcome_3d", "outcome_1d"):
@@ -529,12 +563,14 @@ async def _run_weekly_digest():
                     return v
             return None
 
-        resolved_with_outcomes = [(r, get_best_outcome(r)) for r in resolved_past_week if get_best_outcome(r) is not None]
-        sent     = len(sent_this_week)
+        resolved_with_outcomes = [
+            (r, get_best_outcome(r)) for r in resolved_past_week if get_best_outcome(r) is not None
+        ]
+        sent = len(sent_this_week)
         resolved_count = len(resolved_with_outcomes)
-        wins     = [r for r, out in resolved_with_outcomes if out > 0]
+        wins = [r for r, out in resolved_with_outcomes if out > 0]
         win_rate = round(len(wins) / resolved_count * 100) if resolved_count else None
-        avg_ret  = round(sum(out for r, out in resolved_with_outcomes) / resolved_count, 2) if resolved_count else None
+        avg_ret = round(sum(out for r, out in resolved_with_outcomes) / resolved_count, 2) if resolved_count else None
         best_tup = max(resolved_with_outcomes, key=lambda x: x[1]) if resolved_count else None
         worst_tup = min(resolved_with_outcomes, key=lambda x: x[1]) if resolved_count else None
         best, best_ret = best_tup if best_tup else (None, None)
@@ -542,10 +578,13 @@ async def _run_weekly_digest():
 
         # Fetch SPY benchmark for comparison
         import yfinance as yf
+
         spy_ret = None
         try:
+
             def _fetch_spy():
                 return yf.Ticker("SPY").history(period="5d")
+
             spy_data = await asyncio.to_thread(_fetch_spy)
             if not spy_data.empty and len(spy_data) >= 2:
                 spy_ret = (spy_data["Close"].iloc[-1] / spy_data["Close"].iloc[0] - 1) * 100
@@ -572,31 +611,30 @@ async def _run_weekly_digest():
 
         # ── Telegram and Email digest to owner + all active subscribers ──────────────
         try:
-            from services.email_svc import send_weekly_digest
-            from models import User
-            from sqlalchemy import select as _sel
             import aiohttp
-            from config import get_settings, TIERS
-            
+            from config import TIERS, get_settings
+            from models import User
+            from services.email_svc import send_weekly_digest
+            from sqlalchemy import select as _sel
+
             week_ending_str = datetime.now(ET).strftime("%b %d, %Y")
             s = get_settings()
-            
+
             async with AsyncSessionLocal() as db2:
-                users = (await db2.execute(
-                    _sel(User).where(User.is_active == True)
-                )).scalars().all()
-            
-            recipients = [u.email for u in users
-                          if u.is_owner or u.subscription_status == "active"]
-            
-            recipients_tg = [u.telegram_chat_id for u in users
-                             if u.telegram_chat_id and (
-                                 u.is_owner or (
-                                     u.subscription_status == "active" and
-                                     TIERS.index(u.subscription_tier) >= TIERS.index("basic")
-                                 )
-                             )]
-            
+                users = (await db2.execute(_sel(User).where(User.is_active == True))).scalars().all()
+
+            recipients = [u.email for u in users if u.is_owner or u.subscription_status == "active"]
+
+            recipients_tg = [
+                u.telegram_chat_id
+                for u in users
+                if u.telegram_chat_id
+                and (
+                    u.is_owner
+                    or (u.subscription_status == "active" and TIERS.index(u.subscription_tier) >= TIERS.index("basic"))
+                )
+            ]
+
             # Send to Telegram subscribers
             if s.telegram_bot_token:
                 url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
@@ -606,14 +644,17 @@ async def _run_weekly_digest():
                     chats_to_notify = set(recipients_tg)
                     if not chats_to_notify and s.telegram_chat_id:
                         chats_to_notify.add(s.telegram_chat_id)
-                        
+
                     for chat_id in chats_to_notify:
                         try:
-                            await session.post(url, json={
-                                "chat_id": chat_id,
-                                "text": message_text,
-                                "parse_mode": "Markdown",
-                            })
+                            await session.post(
+                                url,
+                                json={
+                                    "chat_id": chat_id,
+                                    "text": message_text,
+                                    "parse_mode": "Markdown",
+                                },
+                            )
                         except Exception as e_tg:
                             log.warning(f"[digest] telegram to {chat_id} failed: {e_tg}")
                 log.info(f"[digest] Weekly digest sent via Telegram to {len(chats_to_notify)} chats")
@@ -642,6 +683,7 @@ async def _run_weekly_digest():
         # ── Auto performance snapshot (weekly baseline) ───────────────────────
         try:
             from scripts.calc_tbd_metrics import analyze_db as _metrics_analyze
+
             week_label = datetime.now(ET).strftime("weekly-%Y-%m-%d")
             await _metrics_analyze(snapshot_tag=week_label)
             log.info(f"[digest] performance snapshot saved: {week_label}")
@@ -650,6 +692,7 @@ async def _run_weekly_digest():
 
     except Exception as e:
         print(f"[digest] error: {e}")
+
 
 async def _weekly_digest():
     """Send a Sunday morning Telegram summary of the week's signals and win rate."""
@@ -681,59 +724,239 @@ async def _ensure_default_watchlist():
     """
     DEFAULT_TICKERS: list[str] = [
         # ── Mega-cap / S&P 100 core ──────────────────────────────────────────
-        "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","BRK-B","AVGO","JPM",
-        "LLY","V","UNH","XOM","MA","COST","HD","PG","JNJ","WMT",
-        "BAC","ABBV","CRM","AMD","NFLX","KO","ACN","MRK","CVX","TMO",
-        "ORCL","WFC","ABT","CSCO","AXP","BX","MCD","PEP","PM","GE",
-        "INTU","CAT","QCOM","GS","TXN","NOW","IBM","MS","LIN","DHR",
-        "NEE","RTX","UNP","HON","SYK","AMGN","BMY","UBER","AMAT","UPS",
-        "T","PANW","LOW","BKNG","DE","MDT","VRTX","LMT","MU","C",
-        "REGN","SBUX","BA","NKE","CVS","ISRG","PLD","GILD","SO","TJX",
-        "MMC","ETN","CME","CI","BSX","PGR","AON","MCO","HCA","GM",
-        "SNOW","PLTR","MO","TGT","GD","CB","AIG","COF","SPGI","ZTS",
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "AMZN",
+        "GOOGL",
+        "META",
+        "TSLA",
+        "BRK-B",
+        "AVGO",
+        "JPM",
+        "LLY",
+        "V",
+        "UNH",
+        "XOM",
+        "MA",
+        "COST",
+        "HD",
+        "PG",
+        "JNJ",
+        "WMT",
+        "BAC",
+        "ABBV",
+        "CRM",
+        "AMD",
+        "NFLX",
+        "KO",
+        "ACN",
+        "MRK",
+        "CVX",
+        "TMO",
+        "ORCL",
+        "WFC",
+        "ABT",
+        "CSCO",
+        "AXP",
+        "BX",
+        "MCD",
+        "PEP",
+        "PM",
+        "GE",
+        "INTU",
+        "CAT",
+        "QCOM",
+        "GS",
+        "TXN",
+        "NOW",
+        "IBM",
+        "MS",
+        "LIN",
+        "DHR",
+        "NEE",
+        "RTX",
+        "UNP",
+        "HON",
+        "SYK",
+        "AMGN",
+        "BMY",
+        "UBER",
+        "AMAT",
+        "UPS",
+        "T",
+        "PANW",
+        "LOW",
+        "BKNG",
+        "DE",
+        "MDT",
+        "VRTX",
+        "LMT",
+        "MU",
+        "C",
+        "REGN",
+        "SBUX",
+        "BA",
+        "NKE",
+        "CVS",
+        "ISRG",
+        "PLD",
+        "GILD",
+        "SO",
+        "TJX",
+        "MMC",
+        "ETN",
+        "CME",
+        "CI",
+        "BSX",
+        "PGR",
+        "AON",
+        "MCO",
+        "HCA",
+        "GM",
+        "SNOW",
+        "PLTR",
+        "MO",
+        "TGT",
+        "GD",
+        "CB",
+        "AIG",
+        "COF",
+        "SPGI",
+        "ZTS",
         # ── Established tech & semi ──────────────────────────────────────────
-        "SMCI","ARM","MRVL","KLAC","LRCX","ADI","CDNS","SNPS","ICE","ADP",
+        "SMCI",
+        "ARM",
+        "MRVL",
+        "KLAC",
+        "LRCX",
+        "ADI",
+        "CDNS",
+        "SNPS",
+        "ICE",
+        "ADP",
         # ── AI Infrastructure (second-wave): FPGAs, packaging, optics, storage
-        "ALTR","AMKR","COHR","LATT","POWI","PSTG","KEYS",
+        "ALTR",
+        "AMKR",
+        "COHR",
+        "LATT",
+        "POWI",
+        "PSTG",
+        "KEYS",
         # ── Industrial rotation & infrastructure ─────────────────────────────
-        "PWR","TT","URI","AME","EMR","ITW","APH",
+        "PWR",
+        "TT",
+        "URI",
+        "AME",
+        "EMR",
+        "ITW",
+        "APH",
         # ── Commodities / real assets ────────────────────────────────────────
-        "FCX","SCCO","HBM","AEM","NEM",
-        "GLD","GDX","GDXJ","SLV","SIL","COPX","PALL","PPLT",
-        "SLB","EOG",
+        "FCX",
+        "SCCO",
+        "HBM",
+        "AEM",
+        "NEM",
+        "GLD",
+        "GDX",
+        "GDXJ",
+        "SLV",
+        "SIL",
+        "COPX",
+        "PALL",
+        "PPLT",
+        "SLB",
+        "EOG",
         # ── Software / next-gen tech ─────────────────────────────────────────
-        "MDB","DDOG","NET",
+        "MDB",
+        "DDOG",
+        "NET",
         # ── Broad market & sector ETFs ───────────────────────────────────────
-        "SPY","QQQ","IWM","TQQQ","XLK","XLF","XLE","XLI","XLV","XLC","XLP","XLRE","XLU","XLB",
+        "SPY",
+        "QQQ",
+        "IWM",
+        "TQQQ",
+        "XLK",
+        "XLF",
+        "XLE",
+        "XLI",
+        "XLV",
+        "XLC",
+        "XLP",
+        "XLRE",
+        "XLU",
+        "XLB",
         # ── 3× Bull leveraged ETFs ───────────────────────────────────────────
-        "UPRO","SPXL","SOXL","TECL","FAS","TNA","LABU","WEBL","FNGU",
-        "NAIL","DPST","YINN","DRN","TMF","HIBL","MIDU","GUSH","NUGT","JNUG",
+        "UPRO",
+        "SPXL",
+        "SOXL",
+        "TECL",
+        "FAS",
+        "TNA",
+        "LABU",
+        "WEBL",
+        "FNGU",
+        "NAIL",
+        "DPST",
+        "YINN",
+        "DRN",
+        "TMF",
+        "HIBL",
+        "MIDU",
+        "GUSH",
+        "NUGT",
+        "JNUG",
         # ── 3× Bear / inverse leveraged ETFs ────────────────────────────────
-        "SQQQ","SPXS","SPXU","SOXS","TECS","FAZ","TZA","LABD","FNGD",
-        "YANG","DRV","TMV","HIBS","SRTY","DRIP","DUST","JDST",
+        "SQQQ",
+        "SPXS",
+        "SPXU",
+        "SOXS",
+        "TECS",
+        "FAZ",
+        "TZA",
+        "LABD",
+        "FNGD",
+        "YANG",
+        "DRV",
+        "TMV",
+        "HIBS",
+        "SRTY",
+        "DRIP",
+        "DUST",
+        "JDST",
         # ── 2× leveraged (popular liquid pairs) ─────────────────────────────
-        "SSO","SDS","QLD","QID","UCO","SCO","ROM","UWM","TWM",
+        "SSO",
+        "SDS",
+        "QLD",
+        "QID",
+        "UCO",
+        "SCO",
+        "ROM",
+        "UWM",
+        "TWM",
         # ── Previously-active custom ─────────────────────────────────────────
-        "BLK","ELV","EBAY","PNC","USB","WM",
+        "BLK",
+        "ELV",
+        "EBAY",
+        "PNC",
+        "USB",
+        "WM",
     ]
 
     try:
         from database import AsyncSessionLocal
         from models import WatchlistItem
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
 
         async with AsyncSessionLocal() as db:
-            existing_count = (await db.execute(
-                select(func.count()).select_from(WatchlistItem).where(WatchlistItem.is_active == True)
-            )).scalar_one()
+            existing_count = (
+                await db.execute(select(func.count()).select_from(WatchlistItem).where(WatchlistItem.is_active == True))
+            ).scalar_one()
 
             if existing_count >= 20:
                 return  # watchlist already populated — don't overwrite user edits
 
-            existing_tickers = set(
-                r.ticker for r in
-                (await db.execute(select(WatchlistItem.ticker))).scalars().all()
-            )
+            existing_tickers = set(r.ticker for r in (await db.execute(select(WatchlistItem.ticker))).scalars().all())
 
             added = 0
             for ticker in DEFAULT_TICKERS:
@@ -756,8 +979,9 @@ async def _ensure_owner_account():
         return
     from database import AsyncSessionLocal
     from models import User
-    from sqlalchemy import select
     from services.auth_svc import generate_link_code, hash_password
+    from sqlalchemy import select
+
     async with AsyncSessionLocal() as db:
         existing = (await db.execute(select(User).where(User.email == s.owner_email.lower()))).scalar_one_or_none()
         if existing:
@@ -787,6 +1011,7 @@ async def _prewarm_news_batch():
     try:
         from services.benzinga_news import prefetch_news_batch
         from services.scanner import _get_scan_tickers
+
         tickers = await _get_scan_tickers(get_settings())
         await prefetch_news_batch(tickers)
         log.info(f"[startup] news batch pre-warmed for {len(tickers)} tickers")
@@ -804,15 +1029,18 @@ async def _warm_indicator_cache():
     try:
         from services.polygon_indicators import get_indicators
         from services.scanner import _get_scan_tickers
+
         tickers = await _get_scan_tickers(get_settings())
         log.info(f"[startup] warming indicator cache for {len(tickers)} tickers (10 concurrent)")
         sem = asyncio.Semaphore(10)  # 10 concurrent — well within unlimited plan
+
         async def _fetch_one(t: str):
             async with sem:
                 try:
                     await get_indicators(t)
                 except Exception:
                     pass
+
         await asyncio.gather(*[_fetch_one(t) for t in tickers])
         log.info("[startup] indicator cache warm complete (%d tickers)", len(tickers))
     except Exception as e:
@@ -834,34 +1062,48 @@ async def _weekly_ticker_screener():
         next_run = next_run + timedelta(days=days_until_sunday)
         await asyncio.sleep((next_run - now_et).total_seconds())
         try:
-            api_key = (get_settings().polygon_api_key or get_settings().massive_api_key or "")
+            api_key = get_settings().polygon_api_key or get_settings().massive_api_key or ""
             if not api_key:
                 continue
-            import ssl, certifi, aiohttp
+            import ssl
+
+            import aiohttp
+            import certifi
+
             _ssl = ssl.create_default_context(cafile=certifi.where())
             candidates = []
             async with aiohttp.ClientSession() as sess:
                 # Fetch active common stocks sorted by primary exchange
                 async with sess.get(
                     "https://api.polygon.io/v3/reference/tickers",
-                    params={"market": "stocks", "type": "CS", "active": "true",
-                            "sort": "primary_exchange", "order": "asc",
-                            "limit": 50, "apiKey": api_key},
-                    ssl=_ssl, timeout=aiohttp.ClientTimeout(total=10)
+                    params={
+                        "market": "stocks",
+                        "type": "CS",
+                        "active": "true",
+                        "sort": "primary_exchange",
+                        "order": "asc",
+                        "limit": 50,
+                        "apiKey": api_key,
+                    },
+                    ssl=_ssl,
+                    timeout=aiohttp.ClientTimeout(total=10),
                 ) as r:
                     if r.status == 200:
                         data = await r.json()
-                        candidates = [t.get("ticker","") for t in (data.get("results") or [])
-                                      if t.get("ticker")]
+                        candidates = [t.get("ticker", "") for t in (data.get("results") or []) if t.get("ticker")]
             if candidates:
                 from database import AsyncSessionLocal
                 from models import AppSettings
                 from sqlalchemy import select
+
                 async with AsyncSessionLocal() as db:
                     row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
                     if row and row.data is not None:
-                        row.data = {**row.data, "screener_suggestions": candidates[:10],
-                                    "screener_updated": datetime.now(__import__('datetime').timezone.utc).isoformat()}
+                        row.data = {
+                            **row.data,
+                            "screener_suggestions": candidates[:10],
+                            "screener_updated": datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                        }
                         await db.commit()
                         log.info(f"[screener] {len(candidates[:10])} suggestions written to app_settings")
         except Exception as e:
@@ -922,30 +1164,33 @@ async def lifespan(app: FastAPI):
     global _scan_task
     _scan_task = asyncio.create_task(_periodic_scan())
     asyncio.create_task(_scan_watchdog())
-    _supervise("weekly_digest",           _weekly_digest,            restart=True)
-    _supervise("weekly_factor_mining",    _weekly_factor_mining,     restart=True)
-    _supervise("weekly_ml_retrain",       _weekly_ml_retrain,        restart=True)
-    _supervise("nightly_signal_cleanup",  _nightly_signal_cleanup,   restart=True)
+    _supervise("weekly_digest", _weekly_digest, restart=True)
+    _supervise("weekly_factor_mining", _weekly_factor_mining, restart=True)
+    _supervise("weekly_ml_retrain", _weekly_ml_retrain, restart=True)
+    _supervise("nightly_signal_cleanup", _nightly_signal_cleanup, restart=True)
     _supervise("nightly_outcome_resolution", _nightly_outcome_resolution, restart=True)
-    _supervise("intraday_stop_monitor",   _intraday_stop_monitor,    restart=True)
-    _supervise("nightly_reflection",      _nightly_reflection_learning, restart=True)
-    _supervise("weekly_screener",         _weekly_ticker_screener,   restart=True)
+    _supervise("intraday_stop_monitor", _intraday_stop_monitor, restart=True)
+    _supervise("nightly_reflection", _nightly_reflection_learning, restart=True)
+    _supervise("weekly_screener", _weekly_ticker_screener, restart=True)
+
     # Pre-warm sector heatmap cache so first open is instant
     async def _prewarm_sectors():
         try:
             from routers.quotes import sector_heatmap
+
             await sector_heatmap()
             print("[startup] sector heatmap pre-warmed")
         except Exception as e:
             print(f"[startup] sector prewarm failed: {e}")
+
     _supervise("prewarm_sectors", _prewarm_sectors, restart=False)
     if settings.alpaca_api_key and settings.alpaca_api_secret:
-        alpaca_ws.start(settings.alpaca_api_key, settings.alpaca_api_secret,
-                        settings.tickers, manager.broadcast)
+        alpaca_ws.start(settings.alpaca_api_key, settings.alpaca_api_secret, settings.tickers, manager.broadcast)
     from services.dark_pool import start_dark_pool_stream
+
     _supervise("dark_pool_stream", start_dark_pool_stream, restart=True)
-    _supervise("prewarm_news",     _prewarm_news_batch,    restart=False)
-    _supervise("warm_indicators",  _warm_indicator_cache,  restart=False)
+    _supervise("prewarm_news", _prewarm_news_batch, restart=False)
+    _supervise("warm_indicators", _warm_indicator_cache, restart=False)
     yield
     alpaca_ws.stop()
     if _scan_task:
@@ -962,9 +1207,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _cors_origin = get_settings().app_url.rstrip("/")
 _allowed_origins = (
-    ["*"]
-    if _cors_origin.startswith("http://localhost") or _cors_origin.startswith("http://127.")
-    else [_cors_origin]
+    ["*"] if _cors_origin.startswith("http://localhost") or _cors_origin.startswith("http://127.") else [_cors_origin]
 )
 app.add_middleware(
     CORSMiddleware,
@@ -977,6 +1220,7 @@ app.add_middleware(
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 
+
 class CacheMiddleware(BaseHTTPMiddleware):
     """
     CDN-aware cache control:
@@ -986,15 +1230,26 @@ class CacheMiddleware(BaseHTTPMiddleware):
         cache with content-hashed URLs, dramatically reducing TTFB via CDN edge.
       • API responses — no-store; CDN must not cache dynamic data.
     """
+
     # Assets that are content-hashed or versioned — safe to cache for 1 year
-    _IMMUTABLE_EXTS   = (".woff", ".woff2", ".ttf", ".otf", ".eot",
-                         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")
-    _IMMUTABLE_PATHS  = {"/favicon.svg", "/manifest.json"}
+    _IMMUTABLE_EXTS = (".woff", ".woff2", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")
+    _IMMUTABLE_PATHS = {"/favicon.svg", "/manifest.json"}
     # App code — never cached (Cloudflare should bypass these too)
-    _NO_CACHE_EXTS    = (".jsx", ".js", ".html", ".css")
-    _NO_CACHE_PATHS   = {"/", "/app", "/login", "/signup", "/mobile", "/design",
-                         "/hub", "/track-record", "/tos", "/privacy", "/verify-email",
-                         "/sw.js"}   # sw.js must never be stale
+    _NO_CACHE_EXTS = (".jsx", ".js", ".html", ".css")
+    _NO_CACHE_PATHS = {
+        "/",
+        "/app",
+        "/login",
+        "/signup",
+        "/mobile",
+        "/design",
+        "/hub",
+        "/track-record",
+        "/tos",
+        "/privacy",
+        "/verify-email",
+        "/sw.js",
+    }  # sw.js must never be stale
 
     async def dispatch(self, request: StarletteRequest, call_next):
         response = await call_next(request)
@@ -1010,10 +1265,11 @@ class CacheMiddleware(BaseHTTPMiddleware):
 
         if path in self._NO_CACHE_PATHS or path.endswith(self._NO_CACHE_EXTS):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-            response.headers["Pragma"]        = "no-cache"
-            response.headers["Expires"]       = "0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
 
         return response
+
 
 app.add_middleware(CacheMiddleware)
 
@@ -1032,6 +1288,7 @@ class DataComplianceMiddleware(BaseHTTPMiddleware):
                 "Polygon.io and yfinance is gated behind paid subscriptions per provider terms."
             )
         return response
+
 
 app.add_middleware(DataComplianceMiddleware)
 
@@ -1063,10 +1320,12 @@ app.include_router(screener_router)
 async def health_check():
     from database import AsyncSessionLocal
     from sqlalchemy import text
+
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
         from datetime import timezone as _tz
+
         scan = get_scan_status()
         bg_status = {
             name: {
@@ -1076,7 +1335,9 @@ async def health_check():
             }
             for name, entry in _bg_tasks.items()
         }
-        degraded = [n for n, e in bg_status.items() if not e["alive"] and e["status"] not in ("done", "cancelled", "starting")]
+        degraded = [
+            n for n, e in bg_status.items() if not e["alive"] and e["status"] not in ("done", "cancelled", "starting")
+        ]
         # Data-quality counters: tickers with consecutive null fetches ≥ 1
         data_quality_alerts = {t: n for t, n in _data_quality.items() if n > 0}
         return {
@@ -1093,6 +1354,7 @@ async def health_check():
         }
     except Exception as e:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=503, detail=f"DB unavailable: {e}")
 
 
@@ -1101,16 +1363,15 @@ async def scan_status(user: User = Depends(get_current_user)):
     """Return scanner lifecycle status for authenticated users."""
     return get_scan_status()
 
+
 @app.post("/api/admin/trigger-weekly-digest", tags=["admin"])
-async def admin_trigger_weekly_digest(
-    background_tasks: BackgroundTasks,
-    user: User = Depends(get_current_user)
-):
+async def admin_trigger_weekly_digest(background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
     """Manually trigger the weekly digest to be sent immediately."""
     if not user.is_owner:
         raise HTTPException(status_code=403, detail="Owner access required.")
     background_tasks.add_task(_run_weekly_digest)
     return {"status": "ok", "message": "Weekly digest triggered and sending in the background."}
+
 
 @app.get("/api/admin/weekly-digest/status", tags=["admin"])
 async def admin_weekly_digest_status(user: User = Depends(get_current_user)):
@@ -1125,54 +1386,67 @@ async def admin_weekly_digest_status(user: User = Depends(get_current_user)):
         "email_configured": bool(settings.smtp_host and settings.smtp_user),
     }
 
+
 # ── Named page routes (must be registered before the static catch-all) ──────────
 @app.get("/favicon.ico")
 async def serve_favicon_ico():
     return FileResponse(str(ROOT / "favicon.svg"), media_type="image/svg+xml")
 
+
 @app.get("/favicon.svg")
 async def serve_favicon_svg():
     return FileResponse(str(ROOT / "favicon.svg"), media_type="image/svg+xml")
+
 
 @app.get("/")
 async def serve_landing():
     return FileResponse(str(ROOT / "landing.html"))
 
+
 @app.get("/app")
 async def serve_app():
     return FileResponse(str(ROOT / "Trading Recommendation System.html"))
+
 
 @app.get("/login")
 async def serve_login():
     return FileResponse(str(ROOT / "login.html"))
 
+
 @app.get("/signup")
 async def serve_signup():
     return FileResponse(str(ROOT / "signup.html"))
+
 
 @app.get("/track-record")
 async def serve_track_record():
     return FileResponse(str(ROOT / "track-record.html"))
 
+
 @app.get("/tos")
 async def serve_tos():
     return FileResponse(str(ROOT / "tos.html"))
+
 
 @app.get("/privacy")
 async def serve_privacy():
     return FileResponse(str(ROOT / "privacy.html"))
 
+
 @app.get("/mobile")
 async def serve_mobile():
     return FileResponse(str(ROOT / "mobile.html"))
+
 
 @app.get("/design")
 async def serve_design():
     return FileResponse(str(ROOT / "design.html"))
 
+
 @app.get("/hub")
 async def serve_hub():
     return FileResponse(str(ROOT / "hub.html"))
+
 
 @app.get("/verify-email")
 async def serve_verify_email():
@@ -1185,6 +1459,7 @@ app.mount("/", StaticFiles(directory=str(ROOT)), name="static")
 
 if __name__ == "__main__":
     import uvicorn
+
     print("\n  Signal.Trade backend starting…")
-    print(f"  Open → http://localhost:8000\n")
+    print("  Open → http://localhost:8000\n")
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

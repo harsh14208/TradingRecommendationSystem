@@ -3,9 +3,9 @@ Congressional trading signals from Quiverquant (free tier, no key needed).
 Uses the bulk endpoint and filters by ticker — the per-ticker endpoint returns 404.
 Bulk data is cached 4 hours; per-ticker results are cached 24 hours.
 """
+
 import ssl
 import time
-import asyncio
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -13,12 +13,12 @@ import certifi
 
 _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 _ticker_cache: dict[str, tuple[dict, float]] = {}
-_bulk_cache:   dict = {"data": None, "ts": 0.0}
+_bulk_cache: dict = {"data": None, "ts": 0.0}
 
-TICKER_TTL = 86400      # 24h per ticker
-BULK_TTL   = 14400      # 4h for the bulk fetch
+TICKER_TTL = 86400  # 24h per ticker
+BULK_TTL = 14400  # 4h for the bulk fetch
 
-_URL  = "https://api.quiverquant.com/beta/live/congresstrading"
+_URL = "https://api.quiverquant.com/beta/live/congresstrading"
 _HDRS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 
@@ -35,7 +35,7 @@ async def _fetch_bulk() -> list:
                 data = await r.json(content_type=None)
         if isinstance(data, list):
             _bulk_cache["data"] = data
-            _bulk_cache["ts"]   = now
+            _bulk_cache["ts"] = now
             return data
     except Exception as e:
         print(f"[congress] bulk fetch: {e}")
@@ -78,23 +78,23 @@ async def get_congress_signal(ticker: str) -> dict:
         net = nb - ns
 
         if net >= 3:
-            signal, score = "bullish",  8
+            signal, score = "bullish", 8
         elif net >= 1:
-            signal, score = "bullish",  4
+            signal, score = "bullish", 4
         elif net <= -3:
             signal, score = "bearish", -8
         elif net <= -1:
             signal, score = "bearish", -4
         else:
-            signal, score = "neutral",  0
+            signal, score = "neutral", 0
 
         result = {
-            "buys":         nb,
-            "sells":        ns,
-            "net":          net,
-            "signal":       signal,
-            "score":        score,
-            "recent_buys":  recent_buys[:3],
+            "buys": nb,
+            "sells": ns,
+            "net": net,
+            "signal": signal,
+            "score": score,
+            "recent_buys": recent_buys[:3],
             "recent_sells": recent_sells[:3],
         }
         _ticker_cache[ticker] = (result, time.time())

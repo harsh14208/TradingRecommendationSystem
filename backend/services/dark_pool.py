@@ -9,12 +9,13 @@ Layer 2 — Block Trade Reconstruction: group fragmented tape prints
   by time/price proximity and infer institutional order direction
   using the Lee-Ready tick rule (buy-initiated vs sell-initiated).
 """
-import os
+
 import asyncio
 import logging
+import os
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 log = logging.getLogger("signal.trade.dark_pool")
 
@@ -22,17 +23,17 @@ log = logging.getLogger("signal.trade.dark_pool")
 _flow_data: dict[str, float] = {}
 
 # ── Rolling print buffer for reconstruction (last 30 minutes of prints) ───────
-_MAX_BUFFER_AGE_S = 1800   # 30 minutes
+_MAX_BUFFER_AGE_S = 1800  # 30 minutes
 _print_buffer: deque = deque(maxlen=100_000)  # (ts, symbol, price, size, notional)
-_last_price: dict[str, float] = {}            # for tick rule direction inference
+_last_price: dict[str, float] = {}  # for tick rule direction inference
 
 
 @dataclass
 class _Print:
-    ts:       float
-    symbol:   str
-    price:    float
-    size:     int
+    ts: float
+    symbol: str
+    price: float
+    size: int
     notional: float
 
 
@@ -40,11 +41,12 @@ def handle_messages(messages: list):
     now = time.time()
     try:
         from massive.websocket.models import EquityTrade
+
         for msg in messages:
             if isinstance(msg, EquityTrade):
                 is_off_exchange = getattr(msg, "exchange", 0) == 4
-                size     = getattr(msg, "size",   0)
-                price    = getattr(msg, "price",  0.0)
+                size = getattr(msg, "size", 0)
+                price = getattr(msg, "price", 0.0)
                 notional = size * price
 
                 if is_off_exchange and (size >= 10_000 or notional >= 250_000):
@@ -62,6 +64,7 @@ def _run_darkpool_scanner():
         return
     try:
         from massive import WebSocketClient
+
         client = WebSocketClient(api_key=api_key, market="stocks")
         client.subscribe("T.*")
         log.info("[dark_pool] Starting Massive WebSocket stream for Dark Pool prints…")
@@ -83,6 +86,7 @@ async def start_dark_pool_stream():
         return
 
     import time as _t
+
     _last_msg = [_t.monotonic()]
     _STALL_SEC = 60
     _PLAN_LIMIT_BACKOFF = 6 * 3600  # 6 hours — plan won't change sooner
@@ -94,8 +98,7 @@ async def start_dark_pool_stream():
             while not stream_task.done():
                 await asyncio.sleep(10)
                 if _t.monotonic() - _last_msg[0] > _STALL_SEC:
-                    log.warning("[dark_pool] stream stalled (%ds no messages) — restarting",
-                                _STALL_SEC)
+                    log.warning("[dark_pool] stream stalled (%ds no messages) — restarting", _STALL_SEC)
                     stream_task.cancel()
                     stalled = True
                     break
@@ -107,8 +110,10 @@ async def start_dark_pool_stream():
         except Exception as e:
             err = str(e).lower()
             if "plan" in err or "upgrade" in err or "subscription" in err or "auth" in err:
-                log.warning("[dark_pool] plan does not include WebSocket access — "
-                            "pausing for 6h (upgrade at massive.com/pricing)")
+                log.warning(
+                    "[dark_pool] plan does not include WebSocket access — "
+                    "pausing for 6h (upgrade at massive.com/pricing)"
+                )
                 await asyncio.sleep(_PLAN_LIMIT_BACKOFF)
             else:
                 log.warning("[dark_pool] stream error: %s — retrying in 10s", e)
@@ -120,14 +125,11 @@ async def get_dark_pool_flow(tickers: list[str]) -> dict:
     Return accumulated off-exchange (dark pool) block flow.
     Returns: { ticker: {"net_flow_m": float_millions} }
     """
-    return {
-        t: {"net_flow_m": round(_flow_data[t], 2)}
-        for t in tickers
-        if _flow_data.get(t, 0.0) > 0
-    }
+    return {t: {"net_flow_m": round(_flow_data[t], 2)} for t in tickers if _flow_data.get(t, 0.0) > 0}
 
 
 # ── Block Trade Reconstruction ────────────────────────────────────────────────
+
 
 def _tick_rule(current_price: float, prev_price: float) -> str:
     """
@@ -166,8 +168,8 @@ def _reconstruct_orders(prints: list[_Print]) -> list[dict]:
         by_sym[p.symbol].append(p)
 
     orders = []
-    TIME_WINDOW  = 30.0  # seconds
-    PRICE_WINDOW = 0.005 # 0.5%
+    TIME_WINDOW = 30.0  # seconds
+    PRICE_WINDOW = 0.005  # 0.5%
 
     for sym, sym_prints in by_sym.items():
         sym_prints.sort(key=lambda p: p.ts)
@@ -177,7 +179,7 @@ def _reconstruct_orders(prints: list[_Print]) -> list[dict]:
         ref_price = sym_prints[0].price
 
         for p in sym_prints[1:]:
-            time_gap  = p.ts - current_group[-1].ts
+            time_gap = p.ts - current_group[-1].ts
             price_gap = abs(p.price - ref_price) / (ref_price or 1)
             if time_gap <= TIME_WINDOW and price_gap <= PRICE_WINDOW:
                 current_group.append(p)
@@ -205,7 +207,7 @@ def _reconstruct_orders(prints: list[_Print]) -> list[dict]:
                     directions.append(d)
                 lp = p.price
 
-            buy_count  = directions.count("buy")
+            buy_count = directions.count("buy")
             sell_count = directions.count("sell")
             if buy_count > sell_count:
                 direction = "buy"
@@ -217,18 +219,20 @@ def _reconstruct_orders(prints: list[_Print]) -> list[dict]:
                 direction = "unknown"
                 confidence = 0.5
 
-            orders.append({
-                "symbol":         sym,
-                "direction":      direction,
-                "direction_conf": round(confidence, 2),
-                "total_notional_m": round(total_notional / 1_000_000, 2),
-                "total_size":     total_size,
-                "vwap":           round(vwap, 2),
-                "print_count":    len(group),
-                "time_start":     int(group[0].ts),
-                "time_end":       int(group[-1].ts),
-                "duration_s":     round(group[-1].ts - group[0].ts, 1),
-            })
+            orders.append(
+                {
+                    "symbol": sym,
+                    "direction": direction,
+                    "direction_conf": round(confidence, 2),
+                    "total_notional_m": round(total_notional / 1_000_000, 2),
+                    "total_size": total_size,
+                    "vwap": round(vwap, 2),
+                    "print_count": len(group),
+                    "time_start": int(group[0].ts),
+                    "time_end": int(group[-1].ts),
+                    "duration_s": round(group[-1].ts - group[0].ts, 1),
+                }
+            )
 
     orders.sort(key=lambda o: o["total_notional_m"], reverse=True)
     return orders
@@ -251,20 +255,20 @@ async def get_reconstructed_orders(ticker: str | None = None) -> dict:
     orders = await asyncio.to_thread(_reconstruct_orders, active_prints)
 
     # Net flow summary: buy $ - sell $
-    buy_total  = sum(o["total_notional_m"] for o in orders if o["direction"] == "buy")
+    buy_total = sum(o["total_notional_m"] for o in orders if o["direction"] == "buy")
     sell_total = sum(o["total_notional_m"] for o in orders if o["direction"] == "sell")
-    net_flow   = buy_total - sell_total
+    net_flow = buy_total - sell_total
 
     return {
-        "ticker":           ticker or "ALL",
-        "window_minutes":   _MAX_BUFFER_AGE_S // 60,
-        "print_count":      len(active_prints),
-        "orders":           orders[:50],   # top 50 by notional
+        "ticker": ticker or "ALL",
+        "window_minutes": _MAX_BUFFER_AGE_S // 60,
+        "print_count": len(active_prints),
+        "orders": orders[:50],  # top 50 by notional
         "summary": {
-            "buy_flow_m":   round(buy_total,  2),
-            "sell_flow_m":  round(sell_total, 2),
-            "net_flow_m":   round(net_flow,   2),
-            "direction":    "buy" if net_flow > 1 else "sell" if net_flow < -1 else "neutral",
+            "buy_flow_m": round(buy_total, 2),
+            "sell_flow_m": round(sell_total, 2),
+            "net_flow_m": round(net_flow, 2),
+            "direction": "buy" if net_flow > 1 else "sell" if net_flow < -1 else "neutral",
         },
         "has_live_data": len(active_prints) > 0,
     }
@@ -288,19 +292,23 @@ async def get_massive_advanced_signals(ticker: str) -> dict:
     if not api_key:
         return {}
 
-    import aiohttp, ssl, certifi
+    import ssl
     from datetime import date, timedelta
+
+    import aiohttp
+    import certifi
+
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 
     results = {
-        "ftd":           {"is_reg_sho": False, "spike_pct": 0.0},
-        "corp_actions":  {"ex_div_soon": False, "ex_div_date": None, "split_soon": False},
+        "ftd": {"is_reg_sho": False, "spike_pct": 0.0},
+        "corp_actions": {"ex_div_soon": False, "ex_div_date": None, "split_soon": False},
         "dark_pool_flow": _flow_data.get(ticker, 0.0),
     }
 
-    today        = date.today()
+    today = date.today()
     lookahead_14 = (today + timedelta(days=14)).isoformat()
-    lookahead_7  = (today + timedelta(days=7)).isoformat()
+    lookahead_7 = (today + timedelta(days=7)).isoformat()
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -320,7 +328,7 @@ async def get_massive_advanced_signals(ticker: str) -> dict:
                 "https://api.polygon.io/v3/reference/dividends",
                 {"ticker": ticker, "ex_dividend_date.lte": lookahead_14, "order": "asc", "limit": 5},
             )
-            for div in (div_data.get("results") or []):
+            for div in div_data.get("results") or []:
                 ex_date = div.get("ex_dividend_date", "")
                 if ex_date and ex_date >= today.isoformat():
                     results["corp_actions"]["ex_div_soon"] = True
@@ -332,7 +340,7 @@ async def get_massive_advanced_signals(ticker: str) -> dict:
                 "https://api.polygon.io/v3/reference/splits",
                 {"ticker": ticker, "execution_date.lte": lookahead_14, "order": "asc", "limit": 5},
             )
-            for sp in (split_data.get("results") or []):
+            for sp in split_data.get("results") or []:
                 ex_date = sp.get("execution_date", "")
                 if ex_date and ex_date >= today.isoformat():
                     results["corp_actions"]["split_soon"] = True
@@ -340,16 +348,16 @@ async def get_massive_advanced_signals(ticker: str) -> dict:
 
             # ── FTDs (Business plan — graceful 403) ──────────────────────────
             ftd_data = await _get(
-                f"https://api.polygon.io/v2/reference/ftd",
+                "https://api.polygon.io/v2/reference/ftd",
                 {"symbol": ticker, "limit": 10},
             )
             ftd_results = ftd_data.get("results") or []
             if ftd_results:
                 latest = ftd_results[0]
-                qty     = float(latest.get("quantity", 0) or 0)
-                prev_q  = float(ftd_results[1].get("quantity", 0) or 0) if len(ftd_results) > 1 else 0.0
-                spike   = ((qty - prev_q) / prev_q * 100) if prev_q > 0 else 0.0
-                is_sho  = bool(latest.get("threshold_securities_list", False))
+                qty = float(latest.get("quantity", 0) or 0)
+                prev_q = float(ftd_results[1].get("quantity", 0) or 0) if len(ftd_results) > 1 else 0.0
+                spike = ((qty - prev_q) / prev_q * 100) if prev_q > 0 else 0.0
+                is_sho = bool(latest.get("threshold_securities_list", False))
                 results["ftd"] = {"is_reg_sho": is_sho, "spike_pct": round(spike, 1)}
 
     except Exception as e:

@@ -15,7 +15,7 @@ reported to the SEC within 4 business days. Categories with strong signal value:
 Window: only process 8-Ks filed within the last 5 trading days.
 Cache: 2 hours per ticker.
 """
-import asyncio
+
 import logging
 import os
 import time
@@ -32,13 +32,13 @@ _BASE = "https://api.polygon.io"
 
 # Item number → (direction_pts, label, sentiment)
 _ITEM_MAP = {
-    "1.01": (+8,  "Material Agreement (M&A/Partnership)", "pos"),
-    "1.02": (-6,  "Agreement Termination",                "neg"),
-    "2.01": (+6,  "Acquisition/Disposition Completed",   "pos"),
-    "2.06": (-8,  "Material Impairment",                 "neg"),
-    "5.02": (0,   "Executive Change",                    "neutral"),   # parsed separately
-    "7.01": (+4,  "Reg FD / Guidance / Presentation",   "pos"),
-    "8.01": (+3,  "Other Material Event",                "pos"),
+    "1.01": (+8, "Material Agreement (M&A/Partnership)", "pos"),
+    "1.02": (-6, "Agreement Termination", "neg"),
+    "2.01": (+6, "Acquisition/Disposition Completed", "pos"),
+    "2.06": (-8, "Material Impairment", "neg"),
+    "5.02": (0, "Executive Change", "neutral"),  # parsed separately
+    "7.01": (+4, "Reg FD / Guidance / Presentation", "pos"),
+    "8.01": (+3, "Other Material Event", "pos"),
 }
 
 
@@ -46,7 +46,7 @@ def _parse_ceo_signal(text: str) -> tuple[float, str]:
     """Parse 5.02 item text for CEO/CFO appointment vs departure."""
     tl = text.lower()
     is_departure = any(w in tl for w in ("resign", "depart", "terminat", "step down", "leaves"))
-    is_appoint   = any(w in tl for w in ("appoint", "named", "elect", "hire", "joins"))
+    is_appoint = any(w in tl for w in ("appoint", "named", "elect", "hire", "joins"))
     if is_departure:
         return -6.0, "CEO/CFO departure — management uncertainty signal"
     if is_appoint:
@@ -67,17 +67,18 @@ async def get_8k_signals(ticker: str) -> dict:
     if not api_key:
         return {"score": 0.0, "events": [], "filings": []}
 
-    import ssl, certifi
+    import ssl
+
+    import certifi
+
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     cutoff = (date.today() - timedelta(days=5)).isoformat()
     url = f"{_BASE}/vX/reference/sec/filings"
-    params = {"apiKey": api_key, "ticker": ticker, "type": "8-K",
-              "filing_date.gte": cutoff, "limit": 5}
+    params = {"apiKey": api_key, "ticker": ticker, "type": "8-K", "filing_date.gte": cutoff, "limit": 5}
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, ssl=ssl_ctx,
-                                   timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            async with session.get(url, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status != 200:
                     return {"score": 0.0, "events": [], "filings": []}
                 data = await resp.json()
@@ -92,7 +93,7 @@ async def get_8k_signals(ticker: str) -> dict:
 
     for filing in filings:
         items = filing.get("items") or []
-        text  = filing.get("text") or filing.get("content") or ""
+        text = filing.get("text") or filing.get("content") or ""
         filed = filing.get("filed_at") or filing.get("filed") or ""
 
         for item_num in items:
@@ -103,22 +104,24 @@ async def get_8k_signals(ticker: str) -> dict:
             pts, label, sentiment = meta
             if item_key == "5.02":
                 pts, label = _parse_ceo_signal(text)
-                sentiment  = "neg" if pts < 0 else "pos" if pts > 0 else "neutral"
+                sentiment = "neg" if pts < 0 else "pos" if pts > 0 else "neutral"
             if pts != 0:
                 total_score += pts
                 event_labels.append(label)
-                parsed_filings.append({
-                    "item":      item_key,
-                    "label":     label,
-                    "score":     pts,
-                    "sentiment": sentiment,
-                    "filed":     filed[:10],
-                })
+                parsed_filings.append(
+                    {
+                        "item": item_key,
+                        "label": label,
+                        "score": pts,
+                        "sentiment": sentiment,
+                        "filed": filed[:10],
+                    }
+                )
 
     result = {
-        "score":    round(min(max(total_score, -12.0), 10.0), 1),
-        "events":   event_labels,
-        "filings":  parsed_filings,
+        "score": round(min(max(total_score, -12.0), 10.0), 1),
+        "events": event_labels,
+        "filings": parsed_filings,
     }
     _cache[ticker] = {"data": result, "ts": now}
     return result

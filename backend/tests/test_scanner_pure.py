@@ -9,11 +9,13 @@ Tests for pure/sync functions in services/scanner.py:
 All external imports inside scanner.py (aiohttp, models, services.*) are patched
 at module level so the file can be imported without real infrastructure.
 """
-import sys
+
 import os
+import sys
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+
 import pytest
-from datetime import datetime, time as dtime, timezone
-from unittest.mock import MagicMock, patch, PropertyMock
 import pytz
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -24,6 +26,7 @@ _ET = pytz.timezone("America/New_York")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _et_dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Return an ET-aware datetime for today at the given time."""
@@ -59,22 +62,23 @@ def _make_bad_df(reason="none"):
 
 # ── Import scanner with mocked heavy dependencies ─────────────────────────────
 
+
 @pytest.fixture(autouse=True, scope="module")
 def _mock_scanner_imports():
     """Patch all heavy imports that scanner.py tries at import time."""
     mocks = {
-        "aiohttp":                      MagicMock(),
-        "database":                     MagicMock(),
-        "models":                       MagicMock(),
-        "services.aaii":                MagicMock(),
-        "services.breadth":             MagicMock(),
-        "services.cot":                 MagicMock(),
-        "services.fear_greed":          MagicMock(),
-        "services.macro":               MagicMock(),
-        "services.market_data":         MagicMock(),
-        "services.signal_engine":       MagicMock(),
-        "services.telegram_svc":        MagicMock(),
-        "config":                       MagicMock(),
+        "aiohttp": MagicMock(),
+        "database": MagicMock(),
+        "models": MagicMock(),
+        "services.aaii": MagicMock(),
+        "services.breadth": MagicMock(),
+        "services.cot": MagicMock(),
+        "services.fear_greed": MagicMock(),
+        "services.macro": MagicMock(),
+        "services.market_data": MagicMock(),
+        "services.signal_engine": MagicMock(),
+        "services.telegram_svc": MagicMock(),
+        "config": MagicMock(),
     }
     # config needs TIERS attribute
     mocks["config"].TIERS = ["free", "basic", "pro"]
@@ -84,14 +88,15 @@ def _mock_scanner_imports():
         # Remove scanner from cache so it re-imports with mocks
         sys.modules.pop("services.scanner", None)
         import services.scanner as scanner_module
+
         yield scanner_module
         sys.modules.pop("services.scanner", None)
 
 
 # ── _market_session tests ─────────────────────────────────────────────────────
 
-class TestMarketSession:
 
+class TestMarketSession:
     def _call_session(self, scanner, et_dt):
         with patch.object(scanner, "datetime") as mock_dt_cls:
             mock_dt_cls.now.return_value = et_dt
@@ -160,8 +165,8 @@ class TestMarketSession:
 
 # ── _market_hours_ok tests ─────────────────────────────────────────────────────
 
-class TestMarketHoursOk:
 
+class TestMarketHoursOk:
     def _call_hours_ok(self, scanner, et_dt):
         with patch.object(scanner, "datetime") as mock_dt_cls:
             mock_dt_cls.now.return_value = et_dt
@@ -214,6 +219,7 @@ class TestMarketHoursOk:
 
 # ── _pct (scanner) tests ───────────────────────────────────────────────────────
 
+
 class TestScannerPct:
     """The _pct in scanner.py is identical to validate_predictions._pct — test it directly."""
 
@@ -246,6 +252,7 @@ class TestScannerPct:
 
 
 # ── _check_data_quality tests ─────────────────────────────────────────────────
+
 
 class TestCheckDataQuality:
     """
@@ -313,7 +320,7 @@ class TestCheckDataQuality:
         s._data_quality["BAD"] = 4
         s._data_quality["GOOD"] = 3
         histories = {
-            "BAD":  None,
+            "BAD": None,
             "GOOD": _make_good_df(),
         }
         result = s._check_data_quality(histories, MagicMock())
@@ -335,8 +342,8 @@ class TestCheckDataQuality:
 
 # ── _today_start_utc tests ────────────────────────────────────────────────────
 
-class TestTodayStartUtc:
 
+class TestTodayStartUtc:
     def test_returns_datetime(self, _mock_scanner_imports):
         result = _mock_scanner_imports._today_start_utc()
         assert isinstance(result, datetime)
@@ -359,6 +366,7 @@ class TestTodayStartUtc:
     def test_is_before_current_utc(self, _mock_scanner_imports):
         """Midnight ET today should be before right now."""
         from datetime import timezone
+
         result = _mock_scanner_imports._today_start_utc()
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         assert result <= now_utc_naive

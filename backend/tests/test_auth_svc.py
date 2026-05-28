@@ -6,32 +6,30 @@ Tests for pure and lightweight functions in services/auth_svc.py:
   - generate_link_code
   - user_to_dict
 """
-import sys
+
 import os
-import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+import sys
 from datetime import datetime
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
+from models import User
 from services.auth_svc import (
-    hash_password,
-    verify_password,
     create_access_token,
     decode_access_token,
-    generate_refresh_token,
     generate_link_code,
+    generate_refresh_token,
+    hash_password,
     user_to_dict,
+    verify_password,
 )
-from models import User
-
 
 # ── hash_password / verify_password ──────────────────────────────────────────
 
-class TestPasswordHashing:
 
+class TestPasswordHashing:
     def test_hash_password_returns_string(self):
         result = hash_password("securepass123")
         assert isinstance(result, str)
@@ -70,8 +68,8 @@ class TestPasswordHashing:
 
 # ── JWT: create / decode ───────────────────────────────────────────────────────
 
-class TestJwtTokens:
 
+class TestJwtTokens:
     def test_create_and_decode_roundtrip(self):
         token = create_access_token(user_id=1, tier="pro", is_owner=False)
         payload = decode_access_token(token)
@@ -107,8 +105,8 @@ class TestJwtTokens:
 
 # ── generate_refresh_token ────────────────────────────────────────────────────
 
-class TestRefreshToken:
 
+class TestRefreshToken:
     def test_returns_two_strings(self):
         raw, hashed = generate_refresh_token()
         assert isinstance(raw, str)
@@ -137,8 +135,8 @@ class TestRefreshToken:
 
 # ── generate_link_code ────────────────────────────────────────────────────────
 
-class TestLinkCode:
 
+class TestLinkCode:
     def test_returns_string(self):
         code = generate_link_code()
         assert isinstance(code, str)
@@ -160,8 +158,8 @@ class TestLinkCode:
 
 # ── user_to_dict ──────────────────────────────────────────────────────────────
 
-class TestUserToDict:
 
+class TestUserToDict:
     def _make_user(self, **kwargs):
         u = User(
             id=kwargs.get("id", 1),
@@ -171,11 +169,11 @@ class TestUserToDict:
             subscription_tier=kwargs.get("subscription_tier", "free"),
         )
         u.subscription_status = kwargs.get("subscription_status", "inactive")
-        u.subscription_period_end = kwargs.get("subscription_period_end", None)
-        u.telegram_chat_id = kwargs.get("telegram_chat_id", None)
+        u.subscription_period_end = kwargs.get("subscription_period_end")
+        u.telegram_chat_id = kwargs.get("telegram_chat_id")
         u.telegram_link_code = kwargs.get("telegram_link_code", "ABC123")
-        u.min_confidence_override = kwargs.get("min_confidence_override", None)
-        u.created_at = kwargs.get("created_at", None)
+        u.min_confidence_override = kwargs.get("min_confidence_override")
+        u.created_at = kwargs.get("created_at")
         return u
 
     def test_basic_fields_present(self):
@@ -201,7 +199,8 @@ class TestUserToDict:
         assert d["subscription_period_end"] is None
 
     def test_subscription_period_end_iso_format(self):
-        from datetime import date, datetime
+        from datetime import datetime
+
         end = datetime(2025, 12, 31, 0, 0, 0)
         user = self._make_user(subscription_period_end=end)
         d = user_to_dict(user)

@@ -7,28 +7,32 @@ Endpoints:
   PATCH  /api/alerts/signals/{id}  update
   DELETE /api/alerts/signals/{id}  delete
 """
-import sys, os
+
+import os
+import sys
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
+from database import get_db
+from models import SignalAlert, User
 from routers.signal_alerts import router
 from services.auth_svc import get_current_user
-from database import get_db
-from models import User, SignalAlert
 
 app = FastAPI()
 app.include_router(router)
 
 
 def _mock_user():
-    return User(id=1, email="trader@example.com", is_owner=False,
-                subscription_tier="pro", is_active=True, email_verified=True)
+    return User(
+        id=1, email="trader@example.com", is_owner=False, subscription_tier="pro", is_active=True, email_verified=True
+    )
 
 
 def _mock_alert(alert_id=1, ticker="NVDA", min_conf=72.0, action="BUY", active=True):
@@ -55,8 +59,10 @@ def mock_db():
 @pytest.fixture
 def client(mock_db):
     app.dependency_overrides[get_current_user] = _mock_user
+
     async def _override_db():
         yield mock_db
+
     app.dependency_overrides[get_db] = _override_db
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
@@ -93,13 +99,17 @@ class TestCreateSignalAlert:
 
         async def _fake_refresh(obj):
             obj.id = 1
+
         mock_db.refresh.side_effect = _fake_refresh
 
-        resp = client.post("/api/alerts/signals/", json={
-            "ticker": "NVDA",
-            "min_confidence": 72.0,
-            "action_filter": "BUY",
-        })
+        resp = client.post(
+            "/api/alerts/signals/",
+            json={
+                "ticker": "NVDA",
+                "min_confidence": 72.0,
+                "action_filter": "BUY",
+            },
+        )
         assert resp.status_code == 200
         assert mock_db.add.called
         added = mock_db.add.call_args[0][0]
@@ -109,25 +119,34 @@ class TestCreateSignalAlert:
         assert added.action_filter == "BUY"
 
     def test_invalid_ticker_422(self, client, mock_db):
-        resp = client.post("/api/alerts/signals/", json={
-            "ticker": "nvda123",  # lowercase + digits
-            "min_confidence": 72.0,
-        })
+        resp = client.post(
+            "/api/alerts/signals/",
+            json={
+                "ticker": "nvda123",  # lowercase + digits
+                "min_confidence": 72.0,
+            },
+        )
         assert resp.status_code == 422
 
     def test_confidence_out_of_range_422(self, client, mock_db):
-        resp = client.post("/api/alerts/signals/", json={
-            "ticker": "NVDA",
-            "min_confidence": 110.0,
-        })
+        resp = client.post(
+            "/api/alerts/signals/",
+            json={
+                "ticker": "NVDA",
+                "min_confidence": 110.0,
+            },
+        )
         assert resp.status_code == 422
 
     def test_invalid_action_filter_422(self, client, mock_db):
-        resp = client.post("/api/alerts/signals/", json={
-            "ticker": "NVDA",
-            "min_confidence": 70.0,
-            "action_filter": "HOLD",  # not valid
-        })
+        resp = client.post(
+            "/api/alerts/signals/",
+            json={
+                "ticker": "NVDA",
+                "min_confidence": 70.0,
+                "action_filter": "HOLD",  # not valid
+            },
+        )
         assert resp.status_code == 422
 
     def test_duplicate_active_rule_409(self, client, mock_db):
@@ -135,10 +154,13 @@ class TestCreateSignalAlert:
         r = MagicMock()
         r.scalar_one_or_none.return_value = existing
         mock_db.execute.return_value = r
-        resp = client.post("/api/alerts/signals/", json={
-            "ticker": "NVDA",
-            "min_confidence": 75.0,
-        })
+        resp = client.post(
+            "/api/alerts/signals/",
+            json={
+                "ticker": "NVDA",
+                "min_confidence": 75.0,
+            },
+        )
         assert resp.status_code == 409
 
     def test_any_action_filter_default(self, client, mock_db):
@@ -147,10 +169,13 @@ class TestCreateSignalAlert:
         mock_db.execute.return_value = r
         mock_db.refresh = AsyncMock()
 
-        resp = client.post("/api/alerts/signals/", json={
-            "ticker": "AAPL",
-            "min_confidence": 65.0,
-        })
+        resp = client.post(
+            "/api/alerts/signals/",
+            json={
+                "ticker": "AAPL",
+                "min_confidence": 65.0,
+            },
+        )
         assert resp.status_code == 200
         added = mock_db.add.call_args[0][0]
         assert added.action_filter == "any"

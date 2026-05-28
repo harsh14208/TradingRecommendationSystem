@@ -3,11 +3,13 @@ Real-time tick streaming from Alpaca Markets (free IEX feed).
 Includes a 15-second heartbeat watchdog: if no frames are received in 15s,
 the connection is forcefully torn down and reconnected with exponential backoff.
 """
+
 import asyncio
 import json
 import logging
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -15,8 +17,8 @@ _task: Optional[asyncio.Task] = None
 _price_cache: dict[str, float] = {}
 _subscribed: set[str] = set()
 
-_WS_URL        = "wss://stream.data.alpaca.markets/v2/iex"
-_HEARTBEAT_SEC = 15   # watchdog fires if no frame in this window
+_WS_URL = "wss://stream.data.alpaca.markets/v2/iex"
+_HEARTBEAT_SEC = 15  # watchdog fires if no frame in this window
 
 
 async def _run(api_key: str, api_secret: str, tickers: list[str], broadcast_fn: Callable):
@@ -36,12 +38,12 @@ async def _run(api_key: str, api_secret: str, tickers: list[str], broadcast_fn: 
     while True:
         _last_frame = time.monotonic()
 
-        async def _watchdog(ws):
+        async def _watchdog(ws):  # noqa: B023 — intentional nonlocal capture
             """Cancel the connection if no frame arrives within _HEARTBEAT_SEC."""
             nonlocal _last_frame
             while True:
                 await asyncio.sleep(5)
-                if time.monotonic() - _last_frame > _HEARTBEAT_SEC:
+                if time.monotonic() - _last_frame > _HEARTBEAT_SEC:  # noqa: B023
                     log.warning("Alpaca WS: no frame in %ds — forcing reconnect", _HEARTBEAT_SEC)
                     await ws.close()
                     return
@@ -56,13 +58,11 @@ async def _run(api_key: str, api_secret: str, tickers: list[str], broadcast_fn: 
                 if not any(m.get("T") == "connected" for m in msgs):
                     log.warning("Alpaca WS unexpected greeting: %s", msgs)
 
-                await ws.send(json.dumps({"action": "auth",
-                                          "key": api_key, "secret": api_secret}))
+                await ws.send(json.dumps({"action": "auth", "key": api_key, "secret": api_secret}))
                 raw = await ws.recv()
                 _last_frame = time.monotonic()
                 msgs = json.loads(raw)
-                if not any(m.get("T") == "success" and m.get("msg") == "authenticated"
-                           for m in msgs):
+                if not any(m.get("T") == "success" and m.get("msg") == "authenticated" for m in msgs):
                     log.warning("Alpaca auth failed: %s", msgs)
                     return
                 log.info("Alpaca WS: authenticated — %d tickers", len(tickers))
@@ -79,16 +79,18 @@ async def _run(api_key: str, api_secret: str, tickers: list[str], broadcast_fn: 
                             if m.get("T") != "t":
                                 continue
                             ticker = m["S"]
-                            price  = float(m["p"])
+                            price = float(m["p"])
                             _price_cache[ticker] = price
                             try:
                                 from services.alpaca_rest import record_price
+
                                 record_price(ticker, price)
                             except ImportError:
                                 pass
                             try:
-                                await broadcast_fn({"type": "tick", "ticker": ticker,
-                                                    "price": price, "size": m.get("s", 0)})
+                                await broadcast_fn(
+                                    {"type": "tick", "ticker": ticker, "price": price, "size": m.get("s", 0)}
+                                )
                             except Exception:
                                 pass
                 finally:

@@ -9,17 +9,17 @@ Feature vector: 20 features extracted from the signal dict.
 Target: binary win (outcome_pct > 0 for BUY, < 0 for SELL).
 Output: adjusted_confidence = base_confidence * clamp(xgb_win_prob / base_win_prob, 0.75, 1.25)
 """
+
 import json
 import logging
 import math
-import os
 from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger("signal.ml")
 
-_DATA_DIR  = Path(__file__).parent.parent / "data"
-_MODEL_FILE   = _DATA_DIR / "signal_ml_model.json"
+_DATA_DIR = Path(__file__).parent.parent / "data"
+_MODEL_FILE = _DATA_DIR / "signal_ml_model.json"
 _FEATURE_FILE = _DATA_DIR / "signal_ml_features.json"
 _MAX_CONFIDENCE = 72.0
 
@@ -29,11 +29,12 @@ _MIN_SAMPLES = 50
 _TRAIN_SPLIT = 0.70
 
 # ── Module-level model cache ───────────────────────────────────────────────────
-_model      = None          # cached XGBoost Booster (or None)
+_model = None  # cached XGBoost Booster (or None)
 _model_mtime: float = 0.0  # mtime of the file when last loaded
 
 
 # ── Feature extraction ─────────────────────────────────────────────────────────
+
 
 def _extract_features(sig: dict) -> list[float]:
     """
@@ -41,7 +42,7 @@ def _extract_features(sig: dict) -> list[float]:
     All values are available at generation time — no look-ahead.
     """
     confidence = float(sig.get("confidence") or 0)
-    sentiment  = float(sig.get("sentiment")  or 0)
+    sentiment = float(sig.get("sentiment") or 0)
 
     sources = sig.get("sources") or []
     if isinstance(sources, str):
@@ -57,7 +58,7 @@ def _extract_features(sig: dict) -> list[float]:
         except Exception:
             rationale = []
 
-    n_sources   = len(sources)
+    n_sources = len(sources)
     n_rationale = len(rationale)
     n_pos = sum(1 for r in rationale if r.get("sentiment") == "pos")
     n_neg = sum(1 for r in rationale if r.get("sentiment") == "neg")
@@ -75,59 +76,59 @@ def _extract_features(sig: dict) -> list[float]:
     except (ValueError, TypeError):
         rr_numeric = 0.0
 
-    action  = (sig.get("action") or "").upper()
-    is_buy  = 1 if action == "BUY" else 0
+    action = (sig.get("action") or "").upper()
+    is_buy = 1 if action == "BUY" else 0
 
-    has_options      = 1 if "Options"      in sources else 0
-    has_dark_pool    = 1 if "Dark Pool"    in sources else 0
+    has_options = 1 if "Options" in sources else 0
+    has_dark_pool = 1 if "Dark Pool" in sources else 0
     has_fundamentals = 1 if "Fundamentals" in sources else 0
-    has_institutional= 1 if "13F"          in sources else 0
-    has_macro        = 1 if "Macro"        in sources else 0
-    has_earnings     = 1 if "Earnings"     in sources else 0
+    has_institutional = 1 if "13F" in sources else 0
+    has_macro = 1 if "Macro" in sources else 0
+    has_earnings = 1 if "Earnings" in sources else 0
 
-    session           = (sig.get("session") or "").lower()
-    is_pre_market     = 1 if session == "pre" else 0
+    session = (sig.get("session") or "").lower()
+    is_pre_market = 1 if session == "pre" else 0
 
-    style             = (sig.get("style") or "").lower()
+    style = (sig.get("style") or "").lower()
     is_position_style = 1 if style == "position" else 0
 
     entry = sig.get("entry") or 0.0
-    stop  = sig.get("stop")  or 0.0
-    target= sig.get("target")or 0.0
+    stop = sig.get("stop") or 0.0
+    target = sig.get("target") or 0.0
     price = sig.get("price") or 0.0
 
     try:
-        entry  = float(entry)
-        stop   = float(stop)
+        entry = float(entry)
+        stop = float(stop)
         target = float(target)
-        price  = float(price)
+        price = float(price)
     except (TypeError, ValueError):
         entry = stop = target = price = 0.0
 
-    stop_pct   = abs(entry - stop)   / entry * 100 if entry > 0 and stop   > 0 else 0.0
+    stop_pct = abs(entry - stop) / entry * 100 if entry > 0 and stop > 0 else 0.0
     target_pct = abs(target - entry) / entry * 100 if entry > 0 and target > 0 else 0.0
-    price_log  = math.log10(price) if price > 0 else 0.0
+    price_log = math.log10(price) if price > 0 else 0.0
 
     return [
-        confidence,        # 1
-        sentiment,         # 2
-        n_sources,         # 3
-        n_rationale,       # 4
-        n_pos,             # 5
-        n_neg,             # 6
-        rr_numeric,        # 7
-        is_buy,            # 8
-        has_options,       # 9
-        has_dark_pool,     # 10
+        confidence,  # 1
+        sentiment,  # 2
+        n_sources,  # 3
+        n_rationale,  # 4
+        n_pos,  # 5
+        n_neg,  # 6
+        rr_numeric,  # 7
+        is_buy,  # 8
+        has_options,  # 9
+        has_dark_pool,  # 10
         has_fundamentals,  # 11
-        has_institutional, # 12
-        has_macro,         # 13
-        has_earnings,      # 14
-        is_pre_market,     # 15
-        is_position_style, # 16
-        stop_pct,          # 17
-        target_pct,        # 18
-        price_log,         # 19
+        has_institutional,  # 12
+        has_macro,  # 13
+        has_earnings,  # 14
+        is_pre_market,  # 15
+        is_position_style,  # 16
+        stop_pct,  # 17
+        target_pct,  # 18
+        price_log,  # 19
         # confidence_bin removed: it was a binned duplicate of confidence (feature 1)
         # and was amplifying the high-confidence→low-win-rate inversion by giving
         # the model two correlated channels to overfit on the top confidence band.
@@ -158,6 +159,7 @@ _FEATURE_NAMES = [
 
 
 # ── Training ──────────────────────────────────────────────────────────────────
+
 
 def train_model() -> Optional[dict]:
     """
@@ -192,10 +194,7 @@ def train_model() -> Optional[dict]:
         return None
 
     if len(rows) < _MIN_SAMPLES:
-        log.info(
-            f"[signal_ml] Only {len(rows)} resolved signals — need {_MIN_SAMPLES} "
-            "before training. Skipping."
-        )
+        log.info(f"[signal_ml] Only {len(rows)} resolved signals — need {_MIN_SAMPLES} before training. Skipping.")
         return None
 
     # Sort oldest-first for temporal split
@@ -204,12 +203,11 @@ def train_model() -> Optional[dict]:
     # ── Build feature matrix and target vector ─────────────────────────────────
     X, y = [], []
     for r in rows:
-        action      = (r.get("action") or "").upper()
+        action = (r.get("action") or "").upper()
         outcome_pct = r.get("outcome_pct")
         if action not in ("BUY", "SELL") or outcome_pct is None:
             continue
-        label = 1 if (action == "BUY" and outcome_pct > 0) or \
-                     (action == "SELL" and outcome_pct < 0) else 0
+        label = 1 if (action == "BUY" and outcome_pct > 0) or (action == "SELL" and outcome_pct < 0) else 0
         X.append(_extract_features(r))
         y.append(label)
 
@@ -218,7 +216,7 @@ def train_model() -> Optional[dict]:
         return None
 
     # ── Temporal train/test split ──────────────────────────────────────────────
-    split    = max(int(len(X) * _TRAIN_SPLIT), _MIN_SAMPLES)
+    split = max(int(len(X) * _TRAIN_SPLIT), _MIN_SAMPLES)
     X_train, X_test = X[:split], X[split:]
     y_train, y_test = y[:split], y[split:]
 
@@ -233,20 +231,21 @@ def train_model() -> Optional[dict]:
     try:
         model = xgb.XGBClassifier(
             n_estimators=200,
-            max_depth=3,        # shallower — prevents memorising confidence bands
-            learning_rate=0.05, # slower shrinkage with more trees
-            min_child_weight=5, # require more samples per leaf
+            max_depth=3,  # shallower — prevents memorising confidence bands
+            learning_rate=0.05,  # slower shrinkage with more trees
+            min_child_weight=5,  # require more samples per leaf
             subsample=0.8,
             colsample_bytree=0.7,
-            gamma=0.3,          # min split-loss gain — prunes low-value splits
-            reg_alpha=0.1,      # L1: drives weak feature weights to zero
-            reg_lambda=2.0,     # L2: shrinks all weights, reduces overfit
+            gamma=0.3,  # min split-loss gain — prunes low-value splits
+            reg_alpha=0.1,  # L1: drives weak feature weights to zero
+            reg_lambda=2.0,  # L2: shrinks all weights, reduces overfit
             use_label_encoder=False,
             eval_metric="logloss",
             random_state=42,
         )
         model.fit(
-            X_train, y_train,
+            X_train,
+            y_train,
             eval_set=[(X_test, y_test)],
             verbose=False,
         )
@@ -256,20 +255,18 @@ def train_model() -> Optional[dict]:
 
     # ── OOS evaluation ─────────────────────────────────────────────────────────
     try:
-        y_pred      = model.predict(X_test)
-        y_prob      = model.predict_proba(X_test)[:, 1]
-        oos_acc     = round(float(accuracy_score(y_test, y_pred)),  4)
-        oos_prec    = round(float(precision_score(y_test, y_pred, zero_division=0)), 4)
-        oos_rec     = round(float(recall_score(y_test, y_pred, zero_division=0)), 4)
+        y_pred = model.predict(X_test)
+        y_prob = model.predict_proba(X_test)[:, 1]
+        oos_acc = round(float(accuracy_score(y_test, y_pred)), 4)
+        oos_prec = round(float(precision_score(y_test, y_pred, zero_division=0)), 4)
+        oos_rec = round(float(recall_score(y_test, y_pred, zero_division=0)), 4)
         # roc_auc needs both classes present in y_test; guard gracefully
         if len(set(y_test)) > 1:
             oos_auc = round(float(roc_auc_score(y_test, y_prob)), 4)
         else:
             oos_auc = None
         log.info(
-            f"[signal_ml] OOS — accuracy={oos_acc:.3f}  "
-            f"precision={oos_prec:.3f}  recall={oos_rec:.3f}  "
-            f"AUC={oos_auc}"
+            f"[signal_ml] OOS — accuracy={oos_acc:.3f}  precision={oos_prec:.3f}  recall={oos_rec:.3f}  AUC={oos_auc}"
         )
     except Exception as e:
         log.warning(f"[signal_ml] Evaluation failed: {e}")
@@ -279,8 +276,7 @@ def train_model() -> Optional[dict]:
     try:
         importances = model.feature_importances_.tolist()
         fi = sorted(
-            [{"feature": n, "importance": round(float(v), 5)}
-             for n, v in zip(_FEATURE_NAMES, importances)],
+            [{"feature": n, "importance": round(float(v), 5)} for n, v in zip(_FEATURE_NAMES, importances)],
             key=lambda x: -x["importance"],
         )
     except Exception:
@@ -301,9 +297,9 @@ def train_model() -> Optional[dict]:
         pass
 
     _should_deploy = (
-        oos_auc is None                          # can't compute AUC (too few samples) — deploy anyway
-        or _champion_auc is None                  # no existing champion — first run
-        or oos_auc > _champion_auc                # challenger beats champion
+        oos_auc is None  # can't compute AUC (too few samples) — deploy anyway
+        or _champion_auc is None  # no existing champion — first run
+        or oos_auc > _champion_auc  # challenger beats champion
     )
 
     if _should_deploy:
@@ -328,18 +324,19 @@ def train_model() -> Optional[dict]:
 
     # ── Persist feature importances + metadata ─────────────────────────────────
     from datetime import datetime as _dt
+
     metadata = {
-        "trained_at":     _dt.utcnow().isoformat(),
-        "n_train":        n_train,
-        "n_test":         n_test,
-        "oos_accuracy":   oos_acc,
-        "oos_auc":        oos_auc,
-        "oos_precision":  oos_prec,
-        "oos_recall":     oos_rec,
-        "top_features":   top_features,
+        "trained_at": _dt.utcnow().isoformat(),
+        "n_train": n_train,
+        "n_test": n_test,
+        "oos_accuracy": oos_acc,
+        "oos_auc": oos_auc,
+        "oos_precision": oos_prec,
+        "oos_recall": oos_rec,
+        "top_features": top_features,
         "feature_importances": fi,
-        "deployed":       _deployed,
-        "champion_auc":   _champion_auc,
+        "deployed": _deployed,
+        "champion_auc": _champion_auc,
     }
     # Always write metadata (so the router can show the last training run even if not deployed)
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -350,23 +347,25 @@ def train_model() -> Optional[dict]:
         log.error(f"[signal_ml] WRITE FAILED — {_FEATURE_FILE}: {e}")
 
     return {
-        "oos_accuracy":  oos_acc,
-        "oos_auc":       oos_auc,
+        "oos_accuracy": oos_acc,
+        "oos_auc": oos_auc,
         "oos_precision": oos_prec,
-        "oos_recall":    oos_rec,
-        "n_train":       n_train,
-        "n_test":        n_test,
-        "top_features":  top_features,
-        "deployed":      _deployed,
-        "champion_auc":  _champion_auc,
+        "oos_recall": oos_rec,
+        "n_train": n_train,
+        "n_test": n_test,
+        "top_features": top_features,
+        "deployed": _deployed,
+        "champion_auc": _champion_auc,
     }
 
 
 # ── DB access (synchronous, for use inside asyncio.to_thread) ──────────────────
 
+
 def _load_resolved_signals_sync() -> list[dict]:
     """Load resolved signals via a fresh asyncio event loop (safe inside asyncio.to_thread)."""
     import asyncio as _asyncio
+
     return _asyncio.run(_load_resolved_signals_async())
 
 
@@ -377,52 +376,55 @@ async def _load_resolved_signals_async() -> list[dict]:
     from sqlalchemy import select
 
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(
-            select(
-                Signal.ticker,
-                Signal.action,
-                Signal.confidence,
-                Signal.sentiment,
-                Signal.sources,
-                Signal.rationale,
-                Signal.outcome_pct,
-                Signal.style,
-                Signal.session,
-                Signal.rr,
-                Signal.entry,
-                Signal.stop,
-                Signal.target,
-                Signal.price,
-                Signal.created_at,
+        rows = (
+            await db.execute(
+                select(
+                    Signal.ticker,
+                    Signal.action,
+                    Signal.confidence,
+                    Signal.sentiment,
+                    Signal.sources,
+                    Signal.rationale,
+                    Signal.outcome_pct,
+                    Signal.style,
+                    Signal.session,
+                    Signal.rr,
+                    Signal.entry,
+                    Signal.stop,
+                    Signal.target,
+                    Signal.price,
+                    Signal.created_at,
+                )
+                .where(Signal.outcome_pct.isnot(None))
+                .where(Signal.action.in_(["BUY", "SELL"]))
+                .order_by(Signal.created_at)
             )
-            .where(Signal.outcome_pct.isnot(None))
-            .where(Signal.action.in_(["BUY", "SELL"]))
-            .order_by(Signal.created_at)
-        )).all()
+        ).all()
 
     return [
         {
-            "ticker":      r.ticker,
-            "action":      r.action,
-            "confidence":  r.confidence,
-            "sentiment":   r.sentiment,
-            "sources":     r.sources or [],
-            "rationale":   r.rationale or [],
+            "ticker": r.ticker,
+            "action": r.action,
+            "confidence": r.confidence,
+            "sentiment": r.sentiment,
+            "sources": r.sources or [],
+            "rationale": r.rationale or [],
             "outcome_pct": r.outcome_pct,
-            "style":       r.style,
-            "session":     r.session,
-            "rr":          r.rr,
-            "entry":       r.entry,
-            "stop":        r.stop,
-            "target":      r.target,
-            "price":       r.price,
-            "created_at":  str(r.created_at) if r.created_at else "",
+            "style": r.style,
+            "session": r.session,
+            "rr": r.rr,
+            "entry": r.entry,
+            "stop": r.stop,
+            "target": r.target,
+            "price": r.price,
+            "created_at": str(r.created_at) if r.created_at else "",
         }
         for r in rows
     ]
 
 
 # ── Model loading ──────────────────────────────────────────────────────────────
+
 
 def load_model():
     """
@@ -465,7 +467,7 @@ def get_model():
         return _model
 
     if _model is None or current_mtime != _model_mtime:
-        _model      = load_model()
+        _model = load_model()
         _model_mtime = current_mtime if _model is not None else 0.0
         if _model is not None:
             log.info("[signal_ml] Model loaded/reloaded from disk")
@@ -474,6 +476,7 @@ def get_model():
 
 
 # ── Confidence adjustment ──────────────────────────────────────────────────────
+
 
 def adjust_confidence(sig_dict: dict, model) -> float:
     """
@@ -491,17 +494,17 @@ def adjust_confidence(sig_dict: dict, model) -> float:
         return sig_dict.get("confidence", 0)
 
     try:
-        import xgboost as xgb
         import numpy as np
+        import xgboost as xgb
 
-        features      = _extract_features(sig_dict)
+        features = _extract_features(sig_dict)
         feature_array = np.array([features], dtype=float)
 
-        dmatrix   = xgb.DMatrix(feature_array, feature_names=_FEATURE_NAMES)
-        win_prob  = float(model.predict(dmatrix)[0])
+        dmatrix = xgb.DMatrix(feature_array, feature_names=_FEATURE_NAMES)
+        win_prob = float(model.predict(dmatrix)[0])
 
         base_confidence = float(sig_dict.get("confidence") or 0)
-        base_win_prob   = base_confidence / 100.0 * 0.85
+        base_win_prob = base_confidence / 100.0 * 0.85
 
         ratio = win_prob / max(base_win_prob, 0.01)
         # Clamp adjustment to ±25%

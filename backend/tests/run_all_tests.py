@@ -9,15 +9,13 @@ Usage:
 """
 
 import os
-import sys
 import subprocess
+import sys
 
 
 def main() -> int:
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     cmd = [sys.executable, "-m", "unittest", "discover", "-q", "-s", "backend/tests"]
-
-
 
     env = os.environ.copy()
     # Ensure backend/ is importable so tests can import `services.*`.
@@ -31,4 +29,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

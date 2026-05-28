@@ -19,20 +19,21 @@ USAGE:
     python scripts/backfill_confidence.py --apply   # writes to DB
     python scripts/backfill_confidence.py --apply --min-delta 3   # only update if delta ≥ 3pp
 """
+
 from __future__ import annotations
+
 import asyncio
 import os
 import sys
-from datetime import datetime, timezone
 
-_HERE   = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__))
 _PARENT = os.path.dirname(_HERE)
 sys.path.insert(0, _PARENT)
 
-from sqlalchemy import select, update
 from database import get_db
 from models import Signal
-from services.calibration import run_calibration, load_calibration, apply_calibration
+from services.calibration import apply_calibration, load_calibration, run_calibration
+from sqlalchemy import select, update
 
 
 async def backfill(apply: bool = False, min_delta: float = 0.5) -> None:
@@ -45,10 +46,8 @@ async def backfill(apply: bool = False, min_delta: float = 0.5) -> None:
     try:
         cal_map = await run_calibration()
         meta = cal_map.get("_meta", {})
-        brier_str = f"{meta['brier_walkforward']:.4f}" if meta.get('brier_walkforward') else "n/a"
-        print(f"  ok  Brier={brier_str}"
-              f"  n_train={meta.get('n_train', '?')}"
-              f"  n_val={meta.get('n_valid', '?')}\n")
+        brier_str = f"{meta['brier_walkforward']:.4f}" if meta.get("brier_walkforward") else "n/a"
+        print(f"  ok  Brier={brier_str}  n_train={meta.get('n_train', '?')}  n_val={meta.get('n_valid', '?')}\n")
     except Exception as e:
         print(f"  run_calibration() failed ({e}), falling back to saved calibration.json")
         cal_map = load_calibration()
@@ -62,9 +61,7 @@ async def backfill(apply: bool = False, min_delta: float = 0.5) -> None:
     db_gen = get_db()
     db = await anext(db_gen)
     try:
-        rows = (await db.execute(
-            select(Signal).order_by(Signal.created_at.asc())
-        )).scalars().all()
+        rows = (await db.execute(select(Signal).order_by(Signal.created_at.asc()))).scalars().all()
     finally:
         await db.close()
 
@@ -93,14 +90,14 @@ async def backfill(apply: bool = False, min_delta: float = 0.5) -> None:
         updates.append({"id": r.id, "old": old_conf, "new": new_conf, "delta": delta})
 
     # ── Summary ────────────────────────────────────────────────────────────────
-    n_up   = len(updates)
+    n_up = len(updates)
     if n_up == 0:
         print(f"  No signals exceed the {min_delta}pp delta threshold. Nothing to update.")
         return
 
     deltas = [u["delta"] for u in updates]
-    avg_d  = sum(deltas) / len(deltas)
-    lower  = sum(1 for d in deltas if d < 0)
+    avg_d = sum(deltas) / len(deltas)
+    lower = sum(1 for d in deltas if d < 0)
     higher = sum(1 for d in deltas if d > 0)
 
     print(f"\n  Signals to update:  {n_up:,}")
@@ -120,7 +117,7 @@ async def backfill(apply: bool = False, min_delta: float = 0.5) -> None:
     for band in sorted(set(list(old_bands.keys()) + list(new_bands.keys()))):
         ob = old_bands.get(band, 0)
         nb = new_bands.get(band, 0)
-        print(f"  {band:<15} {ob:>8,} {nb:>8,} {nb-ob:>+8,}")
+        print(f"  {band:<15} {ob:>8,} {nb:>8,} {nb - ob:>+8,}")
 
     if not apply:
         print("\n  DRY RUN — re-run with --apply to write changes to DB.")
@@ -133,42 +130,46 @@ async def backfill(apply: bool = False, min_delta: float = 0.5) -> None:
     try:
         for chunk in _chunks(updates, 500):
             for u in chunk:
-                await db2.execute(
-                    update(Signal)
-                    .where(Signal.id == u["id"])
-                    .values(confidence=round(u["new"], 2))
-                )
+                await db2.execute(update(Signal).where(Signal.id == u["id"]).values(confidence=round(u["new"], 2)))
         await db2.commit()
     finally:
         await db2.close()
-    print(f"done.\n")
+    print("done.\n")
     print(f"✓ Backfill complete — {n_up:,} signals updated.")
-    print(f"  Re-run calc_tbd_metrics.py to verify the calibration diagram.")
+    print("  Re-run calc_tbd_metrics.py to verify the calibration diagram.")
 
 
 def _band_dist(confs: list[float]) -> dict[str, int]:
     bands: dict[str, int] = {}
     for c in confs:
-        if c < 55:  b = "<55%"
-        elif c < 65: b = "55–65%"
-        elif c < 70: b = "65–70%"
-        elif c < 75: b = "70–75%"
-        elif c < 80: b = "75–80%"
-        else:        b = "80%+"
+        if c < 55:
+            b = "<55%"
+        elif c < 65:
+            b = "55–65%"
+        elif c < 70:
+            b = "65–70%"
+        elif c < 75:
+            b = "70–75%"
+        elif c < 80:
+            b = "75–80%"
+        else:
+            b = "80%+"
         bands[b] = bands.get(b, 0) + 1
     return bands
 
 
 def _chunks(lst: list, n: int):
     for i in range(0, len(lst), n):
-        yield lst[i:i + n]
+        yield lst[i : i + n]
 
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Backfill signal confidence with v2 calibration")
-    parser.add_argument("--apply",     action="store_true", help="Write changes to DB (default: dry run)")
-    parser.add_argument("--min-delta", type=float, default=0.5,
-                        help="Minimum |Δconfidence| in pp to update (default: 0.5)")
+    parser.add_argument("--apply", action="store_true", help="Write changes to DB (default: dry run)")
+    parser.add_argument(
+        "--min-delta", type=float, default=0.5, help="Minimum |Δconfidence| in pp to update (default: 0.5)"
+    )
     args = parser.parse_args()
     asyncio.run(backfill(apply=args.apply, min_delta=args.min_delta))

@@ -17,8 +17,12 @@ Usage:
     cd backend
     python scripts/run_section16.py 2>&1 | tee /tmp/decomp_§16.log
 """
+
 from __future__ import annotations
-import os, sys, warnings
+
+import os
+import sys
+import warnings
 from multiprocessing import Pool
 
 import pandas as pd
@@ -26,44 +30,46 @@ import yfinance as yf
 
 warnings.filterwarnings("ignore")
 
-_HERE   = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__))
 _PARENT = os.path.dirname(_HERE)
 for _p in [_PARENT, _HERE]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 from backtest_technicals import (
-    START, END,
-    fetch_spy_trend, fetch_stlfsi4, process_ticker,
+    END,
+    START,
+    fetch_spy_trend,
+    fetch_stlfsi4,
+    process_ticker,
 )
 from signal_alpha_decomposition import (
     TICKERS,
-    compute_extra_indicators,
-    run_full_sector_research,
     _download_etf_closes,
     _pool_init,
     _prescore,
     _section,
+    compute_extra_indicators,
+    run_full_sector_research,
 )
 
 
 def main() -> None:
     print("# §16 Full-Universe Sector Research\n")
-    print(f"> Skipping §13-§15. Loading data then jumping straight to §16.")
+    print("> Skipping §13-§15. Loading data then jumping straight to §16.")
     print(f"> {len(TICKERS)} tickers · MR=0.1 · Period: {START} → {END}\n")
 
     # ── Fetch alt-data ────────────────────────────────────────────────────────
     print("Fetching VIX…", end=" ", flush=True)
     try:
-        vix_df = yf.download("^VIX", start=START, end=END, interval="1d",
-                              auto_adjust=False, progress=False)
+        vix_df = yf.download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
         if isinstance(vix_df.columns, pd.MultiIndex):
             vix_df.columns = vix_df.columns.get_level_values(0)
-        vix = {pd.Timestamp(str(k)[:10]): float(v)
-               for k, v in vix_df["Close"].items() if pd.notna(v)}
+        vix = {pd.Timestamp(str(k)[:10]): float(v) for k, v in vix_df["Close"].items() if pd.notna(v)}
         print(f"ok ({len(vix)} bars)")
     except Exception as e:
-        vix = {}; print(f"failed ({e})")
+        vix = {}
+        print(f"failed ({e})")
 
     print("Fetching SPY trend…", end=" ", flush=True)
     spy_trend = fetch_spy_trend(START, END)
@@ -109,8 +115,7 @@ def main() -> None:
         return
 
     # ── Extra indicators ──────────────────────────────────────────────────────
-    print("Computing extra indicators (WK52, RS, RS_RANK, CMF, DONCHIAN, HYG, PRICESTR)…",
-          flush=True)
+    print("Computing extra indicators (WK52, RS, RS_RANK, CMF, DONCHIAN, HYG, PRICESTR)…", flush=True)
     spy_s = spy_closes if not spy_closes.empty else None
     hyg_s = hyg_closes if not hyg_closes.empty else None
     for df in all_dfs.values():
@@ -124,12 +129,9 @@ def main() -> None:
     print(f"done ({len(pre_dfs)} tickers).")
 
     N_WORKERS = min(8, os.cpu_count() or 4)
-    with Pool(N_WORKERS, initializer=_pool_init,
-              initargs=(pre_dfs, vix, spy_trend, stlfsi4)) as shared_pool:
-
+    with Pool(N_WORKERS, initializer=_pool_init, initargs=(pre_dfs, vix, spy_trend, stlfsi4)) as shared_pool:
         # ── §16. Full-Universe Sector Research ───────────────────────────────
-        run_full_sector_research(all_dfs, vix, spy_trend, stlfsi4,
-                                 pool=shared_pool, pre_dfs=pre_dfs)
+        run_full_sector_research(all_dfs, vix, spy_trend, stlfsi4, pool=shared_pool, pre_dfs=pre_dfs)
 
 
 if __name__ == "__main__":

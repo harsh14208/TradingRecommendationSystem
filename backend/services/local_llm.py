@@ -7,7 +7,7 @@ This keeps trading logic private and avoids API costs for processing news feeds.
 
 Supports Ollama, LM Studio, or any OpenAI-compatible local server.
 """
-import json
+
 import logging
 import re
 import time
@@ -30,6 +30,7 @@ _fallback_mode = False
 @dataclass
 class SentimentResult:
     """Result of sentiment analysis."""
+
     score: float  # -1.0 (very bearish) to +1.0 (very bullish)
     confidence: float  # 0.0 to 1.0
     label: str  # "bullish", "bearish", "neutral"
@@ -40,6 +41,7 @@ class SentimentResult:
 @dataclass
 class RiskGateResult:
     """Result of macro risk gating analysis."""
+
     risk_level: str  # "low", "medium", "high", "extreme"
     confidence: float  # 0.0 to 1.0
     factors: list[str]  # Key risk factors identified
@@ -50,7 +52,7 @@ class RiskGateResult:
 def _parse_sentiment_score(text: str) -> float:
     """Parse a sentiment score from LLM response text."""
     # Look for a number between -1 and 1
-    match = re.search(r'[-+]?\d*\.\d+|[-+]?\d+', text)
+    match = re.search(r"[-+]?\d*\.\d+|[-+]?\d+", text)
     if match:
         score = float(match.group())
         return max(-1.0, min(1.0, score))
@@ -70,14 +72,44 @@ def _analyze_sentiment_fallback(news_items: list[dict]) -> SentimentResult:
 
     # Simple keyword-based sentiment
     bullish_keywords = [
-        "beat", "upgrade", "buy", "growth", "profit", "revenue", "positive",
-        "exceed", "outperform", "bullish", "rally", "surge", "gain", "rise",
-        "strong", "record", "breakthrough", "approval", "partnership",
+        "beat",
+        "upgrade",
+        "buy",
+        "growth",
+        "profit",
+        "revenue",
+        "positive",
+        "exceed",
+        "outperform",
+        "bullish",
+        "rally",
+        "surge",
+        "gain",
+        "rise",
+        "strong",
+        "record",
+        "breakthrough",
+        "approval",
+        "partnership",
     ]
     bearish_keywords = [
-        "miss", "downgrade", "sell", "loss", "decline", "negative",
-        "underperform", "bearish", "drop", "plunge", "fall", "weak",
-        "lawsuit", "investigation", "recall", "warning", "delay",
+        "miss",
+        "downgrade",
+        "sell",
+        "loss",
+        "decline",
+        "negative",
+        "underperform",
+        "bearish",
+        "drop",
+        "plunge",
+        "fall",
+        "weak",
+        "lawsuit",
+        "investigation",
+        "recall",
+        "warning",
+        "delay",
     ]
 
     total_score = 0.0
@@ -195,26 +227,35 @@ class LocalLLMClient:
         raise NotImplementedError
 
 
-async def _aio_post(url: str, payload: dict, headers: dict = None,
-                    timeout: int = 30) -> dict:
+async def _aio_post(url: str, payload: dict, headers: dict = None, timeout: int = 30) -> dict:
     """Non-blocking POST via aiohttp. Replaces urllib.request.urlopen."""
-    import aiohttp, ssl, certifi
+    import ssl
+
+    import aiohttp
+    import certifi
+
     _ssl = ssl.create_default_context(cafile=certifi.where())
     hdrs = {"Content-Type": "application/json", **(headers or {})}
     async with aiohttp.ClientSession() as sess:
-        async with sess.post(url, json=payload, headers=hdrs, ssl=_ssl,
-                             timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+        async with sess.post(
+            url, json=payload, headers=hdrs, ssl=_ssl, timeout=aiohttp.ClientTimeout(total=timeout)
+        ) as r:
             return await r.json(content_type=None)
 
 
 async def _aio_get(url: str, headers: dict = None, timeout: int = 5) -> int:
     """Non-blocking GET status check via aiohttp."""
-    import aiohttp, ssl, certifi
+    import ssl
+
+    import aiohttp
+    import certifi
+
     _ssl = ssl.create_default_context(cafile=certifi.where())
     try:
         async with aiohttp.ClientSession() as sess:
-            async with sess.get(url, headers=headers or {}, ssl=_ssl,
-                                timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+            async with sess.get(
+                url, headers=headers or {}, ssl=_ssl, timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as r:
                 return r.status
     except Exception:
         return 0
@@ -238,6 +279,7 @@ class OllamaClient(LocalLLMClient):
         # only touches the TCP layer; no HTTP round-trip needed for availability.
         try:
             import socket as _socket
+
             parsed = self.url.replace("http://", "").replace("https://", "").split("/")[0]
             host, _, port_str = parsed.partition(":")
             port = int(port_str) if port_str else (443 if "https" in self.url else 80)
@@ -253,17 +295,24 @@ class OllamaClient(LocalLLMClient):
 
     async def agenerate(self, prompt: str, system_prompt: str = "") -> str:
         """Async generate — does not block the FastAPI event loop."""
-        payload = {"model": self.model, "prompt": prompt, "system": system_prompt,
-                   "stream": False, "options": {"temperature": 0.1, "top_p": 0.9}}
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "system": system_prompt,
+            "stream": False,
+            "options": {"temperature": 0.1, "top_p": 0.9},
+        }
         result = await _aio_post(f"{self.url}/api/generate", payload, timeout=30)
         return result.get("response", "")
 
     def generate(self, prompt: str, system_prompt: str = "") -> str:
         """Sync wrapper — only for legacy callers outside asyncio context."""
         import asyncio as _aio
+
         try:
             loop = _aio.get_running_loop()
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 return ex.submit(_aio.run, self.agenerate(prompt, system_prompt)).result()
         except RuntimeError:
@@ -273,10 +322,9 @@ class OllamaClient(LocalLLMClient):
 class OpenAICompatibleClient(LocalLLMClient):
     """OpenAI-compatible local LLM client (LM Studio, etc.) — fully async."""
 
-    def __init__(self, model: str = LOCAL_LLM_MODEL,
-                 url: str = "http://localhost:1234/v1", api_key: str = None):
-        self.model   = model
-        self.url     = url.rstrip("/")
+    def __init__(self, model: str = LOCAL_LLM_MODEL, url: str = "http://localhost:1234/v1", api_key: str = None):
+        self.model = model
+        self.url = url.rstrip("/")
         self.api_key = api_key or "not-needed"
         self._available: Optional[bool] = None
         self._last_check = 0.0
@@ -289,6 +337,7 @@ class OpenAICompatibleClient(LocalLLMClient):
         # urllib.request in the event loop thread.
         try:
             import socket as _socket
+
             parsed = self.url.replace("http://", "").replace("https://", "").split("/")[0]
             host, _, port_str = parsed.partition(":")
             port = int(port_str) if port_str else (443 if "https" in self.url else 1234)
@@ -304,20 +353,23 @@ class OpenAICompatibleClient(LocalLLMClient):
 
     async def agenerate(self, prompt: str, system_prompt: str = "") -> str:
         """Async generate — does not block the FastAPI event loop."""
-        payload = {"model": self.model,
-                   "messages": [{"role": "system", "content": system_prompt},
-                                 {"role": "user",   "content": prompt}],
-                   "temperature": 0.1, "max_tokens": 256}
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 256,
+        }
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        result  = await _aio_post(f"{self.url}/chat/completions", payload,
-                                   headers=headers, timeout=30)
+        result = await _aio_post(f"{self.url}/chat/completions", payload, headers=headers, timeout=30)
         return result["choices"][0]["message"]["content"]
 
     def generate(self, prompt: str, system_prompt: str = "") -> str:
         import asyncio as _aio
+
         try:
             _aio.get_running_loop()
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 return ex.submit(_aio.run, self.agenerate(prompt, system_prompt)).result()
         except RuntimeError:
@@ -382,7 +434,7 @@ def analyze_news_sentiment(news_items: list[dict], ticker: str = "") -> Sentimen
 Respond with a sentiment score between -1.0 (very bearish) and +1.0 (very bullish), followed by a brief explanation.
 Format: SCORE: <number> | REASONING: <explanation>"""
 
-    prompt = f"""Analyze the following news for {ticker or 'this stock'}:
+    prompt = f"""Analyze the following news for {ticker or "this stock"}:
 
 {news_text}
 
@@ -393,7 +445,7 @@ Provide a sentiment score and reasoning."""
 
         # Parse response
         score = _parse_sentiment_score(response)
-        reasoning_match = re.search(r'REASONING:\s*(.+)', response, re.IGNORECASE)
+        reasoning_match = re.search(r"REASONING:\s*(.+)", response, re.IGNORECASE)
         reasoning = reasoning_match.group(1).strip() if reasoning_match else response[:100]
 
         label = "bullish" if score > 0.2 else "bearish" if score < -0.2 else "neutral"
@@ -444,12 +496,12 @@ Provide risk assessment and trading recommendation."""
         response = client.generate(prompt, system_prompt)
 
         # Parse response
-        risk_match = re.search(r'RISK:\s*(\w+)', response, re.IGNORECASE)
-        conf_match = re.search(r'CONFIDENCE:\s*([\d.]+)', response, re.IGNORECASE)
-        factors_match = re.search(r'FACTORS:\s*(.+?)(?:\||$)', response, re.IGNORECASE)
-        rec_match = re.search(r'RECOMMENDATION:\s*(\w+)', response, re.IGNORECASE)
+        risk_match = re.search(r"RISK:\s*(\w+)", response, re.IGNORECASE)
+        conf_match = re.search(r"CONFIDENCE:\s*([\d.]+)", response, re.IGNORECASE)
+        factors_match = re.search(r"FACTORS:\s*(.+?)(?:\||$)", response, re.IGNORECASE)
+        rec_match = re.search(r"RECOMMENDATION:\s*(\w+)", response, re.IGNORECASE)
 
-        risk_level = (risk_match.group(1).lower() if risk_match else "medium")
+        risk_level = risk_match.group(1).lower() if risk_match else "medium"
         if risk_level not in ("low", "medium", "high", "extreme"):
             risk_level = "medium"
 
@@ -460,7 +512,7 @@ Provide risk assessment and trading recommendation."""
         if factors_match:
             factors = [f.strip() for f in factors_match.group(1).split(",")]
 
-        recommendation = (rec_match.group(1).lower() if rec_match else "caution")
+        recommendation = rec_match.group(1).lower() if rec_match else "caution"
         if recommendation not in ("proceed", "caution", "reduce_size", "avoid"):
             recommendation = "caution"
 

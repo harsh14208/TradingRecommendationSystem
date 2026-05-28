@@ -1,12 +1,12 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+from database import get_db
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch, MagicMock
-
-from database import get_db
+from models import User
 from routers.billing import router
 from services.auth_svc import get_current_user
-from models import User
 
 app = FastAPI()
 app.include_router(router, prefix="")
@@ -66,10 +66,10 @@ def test_billing_webhook_checkout_session_completed(mock_db):
     with patch("routers.billing.stripe.Webhook.construct_event") as mock_event:
         evt = MagicMock()
         evt.get.side_effect = lambda k, d="": {"id": "evt_test123", "type": "checkout.session.completed"}.get(k, d)
-        evt.__getitem__ = lambda self, k: {"type": "checkout.session.completed",
-                                           "data": {"object": {"customer": "cus_123",
-                                                               "subscription": "sub_123",
-                                                               "metadata": {"user_id": "1"}}}}[k]
+        evt.__getitem__ = lambda self, k: {
+            "type": "checkout.session.completed",
+            "data": {"object": {"customer": "cus_123", "subscription": "sub_123", "metadata": {"user_id": "1"}}},
+        }[k]
         mock_event.return_value = evt
         response = client.post("/api/billing/webhook", content=b"payload", headers={"Stripe-Signature": "sig"})
         assert response.status_code == 200
@@ -89,10 +89,12 @@ def test_billing_webhook_dedup(mock_db):
 def test_billing_webhook_invalid_signature():
     try:
         from stripe.error import SignatureVerificationError
-        with patch("routers.billing.stripe.Webhook.construct_event",
-                   side_effect=SignatureVerificationError("Invalid sig", "sig")):
-            response = client.post("/api/billing/webhook", content=b"payload",
-                                   headers={"Stripe-Signature": "invalid"})
+
+        with patch(
+            "routers.billing.stripe.Webhook.construct_event",
+            side_effect=SignatureVerificationError("Invalid sig", "sig"),
+        ):
+            response = client.post("/api/billing/webhook", content=b"payload", headers={"Stripe-Signature": "invalid"})
             assert response.status_code == 400
     except ImportError:
         pass

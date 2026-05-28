@@ -4,28 +4,30 @@ Tests for §38 infrastructure upgrades:
   - Polygon extended-hours endpoint: happy path, non-200, missing fields, no key
   - Redis OHLCV cache: falls back gracefully to in-memory dict when Redis unavailable
 """
+
 import json
-import sys
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Champion / Challenger gate (signal_ml.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _ml_metadata(auc: float) -> dict:
     return {
         "trained_at": "2026-01-01T00:00:00",
-        "n_train": 100, "n_test": 30,
-        "oos_accuracy": 0.60, "oos_auc": auc,
-        "oos_precision": 0.62, "oos_recall": 0.58,
-        "top_features": ["confidence"], "feature_importances": [],
-        "deployed": True, "champion_auc": None,
+        "n_train": 100,
+        "n_test": 30,
+        "oos_accuracy": 0.60,
+        "oos_auc": auc,
+        "oos_precision": 0.62,
+        "oos_recall": 0.58,
+        "top_features": ["confidence"],
+        "feature_importances": [],
+        "deployed": True,
+        "champion_auc": None,
     }
 
 
@@ -39,8 +41,10 @@ def test_champion_challenger_deploys_better_model(tmp_path):
     feature_file = tmp_path / "signal_ml_features.json"
     feature_file.write_text(json.dumps(_ml_metadata(champion_auc)))
 
-    with patch.object(sml, "_FEATURE_FILE", feature_file), \
-         patch.object(sml, "_MODEL_FILE", tmp_path / "signal_ml_model.json"):
+    with (
+        patch.object(sml, "_FEATURE_FILE", feature_file),
+        patch.object(sml, "_MODEL_FILE", tmp_path / "signal_ml_model.json"),
+    ):
         # Simulate the save block logic directly
         _should_deploy = challenger_auc > champion_auc
         assert _should_deploy, "Challenger AUC 0.65 > champion 0.60 should deploy"
@@ -56,8 +60,10 @@ def test_champion_challenger_rejects_weaker_model(tmp_path):
     feature_file = tmp_path / "signal_ml_features.json"
     feature_file.write_text(json.dumps(_ml_metadata(champion_auc)))
 
-    with patch.object(sml, "_FEATURE_FILE", feature_file), \
-         patch.object(sml, "_MODEL_FILE", tmp_path / "signal_ml_model.json"):
+    with (
+        patch.object(sml, "_FEATURE_FILE", feature_file),
+        patch.object(sml, "_MODEL_FILE", tmp_path / "signal_ml_model.json"),
+    ):
         _champion_auc = json.loads(feature_file.read_text()).get("oos_auc")
         _should_deploy = challenger_auc > _champion_auc
         assert not _should_deploy, "Challenger AUC 0.55 < champion 0.60 should NOT deploy"
@@ -70,8 +76,10 @@ def test_champion_challenger_deploys_when_no_champion(tmp_path):
     feature_file = tmp_path / "signal_ml_features.json"
     # File doesn't exist — no champion
 
-    with patch.object(sml, "_FEATURE_FILE", feature_file), \
-         patch.object(sml, "_MODEL_FILE", tmp_path / "signal_ml_model.json"):
+    with (
+        patch.object(sml, "_FEATURE_FILE", feature_file),
+        patch.object(sml, "_MODEL_FILE", tmp_path / "signal_ml_model.json"),
+    ):
         _champion_auc = None  # no file
         _should_deploy = _champion_auc is None
         assert _should_deploy, "First-run (no champion) should always deploy"
@@ -79,7 +87,6 @@ def test_champion_challenger_deploys_when_no_champion(tmp_path):
 
 def test_champion_challenger_metadata_always_written(tmp_path):
     """Even when challenger is rejected, metadata file must be updated (for router display)."""
-    import services.signal_ml as sml
 
     champion_meta = _ml_metadata(0.70)
     feature_file = tmp_path / "signal_ml_features.json"
@@ -102,10 +109,23 @@ def test_champion_challenger_result_includes_deployed_flag(tmp_path):
 
     # Stub out DB, XGBoost, sklearn to isolate just the gate logic
     mock_rows = [
-        {"ticker": "AAPL", "action": "BUY", "confidence": 65.0, "sentiment": 0.5,
-         "sources": ["Options"], "rationale": [], "outcome_pct": 1.5, "style": "position",
-         "session": "regular", "rr": "1:2", "entry": 100.0, "stop": 95.0,
-         "target": 110.0, "price": 100.0, "created_at": f"2025-{i:02d}-01"}
+        {
+            "ticker": "AAPL",
+            "action": "BUY",
+            "confidence": 65.0,
+            "sentiment": 0.5,
+            "sources": ["Options"],
+            "rationale": [],
+            "outcome_pct": 1.5,
+            "style": "position",
+            "session": "regular",
+            "rr": "1:2",
+            "entry": 100.0,
+            "stop": 95.0,
+            "target": 110.0,
+            "price": 100.0,
+            "created_at": f"2025-{i:02d}-01",
+        }
         for i in range(1, 13)
     ] * 5  # 60 rows
 
@@ -115,11 +135,13 @@ def test_champion_challenger_result_includes_deployed_flag(tmp_path):
     mock_model.feature_importances_ = [0.05] * 19
     mock_model.get_booster.return_value = MagicMock()
 
-    with patch.object(sml, "_load_resolved_signals_sync", return_value=mock_rows), \
-         patch.object(sml, "_DATA_DIR", tmp_path), \
-         patch.object(sml, "_MODEL_FILE", tmp_path / "model.json"), \
-         patch.object(sml, "_FEATURE_FILE", tmp_path / "features.json"), \
-         patch.object(xgb, "XGBClassifier", return_value=mock_model):
+    with (
+        patch.object(sml, "_load_resolved_signals_sync", return_value=mock_rows),
+        patch.object(sml, "_DATA_DIR", tmp_path),
+        patch.object(sml, "_MODEL_FILE", tmp_path / "model.json"),
+        patch.object(sml, "_FEATURE_FILE", tmp_path / "features.json"),
+        patch.object(xgb, "XGBClassifier", return_value=mock_model),
+    ):
         result = sml.train_model()
 
     if result is not None:
@@ -131,6 +153,7 @@ def test_champion_challenger_result_includes_deployed_flag(tmp_path):
 # Polygon extended-hours endpoint (polygon_client.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_polygon_extended_hours_happy_path():
     """Snapshot returns lastTrade.p and prevDay.c → valid dict with gap_pct."""
@@ -138,23 +161,29 @@ async def test_polygon_extended_hours_happy_path():
 
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={
-        "ticker": {
-            "lastTrade": {"p": 152.0},
-            "prevDay":   {"c": 150.0},
-            "min":       {"v": 50000},
+    mock_resp.json = AsyncMock(
+        return_value={
+            "ticker": {
+                "lastTrade": {"p": 152.0},
+                "prevDay": {"c": 150.0},
+                "min": {"v": 50000},
+            }
         }
-    })
+    )
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session.get = MagicMock(
+        return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_resp),
+            __aexit__=AsyncMock(return_value=False),
+        )
+    )
 
-    with patch("aiohttp.ClientSession", return_value=mock_session), \
-         patch("services.polygon_client._get_api_key", return_value="fake_key"):
+    with (
+        patch("aiohttp.ClientSession", return_value=mock_session),
+        patch("services.polygon_client._get_api_key", return_value="fake_key"),
+    ):
         result = await get_polygon_extended_hours("AAPL")
 
     assert result is not None
@@ -169,8 +198,7 @@ async def test_polygon_extended_hours_no_api_key():
     """No API key → returns None without making any HTTP request."""
     from services.polygon_client import get_polygon_extended_hours
 
-    with patch("services.polygon_client._get_api_key", return_value=""), \
-         patch("aiohttp.ClientSession") as mock_cls:
+    with patch("services.polygon_client._get_api_key", return_value=""), patch("aiohttp.ClientSession") as mock_cls:
         result = await get_polygon_extended_hours("AAPL")
 
     mock_cls.assert_not_called()
@@ -186,14 +214,18 @@ async def test_polygon_extended_hours_non_200():
     mock_resp.status = 403
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session.get = MagicMock(
+        return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_resp),
+            __aexit__=AsyncMock(return_value=False),
+        )
+    )
 
-    with patch("aiohttp.ClientSession", return_value=mock_session), \
-         patch("services.polygon_client._get_api_key", return_value="key"):
+    with (
+        patch("aiohttp.ClientSession", return_value=mock_session),
+        patch("services.polygon_client._get_api_key", return_value="key"),
+    ):
         result = await get_polygon_extended_hours("TSLA")
 
     assert result is None
@@ -209,14 +241,18 @@ async def test_polygon_extended_hours_missing_fields():
     mock_resp.json = AsyncMock(return_value={"ticker": {}})  # empty ticker data
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session.get = MagicMock(
+        return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_resp),
+            __aexit__=AsyncMock(return_value=False),
+        )
+    )
 
-    with patch("aiohttp.ClientSession", return_value=mock_session), \
-         patch("services.polygon_client._get_api_key", return_value="key"):
+    with (
+        patch("aiohttp.ClientSession", return_value=mock_session),
+        patch("services.polygon_client._get_api_key", return_value="key"),
+    ):
         result = await get_polygon_extended_hours("MSFT")
 
     assert result is None
@@ -229,23 +265,29 @@ async def test_polygon_extended_hours_flat_direction():
 
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={
-        "ticker": {
-            "lastTrade": {"p": 100.05},
-            "prevDay":   {"c": 100.0},
-            "min":       {"v": 1000},
+    mock_resp.json = AsyncMock(
+        return_value={
+            "ticker": {
+                "lastTrade": {"p": 100.05},
+                "prevDay": {"c": 100.0},
+                "min": {"v": 1000},
+            }
         }
-    })
+    )
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session.get = MagicMock(
+        return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_resp),
+            __aexit__=AsyncMock(return_value=False),
+        )
+    )
 
-    with patch("aiohttp.ClientSession", return_value=mock_session), \
-         patch("services.polygon_client._get_api_key", return_value="key"):
+    with (
+        patch("aiohttp.ClientSession", return_value=mock_session),
+        patch("services.polygon_client._get_api_key", return_value="key"),
+    ):
         result = await get_polygon_extended_hours("SPY")
 
     assert result is not None
@@ -256,14 +298,16 @@ async def test_polygon_extended_hours_flat_direction():
 # Redis OHLCV cache fallback (market_data.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_ohlcv_cache_fallback_to_memory_when_redis_unavailable():
     """When _redis_client is None, _ohlcv_cache_get/_ohlcv_cache_set use the in-memory dict."""
-    import services.market_data as md
-    import pandas as pd
     import time
 
+    import pandas as pd
+    import services.market_data as md
+
     key = ("FALLBACK_TEST", "1mo", "1d")
-    df  = pd.DataFrame({"Close": [100.0, 101.0]})
+    df = pd.DataFrame({"Close": [100.0, 101.0]})
 
     # Ensure Redis is not active for this test
     orig_redis = md._redis_client
@@ -281,12 +325,13 @@ def test_ohlcv_cache_fallback_to_memory_when_redis_unavailable():
 
 def test_ohlcv_cache_returns_none_after_ttl(monkeypatch):
     """Expired cache entry (older than 15 min) returns None via in-memory fallback."""
-    import services.market_data as md
-    import pandas as pd
     import time
 
+    import pandas as pd
+    import services.market_data as md
+
     key = ("TTL_TEST", "3mo", "1d")
-    df  = pd.DataFrame({"Close": [200.0]})
+    df = pd.DataFrame({"Close": [200.0]})
 
     orig_redis = md._redis_client
     md._redis_client = None

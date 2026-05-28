@@ -5,14 +5,14 @@ Tests for several pure helper modules that require no DB/network:
 2. services/bayesian_smoothing.py — calculate_predictive_interval()
 3. services/market_calendar.py — is_pre_long_weekend()
 """
-import sys
-import os
+
 import json
-import math
-import tempfile
+import os
+import sys
+from datetime import date, timedelta
+from unittest.mock import patch
+
 import pytest
-from datetime import datetime, date, timedelta
-from unittest.mock import patch, MagicMock
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
@@ -23,11 +23,10 @@ if BACKEND_DIR not in sys.path:
 # 1. services/calibration.py
 # ─────────────────────────────────────────────────────────────────────────────
 
-from services.calibration import _blend, apply_calibration, load_calibration, _MAX_BLEND, _N_FULL
+from services.calibration import _MAX_BLEND, _N_FULL, _blend, apply_calibration, load_calibration
 
 
 class TestBlend:
-
     def test_below_min_n_returns_zero(self):
         """Fewer than _MIN_N (3) samples → blend = 0.0."""
         assert _blend(0) == 0.0
@@ -44,8 +43,8 @@ class TestBlend:
 
     def test_above_n_full_capped_at_max_blend(self):
         """More than _N_FULL samples → blend capped at _MAX_BLEND."""
-        assert _blend(_N_FULL * 5)  == pytest.approx(_MAX_BLEND)
-        assert _blend(1000)          == pytest.approx(_MAX_BLEND)
+        assert _blend(_N_FULL * 5) == pytest.approx(_MAX_BLEND)
+        assert _blend(1000) == pytest.approx(_MAX_BLEND)
 
     def test_intermediate_blend_value(self):
         """Half of _N_FULL samples → blend = min(_MAX_BLEND, 0.5)."""
@@ -63,7 +62,6 @@ class TestBlend:
 
 
 class TestApplyCalibration:
-
     def _cal_map(self, bin_key: str, win_rate: float, n: int, blend: float) -> dict:
         return {bin_key: {"win_rate": win_rate, "n": n, "blend": blend}}
 
@@ -120,7 +118,6 @@ class TestApplyCalibration:
 
 
 class TestLoadCalibration:
-
     def test_returns_empty_when_file_missing(self, tmp_path):
         """When calibration.json doesn't exist, returns {}."""
         with patch("services.calibration._CAL_FILE", tmp_path / "no_file.json"):
@@ -151,7 +148,6 @@ from services.bayesian_smoothing import calculate_predictive_interval
 
 
 class TestBayesianSmoothing:
-
     def test_returns_tuple(self):
         prob, std = calculate_predictive_interval(wins=5, total=10, current_vix=20.0)
         assert isinstance(prob, float)
@@ -220,7 +216,6 @@ def _holiday(days_from_today: int, weekday_override: int | None = None, name: st
 
 
 class TestIsPreLongWeekend:
-
     def test_no_holidays_returns_false(self):
         result, name = is_pre_long_weekend([])
         assert result is False
@@ -228,15 +223,21 @@ class TestIsPreLongWeekend:
 
     def test_far_future_holiday_ignored(self):
         """Holiday > 5 days away is ignored."""
-        h = {"date": (date.today() + timedelta(days=10)).strftime("%Y-%m-%d"),
-             "name": "Far Holiday", "exchange": "NYSE"}
+        h = {
+            "date": (date.today() + timedelta(days=10)).strftime("%Y-%m-%d"),
+            "name": "Far Holiday",
+            "exchange": "NYSE",
+        }
         result, _ = is_pre_long_weekend([h])
         assert result is False
 
     def test_past_holiday_ignored(self):
         """Holiday in the past is ignored."""
-        h = {"date": (date.today() - timedelta(days=1)).strftime("%Y-%m-%d"),
-             "name": "Past Holiday", "exchange": "NYSE"}
+        h = {
+            "date": (date.today() - timedelta(days=1)).strftime("%Y-%m-%d"),
+            "name": "Past Holiday",
+            "exchange": "NYSE",
+        }
         result, _ = is_pre_long_weekend([h])
         assert result is False
 
@@ -307,8 +308,9 @@ class TestIsPreLongWeekend:
         for delta in range(1, 4):
             candidate = today + timedelta(days=delta)
             if candidate.weekday() in (0, 4):
-                holidays.append({"date": candidate.strftime("%Y-%m-%d"),
-                                  "name": f"Holiday {delta}", "exchange": "NYSE"})
+                holidays.append(
+                    {"date": candidate.strftime("%Y-%m-%d"), "name": f"Holiday {delta}", "exchange": "NYSE"}
+                )
             if len(holidays) >= 2:
                 break
         if len(holidays) < 2:

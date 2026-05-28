@@ -1,15 +1,15 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
+from database import get_db
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch, MagicMock
-
-from services.auth_svc import get_current_user
-from database import get_db
 from models import User
+from services.auth_svc import get_current_user
 
 try:
     from routers.price_alerts import router
-    
+
     app = FastAPI()
     app.include_router(router)
 
@@ -22,7 +22,6 @@ try:
     def client_with_unauth_disabled():
         # Ensure current user dependency is active (some tests may clear overrides)
         return TestClient(app)
-
 
     @pytest.fixture
     def mock_db_session():
@@ -44,7 +43,7 @@ try:
         mock_result.scalars().all.return_value = [alert]
         mock_result.all.return_value = [alert]
         mock_db_session.execute.return_value = mock_result
-        
+
         res = client.get("/api/alerts/")
         assert res.status_code == 200
 

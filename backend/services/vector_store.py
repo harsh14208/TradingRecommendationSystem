@@ -7,12 +7,12 @@ market regime embeddings. When a new signal triggers, the agent can query:
 
 Supports Qdrant, Milvus, or in-memory fallback (Chroma/FAISS).
 """
+
 import hashlib
-import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ _memory_index: dict[str, list[float]] = {}
 @dataclass
 class MarketRegime:
     """Represents a market regime snapshot for vector storage."""
+
     ticker: str
     timestamp: float
     features: dict[str, float]  # Normalized indicator values
@@ -42,11 +43,24 @@ class MarketRegime:
         """Convert features to a normalized embedding vector."""
         # Feature ordering must be consistent
         feature_keys = [
-            "rsi_norm", "macd_norm", "obv_norm", "bb_pct_b",
-            "volume_ratio", "atr_pct", "momentum_10d", "momentum_20d",
-            "vix_level", "spy_trend", "breadth_pct", "pc_ratio",
-            "sector_strength", "earnings_proximity", "analyst_score",
-            "insider_score", "institutional_score", "sentiment_score",
+            "rsi_norm",
+            "macd_norm",
+            "obv_norm",
+            "bb_pct_b",
+            "volume_ratio",
+            "atr_pct",
+            "momentum_10d",
+            "momentum_20d",
+            "vix_level",
+            "spy_trend",
+            "breadth_pct",
+            "pc_ratio",
+            "sector_strength",
+            "earnings_proximity",
+            "analyst_score",
+            "insider_score",
+            "institutional_score",
+            "sentiment_score",
         ]
         vector = [self.features.get(k, 0.0) for k in feature_keys]
         # Pad to EMBEDDING_DIM if needed
@@ -132,11 +146,13 @@ class MemoryVectorStore(VectorStore):
 
             # Compute cosine similarity
             similarity = _cosine_similarity(query_vector, stored_vector)
-            results.append({
-                "id": reg_id,
-                "similarity": similarity,
-                **stored,
-            })
+            results.append(
+                {
+                    "id": reg_id,
+                    "similarity": similarity,
+                    **stored,
+                }
+            )
 
         # Sort by similarity descending
         results.sort(key=lambda x: x["similarity"], reverse=True)
@@ -156,6 +172,7 @@ class QdrantVectorStore(VectorStore):
     def __init__(self, url: str = "http://localhost:6333", api_key: Optional[str] = None):
         try:
             from qdrant_client import QdrantClient
+
             self.client = QdrantClient(url=url, api_key=api_key)
             self._ensure_collection()
             self.available = True
@@ -166,6 +183,7 @@ class QdrantVectorStore(VectorStore):
 
     def _ensure_collection(self):
         from qdrant_client.http import models
+
         try:
             self.client.get_collection(COLLECTION_NAME)
         except Exception:
@@ -181,6 +199,7 @@ class QdrantVectorStore(VectorStore):
         if not self.available:
             return
         from qdrant_client.http import models
+
         regime_id = _generate_id(regime.ticker, regime.timestamp)
         self.client.upsert(
             collection_name=COLLECTION_NAME,
@@ -210,6 +229,7 @@ class QdrantVectorStore(VectorStore):
         if not self.available:
             return []
         from qdrant_client.http import models
+
         query_filter = None
         if filters:
             conditions = [
@@ -252,7 +272,8 @@ class MilvusVectorStore(VectorStore):
 
     def __init__(self, uri: str = "http://localhost:19530"):
         try:
-            from pymilvus import connections, Collection, utility
+            from pymilvus import Collection, connections, utility
+
             connections.connect(uri=uri)
             self.uri = uri
             if not utility.has_collection(COLLECTION_NAME):
@@ -265,7 +286,8 @@ class MilvusVectorStore(VectorStore):
             self.collection = None
 
     def _create_collection(self):
-        from pymilvus import FieldSchema, CollectionSchema, DataType, utility
+        from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, utility
+
         fields = [
             FieldSchema(name="id", dtype=DataType.VarChar, is_primary=True, max_length=64),
             FieldSchema(name="ticker", dtype=DataType.VarChar, max_length=20),
@@ -289,10 +311,16 @@ class MilvusVectorStore(VectorStore):
         if not self.available:
             return
         regime_id = _generate_id(regime.ticker, regime.timestamp)
-        data = [[regime_id], [regime.ticker], [regime.timestamp],
-                [regime.outcome_1d or 0.0], [regime.outcome_3d or 0.0],
-                [regime.outcome_7d or 0.0], [regime.regime_label],
-                [regime.to_vector()]]
+        data = [
+            [regime_id],
+            [regime.ticker],
+            [regime.timestamp],
+            [regime.outcome_1d or 0.0],
+            [regime.outcome_3d or 0.0],
+            [regime.outcome_7d or 0.0],
+            [regime.regime_label],
+            [regime.to_vector()],
+        ]
         self.collection.insert(data)
         self.collection.flush()
 
@@ -307,8 +335,9 @@ class MilvusVectorStore(VectorStore):
         search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
         expr = None
         if filters:
-            conditions = " and ".join(f'{k} == "{v}"' if isinstance(v, str) else f'{k} == {v}'
-                                      for k, v in filters.items())
+            conditions = " and ".join(
+                f'{k} == "{v}"' if isinstance(v, str) else f"{k} == {v}" for k, v in filters.items()
+            )
             expr = conditions
 
         self.collection.load()
@@ -347,6 +376,7 @@ class MilvusVectorStore(VectorStore):
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two vectors."""
     import math
+
     dot_product = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
@@ -360,6 +390,7 @@ def get_vector_store() -> VectorStore:
     """Get the appropriate vector store based on configuration."""
     if VECTOR_DB_TYPE == "qdrant":
         import os
+
         store = QdrantVectorStore(
             url=os.getenv("QDRANT_URL", "http://localhost:6333"),
             api_key=os.getenv("QDRANT_API_KEY"),
@@ -370,6 +401,7 @@ def get_vector_store() -> VectorStore:
         return MemoryVectorStore()
     elif VECTOR_DB_TYPE == "milvus":
         import os
+
         store = MilvusVectorStore(uri=os.getenv("MILVUS_URI", "http://localhost:19530"))
         if store.available:
             return store
@@ -489,6 +521,7 @@ def get_regime_summary(similar_regimes: list[dict]) -> dict:
 # generates a plain-English narrative rationale card using the LLM.
 # Falls back to a template if LLM is unavailable.
 
+
 def generate_rag_rationale(
     ticker: str,
     features: dict[str, float],
@@ -511,10 +544,10 @@ def generate_rag_rationale(
             return None
 
         summary = get_regime_summary(similar)
-        n_sim   = summary["count"]
-        wr_7d   = summary.get("win_rate_7d")
-        avg_7d  = summary.get("avg_outcome_7d")
-        label   = summary.get("most_common_regime", "mixed")
+        n_sim = summary["count"]
+        wr_7d = summary.get("win_rate_7d")
+        avg_7d = summary.get("avg_outcome_7d")
+        label = summary.get("most_common_regime", "mixed")
 
         if wr_7d is None or n_sim < 3:
             return None
@@ -523,6 +556,7 @@ def generate_rag_rationale(
         rag_body = None
         try:
             from services.local_llm import get_llm_client
+
             llm = get_llm_client()
             if llm:
                 prompt = (
@@ -536,8 +570,7 @@ def generate_rag_rationale(
                     f"implies for the current trade setup. Be specific and concise."
                 )
                 rag_body = llm.generate(
-                    prompt,
-                    system_prompt="You are a quantitative trading analyst writing signal rationale cards."
+                    prompt, system_prompt="You are a quantitative trading analyst writing signal rationale cards."
                 )
         except Exception:
             pass
@@ -553,12 +586,11 @@ def generate_rag_rationale(
             )
 
         return {
-            "src":       "Vector Store",
-            "head":      f"RAG: {n_sim} Similar Setups — {wr_7d:.0f}% 7d Win Rate",
-            "body":      rag_body,
+            "src": "Vector Store",
+            "head": f"RAG: {n_sim} Similar Setups — {wr_7d:.0f}% 7d Win Rate",
+            "body": rag_body,
             "sentiment": "pos" if (wr_7d or 0) > 55 else "neg",
-            "meta":      (f"n_similar={n_sim} wr_7d={wr_7d:.0f}% "
-                          f"avg_7d={avg_7d:+.2f}% regime={label}"),
+            "meta": (f"n_similar={n_sim} wr_7d={wr_7d:.0f}% avg_7d={avg_7d:+.2f}% regime={label}"),
         }
     except Exception as e:
         logger.debug(f"[vector_store] RAG rationale failed for {ticker}: {e}")
@@ -570,8 +602,7 @@ def generate_rag_rationale(
 _REFLECTION_KEY_PREFIX = "reflection:"
 
 
-def store_reflection(ticker: str, signal_action: str, outcome_pct: float,
-                     features: dict, lesson: str) -> None:
+def store_reflection(ticker: str, signal_action: str, outcome_pct: float, features: dict, lesson: str) -> None:
     """
     Save a loss reflection to the vector store so the engine can learn from it.
     Called by the automated reflection loop in scanner.py after LLM analysis.
@@ -581,13 +612,14 @@ def store_reflection(ticker: str, signal_action: str, outcome_pct: float,
     try:
         vs = get_store()
         entry_id = f"{_REFLECTION_KEY_PREFIX}{ticker}_{int(time.time())}"
-        vs.store(MarketRegime(
-            ticker    = ticker,
-            timestamp = time.time(),
-            features  = {**features, "was_loss": 1.0, "outcome_pct": outcome_pct},
-            metadata  = {"lesson": lesson, "action": signal_action,
-                         "type": "reflection"},
-        ))
+        vs.store(
+            MarketRegime(
+                ticker=ticker,
+                timestamp=time.time(),
+                features={**features, "was_loss": 1.0, "outcome_pct": outcome_pct},
+                metadata={"lesson": lesson, "action": signal_action, "type": "reflection"},
+            )
+        )
         logger.info(f"[vector_store] Reflection stored for {ticker} ({signal_action}) loss: {lesson[:60]}")
     except Exception as e:
         logger.debug(f"[vector_store] store_reflection failed: {e}")
@@ -605,10 +637,6 @@ def query_reflections(ticker: str, features: dict, top_k: int = 3) -> list[str]:
             top_k=top_k,
             filters={"metadata.type": "reflection"},
         )
-        return [
-            r.get("metadata", {}).get("lesson", "")
-            for r in reflections
-            if r.get("metadata", {}).get("lesson")
-        ]
+        return [r.get("metadata", {}).get("lesson", "") for r in reflections if r.get("metadata", {}).get("lesson")]
     except Exception:
         return []

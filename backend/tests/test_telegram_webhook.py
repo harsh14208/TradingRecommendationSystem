@@ -12,16 +12,16 @@ Coverage targets:
   - Missing JSON body → 400
 """
 
-import pytest
-import types
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from database import get_db
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from database import get_db
-
 try:
     from routers.telegram_webhook import router
+
     _ROUTER_OK = True
 except ImportError:
     _ROUTER_OK = False
@@ -30,6 +30,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_app(db_override):
     app = FastAPI()
@@ -68,8 +69,7 @@ def _db_with_user_lookup(user_for_code=None, user_for_chat_id=None):
     return _get_db_override, db_mock
 
 
-def _make_user(id_=1, email="alice@example.com", link_code="CODE123",
-               chat_id=None, subscription_tier="basic"):
+def _make_user(id_=1, email="alice@example.com", link_code="CODE123", chat_id=None, subscription_tier="basic"):
     u = MagicMock()
     u.id = id_
     u.email = email
@@ -93,9 +93,9 @@ def _webhook_body(text="/start CODE123", chat_id="111222333", username="alice"):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(not _ROUTER_OK, reason="telegram_webhook router import failed")
 class TestTelegramWebhook:
-
     def test_empty_body_no_message_returns_ok(self):
         db_override, _ = _db_with_user_lookup()
         app = _make_app(db_override)
@@ -185,11 +185,11 @@ class TestTelegramWebhook:
 
     def test_chat_already_linked_to_different_account_sends_warning(self):
         target_user = _make_user(id_=1, link_code="CODE123")
-        other_user  = _make_user(id_=2, link_code="OTHER", chat_id="111222333")
+        other_user = _make_user(id_=2, link_code="OTHER", chat_id="111222333")
 
         db_override, _ = _db_with_user_lookup(
             user_for_code=target_user,
-            user_for_chat_id=other_user,   # different user already owns this chat_id
+            user_for_chat_id=other_user,  # different user already owns this chat_id
         )
         app = _make_app(db_override)
 
@@ -237,8 +237,7 @@ class TestTelegramWebhook:
         db_mock.commit.assert_awaited_once()
 
     def test_successful_link_sends_confirmation_reply_with_email(self):
-        user = _make_user(id_=1, email="bob@example.com", link_code="XYZ99",
-                          chat_id=None, subscription_tier="pro")
+        user = _make_user(id_=1, email="bob@example.com", link_code="XYZ99", chat_id=None, subscription_tier="pro")
         db_override, _ = _db_with_user_lookup(
             user_for_code=user,
             user_for_chat_id=None,

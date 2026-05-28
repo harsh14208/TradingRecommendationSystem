@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import ssl
-import certifi
-from datetime import datetime, timedelta, time as dtime, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as dtime
 from time import monotonic
 
+import certifi
 import pytz
 
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
@@ -12,9 +13,11 @@ _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 log = logging.getLogger("scanner")
 
 import aiohttp
-
+from config import TIERS, get_settings
 from database import AsyncSessionLocal
 from models import AppSettings, SendLog, Signal, SignalAlert, SignalDelivery, User
+from sqlalchemy import desc, select, update
+
 from services.aaii import get_aaii_sentiment
 from services.breadth import get_market_breadth
 from services.cot import get_cot_signal
@@ -23,8 +26,6 @@ from services.macro import get_macro_context
 from services.market_data import get_histories_batch, get_infos_sequential, get_quotes_batch
 from services.signal_engine import scan_all
 from services.telegram_svc import format_signal, send_telegram
-from config import get_settings, TIERS
-from sqlalchemy import select, desc, update, func
 
 # ── Data quality monitoring ───────────────────────────────────────────────────
 _data_quality: dict[str, int] = {}  # ticker → consecutive_null_count
@@ -49,14 +50,18 @@ def _check_data_quality(histories: dict, settings) -> list[str]:
 
 async def _alert_sla_breach(ticker: str, action: str, latency_s: float, settings):
     """Notify owner when signal delivery exceeds 5-minute SLA."""
-    msg = (f"⚠️ SLA breach: {action} {ticker} took {latency_s/60:.1f}min to deliver "
-           f"(target ≤5min). Check scanner health.")
+    msg = (
+        f"⚠️ SLA breach: {action} {ticker} took {latency_s / 60:.1f}min to deliver (target ≤5min). Check scanner health."
+    )
     try:
         url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
         async with aiohttp.ClientSession() as sess:
-            await sess.post(url, json={"chat_id": settings.telegram_chat_id,
-                                       "text": msg}, ssl=_SSL_CTX,
-                            timeout=aiohttp.ClientTimeout(total=5))
+            await sess.post(
+                url,
+                json={"chat_id": settings.telegram_chat_id, "text": msg},
+                ssl=_SSL_CTX,
+                timeout=aiohttp.ClientTimeout(total=5),
+            )
     except Exception:
         pass
 
@@ -72,19 +77,25 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
 
     # Fetch users: active subscription (basic or pro) + telegram chat linked
     # Free users don't get Telegram delivery
-    subscribers = (await db.execute(
-        select(User).where(
-            User.telegram_chat_id.isnot(None),
-            User.is_active == True,
+    subscribers = (
+        (
+            await db.execute(
+                select(User).where(
+                    User.telegram_chat_id.isnot(None),
+                    User.is_active == True,
+                )
+            )
         )
-    )).scalars().all()
+        .scalars()
+        .all()
+    )
 
     # Filter to those with telegram access (basic+, pro, or owner)
     eligible = [
-        u for u in subscribers
+        u
+        for u in subscribers
         if u.is_owner
-        or (u.subscription_status == "active"
-            and TIERS.index(u.subscription_tier) >= TIERS.index("basic"))
+        or (u.subscription_status == "active" and TIERS.index(u.subscription_tier) >= TIERS.index("basic"))
     ]
 
     if not eligible:
@@ -93,19 +104,27 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
     # Check for already-delivered (dedup)
     delivered_user_ids = set()
     if db_row.id:
-        rows = (await db.execute(
-            select(SignalDelivery.user_id).where(SignalDelivery.signal_id == db_row.id)
-        )).scalars().all()
+        rows = (
+            (await db.execute(select(SignalDelivery.user_id).where(SignalDelivery.signal_id == db_row.id)))
+            .scalars()
+            .all()
+        )
         delivered_user_ids = set(rows)
 
     # Load per-ticker signal alert rules for this ticker → {user_id: SignalAlert}
     ticker = sig_dict.get("ticker", "")
-    _alert_rows = (await db.execute(
-        select(SignalAlert).where(
-            SignalAlert.ticker == ticker,
-            SignalAlert.is_active == True,
+    _alert_rows = (
+        (
+            await db.execute(
+                select(SignalAlert).where(
+                    SignalAlert.ticker == ticker,
+                    SignalAlert.is_active == True,
+                )
+            )
         )
-    )).scalars().all()
+        .scalars()
+        .all()
+    )
     ticker_rules: dict[int, SignalAlert] = {a.user_id: a for a in _alert_rows}
 
     message_text = format_signal(sig_dict)
@@ -119,7 +138,9 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
             if user.id in delivered_user_ids:
                 continue
             if user.telegram_chat_id in sent_chat_ids:
-                log.info(f" [fanout] skipped user={user.id} — chat {user.telegram_chat_id} already received this signal")
+                log.info(
+                    f" [fanout] skipped user={user.id} — chat {user.telegram_chat_id} already received this signal"
+                )
                 continue
             # Per-ticker signal alert rules override the global confidence threshold.
             # If the user has an active rule for this ticker, apply it; otherwise
@@ -127,29 +148,40 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
             rule = ticker_rules.get(user.id)
             if rule is not None:
                 if sig_dict.get("confidence", 0) < rule.min_confidence:
-                    log.info(f" [fanout] user={user.id} ticker rule {ticker}>={rule.min_confidence:.0f}% not met — skipped")
+                    log.info(
+                        f" [fanout] user={user.id} ticker rule {ticker}>={rule.min_confidence:.0f}% not met — skipped"
+                    )
                     continue
                 if rule.action_filter != "any" and sig_dict.get("action") != rule.action_filter:
-                    log.info(f" [fanout] user={user.id} ticker rule action_filter={rule.action_filter} != {sig_dict.get('action')} — skipped")
+                    log.info(
+                        f" [fanout] user={user.id} ticker rule action_filter={rule.action_filter} != {sig_dict.get('action')} — skipped"
+                    )
                     continue
             else:
                 user_min = user.min_confidence_override if user.min_confidence_override is not None else global_min_conf
                 if sig_dict.get("confidence", 0) < user_min:
-                    log.info(f" [fanout] user={user.id} threshold {user_min:.0f}% > conf {sig_dict['confidence']:.0f}% — skipped")
+                    log.info(
+                        f" [fanout] user={user.id} threshold {user_min:.0f}% > conf {sig_dict['confidence']:.0f}% — skipped"
+                    )
                     continue
             try:
-                resp = await session.post(url, json={
-                    "chat_id": user.telegram_chat_id,
-                    "text": message_text,
-                    "parse_mode": "Markdown",
-                })
+                resp = await session.post(
+                    url,
+                    json={
+                        "chat_id": user.telegram_chat_id,
+                        "text": message_text,
+                        "parse_mode": "Markdown",
+                    },
+                )
                 data = await resp.json()
                 msg_id = str(data.get("result", {}).get("message_id", "")) if data.get("ok") else None
-                db.add(SignalDelivery(
-                    signal_id=db_row.id,
-                    user_id=user.id,
-                    telegram_msg_id=msg_id,
-                ))
+                db.add(
+                    SignalDelivery(
+                        signal_id=db_row.id,
+                        user_id=user.id,
+                        telegram_msg_id=msg_id,
+                    )
+                )
                 if data.get("ok"):
                     any_success = True
                     sent_chat_ids.add(user.telegram_chat_id)
@@ -164,6 +196,7 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
     # Discord delivery — alongside Telegram, for users with webhook_url set
     try:
         from services.discord_bot import send_discord_signal
+
         discord_users = [u for u in eligible if getattr(u, "discord_webhook_url", None)]
         for du in discord_users:
             asyncio.create_task(send_discord_signal(du.discord_webhook_url, sig_dict))
@@ -181,10 +214,10 @@ _MOVEMENT_THRESHOLD = 1.0  # % — skip info re-fetch if price moved less than t
 # ── Differential Scan state ──────────────────────────────────────────────────
 # Persists last known price + volume per ticker across scan cycles.
 # Next scan: stable tickers skip generate_signal() entirely, saving ~80/154 API calls.
-_diff_state: dict[str, dict] = {}   # {ticker: {price, volume, ts}}
-_DIFF_PRICE_THRESHOLD  = 0.5   # % price change that counts as "moved"
-_DIFF_VOL_THRESHOLD    = 1.3   # volume ratio above which ticker is "active"
-_DIFF_SIGNAL_MAX_AGE_H = 2.0   # skip only if an active signal was created within this window
+_diff_state: dict[str, dict] = {}  # {ticker: {price, volume, ts}}
+_DIFF_PRICE_THRESHOLD = 0.5  # % price change that counts as "moved"
+_DIFF_VOL_THRESHOLD = 1.3  # volume ratio above which ticker is "active"
+_DIFF_SIGNAL_MAX_AGE_H = 2.0  # skip only if an active signal was created within this window
 
 
 def _market_session() -> str:
@@ -193,10 +226,14 @@ def _market_session() -> str:
     if now_et.weekday() >= 5:
         return "closed"
     t = now_et.time()
-    if dtime(4, 0) <= t < dtime(9, 30):   return "pre"
-    if dtime(9, 30) <= t < dtime(16, 0):  return "regular"
-    if dtime(16, 0) <= t < dtime(20, 0):  return "after"
+    if dtime(4, 0) <= t < dtime(9, 30):
+        return "pre"
+    if dtime(9, 30) <= t < dtime(16, 0):
+        return "regular"
+    if dtime(16, 0) <= t < dtime(20, 0):
+        return "after"
     return "closed"
+
 
 def _market_hours_ok() -> bool:
     """Return True during NYSE trading hours (9:30–16:05 ET, Mon–Fri only).
@@ -211,10 +248,9 @@ async def _get_scan_tickers(settings) -> list[str]:
     """Return tickers from DB watchlist if populated, otherwise fall back to .env."""
     try:
         from models import WatchlistItem
+
         async with AsyncSessionLocal() as db:
-            rows = (await db.execute(
-                select(WatchlistItem).where(WatchlistItem.is_active == True)
-            )).scalars().all()
+            rows = (await db.execute(select(WatchlistItem).where(WatchlistItem.is_active == True))).scalars().all()
             if rows:
                 return [r.ticker for r in rows]
     except Exception:
@@ -234,21 +270,19 @@ async def _update_outcomes(quotes: list[dict]):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     price_map = {q["t"]: q["p"] for q in quotes}
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(
-            select(Signal).where(Signal.is_sent == True)
-        )).scalars().all()
+        rows = (await db.execute(select(Signal).where(Signal.is_sent == True))).scalars().all()
         for sig in rows:
             current = price_map.get(sig.ticker)
             if not current or not sig.entry or sig.entry <= 0:
                 continue
             age_days = (now - sig.created_at).total_seconds() / 86400 if sig.created_at else 0
-            if age_days >= 1  and sig.outcome_1d  is None:
-                sig.outcome_1d  = _pct(current, sig.entry, sig.action)
-            if age_days >= 3  and sig.outcome_3d  is None:
-                sig.outcome_3d  = _pct(current, sig.entry, sig.action)
-            if age_days >= 7  and sig.outcome_pct is None:
+            if age_days >= 1 and sig.outcome_1d is None:
+                sig.outcome_1d = _pct(current, sig.entry, sig.action)
+            if age_days >= 3 and sig.outcome_3d is None:
+                sig.outcome_3d = _pct(current, sig.entry, sig.action)
+            if age_days >= 7 and sig.outcome_pct is None:
                 sig.outcome_pct = _pct(current, sig.entry, sig.action)
-                sig.outcome_at  = now
+                sig.outcome_at = now
             if age_days >= 14 and sig.outcome_14d is None:
                 sig.outcome_14d = _pct(current, sig.entry, sig.action)
         await db.commit()
@@ -261,15 +295,22 @@ _CONF_CHANGE_THRESHOLD = 15.0  # percentage points
 
 def _today_start_utc() -> datetime:
     """Return today's 00:00:00 ET expressed in UTC (naive)."""
-    ET   = pytz.timezone("America/New_York")
-    now  = datetime.now(ET)
+    ET = pytz.timezone("America/New_York")
+    now = datetime.now(ET)
     midnight_et = now.replace(hour=0, minute=0, second=0, microsecond=0)
     return midnight_et.astimezone(pytz.utc).replace(tzinfo=None)
 
 
-async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
-                      force_resend: bool = False, scan_started_at: datetime | None = None,
-                      bypass_market_hours: bool = False):
+async def _maybe_send(
+    sig_dict: dict,
+    db_row: Signal,
+    settings,
+    db,
+    label: str,
+    force_resend: bool = False,
+    scan_started_at: datetime | None = None,
+    bypass_market_hours: bool = False,
+):
     """Send a Telegram notification for a signal if it qualifies. Mutates db_row on success.
 
     force_resend=True bypasses the 24h cooldown (used when the signal direction flipped)
@@ -279,6 +320,7 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
     not from signal created_at (which can be hours old for refreshed-but-unsent signals).
     """
     from services.delivery_gates import check_delivery_gates
+
     skip_reason, sig_dict = await check_delivery_gates(sig_dict, db, settings)
     if skip_reason:
         log.info(f" {sig_dict['ticker']} skipped ({label}) — {skip_reason}")
@@ -295,13 +337,15 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
     # inflate the "sent signals" count and the win-rate denominator. Cap at 1
     # regardless of direction flip or confidence changes within the same day.
     _today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
-    _today_sent  = (await db.execute(
-        select(Signal)
-        .where(Signal.ticker  == sig_dict["ticker"])
-        .where(Signal.is_sent == True)
-        .where(Signal.sent_at >= _today_start)
-        .limit(1)
-    )).scalar_one_or_none()
+    _today_sent = (
+        await db.execute(
+            select(Signal)
+            .where(Signal.ticker == sig_dict["ticker"])
+            .where(Signal.is_sent == True)
+            .where(Signal.sent_at >= _today_start)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     if _today_sent:
         log.info(f" {sig_dict['ticker']} skipped — already sent today (1/day cap)")
         return
@@ -312,7 +356,7 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=30)
         result = await db.execute(
             select(Signal)
-            .where(Signal.ticker  == sig_dict["ticker"])
+            .where(Signal.ticker == sig_dict["ticker"])
             .where(Signal.is_sent == True)
             .where(Signal.sent_at >= cutoff)
             .limit(1)
@@ -327,23 +371,26 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
         # Loss streak ≥3 → 72h cooldown. Single loss → 48h.
         base_hours = 24
         try:
-            recent_resolved = (await db.execute(
-                select(Signal.outcome_pct)
-                .where(Signal.ticker      == sig_dict["ticker"])
-                .where(Signal.action      == sig_dict["action"])
-                .where(Signal.is_sent     == True)
-                .where(Signal.outcome_pct.isnot(None))
-                .order_by(Signal.sent_at.desc())
-                .limit(3)
-            )).scalars().all()
+            recent_resolved = (
+                (
+                    await db.execute(
+                        select(Signal.outcome_pct)
+                        .where(Signal.ticker == sig_dict["ticker"])
+                        .where(Signal.action == sig_dict["action"])
+                        .where(Signal.is_sent == True)
+                        .where(Signal.outcome_pct.isnot(None))
+                        .order_by(Signal.sent_at.desc())
+                        .limit(3)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             if recent_resolved:
                 _act = sig_dict["action"]
                 # BUY win  = outcome_pct > 0;  BUY loss  = outcome_pct <= 0
                 # SELL win = outcome_pct < 0;  SELL loss = outcome_pct >= 0
-                losses = sum(
-                    1 for o in recent_resolved
-                    if (o <= 0 if _act == "BUY" else o >= 0)
-                )
+                losses = sum(1 for o in recent_resolved if (o <= 0 if _act == "BUY" else o >= 0))
                 if losses >= 3:
                     base_hours = 72
                 elif losses >= 1:
@@ -354,21 +401,20 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=base_hours)
         result = await db.execute(
             select(Signal)
-            .where(Signal.ticker  == sig_dict["ticker"])
-            .where(Signal.action  == sig_dict["action"])
+            .where(Signal.ticker == sig_dict["ticker"])
+            .where(Signal.action == sig_dict["action"])
             .where(Signal.is_sent == True)
             .where(Signal.sent_at >= cutoff)
             .limit(1)
         )
         if result.scalar_one_or_none():
-            log.info(f" {sig_dict['ticker']} cooldown — already sent "
-                  f"{sig_dict['action']} within {base_hours}h")
+            log.info(f" {sig_dict['ticker']} cooldown — already sent {sig_dict['action']} within {base_hours}h")
             return
 
-    now      = datetime.now()
-    now_et   = datetime.now(_ET)           # New York time for display
-    et_time  = now_et.strftime("%H:%M:%S") # "20:32:07 ET"
-    emoji    = "🟢" if sig_dict["action"] == "BUY" else "🔴"
+    now = datetime.now()
+    now_et = datetime.now(_ET)  # New York time for display
+    et_time = now_et.strftime("%H:%M:%S")  # "20:32:07 ET"
+    emoji = "🟢" if sig_dict["action"] == "BUY" else "🔴"
 
     # ── Broadcast channel (scale path: 1 API call vs N per-user DMs) ──────────
     # When TELEGRAM_BROADCAST_CHANNEL_ID is set, post once to the channel so all
@@ -379,9 +425,12 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
             _url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
             _msg = format_signal(sig_dict)
             async with aiohttp.ClientSession() as _sess:
-                _r = await _sess.post(_url, json={"chat_id": _broadcast_id,
-                                                   "text": _msg, "parse_mode": "Markdown"},
-                                      ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=8))
+                _r = await _sess.post(
+                    _url,
+                    json={"chat_id": _broadcast_id, "text": _msg, "parse_mode": "Markdown"},
+                    ssl=_SSL_CTX,
+                    timeout=aiohttp.ClientTimeout(total=8),
+                )
                 _d = await _r.json()
                 any_sent = bool(_d.get("ok"))
                 if any_sent:
@@ -397,13 +446,15 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
 
     # ── Legacy single-user fallback (settings.telegram_chat_id) ────────────
     success = any_sent
-    detail  = ""
+    detail = ""
     if not any_sent:
         success, detail = await send_telegram(sig_dict)
 
-    log_msg = (f"{'✓' if success else '✗'} {emoji} "
-               f"{sig_dict['action']} {sig_dict['ticker']} @ {sig_dict['price']:.2f} "
-               f"(Conf {sig_dict['confidence']:.0f}%)")
+    log_msg = (
+        f"{'✓' if success else '✗'} {emoji} "
+        f"{sig_dict['action']} {sig_dict['ticker']} @ {sig_dict['price']:.2f} "
+        f"(Conf {sig_dict['confidence']:.0f}%)"
+    )
 
     if success:
         db_row.is_sent = True
@@ -420,14 +471,16 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
                     f"(scan started {sla_baseline.isoformat()}, sent {now.isoformat()})"
                 )
                 try:
-                    asyncio.ensure_future(_alert_sla_breach(
-                        sig_dict['ticker'], sig_dict['action'], latency_s, settings
-                    ))
+                    asyncio.ensure_future(
+                        _alert_sla_breach(sig_dict["ticker"], sig_dict["action"], latency_s, settings)
+                    )
                 except Exception:
                     pass
-        log.info(f" ✓ Telegram sent ({label}) — "
-              f"{sig_dict['action']} {sig_dict['ticker']} @ {sig_dict['price']:.2f} "
-              f"conf {sig_dict['confidence']:.0f}%")
+        log.info(
+            f" ✓ Telegram sent ({label}) — "
+            f"{sig_dict['action']} {sig_dict['ticker']} @ {sig_dict['price']:.2f} "
+            f"conf {sig_dict['confidence']:.0f}%"
+        )
         # Fire web push to all subscribers for high-confidence signals
         if sig_dict["confidence"] >= 70:
             asyncio.create_task(_push_web_notifications(sig_dict, db))
@@ -436,23 +489,32 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
     else:
         log.info(f" ✗ Telegram failed — {sig_dict['ticker']}: {detail}")
 
-    db.add(SendLog(time=et_time,            # ET time
-                   status="sent" if success else "fail",
-                   message=log_msg))
+    db.add(
+        SendLog(
+            time=et_time,  # ET time
+            status="sent" if success else "fail",
+            message=log_msg,
+        )
+    )
 
 
 async def _push_web_notifications(sig_dict: dict, db) -> None:
     """Send web push notifications to all subscribed users for a high-confidence signal."""
     try:
         from models import PushSubscription
+
         from services.push_svc import send_web_push
+
         subs = (await db.execute(select(PushSubscription))).scalars().all()
         if not subs:
             return
         emoji = "🟢" if sig_dict["action"] == "BUY" else "🔴"
         push_payload = {
             "title": f"{emoji} {sig_dict['action']} {sig_dict['ticker']} — {sig_dict['confidence']:.0f}% conf",
-            "body": sig_dict.get("headline", f"Entry ${sig_dict.get('entry', sig_dict['price']):.2f} · Target ${sig_dict.get('target', 0):.2f}"),
+            "body": sig_dict.get(
+                "headline",
+                f"Entry ${sig_dict.get('entry', sig_dict['price']):.2f} · Target ${sig_dict.get('target', 0):.2f}",
+            ),
             "tag": f"signal-{sig_dict['ticker']}-{sig_dict['action']}",
             "url": "/",
         }
@@ -469,19 +531,23 @@ async def _send_webhook_outbound(sig_dict: dict, db) -> None:
     Lets power users route signals to their own order management systems (e.g. TradingView bots).
     """
     try:
-        import hashlib, hmac, json
+        import hashlib
+        import hmac
+        import json
+
         from models import User
         from sqlalchemy import select as _sel
-        users_with_webhook = (await db.execute(
-            _sel(User.webhook_url, User.id)
-            .where(User.webhook_url.isnot(None))
-            .where(User.is_active == True)
-        )).all()
+
+        users_with_webhook = (
+            await db.execute(
+                _sel(User.webhook_url, User.id).where(User.webhook_url.isnot(None)).where(User.is_active == True)
+            )
+        ).all()
         if not users_with_webhook:
             return
 
         payload = json.dumps(sig_dict, default=str).encode()
-        secret  = (get_settings().jwt_secret or "").encode()
+        secret = (get_settings().jwt_secret or "").encode()
         sig_hdr = "sha256=" + hmac.new(secret, payload, hashlib.sha256).hexdigest()
 
         async with aiohttp.ClientSession() as sess:
@@ -489,10 +555,11 @@ async def _send_webhook_outbound(sig_dict: dict, db) -> None:
                 url = row[0]
                 try:
                     async with sess.post(
-                        url, data=payload,
-                        headers={"Content-Type": "application/json",
-                                 "X-Signal-Trade-Signature": sig_hdr},
-                        ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=5)
+                        url,
+                        data=payload,
+                        headers={"Content-Type": "application/json", "X-Signal-Trade-Signature": sig_hdr},
+                        ssl=_SSL_CTX,
+                        timeout=aiohttp.ClientTimeout(total=5),
                     ) as r:
                         log.debug(f"[webhook] user={row[1]} → {url} status={r.status}")
                 except Exception as we:
@@ -514,18 +581,21 @@ async def _compute_adaptive_weights() -> dict:
         import math as _math
 
         async with AsyncSessionLocal() as db:
-            rows = (await db.execute(
-                select(Signal.ticker, Signal.action, Signal.outcome_pct, Signal.outcome_at)
-                .where(Signal.outcome_pct.isnot(None))
-                .where(Signal.is_sent == True)
-                .order_by(Signal.outcome_at.asc())   # chronological — needed for streak calc
-            )).all()
+            rows = (
+                await db.execute(
+                    select(Signal.ticker, Signal.action, Signal.outcome_pct, Signal.outcome_at)
+                    .where(Signal.outcome_pct.isnot(None))
+                    .where(Signal.is_sent == True)
+                    .order_by(Signal.outcome_at.asc())  # chronological — needed for streak calc
+                )
+            ).all()
 
         if not rows:
             return {}
 
         from collections import defaultdict
-        action_buckets:  dict = defaultdict(list)
+
+        action_buckets: dict = defaultdict(list)
         ticker_outcomes: dict = defaultdict(list)  # ticker → [(win_bool, outcome_at)]
 
         for ticker, action, pct, outcome_at in rows:
@@ -546,13 +616,13 @@ async def _compute_adaptive_weights() -> dict:
                 continue
             wr = sum(1 for o in outcomes_raw if (o > 0 if action == "BUY" else o < 0)) / len(outcomes_raw)
             weights[f"{action}_win_rate"] = round(wr, 3)
-            log.info(f" {action} historical win rate: {wr*100:.1f}% ({len(outcomes_raw)} signals)")
+            log.info(f" {action} historical win rate: {wr * 100:.1f}% ({len(outcomes_raw)} signals)")
 
         # Per-ticker win rates (recency-weighted) + loss-streak tracking
-        ticker_win_rates:   dict = {}
+        ticker_win_rates: dict = {}
         ticker_loss_streaks: dict = {}
 
-        _HALFLIFE_DAYS = 60.0   # outcomes from 60 days ago count at half weight
+        _HALFLIFE_DAYS = 60.0  # outcomes from 60 days ago count at half weight
 
         for ticker, entries in ticker_outcomes.items():
             if len(entries) < 3:
@@ -596,9 +666,7 @@ async def _load_db_settings() -> dict:
     """Load persisted UI settings from DB (theme, auto_paper_trade, etc.)."""
     try:
         async with AsyncSessionLocal() as db:
-            row = (await db.execute(
-                select(AppSettings).where(AppSettings.id == 1)
-            )).scalar_one_or_none()
+            row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
             if row and row.data:
                 return row.data
     except Exception:
@@ -608,7 +676,7 @@ async def _load_db_settings() -> dict:
 
 async def _maybe_paper_trade(
     sig_dict: dict,
-    positions_map: dict,   # { symbol_upper: position_dict } from Alpaca
+    positions_map: dict,  # { symbol_upper: position_dict } from Alpaca
     settings,
     db_settings: dict,
 ):
@@ -641,11 +709,11 @@ async def _maybe_paper_trade(
 
     from services import alpaca_rest
 
-    ticker   = sig_dict["ticker"]
-    price    = sig_dict.get("price") or sig_dict.get("entry") or 1
+    ticker = sig_dict["ticker"]
+    price = sig_dict.get("price") or sig_dict.get("entry") or 1
     notional = float(db_settings.get("paper_trade_notional", 1000.0))
-    qty      = max(1, round(notional / price))
-    pos      = positions_map.get(ticker.upper())
+    qty = max(1, round(notional / price))
+    pos = positions_map.get(ticker.upper())
 
     # Guard: check buying power before placing BUY orders
     try:
@@ -653,9 +721,11 @@ async def _maybe_paper_trade(
             acct = await alpaca_rest.get_account(settings.alpaca_api_key, settings.alpaca_api_secret)
             buying_power = float(acct.get("buying_power") or 0)
             if buying_power < notional * 0.5:
-                log.info(f" {ticker} BUY skipped — insufficient buying power "
-                      f"(${buying_power:.0f} available, ${notional:.0f} needed). "
-                      f"Reset your paper account at alpaca.markets.")
+                log.info(
+                    f" {ticker} BUY skipped — insufficient buying power "
+                    f"(${buying_power:.0f} available, ${notional:.0f} needed). "
+                    f"Reset your paper account at alpaca.markets."
+                )
                 return
     except Exception as e:
         log.info(f" account check failed: {e}")
@@ -667,32 +737,39 @@ async def _maybe_paper_trade(
                 log.info(f" {ticker} BUY skipped — already long {pos['qty']} shares")
                 return
             order = await alpaca_rest.place_order(
-                settings.alpaca_api_key, settings.alpaca_api_secret,
-                ticker, qty, "buy",
+                settings.alpaca_api_key,
+                settings.alpaca_api_secret,
+                ticker,
+                qty,
+                "buy",
             )
-            log.info(f" ✓ AUTO BUY  {ticker} {qty}sh @ ~${price:.2f} "
-                  f"| order {order.get('id','?')[:8]} status={order.get('status')}")
+            log.info(
+                f" ✓ AUTO BUY  {ticker} {qty}sh @ ~${price:.2f} "
+                f"| order {order.get('id', '?')[:8]} status={order.get('status')}"
+            )
 
         else:  # SELL
             if pos and pos.get("side") == "long":
-                order = await alpaca_rest.close_position(
-                    settings.alpaca_api_key, settings.alpaca_api_secret, ticker
-                )
+                order = await alpaca_rest.close_position(settings.alpaca_api_key, settings.alpaca_api_secret, ticker)
                 log.info(f" ✓ AUTO CLOSE long {ticker} — SELL signal received")
             else:
                 if pos and pos.get("side") == "short":
                     log.info(f" {ticker} SELL skipped — already short {pos['qty']} shares")
                     return
                 order = await alpaca_rest.place_order(
-                    settings.alpaca_api_key, settings.alpaca_api_secret,
-                    ticker, qty, "sell",
+                    settings.alpaca_api_key,
+                    settings.alpaca_api_secret,
+                    ticker,
+                    qty,
+                    "sell",
                 )
-                log.info(f" ✓ AUTO SELL {ticker} {qty}sh @ ~${price:.2f} "
-                      f"| order {order.get('id','?')[:8]} status={order.get('status')}")
+                log.info(
+                    f" ✓ AUTO SELL {ticker} {qty}sh @ ~${price:.2f} "
+                    f"| order {order.get('id', '?')[:8]} status={order.get('status')}"
+                )
 
     except Exception as e:
         log.info(f" ✗ {ticker} {action} failed: {e}")
-
 
 
 async def _alert_telegram(text: str):
@@ -703,8 +780,12 @@ async def _alert_telegram(text: str):
             return
         url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
         async with aiohttp.ClientSession() as sess:
-            await sess.post(url, json={"chat_id": s.telegram_chat_id, "text": text},
-                            ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=6))
+            await sess.post(
+                url,
+                json={"chat_id": s.telegram_chat_id, "text": text},
+                ssl=_SSL_CTX,
+                timeout=aiohttp.ClientTimeout(total=6),
+            )
     except Exception:
         pass
 
@@ -761,18 +842,27 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── Core macro / sentiment signals (concurrent) ───────────────────────────
     try:
         fg, macro, pc, breadth, aaii, cot = await asyncio.gather(
-            get_fear_greed(), get_macro_context(), get_put_call_ratio(), get_market_breadth(),
-            get_aaii_sentiment(), get_cot_signal()
+            get_fear_greed(),
+            get_macro_context(),
+            get_put_call_ratio(),
+            get_market_breadth(),
+            get_aaii_sentiment(),
+            get_cot_signal(),
         )
-        market_ctx.update({"fear_greed": fg, "macro": macro, "put_call": pc,
-                           "breadth": breadth, "aaii": aaii, "cot": cot})
-        fg_label   = fg["label"] if fg else "unknown"
+        market_ctx.update(
+            {"fear_greed": fg, "macro": macro, "put_call": pc, "breadth": breadth, "aaii": aaii, "cot": cot}
+        )
+        fg_label = fg["label"] if fg else "unknown"
         breadth_str = f"{breadth['pct_above_200d']:.0f}% >200d" if breadth else "?"
-        aaii_str    = f"AAII {aaii['spread']:+.0f}% ({aaii['signal']})" if aaii and aaii.get("spread") is not None else "AAII N/A"
-        log.info(f" F&G = {fg['score'] if fg else '?'} ({fg_label}) | "
-                 f"VIX = {macro.get('vix', '?') if macro else '?'} | "
-                 f"Macro score = {macro.get('macro_score', 0) if macro else 0} | "
-                 f"Breadth = {breadth_str} | {aaii_str}")
+        aaii_str = (
+            f"AAII {aaii['spread']:+.0f}% ({aaii['signal']})" if aaii and aaii.get("spread") is not None else "AAII N/A"
+        )
+        log.info(
+            f" F&G = {fg['score'] if fg else '?'} ({fg_label}) | "
+            f"VIX = {macro.get('vix', '?') if macro else '?'} | "
+            f"Macro score = {macro.get('macro_score', 0) if macro else 0} | "
+            f"Breadth = {breadth_str} | {aaii_str}"
+        )
     except Exception as e:
         log.info(f" market context failed: {e}")
 
@@ -783,6 +873,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
 
     try:
         from services.calibration import load_calibration
+
         market_ctx["calibration_map"] = load_calibration()
     except Exception:
         pass
@@ -790,17 +881,21 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── HMM Macro Regime (cached 1h) ─────────────────────────────────────────
     try:
         from services.macro_regime import get_macro_regime
+
         regime_data = await get_macro_regime()
         market_ctx["hmm_regime"] = regime_data
-        log.info(f" HMM regime: {regime_data.get('regime','?')} "
-                 f"bull={regime_data.get('bull_prob',0):.0%} "
-                 f"trans_risk={regime_data.get('transition_risk',0):.0%}")
+        log.info(
+            f" HMM regime: {regime_data.get('regime', '?')} "
+            f"bull={regime_data.get('bull_prob', 0):.0%} "
+            f"trans_risk={regime_data.get('transition_risk', 0):.0%}"
+        )
     except Exception as e:
         log.debug(f" HMM regime failed (non-critical): {e}")
 
     # ── Supply Chain signals (cached 4h) ─────────────────────────────────────
     try:
         from services.supply_chain import get_supply_chain_signals
+
         market_ctx["supply_chain"] = await get_supply_chain_signals()
     except Exception as e:
         log.debug(f" Supply chain data failed (non-critical): {e}")
@@ -808,6 +903,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── 13F institutional flow (quarterly, cached 6h) ────────────────────────
     try:
         from services.institutional import get_institutional_signals
+
         inst_list = await get_institutional_signals(settings.tickers)
         market_ctx["institutional_signals"] = {s["ticker"]: s for s in inst_list}
         if inst_list:
@@ -818,6 +914,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── Dark Pool Block Prints (cached 1h) ───────────────────────────────────
     try:
         from services.dark_pool import get_dark_pool_flow
+
         market_ctx["dark_pool"] = await get_dark_pool_flow(settings.tickers)
     except Exception as e:
         log.debug(f" Dark pool fetch failed (non-critical): {e}")
@@ -825,6 +922,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── Corporate Events (cached 4h) ─────────────────────────────────────────
     try:
         from services.corporate_events import get_corporate_events
+
         corp_events = await get_corporate_events()
         market_ctx["corporate_events"] = corp_events
         n_ev = len(corp_events.get("events", []))
@@ -836,6 +934,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── ETF Fund Flows (cached 4h) ───────────────────────────────────────────
     try:
         from services.etf_flows import get_etf_flows
+
         market_ctx["etf_flows"] = await get_etf_flows()
     except Exception as e:
         log.debug(f" ETF flows fetch failed (non-critical): {e}")
@@ -843,6 +942,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── Economy data from Massive (cached 1h) ────────────────────────────────
     try:
         from services.massive_economy import get_economy_data
+
         eco = await get_economy_data()
         if eco:
             market_ctx["massive_economy"] = eco
@@ -852,6 +952,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── ETF Constituents preload (cached 24h) ────────────────────────────────
     try:
         from services.etf_constituents import preload_all
+
         await preload_all()
     except Exception as e:
         log.debug(f" ETF constituents preload failed (non-critical): {e}")
@@ -861,16 +962,15 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
         try:
             from services import alpaca_rest
             from services.sector import SECTOR_MAP as SECTOR_ETF_MAP
-            positions_list = await alpaca_rest.get_positions(
-                settings.alpaca_api_key, settings.alpaca_api_secret
-            )
+
+            positions_list = await alpaca_rest.get_positions(settings.alpaca_api_key, settings.alpaca_api_secret)
             if positions_list:
                 total_mv = sum(abs(float(p.get("market_value") or 0)) for p in positions_list)
                 sector_exposure: dict[str, float] = {}
                 if total_mv > 0:
                     for p in positions_list:
                         sym = p.get("symbol", "").upper()
-                        mv  = abs(float(p.get("market_value") or 0))
+                        mv = abs(float(p.get("market_value") or 0))
                         etf = SECTOR_ETF_MAP.get(sym)
                         if etf:
                             sector_exposure[etf] = sector_exposure.get(etf, 0) + mv / total_mv * 100
@@ -881,14 +981,14 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
                 }
                 log.info(
                     f" Portfolio: {len(positions_list)} open positions, "
-                    f"sector exposure: {', '.join(f'{k} {v:.0f}%' for k,v in sector_exposure.items())}"
+                    f"sector exposure: {', '.join(f'{k} {v:.0f}%' for k, v in sector_exposure.items())}"
                 )
                 if len(positions_list) >= 3:
                     try:
                         from services.pca_risk import compute_pca_risk
+
                         pos_values = {
-                            p.get("symbol", "").upper(): abs(float(p.get("market_value") or 0))
-                            for p in positions_list
+                            p.get("symbol", "").upper(): abs(float(p.get("market_value") or 0)) for p in positions_list
                         }
                         pca_result = await compute_pca_risk(pos_values)
                         if pca_result:
@@ -907,6 +1007,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── Cointegration / pairs trading signals (cached 2h) ────────────────────
     try:
         from services.cointegration import get_pairs_signals
+
         pairs_signals = await get_pairs_signals(settings.tickers)
         market_ctx["pairs_signals"] = pairs_signals
         if pairs_signals:
@@ -926,6 +1027,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
 
     try:
         from services.factor_miner import load_factor_weights
+
         fw = load_factor_weights()
         if fw and not fw.get("skipped"):
             market_ctx["factor_weights"] = fw
@@ -937,21 +1039,28 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     try:
         async with AsyncSessionLocal() as db:
             from sqlalchemy import text as _sa_text
-            _ratio_row = (await db.execute(_sa_text("""
+
+            _ratio_row = (
+                await db.execute(
+                    _sa_text("""
                 SELECT
                     SUM(CASE WHEN action='BUY'  THEN 1 ELSE 0 END) AS buys,
                     SUM(CASE WHEN action='SELL' THEN 1 ELSE 0 END) AS sells
                 FROM signals
                 WHERE date(created_at) >= date('now', '-7 days')
                   AND action IN ('BUY', 'SELL')
-            """))).fetchone()
-        _buys  = _ratio_row[0] or 0
+            """)
+                )
+            ).fetchone()
+        _buys = _ratio_row[0] or 0
         _sells = _ratio_row[1] or 1
         _buy_sell_ratio = round(_buys / _sells, 2)
         market_ctx["buy_sell_ratio"] = _buy_sell_ratio
-        market_ctx["buy_saturated"]  = _buy_sell_ratio > 4.0
+        market_ctx["buy_saturated"] = _buy_sell_ratio > 4.0
         if _buy_sell_ratio > 4.0:
-            log.info(f" BUY:SELL circuit breaker ACTIVE — 7d ratio {_buy_sell_ratio:.1f}:1 (>4.0 threshold). BUY threshold raised to 42.")
+            log.info(
+                f" BUY:SELL circuit breaker ACTIVE — 7d ratio {_buy_sell_ratio:.1f}:1 (>4.0 threshold). BUY threshold raised to 42."
+            )
         else:
             log.info(f" BUY:SELL ratio (7d): {_buy_sell_ratio:.1f}:1 — within normal range.")
     except Exception as e:
@@ -961,6 +1070,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     # ── News batch prefetch ───────────────────────────────────────────────────
     try:
         from services.benzinga_news import prefetch_news_batch
+
         await prefetch_news_batch(tickers)
     except Exception as e:
         log.debug(f" news batch prefetch failed (non-critical): {e}")
@@ -978,6 +1088,7 @@ async def run_scan(broadcast_fn=None):
     lock_token = None
     try:
         from services.redis_cache import cache_acquire_lock
+
         lock_token = await cache_acquire_lock("lock:scanner:run", ttl=900)
         if not lock_token:
             _scan_status["skipped_overlaps"] += 1
@@ -988,14 +1099,16 @@ async def run_scan(broadcast_fn=None):
 
     async with _scan_lock:
         started = monotonic()
-        _scan_status.update({
-            "state": "running",
-            "running": True,
-            "last_started_at": _utc_iso(),
-            "last_finished_at": None,
-            "last_error": None,
-            "last_duration_s": None,
-        })
+        _scan_status.update(
+            {
+                "state": "running",
+                "running": True,
+                "last_started_at": _utc_iso(),
+                "last_finished_at": None,
+                "last_error": None,
+                "last_duration_s": None,
+            }
+        )
         _scan_status["runs"] += 1
         _mark_scan_stage("start")
         try:
@@ -1016,6 +1129,7 @@ async def run_scan(broadcast_fn=None):
             if lock_token:
                 try:
                     from services.redis_cache import cache_release_lock
+
                     await cache_release_lock("lock:scanner:run", lock_token)
                 except Exception:
                     pass
@@ -1031,30 +1145,34 @@ async def _precompute_analytics() -> None:
     """
     global _last_analytics_compute
     import time as _t
+
     now = _t.monotonic()
     if now - _last_analytics_compute < _ANALYTICS_COMPUTE_INTERVAL:
         return
     _last_analytics_compute = now
 
     try:
-        from services.redis_cache import cache_set
-        from sqlalchemy import select, func, case
         from models import Signal
+        from sqlalchemy import case, func, select
+
+        from services.redis_cache import cache_set
 
         async with AsyncSessionLocal() as db:
-            rows = (await db.execute(
-                select(
-                    Signal.action,
-                    func.count(Signal.id).label("n"),
-                    func.avg(Signal.outcome_pct).label("avg_ret"),
-                    func.sum(
-                        case((Signal.outcome_pct > 0, 1), else_=0)
-                    ).label("wins"),
-                ).where(
-                    Signal.outcome_pct.isnot(None),
-                    Signal.action.in_(["BUY", "SELL"]),
-                ).group_by(Signal.action)
-            )).all()
+            rows = (
+                await db.execute(
+                    select(
+                        Signal.action,
+                        func.count(Signal.id).label("n"),
+                        func.avg(Signal.outcome_pct).label("avg_ret"),
+                        func.sum(case((Signal.outcome_pct > 0, 1), else_=0)).label("wins"),
+                    )
+                    .where(
+                        Signal.outcome_pct.isnot(None),
+                        Signal.action.in_(["BUY", "SELL"]),
+                    )
+                    .group_by(Signal.action)
+                )
+            ).all()
 
         if not rows:
             return
@@ -1062,13 +1180,16 @@ async def _precompute_analytics() -> None:
         total_n = sum(r.n for r in rows)
         total_wins = sum(r.wins for r in rows)
         summary = {
-            "resolved":   total_n,
-            "win_rate":   round(total_wins / total_n * 100, 1) if total_n else None,
+            "resolved": total_n,
+            "win_rate": round(total_wins / total_n * 100, 1) if total_n else None,
             "avg_return": round(sum(r.avg_ret * r.n for r in rows) / total_n, 3) if total_n else None,
-            "by_action":  [
-                {"action": r.action, "count": r.n,
-                 "win_rate": round(r.wins / r.n * 100, 1) if r.n else None,
-                 "avg_return": round(r.avg_ret, 3) if r.avg_ret is not None else None}
+            "by_action": [
+                {
+                    "action": r.action,
+                    "count": r.n,
+                    "win_rate": round(r.wins / r.n * 100, 1) if r.n else None,
+                    "avg_return": round(r.avg_ret, 3) if r.avg_ret is not None else None,
+                }
                 for r in rows
             ],
             "computed_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z",
@@ -1100,7 +1221,7 @@ async def _persist_scan_signals(
         refreshed_unsent — list of (sig_dict, Signal row, force_resend) for
                            in-place refreshes where the signal was never sent
     """
-    new_signals:      list[tuple[dict, Signal, bool]] = []
+    new_signals: list[tuple[dict, Signal, bool]] = []
     refreshed_unsent: list[tuple[dict, Signal, bool]] = []
 
     async with AsyncSessionLocal() as db:
@@ -1116,38 +1237,42 @@ async def _persist_scan_signals(
             force_resend = False
 
             if existing and existing.created_at and existing.created_at >= today_start:
-                conf_delta        = abs(sig["confidence"] - (existing.confidence or 0))
+                conf_delta = abs(sig["confidence"] - (existing.confidence or 0))
                 direction_changed = existing.action != sig["action"]
 
                 if not direction_changed and conf_delta < _CONF_CHANGE_THRESHOLD:
-                    existing.price              = sig["price"]
-                    existing.change             = sig["change"]
-                    existing.change_pct         = sig["changePct"]
-                    existing.confidence         = sig["confidence"]
+                    existing.price = sig["price"]
+                    existing.change = sig["change"]
+                    existing.change_pct = sig["changePct"]
+                    existing.confidence = sig["confidence"]
                     existing.confidence_warning = bool(sig.get("confidence_warning", False))
-                    existing.rationale          = sig["rationale"]
-                    existing.sources            = sig["sources"]
-                    existing.headline           = sig["headline"]
-                    existing.plain_english      = sig.get("plain_english")
-                    existing.session            = sig.get("session")
-                    existing.days_to_earnings   = sig.get("daysToEarnings")
+                    existing.rationale = sig["rationale"]
+                    existing.sources = sig["sources"]
+                    existing.headline = sig["headline"]
+                    existing.plain_english = sig.get("plain_english")
+                    existing.session = sig.get("session")
+                    existing.days_to_earnings = sig.get("daysToEarnings")
                     existing.next_earnings_date = sig.get("nextEarningsDate")
-                    existing.sector_etf         = sig.get("sectorEtf")
-                    existing.rs_vs_sector       = sig.get("rsVsSector")
-                    existing.style              = sig.get("style", existing.style)
+                    existing.sector_etf = sig.get("sectorEtf")
+                    existing.rs_vs_sector = sig.get("rsVsSector")
+                    existing.style = sig.get("style", existing.style)
                     if not existing.is_sent:
                         refreshed_unsent.append((sig, existing, False))
                     continue
 
                 if direction_changed:
                     force_resend = True
-                    log.info(f" {sig['ticker']} direction flip "
-                             f"{existing.action}→{sig['action']} "
-                             f"(conf {existing.confidence:.0f}%→{sig['confidence']:.0f}%)")
+                    log.info(
+                        f" {sig['ticker']} direction flip "
+                        f"{existing.action}→{sig['action']} "
+                        f"(conf {existing.confidence:.0f}%→{sig['confidence']:.0f}%)"
+                    )
                 else:
-                    log.info(f" {sig['ticker']} confidence surge "
-                             f"{existing.confidence:.0f}%→{sig['confidence']:.0f}% "
-                             f"(Δ{conf_delta:.0f}pp)")
+                    log.info(
+                        f" {sig['ticker']} confidence surge "
+                        f"{existing.confidence:.0f}%→{sig['confidence']:.0f}% "
+                        f"(Δ{conf_delta:.0f}pp)"
+                    )
 
             await db.execute(
                 update(Signal)
@@ -1157,7 +1282,7 @@ async def _persist_scan_signals(
             )
 
             _now_et = datetime.now(_ET)
-            _style  = sig.get("style", "swing")
+            _style = sig.get("style", "swing")
             if _style == "intraday":
                 _close_et = _now_et.replace(hour=16, minute=5, second=0, microsecond=0)
                 if _now_et >= _close_et:
@@ -1173,30 +1298,30 @@ async def _persist_scan_signals(
                 _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=_swing_hold)
 
             row = Signal(
-                ticker     = sig["ticker"],
-                company    = sig.get("company"),
-                action     = sig["action"],
-                confidence = sig["confidence"],
-                confidence_warning = bool(sig.get("confidence_warning", False)),
-                price      = sig["price"],
-                change     = sig["change"],
-                change_pct = sig["changePct"],
-                entry      = sig.get("entry"),
-                stop       = sig.get("stop"),
-                target     = sig.get("target"),
-                rr         = sig.get("rr"),
-                headline   = sig["headline"],
-                sentiment  = sig.get("sentiment", 0),
-                style      = sig.get("style", "swing"),
-                sources    = sig.get("sources", []),
-                rationale  = sig.get("rationale", []),
-                plain_english      = sig.get("plain_english"),
-                session            = sig.get("session"),
-                days_to_earnings   = sig.get("daysToEarnings"),
-                next_earnings_date = sig.get("nextEarningsDate"),
-                sector_etf         = sig.get("sectorEtf"),
-                rs_vs_sector       = sig.get("rsVsSector"),
-                expires_at         = _expires,
+                ticker=sig["ticker"],
+                company=sig.get("company"),
+                action=sig["action"],
+                confidence=sig["confidence"],
+                confidence_warning=bool(sig.get("confidence_warning", False)),
+                price=sig["price"],
+                change=sig["change"],
+                change_pct=sig["changePct"],
+                entry=sig.get("entry"),
+                stop=sig.get("stop"),
+                target=sig.get("target"),
+                rr=sig.get("rr"),
+                headline=sig["headline"],
+                sentiment=sig.get("sentiment", 0),
+                style=sig.get("style", "swing"),
+                sources=sig.get("sources", []),
+                rationale=sig.get("rationale", []),
+                plain_english=sig.get("plain_english"),
+                session=sig.get("session"),
+                days_to_earnings=sig.get("daysToEarnings"),
+                next_earnings_date=sig.get("nextEarningsDate"),
+                sector_etf=sig.get("sectorEtf"),
+                rs_vs_sector=sig.get("rsVsSector"),
+                expires_at=_expires,
             )
             db.add(row)
             new_signals.append((sig, row, force_resend))
@@ -1225,7 +1350,7 @@ async def _deliver_scan_signals(
             seen: set = set()
             candidates = []
             new_set = {id(row) for _, row, _ in new_signals}
-            for sig, row, force in (new_signals + refreshed_unsent):
+            for sig, row, force in new_signals + refreshed_unsent:
                 key = (sig["ticker"], sig["action"])
                 if key not in seen:
                     seen.add(key)
@@ -1234,14 +1359,15 @@ async def _deliver_scan_signals(
 
             for sig, row, label, force in candidates:
                 merged = await db.merge(row)
-                await _maybe_send(sig, merged, settings, db, label, force_resend=force,
-                                  scan_started_at=scan_cycle_started_at)
+                await _maybe_send(
+                    sig, merged, settings, db, label, force_resend=force, scan_started_at=scan_cycle_started_at
+                )
                 await _maybe_paper_trade(sig, positions_map, settings, db_settings)
 
             await db.commit()
     elif db_settings.get("auto_paper_trade"):
         seen: set = set()
-        for sig, row, _force in (new_signals + refreshed_unsent):
+        for sig, row, _force in new_signals + refreshed_unsent:
             key = (sig["ticker"], sig["action"])
             if key not in seen:
                 seen.add(key)
@@ -1260,21 +1386,25 @@ async def eod_batch_send() -> None:
     if not settings.auto_send_notifications:
         return
 
-    today_start = datetime.now(_ET).replace(
-        tzinfo=None, hour=0, minute=0, second=0, microsecond=0
-    )
+    today_start = datetime.now(_ET).replace(tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
 
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(
-            select(Signal)
-            .where(
-                Signal.is_active == True,
-                Signal.is_sent   == False,
-                Signal.action.in_(["BUY", "SELL"]),
-                Signal.created_at >= today_start,
+        rows = (
+            (
+                await db.execute(
+                    select(Signal)
+                    .where(
+                        Signal.is_active == True,
+                        Signal.is_sent == False,
+                        Signal.action.in_(["BUY", "SELL"]),
+                        Signal.created_at >= today_start,
+                    )
+                    .order_by(Signal.confidence.desc())
+                )
             )
-            .order_by(Signal.confidence.desc())
-        )).scalars().all()
+            .scalars()
+            .all()
+        )
 
     if not rows:
         log.info("[eod_batch] no unsent BUY/SELL signals today — nothing to send")
@@ -1287,25 +1417,28 @@ async def eod_batch_send() -> None:
     async with AsyncSessionLocal() as db:
         for row in rows:
             sig_dict = {
-                "ticker":         row.ticker,
-                "company":        row.company or row.ticker,
-                "action":         row.action,
-                "confidence":     row.confidence,
-                "price":          row.price,
-                "entry":          row.entry,
-                "stop":           row.stop,
-                "target":         row.target,
-                "rr":             row.rr or "—",
-                "headline":       row.headline or "",
-                "style":          row.style or "swing",
-                "sources":        row.sources or [],
-                "rationale":      row.rationale or [],
-                "sectorEtf":      row.sector_etf,
+                "ticker": row.ticker,
+                "company": row.company or row.ticker,
+                "action": row.action,
+                "confidence": row.confidence,
+                "price": row.price,
+                "entry": row.entry,
+                "stop": row.stop,
+                "target": row.target,
+                "rr": row.rr or "—",
+                "headline": row.headline or "",
+                "style": row.style or "swing",
+                "sources": row.sources or [],
+                "rationale": row.rationale or [],
+                "sectorEtf": row.sector_etf,
                 "daysToEarnings": row.days_to_earnings,
             }
             merged = await db.merge(row)
             await _maybe_send(
-                sig_dict, merged, settings, db,
+                sig_dict,
+                merged,
+                settings,
+                db,
                 label="eod_batch",
                 bypass_market_hours=True,
                 scan_started_at=batch_started_at,
@@ -1335,7 +1468,7 @@ async def _run_scan_impl(broadcast_fn=None):
     """
     scan_cycle_started_at = datetime.now(timezone.utc).replace(tzinfo=None)  # used for SLA measurement
     settings = get_settings()
-    tickers  = await _get_scan_tickers(settings)
+    tickers = await _get_scan_tickers(settings)
     _mark_scan_stage("load_tickers")
 
     # Clear stale data-quality counters at the start of each cycle
@@ -1367,10 +1500,20 @@ async def _run_scan_impl(broadcast_fn=None):
         _alert_msg = f"⚠️ Data quality alert: {len(_bad_tickers)} ticker(s) have ≥5 consecutive null fetches: {', '.join(_bad_tickers[:10])}"
         log.warning(_alert_msg)
         try:
-            await send_telegram({"action": "DATA_ALERT", "ticker": "SYSTEM",
-                                 "confidence": 0, "headline": _alert_msg,
-                                 "price": 0, "sentiment": 0, "style": "swing",
-                                 "sources": [], "rationale": [], "ts": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"})
+            await send_telegram(
+                {
+                    "action": "DATA_ALERT",
+                    "ticker": "SYSTEM",
+                    "confidence": 0,
+                    "headline": _alert_msg,
+                    "price": 0,
+                    "sentiment": 0,
+                    "style": "swing",
+                    "sources": [],
+                    "rationale": [],
+                    "ts": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z",
+                }
+            )
         except Exception:
             pass
 
@@ -1389,11 +1532,17 @@ async def _run_scan_impl(broadcast_fn=None):
     # signal already exists — saves significant time on quiet days.
     try:
         async with AsyncSessionLocal() as db:
-            recent_sigs = (await db.execute(
-                select(Signal.ticker)
-                .where(Signal.is_active == True)
-                .where(Signal.created_at >= stale_cutoff)  # same 8h window
-            )).scalars().all()
+            recent_sigs = (
+                (
+                    await db.execute(
+                        select(Signal.ticker)
+                        .where(Signal.is_active == True)
+                        .where(Signal.created_at >= stale_cutoff)  # same 8h window
+                    )
+                )
+                .scalars()
+                .all()
+            )
         recent_set = set(recent_sigs)
 
         tickers_needing_info = []
@@ -1409,8 +1558,10 @@ async def _run_scan_impl(broadcast_fn=None):
         for t in tickers:
             if t not in infos:
                 infos[t] = {}
-        log.info(f" info fetch: {len(tickers_needing_info)}/{len(tickers)} tickers "
-              f"({len(tickers) - len(tickers_needing_info)} skipped — stable)")
+        log.info(
+            f" info fetch: {len(tickers_needing_info)}/{len(tickers)} tickers "
+            f"({len(tickers) - len(tickers_needing_info)} skipped — stable)"
+        )
     except Exception as e:
         log.info(f" info fetch failed: {e}")
         infos = {}
@@ -1422,11 +1573,15 @@ async def _run_scan_impl(broadcast_fn=None):
     _two_hr_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=_DIFF_SIGNAL_MAX_AGE_H)
     try:
         async with AsyncSessionLocal() as _diff_db:
-            _recent_sig_tickers = set((await _diff_db.execute(
-                select(Signal.ticker)
-                .where(Signal.is_active == True)
-                .where(Signal.created_at >= _two_hr_ago)
-            )).scalars().all())
+            _recent_sig_tickers = set(
+                (
+                    await _diff_db.execute(
+                        select(Signal.ticker).where(Signal.is_active == True).where(Signal.created_at >= _two_hr_ago)
+                    )
+                )
+                .scalars()
+                .all()
+            )
     except Exception:
         _recent_sig_tickers = set()
 
@@ -1447,7 +1602,7 @@ async def _run_scan_impl(broadcast_fn=None):
         if h is not None and len(h) >= 5:
             try:
                 today_vol = float(h["Volume"].iloc[-1])
-                avg_vol   = float(h["Volume"].iloc[-21:-1].mean())
+                avg_vol = float(h["Volume"].iloc[-21:-1].mean())
                 if avg_vol > 0:
                     vol_ratio = today_vol / avg_vol
             except Exception:
@@ -1457,9 +1612,11 @@ async def _run_scan_impl(broadcast_fn=None):
 
     active_tickers = [t for t in tickers if t not in stable_tickers]
     if stable_tickers:
-        log.info(f" differential scan: {len(stable_tickers)} tickers skipped "
-                 f"(stable <{_DIFF_PRICE_THRESHOLD}% move, vol <{_DIFF_VOL_THRESHOLD}×) "
-                 f"| {len(active_tickers)} active")
+        log.info(
+            f" differential scan: {len(stable_tickers)} tickers skipped "
+            f"(stable <{_DIFF_PRICE_THRESHOLD}% move, vol <{_DIFF_VOL_THRESHOLD}×) "
+            f"| {len(active_tickers)} active"
+        )
         # Bulk-update price for stable tickers (no new signal row, no re-send)
         try:
             async with AsyncSessionLocal() as _su_db:
@@ -1497,9 +1654,7 @@ async def _run_scan_impl(broadcast_fn=None):
 
     # ── Step 6: persist (smart daily deduplication) ──────────────────────
     _mark_scan_stage("persistence")
-    new_signals, refreshed_unsent = await _persist_scan_signals(
-        signals, _today_start_utc()
-    )
+    new_signals, refreshed_unsent = await _persist_scan_signals(signals, _today_start_utc())
 
     # ── Step 7: auto-send + auto paper trade ────────────────────────────
     _mark_scan_stage("delivery")
@@ -1509,16 +1664,14 @@ async def _run_scan_impl(broadcast_fn=None):
     if db_settings.get("auto_paper_trade") and settings.alpaca_api_key:
         try:
             from services import alpaca_rest
-            positions_list = await alpaca_rest.get_positions(
-                settings.alpaca_api_key, settings.alpaca_api_secret
-            )
+
+            positions_list = await alpaca_rest.get_positions(settings.alpaca_api_key, settings.alpaca_api_secret)
             positions_map = {p["symbol"].upper(): p for p in positions_list}
         except Exception as e:
             log.info(f" positions fetch failed: {e}")
 
     await _deliver_scan_signals(
-        new_signals, refreshed_unsent, settings, db_settings,
-        positions_map, scan_cycle_started_at
+        new_signals, refreshed_unsent, settings, db_settings, positions_map, scan_cycle_started_at
     )
 
     # ── Step 8: update outcomes ──────────────────────────────────────────
@@ -1533,6 +1686,7 @@ async def _run_scan_impl(broadcast_fn=None):
     # Crossing a user's target price fires Telegram + Discord notification.
     try:
         from services.alert_evaluator import evaluate_price_alerts
+
         async with AsyncSessionLocal() as db:
             await evaluate_price_alerts(db)
     except Exception as e:
@@ -1550,10 +1704,12 @@ async def _run_scan_impl(broadcast_fn=None):
         if market_ctx:
             await broadcast_fn({"type": "market_context", "data": market_ctx})
 
-    log.info(f" {datetime.now().strftime('%H:%M:%S')} — "
-          f"scanned {len(tickers)} tickers, {len(new_signals)} new, "
-          f"{len(signals) - len(new_signals)} refreshed "
-          f"({len(refreshed_unsent)} unsent queued)")
+    log.info(
+        f" {datetime.now().strftime('%H:%M:%S')} — "
+        f"scanned {len(tickers)} tickers, {len(new_signals)} new, "
+        f"{len(signals) - len(new_signals)} refreshed "
+        f"({len(refreshed_unsent)} unsent queued)"
+    )
 
     # ── Step 11: analytics pre-computation ──────────────────────────────
     _mark_scan_stage("analytics")

@@ -33,30 +33,38 @@ Usage:
     cd backend
     python scripts/run_section35.py 2>&1 | tee /tmp/decomp_s35.log
 """
+
 from __future__ import annotations
+
 import math
 import os
-import sys
 import subprocess
+import sys
 import warnings
 
 warnings.filterwarnings("ignore")
 
-_HERE   = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__))
 _PARENT = os.path.dirname(_HERE)
 for _p in [_PARENT, _HERE]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import numpy as np
 import pandas as pd
 import yfinance as yf
-
 from backtest_technicals import (
-    TICKERS, START, END, HOLD_DAYS,
-    compute_indicators, compute_scores,
-    simulate_ticker, stats, fmt_sharpe, print_table,
-    fetch_spy_trend, fetch_stlfsi4,
+    END,
+    HOLD_DAYS,
+    START,
+    TICKERS,
+    compute_indicators,
+    compute_scores,
+    fetch_spy_trend,
+    fetch_stlfsi4,
+    fmt_sharpe,
+    print_table,
+    simulate_ticker,
+    stats,
 )
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
@@ -71,53 +79,53 @@ OOS_WINDOWS = [
 ]
 
 PASS_SHARPE = 1.0
-PASS_N_MIN  = 5
+PASS_N_MIN = 5
 
 # §19 reference for comparison column
 _S19 = {
     "2016–2017": (13, 0.94),
     "2018–2019": (20, 1.18),
     "2020–2021": (26, 0.74),
-    "2022–2023": (8,  0.97),
-    "2024–2025": (9,  0.11),
+    "2022–2023": (8, 0.97),
+    "2024–2025": (9, 0.11),
 }
 _S20 = {
     "2016–2017": (13, 2.69),
     "2018–2019": (16, 0.74),
     "2020–2021": (37, 2.10),
     "2022–2023": (13, 0.61),
-    "2024–2025": (6,  0.01),
+    "2024–2025": (6, 0.01),
 }
 
 
 def _ann_sharpe(sv: dict, n_years: float) -> float:
     sh = sv.get("sharpe") or 0.0
-    n  = sv.get("n")      or 0
+    n = sv.get("n") or 0
     if n < 2:
         return float("nan")
     return round(sh * math.sqrt(n / n_years), 2)
 
 
 def _section(title: str) -> None:
-    print(f"\n{'═'*65}")
+    print(f"\n{'═' * 65}")
     print(f"  {title}")
-    print(f"{'═'*65}\n")
+    print(f"{'═' * 65}\n")
 
 
 # ── Market data helpers ───────────────────────────────────────────────────────
 
+
 def _fetch_alt_data() -> tuple[dict, dict, dict]:
     print("Fetching VIX…", end=" ", flush=True)
     try:
-        v = yf.download("^VIX", start=START, end=END, interval="1d",
-                        auto_adjust=False, progress=False)
+        v = yf.download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
         if isinstance(v.columns, pd.MultiIndex):
             v.columns = v.columns.get_level_values(0)
-        vix = {pd.Timestamp(str(k)[:10]): float(val)
-               for k, val in v["Close"].items() if pd.notna(val)}
+        vix = {pd.Timestamp(str(k)[:10]): float(val) for k, val in v["Close"].items() if pd.notna(val)}
         print(f"ok ({len(vix)} bars)")
     except Exception as e:
-        vix = {}; print(f"failed ({e})")
+        vix = {}
+        print(f"failed ({e})")
 
     print("Fetching SPY trend…", end=" ", flush=True)
     spy = fetch_spy_trend(START, END)
@@ -132,14 +140,12 @@ def _fetch_alt_data() -> tuple[dict, dict, dict]:
 
 def _prep_tickers(vix, spy, stlfsi4) -> dict[str, pd.DataFrame]:
     print(f"\nDownloading {len(TICKERS)} tickers (batch)…", flush=True)
-    raw_all = yf.download(TICKERS, start=START, end=END,
-                          auto_adjust=True, progress=False, threads=True)
+    raw_all = yf.download(TICKERS, start=START, end=END, auto_adjust=True, progress=False, threads=True)
     prepped: dict[str, pd.DataFrame] = {}
     for tkr in TICKERS:
         try:
             if isinstance(raw_all.columns, pd.MultiIndex):
-                df = raw_all.xs(tkr, axis=1, level=1)[
-                    ["Open", "High", "Low", "Close", "Volume"]].copy()
+                df = raw_all.xs(tkr, axis=1, level=1)[["Open", "High", "Low", "Close", "Volume"]].copy()
             else:
                 df = raw_all[["Open", "High", "Low", "Close", "Volume"]].copy()
             df = df.ffill().dropna(subset=["Close", "Volume"])
@@ -159,14 +165,13 @@ def _prep_tickers(vix, spy, stlfsi4) -> dict[str, pd.DataFrame]:
     return prepped
 
 
-def _run_oos_window(prepped, vix_full, spy_full, stlfsi4_full,
-                    oos_start, oos_end, params: dict) -> dict:
+def _run_oos_window(prepped, vix_full, spy_full, stlfsi4_full, oos_start, oos_end, params: dict) -> dict:
     ts_start = pd.Timestamp(oos_start)
-    ts_end   = pd.Timestamp(oos_end)
-    n_years  = (ts_end - ts_start).days / 365.25
-    vix_w    = {k: v for k, v in vix_full.items()    if ts_start <= k <= ts_end}
-    spy_w    = {k: v for k, v in spy_full.items()    if ts_start <= k <= ts_end}
-    st_w     = {k: v for k, v in stlfsi4_full.items()if ts_start <= k <= ts_end}
+    ts_end = pd.Timestamp(oos_end)
+    n_years = (ts_end - ts_start).days / 365.25
+    vix_w = {k: v for k, v in vix_full.items() if ts_start <= k <= ts_end}
+    spy_w = {k: v for k, v in spy_full.items() if ts_start <= k <= ts_end}
+    st_w = {k: v for k, v in stlfsi4_full.items() if ts_start <= k <= ts_end}
 
     all_net: list[float] = []
     for tkr, full_df in prepped.items():
@@ -181,42 +186,55 @@ def _run_oos_window(prepped, vix_full, spy_full, stlfsi4_full,
             pass
 
     if not all_net:
-        return {"window": f"{oos_start[:4]}–{oos_end[:4]}", "n": 0,
-                "wr": 0, "avg": 0, "ann_sharpe": float("nan"), "passed": False}
+        return {
+            "window": f"{oos_start[:4]}–{oos_end[:4]}",
+            "n": 0,
+            "wr": 0,
+            "avg": 0,
+            "ann_sharpe": float("nan"),
+            "passed": False,
+        }
 
     sv = stats(all_net)
     ann_sh = _ann_sharpe(sv, n_years)
     passed = sv.get("n", 0) >= PASS_N_MIN and not math.isnan(ann_sh) and ann_sh >= PASS_SHARPE
     return {
         "window": f"{oos_start[:4]}–{oos_end[:4]}",
-        "n": sv["n"], "wr": sv["wr"] or 0, "avg": sv["avg"] or 0,
-        "sharpe": sv.get("sharpe") or 0, "ann_sharpe": ann_sh, "passed": passed,
+        "n": sv["n"],
+        "wr": sv["wr"] or 0,
+        "avg": sv["avg"] or 0,
+        "sharpe": sv.get("sharpe") or 0,
+        "ann_sharpe": ann_sh,
+        "passed": passed,
     }
 
 
-def _print_oos_table(results: list[dict], ref_label: str = "§19",
-                     ref_data: dict | None = None) -> int:
+def _print_oos_table(results: list[dict], ref_label: str = "§19", ref_data: dict | None = None) -> int:
     n_passed = sum(1 for r in results if r.get("passed"))
-    headers = ["Window", "N", "WR", "Avg", "Ann.Sh", "Pass?",
-               f"{ref_label} N", f"{ref_label} Ann.Sh", "Δ"]
+    headers = ["Window", "N", "WR", "Avg", "Ann.Sh", "Pass?", f"{ref_label} N", f"{ref_label} Ann.Sh", "Δ"]
     rows = []
     for r in results:
-        w   = r["window"]
+        w = r["window"]
         ann = r["ann_sharpe"]
         ann_s = f"{ann:.2f}" if not math.isnan(ann) else "—"
         verdict = "✓" if r.get("passed") else "✗"
         ref_n, ref_ann = (ref_data.get(w) or (None, None)) if ref_data else (None, None)
         ref_ann_s = f"{ref_ann:.2f}" if ref_ann is not None else "—"
-        ref_n_s   = str(ref_n) if ref_n is not None else "—"
-        delta_s = (f"{ann - ref_ann:+.2f}" if (ref_ann is not None and not math.isnan(ann))
-                   else "—")
-        rows.append([
-            w, r["n"],
-            f"{r['wr']:.1f}%" if r["n"] else "—",
-            f"{r['avg']:+.2f}%" if r["n"] else "—",
-            ann_s, verdict,
-            ref_n_s, ref_ann_s, delta_s,
-        ])
+        ref_n_s = str(ref_n) if ref_n is not None else "—"
+        delta_s = f"{ann - ref_ann:+.2f}" if (ref_ann is not None and not math.isnan(ann)) else "—"
+        rows.append(
+            [
+                w,
+                r["n"],
+                f"{r['wr']:.1f}%" if r["n"] else "—",
+                f"{r['avg']:+.2f}%" if r["n"] else "—",
+                ann_s,
+                verdict,
+                ref_n_s,
+                ref_ann_s,
+                delta_s,
+            ]
+        )
     print_table(headers, rows)
     print(f"\n  Passed: {n_passed}/{len(results)}  (threshold: ≥3/5)")
     return n_passed
@@ -225,6 +243,7 @@ def _print_oos_table(results: list[dict], ref_label: str = "§19",
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     print("# §35 — Five Research Experiments\n")
@@ -252,14 +271,15 @@ def main() -> None:
 
     oos_results_35a: list[dict] = []
     for oos_start, oos_end in OOS_WINDOWS:
-        r = _run_oos_window(prepped, vix, spy, stlfsi4,
-                            oos_start, oos_end, REGIME_PARAMS)
+        r = _run_oos_window(prepped, vix, spy, stlfsi4, oos_start, oos_end, REGIME_PARAMS)
         oos_results_35a.append(r)
         status = "✓ PASS" if r["passed"] else "✗ FAIL"
         ann_s = f"{r['ann_sharpe']:.2f}" if not math.isnan(r["ann_sharpe"]) else "—"
-        print(f"  {oos_start[:4]}–{oos_end[:4]}  N={r['n']:>4}  "
-              f"WR={r['wr']:>5.1f}%  Avg={r['avg']:>+5.2f}%  "
-              f"Ann.Sh={ann_s:<6}  {status}")
+        print(
+            f"  {oos_start[:4]}–{oos_end[:4]}  N={r['n']:>4}  "
+            f"WR={r['wr']:>5.1f}%  Avg={r['avg']:>+5.2f}%  "
+            f"Ann.Sh={ann_s:<6}  {status}"
+        )
 
     print()
     n_pass_35a = _print_oos_table(oos_results_35a, "§20", _S20)
@@ -293,27 +313,19 @@ def main() -> None:
     def _run_full(dfs, **overrides) -> pd.DataFrame:
         parts = []
         for tkr, df in dfs.items():
-            t = simulate_ticker(tkr, df, vix, spy, stlfsi4,
-                                **{**BASE_CFG, **overrides})
+            t = simulate_ticker(tkr, df, vix, spy, stlfsi4, **{**BASE_CFG, **overrides})
             if not t.empty:
                 parts.append(t)
         return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
     combos = [
-        ("Baseline (1.005/RSI55)", dict(adaptive_profit_thresh_override=1.005,
-                                        adaptive_rsi_thresh_override=55.0)),
-        ("1.005 / RSI50",          dict(adaptive_profit_thresh_override=1.005,
-                                        adaptive_rsi_thresh_override=50.0)),
-        ("1.005 / RSI45",          dict(adaptive_profit_thresh_override=1.005,
-                                        adaptive_rsi_thresh_override=45.0)),
-        ("1.003 / RSI55",          dict(adaptive_profit_thresh_override=1.003,
-                                        adaptive_rsi_thresh_override=55.0)),
-        ("1.003 / RSI50",          dict(adaptive_profit_thresh_override=1.003,
-                                        adaptive_rsi_thresh_override=50.0)),
-        ("1.001 / RSI50",          dict(adaptive_profit_thresh_override=1.001,
-                                        adaptive_rsi_thresh_override=50.0)),
-        ("1.001 / RSI45",          dict(adaptive_profit_thresh_override=1.001,
-                                        adaptive_rsi_thresh_override=45.0)),
+        ("Baseline (1.005/RSI55)", dict(adaptive_profit_thresh_override=1.005, adaptive_rsi_thresh_override=55.0)),
+        ("1.005 / RSI50", dict(adaptive_profit_thresh_override=1.005, adaptive_rsi_thresh_override=50.0)),
+        ("1.005 / RSI45", dict(adaptive_profit_thresh_override=1.005, adaptive_rsi_thresh_override=45.0)),
+        ("1.003 / RSI55", dict(adaptive_profit_thresh_override=1.003, adaptive_rsi_thresh_override=55.0)),
+        ("1.003 / RSI50", dict(adaptive_profit_thresh_override=1.003, adaptive_rsi_thresh_override=50.0)),
+        ("1.001 / RSI50", dict(adaptive_profit_thresh_override=1.001, adaptive_rsi_thresh_override=50.0)),
+        ("1.001 / RSI45", dict(adaptive_profit_thresh_override=1.001, adaptive_rsi_thresh_override=45.0)),
     ]
 
     adp_rows = []
@@ -325,9 +337,9 @@ def main() -> None:
         sv = stats(df["net_pct"].tolist())
         hold = HOLD_DAYS
         ann = round(sv["sharpe"] * (252 / hold) ** 0.5, 2) if sv.get("sharpe") else None
-        rc  = df["exit_reason"].value_counts()
-        n_adp  = rc.get("adaptive", 0)
-        n_tl   = rc.get("time_loss", 0)
+        rc = df["exit_reason"].value_counts()
+        n_adp = rc.get("adaptive", 0)
+        n_tl = rc.get("time_loss", 0)
         adp_pct = f"{n_adp / sv['n'] * 100:.1f}%" if sv["n"] else "—"
 
         # WR of adaptive-exit trades only
@@ -335,16 +347,18 @@ def main() -> None:
         adp_wr = f"{(adp_sub['net_pct'] > 0).mean() * 100:.1f}%" if not adp_sub.empty else "—"
         adp_avg = f"{adp_sub['net_pct'].mean():+.2f}%" if not adp_sub.empty else "—"
 
-        adp_rows.append([
-            label,
-            sv["n"],
-            f"{sv['wr']:.1f}%",
-            f"{sv['avg']:+.2f}%",
-            fmt_sharpe(ann),
-            f"{n_adp} ({adp_pct})",
-            adp_wr,
-            adp_avg,
-        ])
+        adp_rows.append(
+            [
+                label,
+                sv["n"],
+                f"{sv['wr']:.1f}%",
+                f"{sv['avg']:+.2f}%",
+                fmt_sharpe(ann),
+                f"{n_adp} ({adp_pct})",
+                adp_wr,
+                adp_avg,
+            ]
+        )
 
     print_table(
         ["Label", "N-total", "WR", "Avg", "Ann.Sh", "Adapt# (%)", "Adpt WR", "Adpt Avg"],
@@ -368,31 +382,29 @@ def main() -> None:
         hi_parts.append(t_base[t_base["score"] >= 50])
         lo_base_parts.append(t_base[t_base["score"] < 50])
 
-        t_short = simulate_ticker(tkr, df, vix, spy, stlfsi4,
-                                  **{**BASE_CFG, "hold_days_override": 5})
+        t_short = simulate_ticker(tkr, df, vix, spy, stlfsi4, **{**BASE_CFG, "hold_days_override": 5})
         if not t_short.empty:
             lo_short_parts.append(t_short[t_short["score"] < 50])
 
-    hi_df      = pd.concat(hi_parts,      ignore_index=True) if hi_parts      else pd.DataFrame()
+    hi_df = pd.concat(hi_parts, ignore_index=True) if hi_parts else pd.DataFrame()
     lo_base_df = pd.concat(lo_base_parts, ignore_index=True) if lo_base_parts else pd.DataFrame()
-    lo_short_df= pd.concat(lo_short_parts,ignore_index=True) if lo_short_parts else pd.DataFrame()
+    lo_short_df = pd.concat(lo_short_parts, ignore_index=True) if lo_short_parts else pd.DataFrame()
 
     def _seg_row(label, df):
         if df.empty:
             return [label, 0, "—", "—", "—", "—", "—"]
-        sv  = stats(df["net_pct"].tolist())
+        sv = stats(df["net_pct"].tolist())
         ann = round(sv["sharpe"] * (252 / HOLD_DAYS) ** 0.5, 2) if sv.get("sharpe") else None
-        rc  = df["exit_reason"].value_counts()
-        tl  = rc.get("time_loss", 0)
+        rc = df["exit_reason"].value_counts()
+        tl = rc.get("time_loss", 0)
         tl_pct = f"{tl / sv['n'] * 100:.1f}%" if sv["n"] else "—"
-        return [label, sv["n"], f"{sv['wr']:.1f}%", f"{sv['avg']:+.2f}%",
-                fmt_sharpe(ann), tl, tl_pct]
+        return [label, sv["n"], f"{sv['wr']:.1f}%", f"{sv['avg']:+.2f}%", fmt_sharpe(ann), tl, tl_pct]
 
     print_table(
         ["Label", "N", "WR", "Avg", "Ann.Sh", "TL#", "TL%"],
         [
-            _seg_row("HI score≥50,  hold=10",         hi_df),
-            _seg_row("LO score<50,  hold=10 (base)",  lo_base_df),
+            _seg_row("HI score≥50,  hold=10", hi_df),
+            _seg_row("LO score<50,  hold=10 (base)", lo_base_df),
             _seg_row("LO score<50,  hold=5  (short)", lo_short_df),
         ],
     )
@@ -410,9 +422,9 @@ def main() -> None:
 
     rr_combos = [
         ("stop=2.0, tgt=2.5 (baseline)", 2.0, 2.5),
-        ("stop=2.0, tgt=3.0",            2.0, 3.0),
-        ("stop=2.0, tgt=3.5",            2.0, 3.5),
-        ("stop=1.5, tgt=2.5 (old)",      1.5, 2.5),  # historical comparison
+        ("stop=2.0, tgt=3.0", 2.0, 3.0),
+        ("stop=2.0, tgt=3.5", 2.0, 3.5),
+        ("stop=1.5, tgt=2.5 (old)", 1.5, 2.5),  # historical comparison
     ]
 
     rr_rows = []
@@ -423,16 +435,23 @@ def main() -> None:
             continue
         sv = stats(df["net_pct"].tolist())
         ann = round(sv["sharpe"] * (252 / HOLD_DAYS) ** 0.5, 2) if sv.get("sharpe") else None
-        rc  = df["exit_reason"].value_counts()
+        rc = df["exit_reason"].value_counts()
         n_tgt = rc.get("target", 0)
-        n_stp = rc.get("stop",   0)
+        n_stp = rc.get("stop", 0)
         t_rate = f"{n_tgt / sv['n'] * 100:.1f}%" if sv["n"] else "—"
         s_rate = f"{n_stp / sv['n'] * 100:.1f}%" if sv["n"] else "—"
-        rr_rows.append([
-            label, sv["n"],
-            f"{sv['wr']:.1f}%", f"{sv['avg']:+.2f}%", fmt_sharpe(ann),
-            f"-{sv['max_dd']:.2f}%", t_rate, s_rate,
-        ])
+        rr_rows.append(
+            [
+                label,
+                sv["n"],
+                f"{sv['wr']:.1f}%",
+                f"{sv['avg']:+.2f}%",
+                fmt_sharpe(ann),
+                f"-{sv['max_dd']:.2f}%",
+                t_rate,
+                s_rate,
+            ]
+        )
 
     print_table(
         ["Label", "N", "WR", "Avg", "Ann.Sh", "MaxDD", "Tgt%", "Stop%"],
@@ -453,16 +472,17 @@ def main() -> None:
     if os.path.exists(screener_script):
         python_exe = sys.executable
         print(f"  Launching: {python_exe} {screener_script} --fast")
-        print(f"  Logging to /tmp/s35e_screen.log  (runs in background)\n")
+        print("  Logging to /tmp/s35e_screen.log  (runs in background)\n")
         try:
             log_fh = open("/tmp/s35e_screen.log", "w")
             proc = subprocess.Popen(
                 [python_exe, screener_script, "--fast"],
-                stdout=log_fh, stderr=subprocess.STDOUT,
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
                 cwd=_PARENT,
             )
             print(f"  PID {proc.pid} started. Check /tmp/s35e_screen.log for progress.")
-            print(f"  When complete, add PASS tickers to backtest_technicals.py TICKERS.")
+            print("  When complete, add PASS tickers to backtest_technicals.py TICKERS.")
         except Exception as e:
             print(f"  Failed to launch screener: {e}")
     else:

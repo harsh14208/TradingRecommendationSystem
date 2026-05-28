@@ -7,14 +7,15 @@ Coverage targets:
                    Telegram API-level error, network exception
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 import types
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _base_signal(**overrides):
     """Return a minimal valid signal dict, overrideable via kwargs."""
@@ -34,11 +35,13 @@ def _base_signal(**overrides):
 # format_signal tests
 # ---------------------------------------------------------------------------
 
+
 class TestFormatSignal:
     """Tests for the pure-function format_signal."""
 
     def setup_method(self):
         from services.telegram_svc import format_signal
+
         self.format_signal = format_signal
 
     def test_buy_action_uses_green_emoji(self):
@@ -130,6 +133,7 @@ class TestFormatSignal:
 # send_telegram tests
 # ---------------------------------------------------------------------------
 
+
 class TestSendTelegram:
     """Tests for the async send_telegram function."""
 
@@ -172,10 +176,12 @@ class TestSendTelegram:
         )
 
         mock_resp = AsyncMock()
-        mock_resp.json = AsyncMock(return_value={
-            "ok": True,
-            "result": {"message_id": 42},
-        })
+        mock_resp.json = AsyncMock(
+            return_value={
+                "ok": True,
+                "result": {"message_id": 42},
+            }
+        )
 
         mock_session = AsyncMock()
         mock_session.post = AsyncMock(return_value=mock_resp)
@@ -201,10 +207,12 @@ class TestSendTelegram:
         )
 
         mock_resp = AsyncMock()
-        mock_resp.json = AsyncMock(return_value={
-            "ok": False,
-            "description": "Bad Request: chat not found",
-        })
+        mock_resp.json = AsyncMock(
+            return_value={
+                "ok": False,
+                "description": "Bad Request: chat not found",
+            }
+        )
 
         mock_session = AsyncMock()
         mock_session.post = AsyncMock(return_value=mock_resp)
@@ -256,9 +264,7 @@ class TestSendTelegram:
         )
 
         mock_session_ctx = MagicMock()
-        mock_session_ctx.__aenter__ = AsyncMock(
-            side_effect=ConnectionError("Network unreachable")
-        )
+        mock_session_ctx.__aenter__ = AsyncMock(side_effect=ConnectionError("Network unreachable"))
         mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with patch("config.get_settings", return_value=fake_settings):

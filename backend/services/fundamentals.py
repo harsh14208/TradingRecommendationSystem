@@ -10,13 +10,14 @@ Signals:
   - Dividend yield vs 10Y rate gap
   - Net share buyback yield
 """
+
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import yfinance as yf
 
-from services.market_data import _session, _retry
+from services.market_data import _retry, _session
 
 _executor = ThreadPoolExecutor(max_workers=2)
 _fund_cache: dict[str, tuple[dict, float]] = {}
@@ -33,13 +34,13 @@ def _fetch_fundamentals(ticker: str) -> dict:
         t = yf.Ticker(ticker, session=_session)
 
         # ── Pull all statements ────────────────────────────────────────────
-        info       = _retry(lambda: t.info)
-        fin        = _retry(lambda: t.financials)          # annual income stmt
-        qfin       = _retry(lambda: t.quarterly_financials) # quarterly income stmt
-        bs         = _retry(lambda: t.balance_sheet)       # annual balance sheet
-        qbs        = _retry(lambda: t.quarterly_balance_sheet)
-        cf         = _retry(lambda: t.cashflow)            # annual cashflow
-        qcf        = _retry(lambda: t.quarterly_cashflow)
+        info = _retry(lambda: t.info)
+        fin = _retry(lambda: t.financials)  # annual income stmt
+        qfin = _retry(lambda: t.quarterly_financials)  # quarterly income stmt
+        bs = _retry(lambda: t.balance_sheet)  # annual balance sheet
+        qbs = _retry(lambda: t.quarterly_balance_sheet)
+        cf = _retry(lambda: t.cashflow)  # annual cashflow
+        qcf = _retry(lambda: t.quarterly_cashflow)
 
         import pandas as pd
 
@@ -60,50 +61,83 @@ def _fetch_fundamentals(ticker: str) -> dict:
         # Profitability (4 tests)
         roa = None
         total_assets_1 = _row(bs, "total assets")
-        net_income_1   = _row(fin, "net income")
+        net_income_1 = _row(fin, "net income")
         if total_assets_1 and total_assets_1 != 0 and net_income_1 is not None:
             roa = net_income_1 / total_assets_1
-            if roa > 0: f += 1
+            if roa > 0:
+                f += 1
 
         cfo = _row(cf, "operating cash flow", "cash from operations", "total cash from operations")
-        if cfo is not None and cfo > 0: f += 1
+        if cfo is not None and cfo > 0:
+            f += 1
 
         # Delta ROA (need 2 years)
         try:
             if fin is not None and not fin.empty and bs is not None and not bs.empty:
-                ni_series  = fin.loc[[i for i in fin.index if "net income" in str(i).lower()][0]] if any("net income" in str(i).lower() for i in fin.index) else None
-                ta_series  = bs.loc[[i for i in bs.index if "total assets" in str(i).lower()][0]] if any("total assets" in str(i).lower() for i in bs.index) else None
+                ni_series = (
+                    fin.loc[[i for i in fin.index if "net income" in str(i).lower()][0]]
+                    if any("net income" in str(i).lower() for i in fin.index)
+                    else None
+                )
+                ta_series = (
+                    bs.loc[[i for i in bs.index if "total assets" in str(i).lower()][0]]
+                    if any("total assets" in str(i).lower() for i in bs.index)
+                    else None
+                )
                 if ni_series is not None and ta_series is not None and len(ni_series) >= 2 and len(ta_series) >= 2:
-                    roa_now  = float(ni_series.iloc[0]) / float(ta_series.iloc[0]) if float(ta_series.iloc[0]) != 0 else None
-                    roa_prev = float(ni_series.iloc[1]) / float(ta_series.iloc[1]) if float(ta_series.iloc[1]) != 0 else None
-                    if roa_now is not None and roa_prev is not None and roa_now > roa_prev: f += 1
+                    roa_now = (
+                        float(ni_series.iloc[0]) / float(ta_series.iloc[0]) if float(ta_series.iloc[0]) != 0 else None
+                    )
+                    roa_prev = (
+                        float(ni_series.iloc[1]) / float(ta_series.iloc[1]) if float(ta_series.iloc[1]) != 0 else None
+                    )
+                    if roa_now is not None and roa_prev is not None and roa_now > roa_prev:
+                        f += 1
         except Exception:
             pass
 
         # Accruals (CFO/Assets > ROA)
         if cfo is not None and total_assets_1 and total_assets_1 != 0 and roa is not None:
-            if (cfo / total_assets_1) > roa: f += 1
+            if (cfo / total_assets_1) > roa:
+                f += 1
 
         # Leverage & liquidity (3 tests)
         try:
             if bs is not None and not bs.empty and len(bs.columns) >= 2:
                 ltd_idx = [i for i in bs.index if "long term debt" in str(i).lower()]
-                ca_idx  = [i for i in bs.index if "current assets" in str(i).lower() or "total current assets" in str(i).lower()]
-                cl_idx  = [i for i in bs.index if "current liabilities" in str(i).lower() or "total current liabilities" in str(i).lower()]
+                ca_idx = [
+                    i
+                    for i in bs.index
+                    if "current assets" in str(i).lower() or "total current assets" in str(i).lower()
+                ]
+                cl_idx = [
+                    i
+                    for i in bs.index
+                    if "current liabilities" in str(i).lower() or "total current liabilities" in str(i).lower()
+                ]
                 if ltd_idx:
-                    ltd_now  = float(bs.loc[ltd_idx[0]].iloc[0]) if not pd.isna(bs.loc[ltd_idx[0]].iloc[0]) else 0
+                    ltd_now = float(bs.loc[ltd_idx[0]].iloc[0]) if not pd.isna(bs.loc[ltd_idx[0]].iloc[0]) else 0
                     ltd_prev = float(bs.loc[ltd_idx[0]].iloc[1]) if not pd.isna(bs.loc[ltd_idx[0]].iloc[1]) else 0
-                    if ltd_now < ltd_prev: f += 1
+                    if ltd_now < ltd_prev:
+                        f += 1
                 if ca_idx and cl_idx:
-                    cr_now  = float(bs.loc[ca_idx[0]].iloc[0]) / max(float(bs.loc[cl_idx[0]].iloc[0]), 1)
+                    cr_now = float(bs.loc[ca_idx[0]].iloc[0]) / max(float(bs.loc[cl_idx[0]].iloc[0]), 1)
                     cr_prev = float(bs.loc[ca_idx[0]].iloc[1]) / max(float(bs.loc[cl_idx[0]].iloc[1]), 1)
-                    if cr_now > cr_prev: f += 1
+                    if cr_now > cr_prev:
+                        f += 1
                 # No new share dilution
-                sh_idx = [i for i in bs.index if "share issued" in str(i).lower() or "common stock" in str(i).lower() or "shares outstanding" in str(i).lower()]
+                sh_idx = [
+                    i
+                    for i in bs.index
+                    if "share issued" in str(i).lower()
+                    or "common stock" in str(i).lower()
+                    or "shares outstanding" in str(i).lower()
+                ]
                 if sh_idx and len(bs.columns) >= 2:
-                    sh_now  = float(bs.loc[sh_idx[0]].iloc[0]) if not pd.isna(bs.loc[sh_idx[0]].iloc[0]) else None
+                    sh_now = float(bs.loc[sh_idx[0]].iloc[0]) if not pd.isna(bs.loc[sh_idx[0]].iloc[0]) else None
                     sh_prev = float(bs.loc[sh_idx[0]].iloc[1]) if not pd.isna(bs.loc[sh_idx[0]].iloc[1]) else None
-                    if sh_now is not None and sh_prev is not None and sh_now <= sh_prev * 1.01: f += 1
+                    if sh_now is not None and sh_prev is not None and sh_now <= sh_prev * 1.01:
+                        f += 1
         except Exception:
             pass
 
@@ -113,18 +147,20 @@ def _fetch_fundamentals(ticker: str) -> dict:
                 rev_idx = [i for i in fin.index if "revenue" in str(i).lower() or "total revenue" in str(i).lower()]
                 cogs_idx = [i for i in fin.index if "cost of" in str(i).lower()]
                 if rev_idx and cogs_idx:
-                    rev_now   = float(fin.loc[rev_idx[0]].iloc[0])
-                    rev_prev  = float(fin.loc[rev_idx[0]].iloc[1])
-                    cogs_now  = float(fin.loc[cogs_idx[0]].iloc[0])
+                    rev_now = float(fin.loc[rev_idx[0]].iloc[0])
+                    rev_prev = float(fin.loc[rev_idx[0]].iloc[1])
+                    cogs_now = float(fin.loc[cogs_idx[0]].iloc[0])
                     cogs_prev = float(fin.loc[cogs_idx[0]].iloc[1])
-                    gm_now  = (rev_now  - cogs_now)  / rev_now  if rev_now  != 0 else None
+                    gm_now = (rev_now - cogs_now) / rev_now if rev_now != 0 else None
                     gm_prev = (rev_prev - cogs_prev) / rev_prev if rev_prev != 0 else None
-                    if gm_now is not None and gm_prev is not None and gm_now > gm_prev: f += 1
+                    if gm_now is not None and gm_prev is not None and gm_now > gm_prev:
+                        f += 1
                 ta_idx = [i for i in bs.index if "total assets" in str(i).lower()]
                 if rev_idx and ta_idx and len(bs.columns) >= 2:
-                    at_now  = float(fin.loc[rev_idx[0]].iloc[0]) / max(float(bs.loc[ta_idx[0]].iloc[0]), 1)
+                    at_now = float(fin.loc[rev_idx[0]].iloc[0]) / max(float(bs.loc[ta_idx[0]].iloc[0]), 1)
                     at_prev = float(fin.loc[rev_idx[0]].iloc[1]) / max(float(bs.loc[ta_idx[0]].iloc[1]), 1)
-                    if at_now > at_prev: f += 1
+                    if at_now > at_prev:
+                        f += 1
         except Exception:
             pass
 
@@ -137,7 +173,7 @@ def _fetch_fundamentals(ticker: str) -> dict:
             if cfo is not None and capex is not None and market_cap and market_cap > 0:
                 fcf = cfo - abs(capex)
                 result["fcf_yield"] = round(fcf / market_cap * 100, 2)
-                result["fcf"]       = fcf
+                result["fcf"] = fcf
         except Exception:
             pass
 
@@ -162,13 +198,15 @@ def _fetch_fundamentals(ticker: str) -> dict:
         # ── ROE trend ─────────────────────────────────────────────────────
         try:
             if fin is not None and bs is not None and not fin.empty and not bs.empty and len(fin.columns) >= 2:
-                ni_idx  = [i for i in fin.index if "net income" in str(i).lower()]
-                eq_idx  = [i for i in bs.index  if "stockholders equity" in str(i).lower() or "total equity" in str(i).lower()]
+                ni_idx = [i for i in fin.index if "net income" in str(i).lower()]
+                eq_idx = [
+                    i for i in bs.index if "stockholders equity" in str(i).lower() or "total equity" in str(i).lower()
+                ]
                 if ni_idx and eq_idx:
-                    roe_now  = float(fin.loc[ni_idx[0]].iloc[0]) / max(abs(float(bs.loc[eq_idx[0]].iloc[0])), 1) * 100
+                    roe_now = float(fin.loc[ni_idx[0]].iloc[0]) / max(abs(float(bs.loc[eq_idx[0]].iloc[0])), 1) * 100
                     roe_prev = float(fin.loc[ni_idx[0]].iloc[1]) / max(abs(float(bs.loc[eq_idx[0]].iloc[1])), 1) * 100
-                    result["roe_now"]       = round(roe_now, 2)
-                    result["roe_prev"]      = round(roe_prev, 2)
+                    result["roe_now"] = round(roe_now, 2)
+                    result["roe_prev"] = round(roe_prev, 2)
                     result["roe_improving"] = bool(roe_now > roe_prev)
         except Exception:
             pass
@@ -184,8 +222,12 @@ def _fetch_fundamentals(ticker: str) -> dict:
         # ── Buyback yield ─────────────────────────────────────────────────
         try:
             if cf is not None and not cf.empty:
-                rep_idx = [i for i in cf.index if "repurchase" in str(i).lower() or "buyback" in str(i).lower() or "common stock" in str(i).lower()]
-                mktcap  = info.get("marketCap")
+                rep_idx = [
+                    i
+                    for i in cf.index
+                    if "repurchase" in str(i).lower() or "buyback" in str(i).lower() or "common stock" in str(i).lower()
+                ]
+                mktcap = info.get("marketCap")
                 if rep_idx and mktcap and mktcap > 0 and len(cf.columns) >= 1:
                     buyback = abs(float(cf.loc[rep_idx[0]].iloc[0])) if not pd.isna(cf.loc[rep_idx[0]].iloc[0]) else 0
                     result["buyback_yield"] = round(buyback / mktcap * 100, 2)
@@ -198,9 +240,13 @@ def _fetch_fundamentals(ticker: str) -> dict:
         try:
             sh_current = info.get("sharesOutstanding") or info.get("impliedSharesOutstanding")
             if bs is not None and not bs.empty and sh_current and sh_current > 0 and len(bs.columns) >= 2:
-                sh_idx = [i for i in bs.index if "share issued" in str(i).lower()
-                          or "common stock" in str(i).lower()
-                          or "shares outstanding" in str(i).lower()]
+                sh_idx = [
+                    i
+                    for i in bs.index
+                    if "share issued" in str(i).lower()
+                    or "common stock" in str(i).lower()
+                    or "shares outstanding" in str(i).lower()
+                ]
                 if sh_idx:
                     sh_prev_bs = float(bs.loc[sh_idx[0]].iloc[-1]) if not pd.isna(bs.loc[sh_idx[0]].iloc[-1]) else None
                     if sh_prev_bs and sh_prev_bs > 0:

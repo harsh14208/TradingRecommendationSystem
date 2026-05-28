@@ -12,10 +12,9 @@ Functions tested (all pure/sync, no network, no DB):
   eightk_events.py:
     - _parse_ceo_signal(text)
 """
-import sys
+
 import os
-import math
-import pytest
+import sys
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
@@ -23,11 +22,10 @@ if BACKEND_DIR not in sys.path:
 
 # ── options.py ────────────────────────────────────────────────────────────────
 
-from services.options import _bs_gamma, _bs_vanna, _bs_charm, compute_dealer_positioning, score_options
+from services.options import _bs_charm, _bs_gamma, _bs_vanna, compute_dealer_positioning, score_options
 
 
 class TestBsGamma:
-
     def test_atm_call_positive_gamma(self):
         """ATM option has positive gamma."""
         g = _bs_gamma(S=100, K=100, T=0.25, sigma=0.20)
@@ -54,13 +52,12 @@ class TestBsGamma:
 
     def test_higher_sigma_lower_gamma_atm(self):
         """Higher IV → lower gamma for ATM (peak gamma is narrower)."""
-        g_low  = _bs_gamma(S=100, K=100, T=0.25, sigma=0.10)
+        g_low = _bs_gamma(S=100, K=100, T=0.25, sigma=0.10)
         g_high = _bs_gamma(S=100, K=100, T=0.25, sigma=0.50)
         assert g_low > g_high
 
 
 class TestBsVanna:
-
     def test_returns_float(self):
         v = _bs_vanna(S=100, K=100, T=0.25, sigma=0.20)
         assert isinstance(v, float)
@@ -81,7 +78,6 @@ class TestBsVanna:
 
 
 class TestBsCharm:
-
     def test_returns_float(self):
         c = _bs_charm(S=100, K=100, T=0.25, sigma=0.20)
         assert isinstance(c, float)
@@ -102,19 +98,12 @@ class TestBsCharm:
 
 
 class TestComputeDealerPositioning:
-
     def _basic_chain(self, n_calls=1, n_puts=1):
         contracts = []
         for _ in range(n_calls):
-            contracts.append({
-                "strike": 100, "expiry_days": 30, "iv": 0.25,
-                "oi": 500, "option_type": "call"
-            })
+            contracts.append({"strike": 100, "expiry_days": 30, "iv": 0.25, "oi": 500, "option_type": "call"})
         for _ in range(n_puts):
-            contracts.append({
-                "strike": 95, "expiry_days": 30, "iv": 0.25,
-                "oi": 500, "option_type": "put"
-            })
+            contracts.append({"strike": 95, "expiry_days": 30, "iv": 0.25, "oi": 500, "option_type": "put"})
         return contracts
 
     def test_empty_chain_neutral(self):
@@ -154,7 +143,6 @@ class TestComputeDealerPositioning:
 
 
 class TestScoreOptions:
-
     def test_empty_dict_returns_zero(self):
         score, rationale = score_options({})
         assert score == 0.0
@@ -190,63 +178,68 @@ class TestScoreOptions:
 
     def test_call_sweep_adds_score(self):
         """Large call sweep → positive score + rationale."""
-        sweep = [{"strike": 150, "vol": 5000, "oi": 1000, "vol_oi": 5.0, "itm": False,
-                  "expiry": "2024-02-16", "iv": 0.30}]
+        sweep = [
+            {"strike": 150, "vol": 5000, "oi": 1000, "vol_oi": 5.0, "itm": False, "expiry": "2024-02-16", "iv": 0.30}
+        ]
         score, rationale = score_options({"sweep_calls": sweep})
         assert score > 0
         assert any("Call Sweep" in r["head"] for r in rationale)
 
     def test_put_sweep_subtracts_score(self):
         """Large put sweep → negative score + rationale."""
-        sweep = [{"strike": 140, "vol": 5000, "oi": 1000, "vol_oi": 5.0, "itm": False,
-                  "expiry": "2024-02-16", "iv": 0.30}]
+        sweep = [
+            {"strike": 140, "vol": 5000, "oi": 1000, "vol_oi": 5.0, "itm": False, "expiry": "2024-02-16", "iv": 0.30}
+        ]
         score, rationale = score_options({"sweep_puts": sweep})
         assert score < 0
         assert any("Put Sweep" in r["head"] for r in rationale)
 
     def test_otm_call_surge_bullish(self):
         """OTM call volume > 65% of total call vol and > 500 → +6."""
-        score, rationale = score_options({
-            "otm_call_vol": 800, "call_vol": 1000
-        })
+        score, rationale = score_options({"otm_call_vol": 800, "call_vol": 1000})
         assert score == 6
         assert any("OTM Call" in r["head"] for r in rationale)
 
     def test_otm_put_spike_bearish(self):
         """OTM put > 70% of total put vol and > 500 → -5."""
-        score, rationale = score_options({
-            "otm_put_vol": 800, "put_vol": 1000
-        })
+        score, rationale = score_options({"otm_put_vol": 800, "put_vol": 1000})
         assert score == -5
         assert any("OTM Put" in r["head"] for r in rationale)
 
     def test_combined_signals(self):
         """Multiple signals combine correctly."""
-        score, rationale = score_options({
-            "pc_ratio": 2.5,         # +10
-            "otm_call_vol": 800, "call_vol": 1000,  # +6
-        })
+        score, rationale = score_options(
+            {
+                "pc_ratio": 2.5,  # +10
+                "otm_call_vol": 800,
+                "call_vol": 1000,  # +6
+            }
+        )
         assert score == 16
         assert len(rationale) >= 2
 
     def test_unusual_vol_no_sweeps_bullish(self):
         """uv > 3.0, no sweeps, pc=0.8 (no pc signal) → +6 bullish unusual vol."""
-        score, rationale = score_options({
-            "unusual_vol_ratio": 4.0,
-            "pc_ratio": 0.8,
-            "sweep_calls": [],
-            "sweep_puts": [],
-        })
+        score, rationale = score_options(
+            {
+                "unusual_vol_ratio": 4.0,
+                "pc_ratio": 0.8,
+                "sweep_calls": [],
+                "sweep_puts": [],
+            }
+        )
         # pc=0.8: falls between 0.65 and 1.0 → no pc_ratio delta
         # unusual_vol bias = +1 (pc < 1.0) → score += 6
         assert score == 6
 
     def test_unusual_vol_no_sweeps_bearish(self):
         """uv > 3.0, no sweeps, pc > 1.0 → -6 bearish."""
-        score, rationale = score_options({
-            "unusual_vol_ratio": 4.0,
-            "pc_ratio": 1.2,
-        })
+        score, rationale = score_options(
+            {
+                "unusual_vol_ratio": 4.0,
+                "pc_ratio": 1.2,
+            }
+        )
         assert score == -6
 
     def test_iv_term_spike_adds_rationale(self):
@@ -303,7 +296,6 @@ from services.eightk_events import _parse_ceo_signal
 
 
 class TestParseCeoSignal:
-
     def test_resignation_is_departure(self):
         pts, label = _parse_ceo_signal("CEO John Doe to resign effective immediately.")
         assert pts == -6.0

@@ -3,8 +3,8 @@ import aiohttp
 
 def format_signal(signal: dict) -> str:
     emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(signal["action"], "⚪")
-    conf  = f"{signal['confidence']:.0f}%"
-    rr    = signal.get("rr", "—")
+    conf = f"{signal['confidence']:.0f}%"
+    rr = signal.get("rr", "—")
     company = signal.get("company", "")
     name_part = f" ({company})" if company and company != signal["ticker"] else ""
     lines = [
@@ -12,9 +12,7 @@ def format_signal(signal: dict) -> str:
         f"_{signal['headline']}_",
     ]
     if signal.get("entry") and signal.get("stop") and signal.get("target"):
-        lines.append(
-            f"Entry ${signal['entry']:.2f}  Stop ${signal['stop']:.2f}  TP ${signal['target']:.2f}"
-        )
+        lines.append(f"Entry ${signal['entry']:.2f}  Stop ${signal['stop']:.2f}  TP ${signal['target']:.2f}")
     lines.append("_Not financial advice · Signal.Trade_")
     return "\n".join(lines)
 
@@ -26,8 +24,11 @@ async def send_telegram_message(
     timeout: int = 8,
 ) -> tuple[bool, str]:
     """Single shared Telegram send function used by all call sites."""
+    import ssl
+
+    import certifi
     from config import get_settings
-    import ssl, certifi
+
     s = get_settings()
     if not s.telegram_bot_token or not chat_id:
         return False, "Not configured"
@@ -51,6 +52,7 @@ async def send_telegram_message(
 
 async def send_telegram(signal: dict) -> tuple[bool, str]:
     from config import get_settings
+
     s = get_settings()
     if not s.telegram_bot_token or not s.telegram_chat_id:
         return False, "Telegram not configured — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env"

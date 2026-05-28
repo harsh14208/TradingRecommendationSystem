@@ -13,16 +13,16 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
-SCRIPT_DIR = Path(__file__).resolve().parent          # backend/scripts/
-BACKEND_DIR = SCRIPT_DIR.parent                       # backend/
-REPO_ROOT = BACKEND_DIR.parent                        # repo root
+SCRIPT_DIR = Path(__file__).resolve().parent  # backend/scripts/
+BACKEND_DIR = SCRIPT_DIR.parent  # backend/
+REPO_ROOT = BACKEND_DIR.parent  # repo root
 OUTPUT_FILE = REPO_ROOT / "INTEGRATION_STATUS.md"
 
 DEFAULT_TEST_REPORT = BACKEND_DIR / "test-report.json"
@@ -33,15 +33,15 @@ DEFAULT_COVERAGE = BACKEND_DIR / "coverage.json"
 # ---------------------------------------------------------------------------
 
 FEATURE_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("Authentication",      re.compile(r"test_routers_auth|test_auth", re.I)),
-    ("Signal Engine",       re.compile(r"test_signal_engine|test_signal_scoring|test_signal_workers", re.I)),
-    ("Scanner",             re.compile(r"test_scanner|test_services_scanner", re.I)),
+    ("Authentication", re.compile(r"test_routers_auth|test_auth", re.I)),
+    ("Signal Engine", re.compile(r"test_signal_engine|test_signal_scoring|test_signal_workers", re.I)),
+    ("Scanner", re.compile(r"test_scanner|test_services_scanner", re.I)),
     ("Telegram / Delivery", re.compile(r"test_telegram|test_delivery", re.I)),
-    ("Billing",             re.compile(r"test_routers_billing", re.I)),
-    ("Watchlist",           re.compile(r"test_routers_watchlist", re.I)),
-    ("Quotes / Market",     re.compile(r"test_routers_quotes", re.I)),
-    ("Technicals",          re.compile(r"test_technicals|test_services_technicals", re.I)),
-    ("ML / Scoring",        re.compile(r"test_signal_ml|test_calibration", re.I)),
+    ("Billing", re.compile(r"test_routers_billing", re.I)),
+    ("Watchlist", re.compile(r"test_routers_watchlist", re.I)),
+    ("Quotes / Market", re.compile(r"test_routers_quotes", re.I)),
+    ("Technicals", re.compile(r"test_technicals|test_services_technicals", re.I)),
+    ("ML / Scoring", re.compile(r"test_signal_ml|test_calibration", re.I)),
 ]
 
 ALL_FEATURES = [name for name, _ in FEATURE_PATTERNS] + ["Other"]
@@ -61,6 +61,7 @@ def classify_nodeid(nodeid: str) -> str:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
+
 def load_json(path: Path) -> Optional[dict]:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -72,16 +73,15 @@ def load_json(path: Path) -> Optional[dict]:
 def parse_test_report(data: dict) -> dict:
     """Extract summary and per-feature stats from pytest-json-report data."""
     summary = data.get("summary", {})
-    total    = summary.get("total",   0)
-    passed   = summary.get("passed",  0)
-    failed   = summary.get("failed",  0)
-    skipped  = summary.get("skipped", 0)
+    total = summary.get("total", 0)
+    passed = summary.get("passed", 0)
+    failed = summary.get("failed", 0)
+    skipped = summary.get("skipped", 0)
     duration = round(data.get("duration", 0.0), 2)
 
     # Per-feature accumulators: {feature: {tests, passed, failed, duration, errors}}
     features: dict[str, dict] = {
-        f: {"tests": 0, "passed": 0, "failed": 0, "duration": 0.0, "errors": []}
-        for f in ALL_FEATURES
+        f: {"tests": 0, "passed": 0, "failed": 0, "duration": 0.0, "errors": []} for f in ALL_FEATURES
     }
 
     for test in data.get("tests", []):
@@ -130,9 +130,9 @@ def parse_coverage(data: dict) -> tuple[float, list[tuple[str, float, int]]]:
         modules.append((name, pct, num_stmts))
 
     # Sort by coverage ascending (lowest first), take top 15 by line count
-    modules.sort(key=lambda x: (-x[2], x[1]))   # largest files first
+    modules.sort(key=lambda x: (-x[2], x[1]))  # largest files first
     top15 = modules[:15]
-    top15.sort(key=lambda x: x[1])              # then sort by coverage ascending
+    top15.sort(key=lambda x: x[1])  # then sort by coverage ascending
     return overall_pct, top15
 
 
@@ -161,18 +161,19 @@ def extract_previous_run(md_path: Path) -> Optional[dict]:
         return None
 
     tests_str = m.group("tests").strip()
-    cov_str   = m.group("cov").strip().rstrip("%")
+    cov_str = m.group("cov").strip().rstrip("%")
     return {
         "timestamp": m.group("ts").strip(),
-        "tests":     tests_str if tests_str != "N/A" else None,
-        "coverage":  cov_str   if cov_str   != "N/A" else None,
-        "status":    m.group("status").strip(),
+        "tests": tests_str if tests_str != "N/A" else None,
+        "coverage": cov_str if cov_str != "N/A" else None,
+        "status": m.group("status").strip(),
     }
 
 
 # ---------------------------------------------------------------------------
 # Health delta
 # ---------------------------------------------------------------------------
+
 
 def health_delta(prev: Optional[dict], total: int, coverage: float, pipeline: str) -> tuple[str, str, str]:
     """Return (tests_delta, cov_delta, status_str)."""
@@ -213,12 +214,13 @@ def health_delta(prev: Optional[dict], total: int, coverage: float, pipeline: st
 # Markdown generation
 # ---------------------------------------------------------------------------
 
+
 def feature_row(name: str, stats: dict) -> str:
-    n        = stats["tests"]
-    status   = "✅" if stats["failed"] == 0 else "❌"
-    dur      = round(stats["duration"], 2)
-    errors   = stats["errors"]
-    err_str  = errors[0] if errors else "—"
+    n = stats["tests"]
+    status = "✅" if stats["failed"] == 0 else "❌"
+    dur = round(stats["duration"], 2)
+    errors = stats["errors"]
+    err_str = errors[0] if errors else "—"
     # Truncate long error strings in the cell
     if len(err_str) > 80:
         err_str = err_str[:77] + "..."
@@ -227,21 +229,20 @@ def feature_row(name: str, stats: dict) -> str:
 
 def generate_report(
     test_data: Optional[dict],
-    cov_data:  Optional[dict],
-    prev_run:  Optional[dict],
-    now_str:   str,
+    cov_data: Optional[dict],
+    prev_run: Optional[dict],
+    now_str: str,
     commit_sha: str,
 ) -> str:
-
     # ------------------------------------------------------------------
     # Build values — fall back to N/A when data is missing
     # ------------------------------------------------------------------
     if test_data is not None:
-        stats    = parse_test_report(test_data)
-        total    = stats["total"]
-        passed   = stats["passed"]
-        failed   = stats["failed"]
-        skipped  = stats["skipped"]
+        stats = parse_test_report(test_data)
+        total = stats["total"]
+        passed = stats["passed"]
+        failed = stats["failed"]
+        skipped = stats["skipped"]
         duration = stats["duration"]
         pipeline = stats["pipeline"]
         features = stats["features"]
@@ -261,9 +262,9 @@ def generate_report(
 
     # Prev row values
     if prev_run:
-        prev_ts     = prev_run["timestamp"]
-        prev_tests  = prev_run["tests"]  or "N/A"
-        prev_cov    = (prev_run["coverage"] + "%" if prev_run["coverage"] else "N/A")
+        prev_ts = prev_run["timestamp"]
+        prev_tests = prev_run["tests"] or "N/A"
+        prev_cov = prev_run["coverage"] + "%" if prev_run["coverage"] else "N/A"
         prev_status = prev_run["status"] or "N/A"
     else:
         prev_ts = prev_tests = prev_cov = prev_status = "N/A"
@@ -332,17 +333,18 @@ def generate_report(
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     args = sys.argv[1:]
     test_report_path = Path(args[0]) if len(args) >= 1 else DEFAULT_TEST_REPORT
-    coverage_path    = Path(args[1]) if len(args) >= 2 else DEFAULT_COVERAGE
+    coverage_path = Path(args[1]) if len(args) >= 2 else DEFAULT_COVERAGE
 
-    now_str    = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     commit_sha = os.environ.get("GITHUB_SHA", "local")
 
     # Load inputs (gracefully handle missing files)
     test_data = load_json(test_report_path)
-    cov_data  = load_json(coverage_path)
+    cov_data = load_json(coverage_path)
 
     if test_data is None:
         print(f"[generate_status_report] WARNING: {test_report_path} not found or invalid — reporting N/A")

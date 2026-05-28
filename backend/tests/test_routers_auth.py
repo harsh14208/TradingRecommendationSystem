@@ -1,12 +1,11 @@
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from database import get_db
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch, MagicMock
-
-from routers.auth import router
-from database import get_db
 from models import User
+from routers.auth import router
 
 # Create an isolated FastAPI app for the auth router
 app = FastAPI()
@@ -48,13 +47,16 @@ def test_login_success(client, mock_db_session):
     mock_db_session.execute.return_value = mock_result
 
     # Patch both password verification and current user dependency guard
-    with patch("routers.auth.verify_password", return_value=True), patch(
-        "routers.auth.get_current_user",
-        return_value=User(
-            id=1,
-            email="trader@example.com",
-            is_owner=False,
-            subscription_tier="free",
+    with (
+        patch("routers.auth.verify_password", return_value=True),
+        patch(
+            "routers.auth.get_current_user",
+            return_value=User(
+                id=1,
+                email="trader@example.com",
+                is_owner=False,
+                subscription_tier="free",
+            ),
         ),
     ):
         response = client.post(
@@ -107,7 +109,7 @@ def test_register_duplicate_email(client, mock_db_session):
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = mock_user
     mock_db_session.execute.return_value = mock_result
-    
+
     response = client.post(
         "/api/auth/register",
         json={
@@ -161,4 +163,3 @@ def test_register_invalid_email(client, mock_db_session):
         json={"email": "not-an-email", "password": "password123", "full_name": "Test User"},
     )
     assert response.status_code == 422
-

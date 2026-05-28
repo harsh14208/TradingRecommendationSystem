@@ -13,7 +13,7 @@ Used in signal_engine's Sector Peer Confirmation block:
 
 Cache: 24 hours per ticker (relationships are stable week-to-week).
 """
-import asyncio
+
 import logging
 import os
 import ssl
@@ -52,8 +52,7 @@ async def get_related_companies(ticker: str) -> list[str]:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, ssl=_SSL_CTX,
-                                   timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            async with session.get(url, params=params, ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status != 200:
                     _cache[ticker] = {"tickers": [], "ts": now}
                     return []
@@ -98,23 +97,26 @@ async def check_related_peer_confirmation(
     if len(tracked) < 2:
         return 0.0, ""  # Not enough data to form a view
 
-    confirming = [t for t in tracked
-                  if signals_by_ticker[t].get("action") == action]
-    n_tracked   = min(len(tracked), 5)
+    confirming = [t for t in tracked if signals_by_ticker[t].get("action") == action]
+    n_tracked = min(len(tracked), 5)
     n_confirming = len(confirming)
 
     if n_confirming >= 2:
         adj = +2.0
-        reason = (f"Polygon related companies confirm: {n_confirming}/{n_tracked} peers "
-                  f"({', '.join(confirming[:3])}) also {action}. "
-                  f"News-correlated and return-correlated peers agreeing raises "
-                  f"statistical reliability of this signal.")
+        reason = (
+            f"Polygon related companies confirm: {n_confirming}/{n_tracked} peers "
+            f"({', '.join(confirming[:3])}) also {action}. "
+            f"News-correlated and return-correlated peers agreeing raises "
+            f"statistical reliability of this signal."
+        )
     elif n_confirming == 0 and n_tracked >= 3:
         adj = -5.0
-        reason = (f"Polygon related companies diverge: 0/{n_tracked} peers "
-                  f"({', '.join(tracked[:3])}) share this {action} signal. "
-                  f"When business-correlated peers don't confirm, the signal is likely "
-                  f"stock-specific noise rather than sector-wide institutional flow.")
+        reason = (
+            f"Polygon related companies diverge: 0/{n_tracked} peers "
+            f"({', '.join(tracked[:3])}) share this {action} signal. "
+            f"When business-correlated peers don't confirm, the signal is likely "
+            f"stock-specific noise rather than sector-wide institutional flow."
+        )
     else:
         return 0.0, ""
 

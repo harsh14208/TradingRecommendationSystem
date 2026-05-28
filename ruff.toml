@@ -1,0 +1,46 @@
+target-version = "py311"   # matches CI — catches py3.12+ syntax used on py3.11
+line-length = 120
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (undefined names, unused imports)
+    "UP",   # pyupgrade (py311-incompatible syntax)
+    "B",    # flake8-bugbear (likely bugs)
+    "SIM",  # flake8-simplify
+    "I",    # isort
+]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "E402",   # module-level import not at top (many service files do conditional imports)
+    "B008",   # do not perform function calls in default arguments (FastAPI Depends pattern)
+    "SIM108", # ternary vs if/else — too aggressive for signal logic
+    "SIM117", # nested with — style choice
+    "UP007",  # use X | Y for union types — requires 3.10+ at call sites
+    # ── Brownfield style — widespread, non-bug ──────────────────────────────────
+    "E701",   # multiple statements on one line (colon) — `if ...: continue` pattern pervasive
+    "E702",   # multiple statements on one line (semicolon) — intentional in backtest/scripts
+    "E712",   # == True / == False — intentional comparisons throughout
+    "E741",   # ambiguous variable names (l, O, I) — used as loop vars in backtest math
+    "F841",   # local variable assigned but never used — common in exploratory scripts
+    "B007",   # unused loop control variable — `for _, df in results`
+    "B905",   # zip() without explicit strict= — not changing call sites
+    "SIM102", # collapsible if — style preference
+    "SIM105", # suppressible exception — explicit try/except/pass intentional
+    "SIM115", # open() without context manager — scripts use it intentionally
+    "UP017",  # datetime.timezone.utc → UTC — cosmetic upgrade
+    "UP041",  # TimeoutError alias — cosmetic upgrade
+    "UP045",  # Optional[X] → X | None — large diff, defer to future PR
+    "B904",   # raise-without-from-inside-except — pervasive FastAPI/HTTP pattern
+    "SIM103", # return condition directly — style preference
+    "SIM113", # use enumerate() — style preference
+]
+
+[lint.per-file-ignores]
+"tests/*"  = ["F811"]  # test fixtures frequently redefine names
+"scripts/*" = ["E731"]  # lambda assignment — backtest scripts use them for brevity
+
+[format]
+quote-style = "double"
+indent-style = "space"

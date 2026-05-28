@@ -1,11 +1,10 @@
-import unittest
 import os
 import sys
+import unittest
 
 # Force SQLite for this test run.
 # Otherwise SQLAlchemy will attempt to load asyncpg at import-time.
 os.environ.setdefault("DATABASE_URL", "")
-
 
 
 # Ensure backend/ is on sys.path so absolute imports like `from services...` work.
@@ -23,12 +22,11 @@ class TestImportsSmoke(unittest.TestCase):
         if root_dir not in sys.path:
             sys.path.insert(0, root_dir)
 
+        import backend.routers.auth  # noqa: F401
+        import backend.services.calibration  # noqa: F401
+        import backend.services.scanner  # noqa: F401
         import backend.services.signal_engine  # noqa: F401
-        import backend.services.calibration   # noqa: F401
-        import backend.services.scanner       # noqa: F401
-        import backend.routers.auth           # noqa: F401
 
 
 if __name__ == "__main__":
     unittest.main()
-

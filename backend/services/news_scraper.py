@@ -37,7 +37,7 @@ _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 log = logging.getLogger("signal.news_scraper")
 
 _CACHE: dict[str, tuple[list, float]] = {}
-_TTL = 600   # 10 minutes — news is time-sensitive
+_TTL = 600  # 10 minutes — news is time-sensitive
 
 # Chrome-like UA to avoid trivial bot blocks on Finviz / Google
 _HEADERS = {
@@ -46,14 +46,15 @@ _HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
     "Accept-Encoding": "gzip, deflate",  # omit br — aiohttp lacks brotli support
-    "Connection":      "keep-alive",
+    "Connection": "keep-alive",
 }
 
 
 # ── Yahoo Finance RSS ─────────────────────────────────────────────────────────
+
 
 async def _fetch_yahoo_finance(ticker: str, session: aiohttp.ClientSession) -> list[dict]:
     """
@@ -61,13 +62,9 @@ async def _fetch_yahoo_finance(ticker: str, session: aiohttp.ClientSession) -> l
     Endpoint: feeds.finance.yahoo.com/rss/2.0/headline?s=TICKER
     No API key required; generally very reliable.
     """
-    url = (
-        f"https://feeds.finance.yahoo.com/rss/2.0/headline"
-        f"?s={ticker.upper()}&region=US&lang=en-US"
-    )
+    url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker.upper()}&region=US&lang=en-US"
     try:
-        async with session.get(url, ssl=_ssl_ctx, headers=_HEADERS,
-                               timeout=aiohttp.ClientTimeout(total=12)) as r:
+        async with session.get(url, ssl=_ssl_ctx, headers=_HEADERS, timeout=aiohttp.ClientTimeout(total=12)) as r:
             if r.status != 200:
                 log.debug(f"[yahoo] {ticker}: HTTP {r.status}")
                 return []
@@ -85,25 +82,28 @@ async def _fetch_yahoo_finance(ticker: str, session: aiohttp.ClientSession) -> l
 
     items: list[dict] = []
     for item in root.findall(".//item")[:10]:
-        title     = (item.findtext("title")       or "").strip()
-        link      = (item.findtext("link")        or "").strip()
-        desc      = (item.findtext("description") or "").strip()
-        pub       = item.findtext("pubDate")       or ""
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        desc = (item.findtext("description") or "").strip()
+        pub = item.findtext("pubDate") or ""
         desc_clean = re.sub(r"<[^>]+>", "", desc)[:300]
-        hours_ago  = _hours_since(pub)
+        hours_ago = _hours_since(pub)
         if title and hours_ago < 7 * 24:
-            items.append({
-                "headline":  title,
-                "summary":   desc_clean or title,
-                "sentiment": score_sentiment(title + " " + desc_clean),
-                "hours_ago": hours_ago,
-                "source":    "Yahoo Finance",
-                "url":       link,
-            })
+            items.append(
+                {
+                    "headline": title,
+                    "summary": desc_clean or title,
+                    "sentiment": score_sentiment(title + " " + desc_clean),
+                    "hours_ago": hours_ago,
+                    "source": "Yahoo Finance",
+                    "url": link,
+                }
+            )
     return items
 
 
 # ── Seeking Alpha RSS ────────────────────────────────────────────────────────
+
 
 async def _fetch_seeking_alpha(ticker: str, session: aiohttp.ClientSession) -> list[dict]:
     """
@@ -123,8 +123,8 @@ async def _fetch_seeking_alpha(ticker: str, session: aiohttp.ClientSession) -> l
 
     # Strip namespace declarations AND any prefixed elements (sa:, media:)
     # so ElementTree can parse without "unbound prefix" errors.
-    text = re.sub(r'\s+xmlns(?::\w+)?="[^"]+"', "", text)   # strip xmlns attrs
-    text = re.sub(r"</?(?:sa|media):[^>]*>", "", text)       # remove sa:/media: tags
+    text = re.sub(r'\s+xmlns(?::\w+)?="[^"]+"', "", text)  # strip xmlns attrs
+    text = re.sub(r"</?(?:sa|media):[^>]*>", "", text)  # remove sa:/media: tags
     try:
         root = ET.fromstring(text)
     except ET.ParseError as e:
@@ -133,26 +133,29 @@ async def _fetch_seeking_alpha(ticker: str, session: aiohttp.ClientSession) -> l
 
     items: list[dict] = []
     for item in root.findall(".//item")[:10]:
-        title  = (item.findtext("title")       or "").strip()
-        desc   = (item.findtext("description") or "").strip()
-        link   = (item.findtext("link")        or "").strip()
-        pub    = item.findtext("pubDate")       or ""
+        title = (item.findtext("title") or "").strip()
+        desc = (item.findtext("description") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        pub = item.findtext("pubDate") or ""
 
         desc_clean = re.sub(r"<[^>]+>", "", desc)[:300]
-        hours_ago  = _hours_since(pub)
+        hours_ago = _hours_since(pub)
         if title and hours_ago < 7 * 24:
-            items.append({
-                "headline":  title,
-                "summary":   desc_clean or title,
-                "sentiment": score_sentiment(title + " " + desc_clean),
-                "hours_ago": hours_ago,
-                "source":    "Seeking Alpha",
-                "url":       link,
-            })
+            items.append(
+                {
+                    "headline": title,
+                    "summary": desc_clean or title,
+                    "sentiment": score_sentiment(title + " " + desc_clean),
+                    "hours_ago": hours_ago,
+                    "source": "Seeking Alpha",
+                    "url": link,
+                }
+            )
     return items
 
 
 # ── Reuters via Google News RSS ───────────────────────────────────────────────
+
 
 async def _fetch_reuters(ticker: str, company: str, session: aiohttp.ClientSession) -> list[dict]:
     """
@@ -160,11 +163,7 @@ async def _fetch_reuters(ticker: str, company: str, session: aiohttp.ClientSessi
     No API key; respects robots.txt (bots=allowed for /rss/ path).
     """
     q = f"{ticker} {company}".strip().replace(" ", "+")
-    url = (
-        f"https://news.google.com/rss/search"
-        f"?q={q}+site:reuters.com"
-        f"&hl=en-US&gl=US&ceid=US:en"
-    )
+    url = f"https://news.google.com/rss/search?q={q}+site:reuters.com&hl=en-US&gl=US&ceid=US:en"
     try:
         async with session.get(url, ssl=_ssl_ctx, headers=_HEADERS, timeout=aiohttp.ClientTimeout(total=15)) as r:
             if r.status != 200:
@@ -185,27 +184,30 @@ async def _fetch_reuters(ticker: str, company: str, session: aiohttp.ClientSessi
 
     items: list[dict] = []
     for item in root.findall(".//item")[:8]:
-        title   = (item.findtext("title") or "").strip()
-        link    = (item.findtext("link")  or "").strip()
-        pub     = item.findtext("pubDate") or ""
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        pub = item.findtext("pubDate") or ""
 
         # Google News appends " - Reuters" — strip it for clean headlines
         title = re.sub(r"\s*[-–]\s*Reuters\s*$", "", title).strip()
         hours_ago = _hours_since(pub)
 
         if title and len(title) > 10 and hours_ago < 7 * 24:
-            items.append({
-                "headline":  title,
-                "summary":   title,
-                "sentiment": score_sentiment(title),
-                "hours_ago": hours_ago,
-                "source":    "Reuters",
-                "url":       link,
-            })
+            items.append(
+                {
+                    "headline": title,
+                    "summary": title,
+                    "sentiment": score_sentiment(title),
+                    "hours_ago": hours_ago,
+                    "source": "Reuters",
+                    "url": link,
+                }
+            )
     return items
 
 
 # ── Finviz (aiohttp → Playwright fallback) ────────────────────────────────────
+
 
 async def _fetch_finviz(ticker: str) -> list[dict]:
     """
@@ -251,7 +253,7 @@ def _parse_finviz_html(html: str) -> list[dict]:
     # Split HTML into per-row blocks on the <tr onclick= boundary
     row_blocks = re.split(r'(?=<tr[^>]+onclick="trackAndOpenNews)', html)
 
-    for block in row_blocks[1:]:   # skip everything before the first news row
+    for block in row_blocks[1:]:  # skip everything before the first news row
         # Extract source + url from onclick
         oc = re.search(
             r"""onclick="trackAndOpenNews\(event,\s*'([^']+)',\s*'([^']+)'\)""",
@@ -281,8 +283,9 @@ def _parse_finviz_html(html: str) -> list[dict]:
                 time_part = date_raw.replace("Today", "").strip()
                 current_date = datetime.now().replace(
                     hour=int(time_part.split(":")[0]),
-                    minute=int(time_part[time_part.index(":")+1:time_part.index(":")+3]),
-                    second=0, microsecond=0,
+                    minute=int(time_part[time_part.index(":") + 1 : time_part.index(":") + 3]),
+                    second=0,
+                    microsecond=0,
                 )
             except Exception:
                 current_date = datetime.now()
@@ -298,14 +301,16 @@ def _parse_finviz_html(html: str) -> list[dict]:
         if hours_ago > 7 * 24:
             continue
 
-        items.append({
-            "headline":  headline,
-            "summary":   headline,
-            "sentiment": score_sentiment(headline),
-            "hours_ago": hours_ago,
-            "source":    source or "Finviz",
-            "url":       url if url.startswith("http") else f"https://finviz.com{url}",
-        })
+        items.append(
+            {
+                "headline": headline,
+                "summary": headline,
+                "sentiment": score_sentiment(headline),
+                "hours_ago": hours_ago,
+                "source": source or "Finviz",
+                "url": url if url.startswith("http") else f"https://finviz.com{url}",
+            }
+        )
         if len(items) >= 10:
             break
     return items
@@ -318,15 +323,21 @@ def _playwright_finviz_sync(url: str) -> str:
     blocks the main event loop. Returns raw HTML or "" on failure.
     """
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+        from playwright.sync_api import TimeoutError as PWTimeout
+        from playwright.sync_api import sync_playwright
     except ImportError:
         return ""
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
-                      "--disable-extensions", "--single-process"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--single-process",
+                ],
             )
             ctx = browser.new_context(
                 user_agent=_HEADERS["User-Agent"],
@@ -334,8 +345,7 @@ def _playwright_finviz_sync(url: str) -> str:
                 locale="en-US",
             )
             page = ctx.new_page()
-            page.route("**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,mp4,mp3}",
-                       lambda r: r.abort())
+            page.route("**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,mp4,mp3}", lambda r: r.abort())
             page.goto(url, wait_until="domcontentloaded", timeout=25_000)
             try:
                 page.wait_for_selector("#news-table", timeout=8_000)
@@ -383,6 +393,7 @@ async def _playwright_finviz(ticker: str, url: str) -> list[dict]:
 
 # ── Merge + deduplication ─────────────────────────────────────────────────────
 
+
 def _headline_words(s: str) -> frozenset:
     """Normalised word-set for overlap-based deduplication."""
     return frozenset(w.lower() for w in re.split(r"\W+", s) if len(w) > 4)
@@ -404,6 +415,7 @@ def _merge_dedupe(sources: list[list[dict]]) -> list[dict]:
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
+
 
 async def get_scraped_news(ticker: str, company: str = "", days: int = 7) -> list[dict]:
     """
@@ -428,10 +440,10 @@ async def get_scraped_news(ticker: str, company: str = "", days: int = 7) -> lis
             return_exceptions=True,
         )
 
-    yahoo   = yahoo   if isinstance(yahoo,   list) else []
-    sa      = sa      if isinstance(sa,      list) else []
+    yahoo = yahoo if isinstance(yahoo, list) else []
+    sa = sa if isinstance(sa, list) else []
     reuters = reuters if isinstance(reuters, list) else []
-    finviz  = finviz  if isinstance(finviz,  list) else []
+    finviz = finviz if isinstance(finviz, list) else []
 
     result = _merge_dedupe([yahoo, sa, reuters, finviz])
     _CACHE[cache_key] = (result, time.time())
@@ -445,13 +457,14 @@ async def get_scraped_news(ticker: str, company: str = "", days: int = 7) -> lis
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
+
 def _hours_since(date_str: str) -> int:
     """Parse an RFC-2822 pubDate and return hours since publication."""
     if not date_str:
         return 9999
     try:
         pub_dt = parsedate_to_datetime(date_str)
-        delta  = datetime.now(pub_dt.tzinfo) - pub_dt
+        delta = datetime.now(pub_dt.tzinfo) - pub_dt
         return max(0, int(delta.total_seconds() / 3600))
     except Exception:
         return 9999

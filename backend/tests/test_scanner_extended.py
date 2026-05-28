@@ -19,18 +19,16 @@ Coverage targets:
     - duplicate chat_id skipped (sent_chat_ids dedup)
 """
 
-import asyncio
 import types
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-
 from services import scanner
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _settings(**kwargs):
     defaults = dict(
@@ -43,8 +41,7 @@ def _settings(**kwargs):
     return types.SimpleNamespace(**defaults)
 
 
-def _sig(action="BUY", ticker="AAPL", confidence=75.0, price=150.0,
-         entry=148.0, target=155.0, stop=144.0, **extra):
+def _sig(action="BUY", ticker="AAPL", confidence=75.0, price=150.0, entry=148.0, target=155.0, stop=144.0, **extra):
     base = dict(
         action=action,
         ticker=ticker,
@@ -98,8 +95,8 @@ def _make_db(sent_signal=None):
 # _maybe_send tests
 # ---------------------------------------------------------------------------
 
-class TestMaybeSend:
 
+class TestMaybeSend:
     @pytest.mark.asyncio
     async def test_hold_action_skipped_immediately(self):
         """HOLD signals must never trigger a send path."""
@@ -110,9 +107,7 @@ class TestMaybeSend:
         with patch.object(scanner, "_market_hours_ok", return_value=True):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
                 with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=False)):
-                    await scanner._maybe_send(
-                        _sig(action="HOLD"), row, settings, db, "test"
-                    )
+                    await scanner._maybe_send(_sig(action="HOLD"), row, settings, db, "test")
                 mock_send.assert_not_called()
 
         assert row.is_sent is False
@@ -125,9 +120,7 @@ class TestMaybeSend:
 
         with patch.object(scanner, "_market_hours_ok", return_value=True):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
-                await scanner._maybe_send(
-                    _sig(confidence=60.0), row, settings, db, "test"
-                )
+                await scanner._maybe_send(_sig(confidence=60.0), row, settings, db, "test")
             mock_send.assert_not_called()
 
         assert row.is_sent is False
@@ -158,9 +151,7 @@ class TestMaybeSend:
 
         with patch.object(scanner, "_market_hours_ok", return_value=False):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
-                await scanner._maybe_send(
-                    _sig(confidence=70.0), row, settings, db, "test"
-                )
+                await scanner._maybe_send(_sig(confidence=70.0), row, settings, db, "test")
             mock_send.assert_not_called()
 
         assert row.is_sent is False
@@ -168,7 +159,7 @@ class TestMaybeSend:
     @pytest.mark.asyncio
     async def test_24h_cooldown_active_skipped(self):
         """Cooldown: DB returns an existing sent Signal → skip."""
-        existing_sent = MagicMock()   # non-None means cooldown hit
+        existing_sent = MagicMock()  # non-None means cooldown hit
 
         cooldown_result = MagicMock()
         cooldown_result.scalar_one_or_none.return_value = existing_sent
@@ -185,8 +176,8 @@ class TestMaybeSend:
         async def _execute(_stmt):
             call_count[0] += 1
             if call_count[0] == 1:
-                return streak_result    # loss-streak query
-            return cooldown_result      # cooldown query
+                return streak_result  # loss-streak query
+            return cooldown_result  # cooldown query
 
         db.execute = _execute
         db.add = MagicMock()
@@ -199,9 +190,7 @@ class TestMaybeSend:
                 with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=False)):
                     with patch("services.market_calendar.get_upcoming_holidays", new=AsyncMock(return_value=[])):
                         with patch("services.market_calendar.is_pre_long_weekend", return_value=(False, "")):
-                            await scanner._maybe_send(
-                                _sig(confidence=70.0), row, settings, db, "test"
-                            )
+                            await scanner._maybe_send(_sig(confidence=70.0), row, settings, db, "test")
                 mock_send.assert_not_called()
 
         assert row.is_sent is False
@@ -251,9 +240,7 @@ class TestMaybeSend:
                         with patch("services.market_calendar.is_pre_long_weekend", return_value=(False, "")):
                             with patch("asyncio.create_task"):
                                 with patch("asyncio.ensure_future"):
-                                    await scanner._maybe_send(
-                                        _sig(confidence=70.0), row, settings, db, "new"
-                                    )
+                                    await scanner._maybe_send(_sig(confidence=70.0), row, settings, db, "new")
 
         assert row.is_sent is True
 
@@ -296,9 +283,7 @@ class TestMaybeSend:
                         with patch("services.market_calendar.is_pre_long_weekend", return_value=(False, "")):
                             with patch("asyncio.create_task"):
                                 with patch("asyncio.ensure_future"):
-                                    await scanner._maybe_send(
-                                        _sig(), row, settings, db, "new"
-                                    )
+                                    await scanner._maybe_send(_sig(), row, settings, db, "new")
 
         # At least one SendLog object should have been added
         assert any(isinstance(o, SendLog) for o in added_objects)
@@ -308,8 +293,8 @@ class TestMaybeSend:
 # _fanout_to_subscribers tests
 # ---------------------------------------------------------------------------
 
-class TestFanoutToSubscribers:
 
+class TestFanoutToSubscribers:
     @pytest.mark.asyncio
     async def test_no_token_returns_false_immediately(self):
         settings_no_token = types.SimpleNamespace(telegram_bot_token="")
@@ -331,7 +316,7 @@ class TestFanoutToSubscribers:
         )
 
         scalars_mock = MagicMock()
-        scalars_mock.all.return_value = []   # zero subscribers
+        scalars_mock.all.return_value = []  # zero subscribers
         result_mock = MagicMock()
         result_mock.scalars.return_value = scalars_mock
 
@@ -469,7 +454,7 @@ class TestFanoutToSubscribers:
         user.subscription_status = "active"
         user.subscription_tier = "basic"
         user.telegram_chat_id = "CHAT3"
-        user.min_confidence_override = 90.0   # very high personal threshold
+        user.min_confidence_override = 90.0  # very high personal threshold
 
         call_count = [0]
 
@@ -504,9 +489,7 @@ class TestFanoutToSubscribers:
                 with patch("aiohttp.ClientSession", return_value=mock_ctx):
                     with patch("services.scanner.asyncio.create_task"):
                         # Signal confidence = 70, user threshold = 90 → blocked
-                        result = await scanner._fanout_to_subscribers(
-                            _sig(confidence=70.0), row, db
-                        )
+                        result = await scanner._fanout_to_subscribers(_sig(confidence=70.0), row, db)
 
         mock_session.post.assert_not_called()
         assert result is False

@@ -26,33 +26,35 @@ v2 changes:
   4. Wider confidence cap   — 78% (calibration sets it, not a hard ceiling)
   5. Brier score output     — tracked in _meta so quality is measurable
 """
+
 from __future__ import annotations
+
 import json
 import logging
 import math
-import os
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger("signal.trade.calibration")
 
-_DATA_DIR    = Path(__file__).parent.parent / "data"
-_CAL_FILE    = _DATA_DIR / "calibration.json"
-_BIN_SIZE    = 5          # pp bin width for Platt fallback
-_MIN_N       = 3          # min samples before blending
-_MAX_BLEND   = 0.97       # empirical weight ceiling
-_N_FULL      = 15         # reach MAX_BLEND at this sample count
-_HALF_LIFE   = 45.0       # recency decay half-life in days
-_CONF_FLOOR  = 35.0       # minimum output confidence
-_CONF_CEIL   = 78.0       # maximum output confidence — raised from 65% (v1 ceiling
-                          # clipped calibrated 75%+ WR signals to 65%)
-_VALID_FRAC  = 0.20       # fraction held out for walk-forward Brier scoring
+_DATA_DIR = Path(__file__).parent.parent / "data"
+_CAL_FILE = _DATA_DIR / "calibration.json"
+_BIN_SIZE = 5  # pp bin width for Platt fallback
+_MIN_N = 3  # min samples before blending
+_MAX_BLEND = 0.97  # empirical weight ceiling
+_N_FULL = 15  # reach MAX_BLEND at this sample count
+_HALF_LIFE = 45.0  # recency decay half-life in days
+_CONF_FLOOR = 35.0  # minimum output confidence
+_CONF_CEIL = 78.0  # maximum output confidence — raised from 65% (v1 ceiling
+# clipped calibrated 75%+ WR signals to 65%)
+_VALID_FRAC = 0.20  # fraction held out for walk-forward Brier scoring
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _blend(n: int) -> float:
     if n < _MIN_N:
@@ -81,6 +83,7 @@ def _fit_isotonic(X: list, y: list, w: list | None = None) -> list | None:
     try:
         import numpy as np
         from sklearn.isotonic import IsotonicRegression
+
         ir = IsotonicRegression(out_of_bounds="clip", increasing=True)
         ir.fit(X, y, sample_weight=w if w else None)
         confs = np.linspace(_CONF_FLOOR / 100, _CONF_CEIL / 100, 44)
@@ -128,10 +131,10 @@ def _build_spy_regime_cache(start: str, end: str) -> dict:
     Returns {date_str: regime_str}.
     """
     try:
-        import yfinance as yf
         import pandas as pd
-        raw = yf.download("SPY", start=start, end=end, interval="1d",
-                          auto_adjust=True, progress=False)
+        import yfinance as yf
+
+        raw = yf.download("SPY", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = raw.columns.get_level_values(0)
         closes = raw["Close"].ffill()
@@ -141,9 +144,12 @@ def _build_spy_regime_cache(start: str, end: str) -> dict:
             if not isinstance(s, float) or s != s:
                 continue
             ratio = float(c) / float(s)
-            if   ratio > 1.02: regime = "bull"
-            elif ratio < 0.98: regime = "bear"
-            else:              regime = "neutral"
+            if ratio > 1.02:
+                regime = "bull"
+            elif ratio < 0.98:
+                regime = "bear"
+            else:
+                regime = "neutral"
             cache[str(dt)[:10]] = regime
         return cache
     except Exception as exc:
@@ -155,32 +161,33 @@ def _build_spy_regime_cache(start: str, end: str) -> dict:
 # Main calibration run
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 async def run_calibration() -> dict:
     """
     Build a regime-aware, recency-weighted calibration map from resolved signals.
     Writes calibration.json and returns the map.
     """
     try:
-        from sqlalchemy import select
         from database import AsyncSessionLocal
         from models import Signal
+        from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
-            rows = (await db.execute(
-                select(
-                    Signal.action,
-                    Signal.confidence,
-                    Signal.outcome_14d,
-                    Signal.outcome_pct,
-                    Signal.created_at,
+            rows = (
+                await db.execute(
+                    select(
+                        Signal.action,
+                        Signal.confidence,
+                        Signal.outcome_14d,
+                        Signal.outcome_pct,
+                        Signal.created_at,
+                    )
+                    .where(Signal.is_sent == True)
+                    .where(Signal.action.in_(["BUY", "SELL"]))
+                    .where((Signal.outcome_14d.isnot(None)) | (Signal.outcome_pct.isnot(None)))
+                    .order_by(Signal.created_at)
                 )
-                .where(Signal.is_sent == True)
-                .where(Signal.action.in_(["BUY", "SELL"]))
-                .where(
-                    (Signal.outcome_14d.isnot(None)) | (Signal.outcome_pct.isnot(None))
-                )
-                .order_by(Signal.created_at)
-            )).all()
+            ).all()
 
         if not rows:
             log.info("[calibration] no resolved signals — skipping")
@@ -190,7 +197,7 @@ async def run_calibration() -> dict:
         dates = [r.created_at for r in rows if r.created_at]
         if dates:
             start = min(dates).strftime("%Y-%m-%d")
-            end   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         else:
             start, end = "2024-01-01", datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -204,16 +211,18 @@ async def run_calibration() -> dict:
             pct = pct_14d if pct_14d is not None else pct_7d
             if pct is None:
                 continue
-            win    = 1 if (pct > 0 if action == "BUY" else pct < 0) else 0
+            win = 1 if (pct > 0 if action == "BUY" else pct < 0) else 0
             weight = _recency_weight(created_at, ref_dt)
             regime = _spy_regime_at(created_at, spy_cache) if created_at else "neutral"
-            samples.append({
-                "conf":    conf,
-                "win":     win,
-                "weight":  weight,
-                "regime":  regime,
-                "created": created_at,
-            })
+            samples.append(
+                {
+                    "conf": conf,
+                    "win": win,
+                    "weight": weight,
+                    "regime": regime,
+                    "created": created_at,
+                }
+            )
 
         n_total = len(samples)
         if n_total == 0:
@@ -229,25 +238,24 @@ async def run_calibration() -> dict:
         for s in train:
             b = max(0, min(95, (int(s["conf"]) // _BIN_SIZE) * _BIN_SIZE))
             bins[b]["w_total"] += s["weight"]
-            bins[b]["w_wins"]  += s["weight"] * s["win"]
+            bins[b]["w_wins"] += s["weight"] * s["win"]
 
         cal_map: dict[str, object] = {}
         for b, bstats in sorted(bins.items()):
             wt = bstats["w_total"]
             wr = bstats["w_wins"] / wt if wt > 0 else 0.5
-            n_raw = sum(1 for s in train
-                        if max(0, min(95, (int(s["conf"]) // _BIN_SIZE) * _BIN_SIZE)) == b)
+            n_raw = sum(1 for s in train if max(0, min(95, (int(s["conf"]) // _BIN_SIZE) * _BIN_SIZE)) == b)
             cal_map[str(b)] = {
                 "win_rate": round(wr, 4),
-                "n":        n_raw,
-                "blend":    round(_blend(n_raw), 3),
+                "n": n_raw,
+                "blend": round(_blend(n_raw), 3),
             }
-            log.debug(f"[calibration] bin {b}: wr={wr*100:.1f}% n={n_raw} w={wt:.1f}")
+            log.debug(f"[calibration] bin {b}: wr={wr * 100:.1f}% n={n_raw} w={wt:.1f}")
 
         # ── Global isotonic (recency-weighted) ────────────────────────────────
         _X = [s["conf"] / 100.0 for s in train]
-        _y = [s["win"]           for s in train]
-        _w = [s["weight"]        for s in train]
+        _y = [s["win"] for s in train]
+        _w = [s["weight"] for s in train]
         iso_global = _fit_isotonic(_X, _y, _w)
         if iso_global:
             cal_map["_isotonic"] = iso_global
@@ -261,21 +269,20 @@ async def run_calibration() -> dict:
                 log.debug(f"[calibration] {regime}: only {len(sub)} samples — skip")
                 continue
             rx = [s["conf"] / 100.0 for s in sub]
-            ry = [s["win"]           for s in sub]
-            rw = [s["weight"]        for s in sub]
+            ry = [s["win"] for s in sub]
+            rw = [s["weight"] for s in sub]
             iso = _fit_isotonic(rx, ry, rw)
             # Platt bins per regime
             rbins: dict[int, dict] = defaultdict(lambda: {"w_wins": 0.0, "w_total": 0.0})
             for s in sub:
                 b = max(0, min(95, (int(s["conf"]) // _BIN_SIZE) * _BIN_SIZE))
                 rbins[b]["w_total"] += s["weight"]
-                rbins[b]["w_wins"]  += s["weight"] * s["win"]
+                rbins[b]["w_wins"] += s["weight"] * s["win"]
             rbin_map = {}
             for b, bst in sorted(rbins.items()):
                 wt = bst["w_total"]
                 wr = bst["w_wins"] / wt if wt > 0 else 0.5
-                n_r = sum(1 for s in sub
-                          if max(0, min(95, (int(s["conf"]) // _BIN_SIZE) * _BIN_SIZE)) == b)
+                n_r = sum(1 for s in sub if max(0, min(95, (int(s["conf"]) // _BIN_SIZE) * _BIN_SIZE)) == b)
                 rbin_map[str(b)] = {"win_rate": round(wr, 4), "n": n_r, "blend": round(_blend(n_r), 3)}
             regime_entry: dict = {"n": len(sub), "bins": rbin_map}
             if iso:
@@ -294,17 +301,21 @@ async def run_calibration() -> dict:
                 if iso_global:
                     p = _interp_isotonic(iso_global, x)
                     if p is not None:
-                        preds.append(p); actuals.append(s["win"]); continue
+                        preds.append(p)
+                        actuals.append(s["win"])
+                        continue
                 # Platt fallback
                 b = str(max(0, min(95, (int(s["conf"]) // _BIN_SIZE) * _BIN_SIZE)))
                 entry = cal_map.get(b)
                 if entry and isinstance(entry, dict) and entry.get("blend", 0) > 0:
                     p = entry["win_rate"] * entry["blend"] + s["conf"] / 100 * (1 - entry["blend"])
-                    preds.append(p); actuals.append(s["win"])
+                    preds.append(p)
+                    actuals.append(s["win"])
             brier = _brier_score(preds, actuals)
             brier_naive = _brier_score([0.5] * len(actuals), actuals)  # baseline: predict 50%
-            log.info(f"[calibration] Brier (walk-forward, n={len(preds)}): {brier:.4f} "
-                     f"vs naive 0.5 → {brier_naive:.4f}")
+            log.info(
+                f"[calibration] Brier (walk-forward, n={len(preds)}): {brier:.4f} vs naive 0.5 → {brier_naive:.4f}"
+            )
         else:
             brier = float("nan")
 
@@ -314,17 +325,17 @@ async def run_calibration() -> dict:
             regime_counts[s["regime"]] += 1
 
         cal_map["_meta"] = {
-            "n_total":    n_total,
-            "n_train":    len(train),
-            "n_valid":    len(valid),
-            "n_bull":     regime_counts["bull"],
-            "n_bear":     regime_counts["bear"],
-            "n_neutral":  regime_counts["neutral"],
+            "n_total": n_total,
+            "n_train": len(train),
+            "n_valid": len(valid),
+            "n_bull": regime_counts["bull"],
+            "n_bear": regime_counts["bear"],
+            "n_neutral": regime_counts["neutral"],
             "brier_walkforward": brier if not (isinstance(brier, float) and brier != brier) else None,
             "brier_naive_50pct": round(brier_naive, 4) if valid else None,
-            "last_run":   datetime.now(timezone.utc).isoformat()[:19],
+            "last_run": datetime.now(timezone.utc).isoformat()[:19],
             "conf_floor": _CONF_FLOOR,
-            "conf_ceil":  _CONF_CEIL,
+            "conf_ceil": _CONF_CEIL,
         }
 
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -332,7 +343,9 @@ async def run_calibration() -> dict:
         log.info(
             f"[calibration] wrote {n_total} signals · "
             f"bull={regime_counts['bull']} bear={regime_counts['bear']} "
-            f"neutral={regime_counts['neutral']} · Brier={brier:.4f}" if isinstance(brier, float) and brier == brier else f"neutral={regime_counts['neutral']} · Brier=n/a"
+            f"neutral={regime_counts['neutral']} · Brier={brier:.4f}"
+            if isinstance(brier, float) and brier == brier
+            else f"neutral={regime_counts['neutral']} · Brier=n/a"
         )
         return cal_map
 
@@ -355,11 +368,12 @@ def load_calibration() -> dict:
 # Apply calibration
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def apply_calibration(
     raw_conf: float,
-    action:   str,
-    cal_map:  dict,
-    regime:   str | None = None,
+    action: str,
+    cal_map: dict,
+    regime: str | None = None,
 ) -> tuple[float, dict | None]:
     """
     Map raw model confidence → calibrated win probability.
@@ -380,7 +394,7 @@ def apply_calibration(
     # ── 1. Regime-specific isotonic ───────────────────────────────────────────
     if regime and "_regime" in cal_map:
         reg_entry = cal_map["_regime"].get(regime, {})
-        iso_reg   = reg_entry.get("_isotonic")
+        iso_reg = reg_entry.get("_isotonic")
         if iso_reg and reg_entry.get("n", 0) >= 20:
             p = _interp_isotonic(iso_reg, x)
             if p is not None:
@@ -396,13 +410,13 @@ def apply_calibration(
             return cal, {"source": "isotonic_global", "prob": round(p, 4)}
 
     # ── 3. Platt bin blend (fallback) ─────────────────────────────────────────
-    b      = str(max(0, (int(raw_conf) // _BIN_SIZE) * _BIN_SIZE))
+    b = str(max(0, (int(raw_conf) // _BIN_SIZE) * _BIN_SIZE))
     _lower = str(max(0, int(b) - _BIN_SIZE))
-    entry  = cal_map.get(b) or (cal_map.get(_lower) if _lower != b else None)
+    entry = cal_map.get(b) or (cal_map.get(_lower) if _lower != b else None)
     if not entry or not isinstance(entry, dict) or entry.get("blend", 0.0) == 0.0:
         return raw_conf, None
 
     emp_wr_pct = entry["win_rate"] * 100
-    blend      = entry["blend"]
+    blend = entry["blend"]
     calibrated = emp_wr_pct * blend + raw_conf * (1.0 - blend)
     return round(min(_CONF_CEIL, max(_CONF_FLOOR, calibrated)), 1), entry

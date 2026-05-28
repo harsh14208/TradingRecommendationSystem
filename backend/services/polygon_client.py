@@ -1,13 +1,15 @@
-import os
-import logging
 import asyncio
+import logging
+import os
+from datetime import datetime, timedelta, timezone
+
 import aiohttp
 import pandas as pd
-from datetime import datetime, timedelta, timezone
 
 log = logging.getLogger("signal.trade.polygon")
 
 _BASE = "https://api.polygon.io"
+
 
 def _get_api_key() -> str:
     """
@@ -39,7 +41,7 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
     # Map yfinance period strings to date ranges
     end_dt = datetime.now(timezone.utc).replace(tzinfo=None)
     if period == "1d":
-        start_dt = end_dt - timedelta(days=2) # Extra days to ensure we get data over weekends
+        start_dt = end_dt - timedelta(days=2)  # Extra days to ensure we get data over weekends
     elif period == "5d":
         start_dt = end_dt - timedelta(days=7)
     elif period == "1mo":
@@ -59,15 +61,13 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
     end_str = end_dt.strftime("%Y-%m-%d")
 
     url = f"https://api.polygon.io/v2/aggs/ticker/{ticker.upper()}/range/{multiplier}/{timespan}/{start_str}/{end_str}"
-    params = {
-        "adjusted": "true",
-        "sort": "asc",
-        "limit": 50000,
-        "apiKey": api_key
-    }
+    params = {"adjusted": "true", "sort": "asc", "limit": 50000, "apiKey": api_key}
 
     try:
-        import ssl, certifi
+        import ssl
+
+        import certifi
+
         ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
@@ -75,24 +75,18 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
                     log.warning(f"[polygon] Error fetching {ticker}: HTTP {resp.status}")
                     return None
                 data = await resp.json()
-                
+
                 results = data.get("results", [])
                 if not results:
                     return pd.DataFrame()
-                
+
                 df = pd.DataFrame(results)
                 df.loc[:, "Datetime"] = pd.to_datetime(df["t"], unit="ms", utc=True).dt.tz_convert("America/New_York")
                 df.set_index("Datetime", inplace=True)
-                
+
                 # Rename to match yfinance output exactly
-                df.rename(columns={
-                    "o": "Open",
-                    "h": "High",
-                    "l": "Low",
-                    "c": "Close",
-                    "v": "Volume"
-                }, inplace=True)
-                
+                df.rename(columns={"o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"}, inplace=True)
+
                 # Return only the necessary columns in correct case
                 return df[["Open", "High", "Low", "Close", "Volume"]]
     except Exception as e:
@@ -146,11 +140,13 @@ async def get_polygon_quotes_batch(tickers: list[str]) -> list[dict]:
             prev = float(close.iloc[-2])
             if prev <= 0:
                 continue
-            quotes.append({
-                "t": ticker.upper(),
-                "p": round(price, 2),
-                "c": round((price - prev) / prev * 100, 2),
-            })
+            quotes.append(
+                {
+                    "t": ticker.upper(),
+                    "p": round(price, 2),
+                    "c": round((price - prev) / prev * 100, 2),
+                }
+            )
         except Exception:
             continue
     return quotes
@@ -164,7 +160,10 @@ async def get_polygon_info(ticker: str) -> dict | None:
     url = f"{_BASE}/v3/reference/tickers/{ticker.upper()}"
     params = {"apiKey": api_key}
     try:
-        import ssl, certifi
+        import ssl
+
+        import certifi
+
         ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
@@ -217,14 +216,19 @@ async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame 
     if not api_key:
         return None
 
-    end_dt   = datetime.now(timezone.utc).replace(tzinfo=None)
+    end_dt = datetime.now(timezone.utc).replace(tzinfo=None)
     start_dt = end_dt - timedelta(weeks=weeks + 4)  # extra buffer for weekends/holidays
-    url = (f"https://api.polygon.io/v2/aggs/ticker/{ticker.upper()}"
-           f"/range/1/week/{start_dt.strftime('%Y-%m-%d')}/{end_dt.strftime('%Y-%m-%d')}")
+    url = (
+        f"https://api.polygon.io/v2/aggs/ticker/{ticker.upper()}"
+        f"/range/1/week/{start_dt.strftime('%Y-%m-%d')}/{end_dt.strftime('%Y-%m-%d')}"
+    )
     params = {"adjusted": "true", "sort": "asc", "limit": 50000, "apiKey": api_key}
 
     try:
-        import ssl as _ssl, certifi as _certifi
+        import ssl as _ssl
+
+        import certifi as _certifi
+
         ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
@@ -237,15 +241,14 @@ async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame 
                 df = pd.DataFrame(results)
                 df.loc[:, "Datetime"] = pd.to_datetime(df["t"], unit="ms", utc=True)
                 df.set_index("Datetime", inplace=True)
-                df.rename(columns={"o": "Open", "h": "High", "l": "Low",
-                                   "c": "Close", "v": "Volume"}, inplace=True)
+                df.rename(columns={"o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"}, inplace=True)
                 return df[["Open", "High", "Low", "Close", "Volume"]].tail(weeks)
     except Exception as e:
         log.warning(f"[polygon] weekly bars {ticker}: {e}")
         return None
 
 
-async def get_polygon_extended_hours(ticker: str) -> "Optional[dict]":
+async def get_polygon_extended_hours(ticker: str) -> dict | None:
     """
     Return extended-hours (pre-market / after-hours) stats using the Polygon v2
     snapshot endpoint.  Returns the same dict shape as market_data._fetch_extended_hours()
@@ -255,7 +258,6 @@ async def get_polygon_extended_hours(ticker: str) -> "Optional[dict]":
     and prevDay.c (previous regular-session close) — reliable even when yfinance is
     rate-limited or impersonation headers expire.
     """
-    from typing import Optional as _Opt
     api_key = _get_api_key()
     if not api_key:
         return None
@@ -264,7 +266,10 @@ async def get_polygon_extended_hours(ticker: str) -> "Optional[dict]":
     params = {"apiKey": api_key}
 
     try:
-        import ssl as _ssl, certifi as _certifi
+        import ssl as _ssl
+
+        import certifi as _certifi
+
         ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
@@ -273,28 +278,28 @@ async def get_polygon_extended_hours(ticker: str) -> "Optional[dict]":
                     return None
                 data = await resp.json()
 
-        t_data     = (data.get("ticker") or {})
+        t_data = data.get("ticker") or {}
         last_trade = t_data.get("lastTrade") or {}
-        prev_day   = t_data.get("prevDay")   or {}
-        min_data   = t_data.get("min")       or {}
+        prev_day = t_data.get("prevDay") or {}
+        min_data = t_data.get("min") or {}
 
-        ext_price  = last_trade.get("p")
+        ext_price = last_trade.get("p")
         prev_close = prev_day.get("c")
         if not ext_price or not prev_close:
             return None
 
-        ext_price  = float(ext_price)
+        ext_price = float(ext_price)
         prev_close = float(prev_close)
-        gap_pct    = round((ext_price - prev_close) / prev_close * 100, 3)
-        direction  = "up" if gap_pct > 0.1 else "down" if gap_pct < -0.1 else "flat"
+        gap_pct = round((ext_price - prev_close) / prev_close * 100, 3)
+        direction = "up" if gap_pct > 0.1 else "down" if gap_pct < -0.1 else "flat"
         ext_volume = int(min_data.get("v") or 0)
 
         return {
-            "price":      ext_price,
+            "price": ext_price,
             "prev_close": prev_close,
-            "gap_pct":    gap_pct,
-            "vol_ratio":  1.0,   # snapshot doesn't provide avg ext-hours vol
-            "direction":  direction,
+            "gap_pct": gap_pct,
+            "vol_ratio": 1.0,  # snapshot doesn't provide avg ext-hours vol
+            "direction": direction,
             "ext_volume": ext_volume,
         }
     except Exception as e:

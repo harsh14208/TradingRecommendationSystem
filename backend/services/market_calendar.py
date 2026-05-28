@@ -6,11 +6,12 @@ when a 3-day weekend is 2 trading days away (lower liquidity, wider spreads, gap
 
 Cache: 24 hours (holiday schedule doesn't change intraday).
 """
+
 import logging
 import os
 import ssl
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import aiohttp
 import certifi
@@ -34,7 +35,7 @@ async def get_upcoming_holidays() -> list[dict]:
     api_key = os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY") or ""
     if not api_key:
         _cache["data"] = []
-        _cache["ts"]   = now
+        _cache["ts"] = now
         return []
 
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
@@ -48,26 +49,28 @@ async def get_upcoming_holidays() -> list[dict]:
             ) as resp:
                 if resp.status != 200:
                     _cache["data"] = []
-                    _cache["ts"]   = now
+                    _cache["ts"] = now
                     return []
                 data = await resp.json()
     except Exception as e:
         log.debug(f"[market_calendar] fetch failed: {e}")
         _cache["data"] = []
-        _cache["ts"]   = now
+        _cache["ts"] = now
         return []
 
     holidays = []
-    for item in (data if isinstance(data, list) else []):
+    for item in data if isinstance(data, list) else []:
         if item.get("status") == "closed" and item.get("exchange") in ("NYSE", "NASDAQ"):
-            holidays.append({
-                "date":     item.get("date", ""),
-                "name":     item.get("name", "Holiday"),
-                "exchange": item.get("exchange", "NYSE"),
-            })
+            holidays.append(
+                {
+                    "date": item.get("date", ""),
+                    "name": item.get("name", "Holiday"),
+                    "exchange": item.get("exchange", "NYSE"),
+                }
+            )
 
     _cache["data"] = holidays
-    _cache["ts"]   = now
+    _cache["ts"] = now
     if holidays:
         log.debug(f"[market_calendar] {len(holidays)} upcoming holidays loaded")
     return holidays
@@ -92,7 +95,7 @@ def is_pre_long_weekend(holidays: list[dict]) -> tuple[bool, str]:
             continue
         # Check if it creates a 3-day weekend (Mon or Fri holiday)
         weekday = hdate.weekday()  # 0=Mon … 4=Fri
-        if weekday in (0, 4):     # Monday or Friday holiday → 3-day weekend
+        if weekday in (0, 4):  # Monday or Friday holiday → 3-day weekend
             # Are we within 2 trading days?
             # Approximate: 2 trading days ≈ 2-3 calendar days before
             if days_until <= 3:

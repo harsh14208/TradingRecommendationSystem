@@ -2,31 +2,29 @@
 Tests for config.py — Settings properties, tier helpers, and get_settings().
 All tests are pure and rely only on the in-process Settings object.
 """
-import sys
+
 import os
-import pytest
+import sys
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from config import (
-    Settings,
-    get_settings,
-    TIERS,
-    TIER_FEATURES,
     TIER_LABELS,
     TIER_PLAN_FEATURES,
     TIER_PRICES_CENTS,
+    TIERS,
+    Settings,
+    get_settings,
     has_feature,
     tier_gte,
 )
 
-
 # ── Settings.tickers property ──────────────────────────────────────────────────
 
-class TestSettingsTickers:
 
+class TestSettingsTickers:
     def test_default_watchlist_returns_list(self):
         s = Settings()
         tickers = s.tickers
@@ -52,8 +50,8 @@ class TestSettingsTickers:
 
 # ── Settings.jwt_secret_key property ──────────────────────────────────────────
 
-class TestJwtSecretKey:
 
+class TestJwtSecretKey:
     def test_returns_set_secret(self):
         s = Settings(jwt_secret="MY_VERY_SECRET_KEY")
         assert s.jwt_secret_key == "MY_VERY_SECRET_KEY"
@@ -67,8 +65,8 @@ class TestJwtSecretKey:
 
 # ── has_feature ────────────────────────────────────────────────────────────────
 
-class TestHasFeature:
 
+class TestHasFeature:
     def test_owner_has_all_features(self):
         """Owner bypasses tier checks — always returns True."""
         assert has_feature("free", "paper_trading", is_owner=True) is True
@@ -98,8 +96,8 @@ class TestHasFeature:
 
 # ── tier_gte ───────────────────────────────────────────────────────────────────
 
-class TestTierGte:
 
+class TestTierGte:
     def test_same_tier_is_gte(self):
         assert tier_gte("free", "free") is True
         assert tier_gte("basic", "basic") is True
@@ -118,8 +116,8 @@ class TestTierGte:
 
 # ── TIERS constant ─────────────────────────────────────────────────────────────
 
-class TestTiersConstant:
 
+class TestTiersConstant:
     def test_tiers_is_list(self):
         assert isinstance(TIERS, list)
 
@@ -148,8 +146,8 @@ class TestTiersConstant:
 
 # ── get_settings ───────────────────────────────────────────────────────────────
 
-class TestGetSettings:
 
+class TestGetSettings:
     def test_returns_settings_instance(self):
         s = get_settings()
         assert isinstance(s, Settings)

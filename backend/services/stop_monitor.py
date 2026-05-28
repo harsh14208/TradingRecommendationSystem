@@ -8,14 +8,14 @@ Checks every active sent BUY/SELL signal against the latest price:
 
 Deactivates the signal after either event so users aren't notified twice.
 """
+
 import asyncio
 import logging
 import math
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import yfinance as yf
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 log = logging.getLogger("signal.trade.stop_monitor")
 
@@ -25,6 +25,7 @@ def _fetch_current_prices(tickers: list[str]) -> dict[str, float]:
         return {}
     try:
         import warnings
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             data = yf.download(tickers, period="1d", progress=False, auto_adjust=True)
@@ -46,14 +47,16 @@ def _fetch_current_prices(tickers: list[str]) -> dict[str, float]:
         return {}
 
 
-async def _send_stop_target_notification(ticker: str, action: str, event: str,
-                                          price: float, level: float, ret_pct: float,
-                                          signal_id: int):
+async def _send_stop_target_notification(
+    ticker: str, action: str, event: str, price: float, level: float, ret_pct: float, signal_id: int
+):
     """Send Telegram notification when stop or target is hit."""
     try:
         from config import get_settings
-        from services.telegram_svc import send_telegram_message
+
         from services.market_data import COMPANY_NAMES
+        from services.telegram_svc import send_telegram_message
+
         settings = get_settings()
         emoji = "✅" if event == "target" else "⛔"
         color_word = "TARGET HIT" if event == "target" else "STOP HIT"
@@ -84,24 +87,30 @@ async def check_stop_targets_and_notify():
 
     async with AsyncSessionLocal() as db:
         # Only check active, sent BUY/SELL signals with defined stop/target and no exit yet
-        rows = (await db.execute(
-            select(Signal).where(
-                Signal.is_sent  == True,
-                Signal.is_active == True,
-                Signal.action.in_(["BUY", "SELL"]),
-                Signal.entry.isnot(None),
-                Signal.stop.isnot(None),
-                Signal.target.isnot(None),
-                Signal.exit_type.is_(None),   # not yet resolved
+        rows = (
+            (
+                await db.execute(
+                    select(Signal).where(
+                        Signal.is_sent == True,
+                        Signal.is_active == True,
+                        Signal.action.in_(["BUY", "SELL"]),
+                        Signal.entry.isnot(None),
+                        Signal.stop.isnot(None),
+                        Signal.target.isnot(None),
+                        Signal.exit_type.is_(None),  # not yet resolved
+                    )
+                )
             )
-        )).scalars().all()
+            .scalars()
+            .all()
+        )
 
     if not rows:
         log.info("[stop_monitor] no active signals to check.")
         return
 
     tickers = list({s.ticker for s in rows})
-    prices  = _fetch_current_prices(tickers)
+    prices = _fetch_current_prices(tickers)
     log.info(f"[stop_monitor] got prices for {len(prices)}/{len(tickers)} tickers.")
 
     now_utc = datetime.now(timezone.utc)
@@ -113,19 +122,19 @@ async def check_stop_targets_and_notify():
             if not current:
                 continue
 
-            entry  = sig.entry
-            stop   = sig.stop
+            entry = sig.entry
+            stop = sig.stop
             target = sig.target
             is_buy = sig.action == "BUY"
 
-            hit_stop   = (current <= stop)   if is_buy else (current >= stop)
+            hit_stop = (current <= stop) if is_buy else (current >= stop)
             hit_target = (current >= target) if is_buy else (current <= target)
 
             if not hit_stop and not hit_target:
                 continue
 
             event = "target" if hit_target else "stop"
-            level = target   if hit_target else stop
+            level = target if hit_target else stop
 
             # Compute return at the exit level (stop or target price), not at `current`.
             # Using the level price ensures outcome_pct reflects what you'd receive if
@@ -140,24 +149,20 @@ async def check_stop_targets_and_notify():
                 ret_pct = 0.0
 
             # Update DB
-            sig_db = (await db.execute(
-                select(Signal).where(Signal.id == sig.id)
-            )).scalar_one_or_none()
+            sig_db = (await db.execute(select(Signal).where(Signal.id == sig.id))).scalar_one_or_none()
             if not sig_db:
                 continue
 
-            sig_db.hit_stop    = hit_stop
-            sig_db.hit_target  = hit_target
-            sig_db.exit_type   = event
-            sig_db.is_active   = False   # position closed — deactivate signal
+            sig_db.hit_stop = hit_stop
+            sig_db.hit_target = hit_target
+            sig_db.exit_type = event
+            sig_db.is_active = False  # position closed — deactivate signal
             sig_db.outcome_pct = ret_pct  # always lock to exit-level return
             updated += 1
 
             # Fire Telegram notification (async, non-blocking)
             asyncio.create_task(
-                _send_stop_target_notification(
-                    sig.ticker, sig.action, event, current, level, ret_pct, sig.id
-                )
+                _send_stop_target_notification(sig.ticker, sig.action, event, current, level, ret_pct, sig.id)
             )
             log.info(
                 f"[stop_monitor] {sig.ticker} {sig.action} {event.upper()} "

@@ -26,7 +26,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov pytest-timeout pip-audit
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout pip-audit ruff
 
       - name: Syntax check (all .py files)
         run: |
@@ -43,6 +43,9 @@ jobs:
               [print('FAIL:', e) for e in errors]; sys.exit(1)
           print(f'Syntax OK ({len(glob.glob("**/*.py", recursive=True))} files)')
           PYEOF
+
+      - name: Ruff lint
+        run: ruff check . --config ../ruff.toml
 
       - name: Import smoke tests
         run: python3 tests/test_imports_smoke.py

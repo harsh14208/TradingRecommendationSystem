@@ -13,22 +13,25 @@ Algorithm:
   5. Rescale to 100% total weight
   6. Return per-asset weight, individual vol, pair correlations above threshold
 """
+
 import asyncio
 import logging
+from typing import Optional
+
 import numpy as np
 import pandas as pd
-from typing import Optional
 
 log = logging.getLogger("signal.trade.vol_target")
 
-TARGET_VOL = 0.15          # 15% annualised portfolio vol target
-CORR_THRESHOLD = 0.70      # pairs above this get correlation penalty
+TARGET_VOL = 0.15  # 15% annualised portfolio vol target
+CORR_THRESHOLD = 0.70  # pairs above this get correlation penalty
 TRADING_DAYS = 252
 
 
 async def _fetch_returns(tickers: list[str], period: str = "3mo") -> pd.DataFrame:
     """Fetch daily % returns for each ticker. Returns DataFrame[ticker → daily_return]."""
     from services.market_data import get_histories_batch
+
     histories = await get_histories_batch(tickers, period=period, interval="1d")
     returns: dict[str, pd.Series] = {}
     for t in tickers:
@@ -68,7 +71,7 @@ def _vol_target_weights(returns_df: pd.DataFrame) -> dict:
     penalty = {t: 0.0 for t in tickers}
 
     for i, a in enumerate(tickers):
-        for b in tickers[i+1:]:
+        for b in tickers[i + 1 :]:
             c = corr_matrix.loc[a, b] if (a in corr_matrix.index and b in corr_matrix.columns) else 0.0
             if abs(c) > CORR_THRESHOLD:
                 high_corr_pairs.append({"a": a, "b": b, "correlation": round(float(c), 3)})

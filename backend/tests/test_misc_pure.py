@@ -9,8 +9,10 @@ small but testable pure helpers:
   - services/massive_analyst.py: pure scoring helpers
   - services/polygon_indicators.py: pure helpers
 """
-import sys
+
 import os
+import sys
+
 import pytest
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -26,11 +28,10 @@ from services.fear_greed import _classify, _neutral_result
 
 
 class TestFearGreedClassify:
-
     def test_extreme_fear_low_score(self):
         label, sentiment, bias = _classify(10.0)
         assert label == "Extreme Fear"
-        assert sentiment == "pos"   # contrarian: oversold = buy dip
+        assert sentiment == "pos"  # contrarian: oversold = buy dip
         assert bias == 15
 
     def test_fear_range(self):
@@ -70,7 +71,6 @@ class TestFearGreedClassify:
 
 
 class TestFearGreedNeutralResult:
-
     def test_returns_dict(self):
         result = _neutral_result()
         assert isinstance(result, dict)
@@ -95,11 +95,10 @@ class TestFearGreedNeutralResult:
 # services/eightk_events.py — _ITEM_MAP structure + score clamping
 # ─────────────────────────────────────────────────────────────────────────────
 
-from services.eightk_events import _ITEM_MAP, _parse_ceo_signal
+from services.eightk_events import _ITEM_MAP
 
 
 class TestItemMap:
-
     def test_item_map_is_dict(self):
         assert isinstance(_ITEM_MAP, dict)
 
@@ -129,7 +128,6 @@ from services.massive_options import score_option_chain
 
 
 class TestScoreOptionChain:
-
     def test_empty_signals_returns_zero(self):
         score, rationale = score_option_chain({}, 100.0, "BUY")
         assert score == 0.0
@@ -163,16 +161,12 @@ class TestScoreOptionChain:
 
     def test_max_pain_adds_rationale(self):
         """Max pain > 3% from spot → adds rationale about gravitational pull."""
-        score, rationale = score_option_chain(
-            {"max_pain": 110.0}, 100.0, "BUY"
-        )
+        score, rationale = score_option_chain({"max_pain": 110.0}, 100.0, "BUY")
         assert any("Max Pain" in r["head"] for r in rationale)
 
     def test_max_pain_close_to_spot_no_rationale(self):
         """Max pain within 3% → no rationale added."""
-        score, rationale = score_option_chain(
-            {"max_pain": 101.0}, 100.0, "BUY"
-        )
+        score, rationale = score_option_chain({"max_pain": 101.0}, 100.0, "BUY")
         assert not any("Max Pain" in r["head"] for r in rationale)
 
 
@@ -184,7 +178,6 @@ from services.polygon_indicators import blend_rsi, polygon_sma_crossover
 
 
 class TestBlendRsi:
-
     def test_both_available_weighted_blend(self):
         """60% Polygon + 40% pandas."""
         result = blend_rsi(pandas_rsi=40.0, polygon_rsi=50.0)
@@ -207,7 +200,6 @@ class TestBlendRsi:
 
 
 class TestPolygonSmaCrossover:
-
     def test_empty_indicators_returns_empty(self):
         result = polygon_sma_crossover({}, 100.0)
         assert result == {}

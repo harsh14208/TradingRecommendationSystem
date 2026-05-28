@@ -1,12 +1,14 @@
 import logging
 import os
 from pathlib import Path
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+
 from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv(Path(__file__).parent / ".env", override=False)
 except ImportError:
     pass
@@ -56,7 +58,7 @@ if _IS_POSTGRES:
         echo=False,
         pool_size=10,
         max_overflow=20,
-        pool_pre_ping=True,   # detect stale connections
+        pool_pre_ping=True,  # detect stale connections
     )
     logger.info(f"[db] Using PostgreSQL: {DATABASE_URL.split('@')[-1]}")
 else:

@@ -4,10 +4,10 @@ Tests for pure helper functions in validate_predictions.py.
 Tests _pct, _age_days, _best_outcome, and the BANDS constant.
 All tests are self-contained with no I/O or DB access.
 """
-import sys
+
 import os
-import pytest
-from datetime import datetime, timezone, timedelta
+import sys
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 # Ensure the backend directory is on sys.path
@@ -15,10 +15,10 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from validate_predictions import _pct, _age_days, _best_outcome, BANDS
-
+from validate_predictions import BANDS, _age_days, _best_outcome, _pct
 
 # ── _pct tests ────────────────────────────────────────────────────────────────
+
 
 class TestPct:
     """Tests for _pct(current, entry, action) pure function."""
@@ -107,6 +107,7 @@ class TestPct:
 
 # ── _age_days tests ────────────────────────────────────────────────────────────
 
+
 class TestAgeDays:
     """Tests for _age_days(sig) — uses sig.created_at attribute."""
 
@@ -167,6 +168,7 @@ class TestAgeDays:
 
 # ── _best_outcome tests ────────────────────────────────────────────────────────
 
+
 class TestBestOutcome:
     """Tests for _best_outcome(sig) priority chain:
     outcome_14d → outcome_pct → outcome_3d → outcome_1d → None
@@ -175,10 +177,10 @@ class TestBestOutcome:
 
     def _make_sig(self, **kwargs):
         sig = MagicMock(spec=["outcome_pct", "outcome_14d", "outcome_3d", "outcome_1d"])
-        sig.outcome_pct  = kwargs.get("outcome_pct",  None)
-        sig.outcome_14d  = kwargs.get("outcome_14d", None)
-        sig.outcome_3d   = kwargs.get("outcome_3d",  None)
-        sig.outcome_1d   = kwargs.get("outcome_1d",  None)
+        sig.outcome_pct = kwargs.get("outcome_pct")
+        sig.outcome_14d = kwargs.get("outcome_14d")
+        sig.outcome_3d = kwargs.get("outcome_3d")
+        sig.outcome_1d = kwargs.get("outcome_1d")
         return sig
 
     def test_all_none_returns_none(self):
@@ -230,6 +232,7 @@ class TestBestOutcome:
 
 # ── BANDS constant tests ───────────────────────────────────────────────────────
 
+
 class TestBands:
     def test_bands_is_list_of_tuples(self):
         assert isinstance(BANDS, list)
@@ -252,12 +255,12 @@ class TestBands:
 
 # ── _fetch_prices tests (mocked yfinance) ─────────────────────────────────────
 
+from unittest.mock import patch
+
 from validate_predictions import _fetch_prices
-from unittest.mock import patch, MagicMock
 
 
 class TestFetchPrices:
-
     def test_empty_tickers_returns_empty(self):
         result = _fetch_prices([])
         assert result == {}

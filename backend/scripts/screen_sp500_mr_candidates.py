@@ -33,8 +33,13 @@ Usage:
     # Fast mode (2006–2016 only, ~30min): --fast
     python scripts/screen_sp500_mr_candidates.py --fast
 """
+
 from __future__ import annotations
-import os, sys, warnings, argparse
+
+import argparse
+import os
+import sys
+import warnings
 from multiprocessing import Pool
 
 import pandas as pd
@@ -42,56 +47,83 @@ import yfinance as yf
 
 warnings.filterwarnings("ignore")
 
-_HERE   = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__))
 _PARENT = os.path.dirname(_HERE)
 for _p in [_PARENT, _HERE]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 from backtest_technicals import (
-    START, END, TICKERS as _PRODUCTION_TICKERS,
-    fetch_spy_trend, fetch_stlfsi4, process_ticker,
-    simulate_ticker, stats, print_table, fmt_sharpe,
+    END,
+    fetch_spy_trend,
+    fetch_stlfsi4,
+    fmt_sharpe,
+    process_ticker,
+    simulate_ticker,
+    stats,
+)
+from backtest_technicals import (
+    TICKERS as _PRODUCTION_TICKERS,
 )
 from signal_alpha_decomposition import (
-    compute_extra_indicators, _download_etf_closes,
-    _pool_init, _prescore, _section,
+    _download_etf_closes,
+    _prescore,
+    _section,
+    compute_extra_indicators,
 )
 
 # ── Target sectors (GICS names as returned by yfinance info["sector"]) ────────
 _MR_SECTORS = {
     "Technology",
-    "Consumer Cyclical",        # yfinance name for Consumer Discretionary
-    "Financial Services",       # yfinance name for Financials
-    "Communication Services",   # partial overlap — will backtest-gate individually
-    "Energy",                   # §16g: Ann=0.44, WR=75% with VIX≥15+thresh=40+hold=5d
+    "Consumer Cyclical",  # yfinance name for Consumer Discretionary
+    "Financial Services",  # yfinance name for Financials
+    "Communication Services",  # partial overlap — will backtest-gate individually
+    "Energy",  # §16g: Ann=0.44, WR=75% with VIX≥15+thresh=40+hold=5d
 }
 
 # Confirmed-negative sectors from §16g — exclude regardless
 _BLOCKED_SECTORS = {
-    "Healthcare", "Industrials", "Real Estate",
-    "Utilities", "Basic Materials",
+    "Healthcare",
+    "Industrials",
+    "Real Estate",
+    "Utilities",
+    "Basic Materials",
     "Consumer Defensive",  # XLP — low-beta, macro-driven
 }
 
 # Current production tickers — skip (already included or known bad)
 _SKIP = set(_PRODUCTION_TICKERS) | {
     # Known bad: confirmed weak in §15a pruning or bad-ticker list
-    "MU", "MCD", "KO", "WMT", "PG", "PFE", "MRK", "ABBV", "TMO",
-    "NKE", "TXN", "QCOM",   # removed from TICKERS for documented reasons
-    "BRK-B", "BRK.B",       # Berkshire — no options, no MR edge
+    "MU",
+    "MCD",
+    "KO",
+    "WMT",
+    "PG",
+    "PFE",
+    "MRK",
+    "ABBV",
+    "TMO",
+    "NKE",
+    "TXN",
+    "QCOM",  # removed from TICKERS for documented reasons
+    "BRK-B",
+    "BRK.B",  # Berkshire — no options, no MR edge
 }
 
-MIN_MARKET_CAP_B = 10.0   # $10B minimum
-MIN_BETA         = 0.70   # beta floor — need mean-reversion on fear
-MIN_WR           = 0.55   # win rate floor for inclusion
-MIN_SHARPE       = 0.35   # per-trade Sharpe floor for inclusion
-MIN_TRADES       = 5      # minimum trade count (statistical significance)
+MIN_MARKET_CAP_B = 10.0  # $10B minimum
+MIN_BETA = 0.70  # beta floor — need mean-reversion on fear
+MIN_WR = 0.55  # win rate floor for inclusion
+MIN_SHARPE = 0.35  # per-trade Sharpe floor for inclusion
+MIN_TRADES = 5  # minimum trade count (statistical significance)
 
 
 def _load_sp500_wiki() -> pd.DataFrame:
     """Fetch S&P 500 constituents from Wikipedia."""
-    import ssl, certifi, urllib.request
+    import ssl
+    import urllib.request
+
+    import certifi
+
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
@@ -111,30 +143,34 @@ def _fetch_ticker_meta(ticker: str) -> dict:
     """Fetch market cap, beta, sector from yfinance info (cached per run)."""
     try:
         info = yf.Ticker(ticker).info
-        sector    = info.get("sector") or info.get("sectorDisp", "")
+        sector = info.get("sector") or info.get("sectorDisp", "")
         mkt_cap_b = (info.get("marketCap") or 0) / 1e9
-        beta      = info.get("beta") or 0.0
-        name      = info.get("shortName") or ticker
-        return {"ticker": ticker, "sector": sector,
-                "mkt_cap_b": mkt_cap_b, "beta": beta, "name": name}
+        beta = info.get("beta") or 0.0
+        name = info.get("shortName") or ticker
+        return {"ticker": ticker, "sector": sector, "mkt_cap_b": mkt_cap_b, "beta": beta, "name": name}
     except Exception:
         return {"ticker": ticker, "sector": "", "mkt_cap_b": 0.0, "beta": 0.0, "name": ticker}
 
 
 def _classify_sector(sector: str) -> str:
     """Map yfinance sector to our MR sector groups."""
-    if "Technology" in sector:            return "Tech"
-    if "Consumer Cyclical" in sector:     return "Consumer"
-    if "Financial" in sector:             return "Financial"
-    if "Communication" in sector:         return "Communication"
-    if "Energy" in sector:                return "Energy"
+    if "Technology" in sector:
+        return "Tech"
+    if "Consumer Cyclical" in sector:
+        return "Consumer"
+    if "Financial" in sector:
+        return "Financial"
+    if "Communication" in sector:
+        return "Communication"
+    if "Energy" in sector:
+        return "Energy"
     return "Other"
 
 
 def _ann_val(sv: dict, period_years: float = 20.0) -> float:
     """Annualised Sharpe: per_trade_Sharpe × √(N / years)."""
     sh = sv.get("sharpe", 0.0) or 0.0
-    n  = sv.get("n", 0) or 0
+    n = sv.get("n", 0) or 0
     if n < 2:
         return 0.0
     return round(sh * (n / period_years) ** 0.5, 3)
@@ -170,10 +206,14 @@ def _backtest_candidate(
 
     try:
         tdf = simulate_ticker(
-            ticker, df, vix, spy_trend, stlfsi4,
+            ticker,
+            df,
+            vix,
+            spy_trend,
+            stlfsi4,
             mr_only=True,
             hold_days_override=hold_days,
-            buy_thresh_override=35,    # global base threshold for max N discovery
+            buy_thresh_override=35,  # global base threshold for max N discovery
             atr_pct_rank_min_override=20.0,  # ATR≥20 quality gate (always on)
             # No VIX floor, no ATR ceiling, no jump filter — discovery pass
         )
@@ -193,11 +233,13 @@ def main(fast: bool = False) -> None:
     # Fast mode (10yr) = ~0.75 trades/ticker → use N≥3 to surface candidates.
     # Full mode (20yr) uses the standard N≥5 bar for statistical significance.
     min_trades = 3 if fast else MIN_TRADES
-    print(f"# S&P 500 MR Candidate Screener\n")
-    print(f"> Target: Tech + Consumer Disc + Financials + Energy + Comm, mktcap ≥ $10B, beta ≥ 0.7")
-    print(f"> Backtest: base discovery (thresh=35, ATR≥20, sector hold, no VIX/ceiling/jump). PASS needs §15f+§17f validation.")
+    print("# S&P 500 MR Candidate Screener\n")
+    print("> Target: Tech + Consumer Disc + Financials + Energy + Comm, mktcap ≥ $10B, beta ≥ 0.7")
+    print(
+        "> Backtest: base discovery (thresh=35, ATR≥20, sector hold, no VIX/ceiling/jump). PASS needs §15f+§17f validation."
+    )
     print(f"> Period: {period_label}")
-    print(f"> Quality bar: WR ≥ {MIN_WR*100:.0f}%, per-trade Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades}\n")
+    print(f"> Quality bar: WR ≥ {MIN_WR * 100:.0f}%, per-trade Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades}\n")
 
     # ── 1. Get S&P 500 constituent list ───────────────────────────────────────
     _section("1. Loading S&P 500 constituents from Wikipedia")
@@ -206,7 +248,7 @@ def main(fast: bool = False) -> None:
         print("[error] Could not load S&P 500 list. Check internet connection.")
         return
 
-    sym_col  = "Symbol" if "Symbol" in sp500_df.columns else sp500_df.columns[0]
+    sym_col = "Symbol" if "Symbol" in sp500_df.columns else sp500_df.columns[0]
     all_sp500 = [t.replace(".", "-") for t in sp500_df[sym_col].tolist()]
     print(f"  {len(all_sp500)} S&P 500 constituents loaded.")
 
@@ -219,6 +261,7 @@ def main(fast: bool = False) -> None:
     print(f"  Fetching yfinance info for {len(candidates_raw)} tickers (may take 3-5 min)…\n")
 
     import concurrent.futures
+
     meta_list = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
         futures = {ex.submit(_fetch_ticker_meta, t): t for t in candidates_raw}
@@ -248,8 +291,8 @@ def main(fast: bool = False) -> None:
 
     candidates = meta_filtered["ticker"].tolist()
     sector_map = dict(zip(meta_filtered["ticker"], meta_filtered["sector"]))
-    beta_map   = dict(zip(meta_filtered["ticker"], meta_filtered["beta"].round(2)))
-    cap_map    = dict(zip(meta_filtered["ticker"], meta_filtered["mkt_cap_b"].round(1)))
+    beta_map = dict(zip(meta_filtered["ticker"], meta_filtered["beta"].round(2)))
+    cap_map = dict(zip(meta_filtered["ticker"], meta_filtered["mkt_cap_b"].round(1)))
 
     if not candidates:
         print("[error] No candidates passed the filter.")
@@ -258,19 +301,18 @@ def main(fast: bool = False) -> None:
     # ── 4. Fetch alt-data (VIX, SPY, FRED) ───────────────────────────────────
     _section("4. Fetching VIX / SPY / STLFSI4")
     bt_start = "2006-01-01"
-    bt_end   = "2016-12-31" if fast else END
+    bt_end = "2016-12-31" if fast else END
 
     print("Fetching VIX…", end=" ", flush=True)
     try:
-        vix_df = yf.download("^VIX", start=bt_start, end=bt_end,
-                              interval="1d", auto_adjust=False, progress=False)
+        vix_df = yf.download("^VIX", start=bt_start, end=bt_end, interval="1d", auto_adjust=False, progress=False)
         if isinstance(vix_df.columns, pd.MultiIndex):
             vix_df.columns = vix_df.columns.get_level_values(0)
-        vix = {pd.Timestamp(str(k)[:10]): float(v)
-               for k, v in vix_df["Close"].items() if pd.notna(v)}
+        vix = {pd.Timestamp(str(k)[:10]): float(v) for k, v in vix_df["Close"].items() if pd.notna(v)}
         print(f"ok ({len(vix)} bars)")
     except Exception as e:
-        vix = {}; print(f"failed ({e})")
+        vix = {}
+        print(f"failed ({e})")
 
     print("Fetching SPY trend…", end=" ", flush=True)
     spy_trend = fetch_spy_trend(bt_start, bt_end)
@@ -325,7 +367,7 @@ def main(fast: bool = False) -> None:
 
     # ── 7. Run §17f backtest on each candidate ─────────────────────────────────
     _section("7. Running §17f backtest on all candidates")
-    print(f"\n  Config: base discovery — thresh=35, ATR≥20, sector hold. PASS tickers need §15f+§17f validation.\n")
+    print("\n  Config: base discovery — thresh=35, ATR≥20, sector hold. PASS tickers need §15f+§17f validation.\n")
 
     results = []
     total = len(pre_dfs)
@@ -333,18 +375,20 @@ def main(fast: bool = False) -> None:
         sector_raw = sector_map.get(ticker, "")
         sector_grp = _classify_sector(sector_raw)
         sv = _backtest_candidate(ticker, df, sector_grp, vix, spy_trend, stlfsi4)
-        sv.update({
-            "ticker":     ticker,
-            "sector_grp": sector_grp,
-            "sector_raw": sector_raw,
-            "beta":       beta_map.get(ticker, 0.0),
-            "mkt_cap_b":  cap_map.get(ticker, 0.0),
-        })
+        sv.update(
+            {
+                "ticker": ticker,
+                "sector_grp": sector_grp,
+                "sector_raw": sector_raw,
+                "beta": beta_map.get(ticker, 0.0),
+                "mkt_cap_b": cap_map.get(ticker, 0.0),
+            }
+        )
         results.append(sv)
         if i % 10 == 0 or i == total:
-            _sh = sv.get('sharpe') or 0.0
-            _wr = sv.get('wr') or 0.0
-            print(f"  [{i}/{total}] {ticker}: N={sv['n']}, WR={_wr*100:.0f}%, Sh={_sh:.2f}")
+            _sh = sv.get("sharpe") or 0.0
+            _wr = sv.get("wr") or 0.0
+            print(f"  [{i}/{total}] {ticker}: N={sv['n']}, WR={_wr * 100:.0f}%, Sh={_sh:.2f}")
 
     results_df = pd.DataFrame(results)
     for _col in ("wr", "avg", "sharpe", "ann", "maxdd"):
@@ -353,41 +397,44 @@ def main(fast: bool = False) -> None:
 
     # ── 8. Print full results table ────────────────────────────────────────────
     _section("8. Full Candidate Results (ranked by Ann.Sharpe)")
-    print(f"\n{'Ticker':<8} {'Sector':<12} {'Beta':>5} {'Cap($B)':>8} {'N':>4} {'WR':>6} {'Avg%':>7} {'Sharpe':>8} {'Ann.Sh':>8} {'MaxDD':>7}")
+    print(
+        f"\n{'Ticker':<8} {'Sector':<12} {'Beta':>5} {'Cap($B)':>8} {'N':>4} {'WR':>6} {'Avg%':>7} {'Sharpe':>8} {'Ann.Sh':>8} {'MaxDD':>7}"
+    )
     print("-" * 75)
     for _, r in results_df.iterrows():
         n = r.get("n", 0)
         if n < 1:
             continue
-        wr_s    = f"{(r.get('wr') or 0)*100:.0f}%"
-        avg_s   = f"{(r.get('avg') or 0)*100:.2f}%"
-        sh_s    = fmt_sharpe(r.get("sharpe") or 0)
-        ann_s   = f"{r.get('ann') or 0:.2f}"
-        dd_s    = f"{(r.get('maxdd') or 0)*100:.1f}%"
-        flag    = " ✓" if ((r.get("wr") or 0) >= MIN_WR and (r.get("sharpe") or 0) >= MIN_SHARPE and n >= min_trades) else ""
-        print(f"{r['ticker']:<8} {r['sector_grp']:<12} {r['beta']:>5.2f} {r['mkt_cap_b']:>7.0f}B {n:>4} {wr_s:>6} {avg_s:>7} {sh_s:>8} {ann_s:>8} {dd_s:>7}{flag}")
+        wr_s = f"{(r.get('wr') or 0) * 100:.0f}%"
+        avg_s = f"{(r.get('avg') or 0) * 100:.2f}%"
+        sh_s = fmt_sharpe(r.get("sharpe") or 0)
+        ann_s = f"{r.get('ann') or 0:.2f}"
+        dd_s = f"{(r.get('maxdd') or 0) * 100:.1f}%"
+        flag = (
+            " ✓" if ((r.get("wr") or 0) >= MIN_WR and (r.get("sharpe") or 0) >= MIN_SHARPE and n >= min_trades) else ""
+        )
+        print(
+            f"{r['ticker']:<8} {r['sector_grp']:<12} {r['beta']:>5.2f} {r['mkt_cap_b']:>7.0f}B {n:>4} {wr_s:>6} {avg_s:>7} {sh_s:>8} {ann_s:>8} {dd_s:>7}{flag}"
+        )
 
     # ── 9. PASS / FAIL summary ─────────────────────────────────────────────────
     _section("9. Candidates Meeting Quality Bar")
     pass_df = results_df[
-        (results_df["wr"]     >= MIN_WR)     &
-        (results_df["sharpe"] >= MIN_SHARPE) &
-        (results_df["n"]      >= min_trades)
+        (results_df["wr"] >= MIN_WR) & (results_df["sharpe"] >= MIN_SHARPE) & (results_df["n"] >= min_trades)
     ].copy()
 
     fail_df = results_df[
-        (results_df["n"] >= min_trades) &
-        ~((results_df["wr"] >= MIN_WR) & (results_df["sharpe"] >= MIN_SHARPE))
+        (results_df["n"] >= min_trades) & ~((results_df["wr"] >= MIN_WR) & (results_df["sharpe"] >= MIN_SHARPE))
     ].copy()
 
     insufficient_df = results_df[results_df["n"] < min_trades].copy()
 
-    print(f"\n  PASS: {len(pass_df)} tickers (WR ≥ {MIN_WR*100:.0f}%, Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades})")
+    print(f"\n  PASS: {len(pass_df)} tickers (WR ≥ {MIN_WR * 100:.0f}%, Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades})")
     print(f"  FAIL: {len(fail_df)} tickers (tested but below quality bar)")
     print(f"  SKIP: {len(insufficient_df)} tickers (N < {min_trades} — insufficient signal history)")
 
     if not pass_df.empty:
-        print(f"\n### PASS — Copy into _STRONG universe:\n")
+        print("\n### PASS — Copy into _STRONG universe:\n")
         pass_by_sector = {}
         for _, r in pass_df.iterrows():
             pass_by_sector.setdefault(r["sector_grp"], []).append(r["ticker"])
@@ -399,34 +446,34 @@ def main(fast: bool = False) -> None:
         # Print as Python list for direct copy-paste
         all_pass_tickers = sorted(pass_df["ticker"].tolist())
         print(f"  # All {len(all_pass_tickers)} PASS tickers (sorted):")
-        chunks = [all_pass_tickers[i:i+10] for i in range(0, len(all_pass_tickers), 10)]
+        chunks = [all_pass_tickers[i : i + 10] for i in range(0, len(all_pass_tickers), 10)]
         for chunk in chunks:
-            quoted = ', '.join(f'"{t}"' for t in chunk)
+            quoted = ", ".join(f'"{t}"' for t in chunk)
             print(f"  {quoted},")
 
     if not fail_df.empty:
-        print(f"\n### FAIL — Do NOT add (tested, below quality bar):\n")
+        print("\n### FAIL — Do NOT add (tested, below quality bar):\n")
         fail_tickers = sorted(fail_df["ticker"].tolist())
         for i in range(0, len(fail_tickers), 15):
-            print(f"  {', '.join(fail_tickers[i:i+15])}")
+            print(f"  {', '.join(fail_tickers[i : i + 15])}")
 
     # ── 10. Projection ─────────────────────────────────────────────────────────
     _section("10. Annualised Sharpe Projection")
-    n_pass     = len(pass_df)
-    n_current  = 42   # strong universe size
-    n_total    = n_current + n_pass
+    n_pass = len(pass_df)
+    n_current = 42  # strong universe size
+    n_total = n_current + n_pass
 
     current_per_trade_sh = 0.70
-    new_trades_est       = n_total * (66 / n_current)  # linear trade count scale
-    projected_ann        = current_per_trade_sh * (new_trades_est / 20) ** 0.5
+    new_trades_est = n_total * (66 / n_current)  # linear trade count scale
+    projected_ann = current_per_trade_sh * (new_trades_est / 20) ** 0.5
 
     print(f"\n  Current:  {n_current} tickers → N≈66 trades/yr → Ann.Sharpe ≈ 1.27")
     print(f"  New PASS: {n_pass} tickers passing quality bar")
     print(f"  Combined: {n_total} tickers → N≈{new_trades_est:.0f} trades/yr (projected)")
     print(f"  Projected Ann.Sharpe: {projected_ann:.2f} (at 0.70 per-trade Sharpe)")
-    print(f"  Conservative (0.60 per-trade):  {0.60 * (new_trades_est/20)**0.5:.2f}")
-    print(f"\n  Note: Run §17f backtest on PASS tickers against full 20yr period before")
-    print(f"  adding to production. Validate per-ticker Sharpe ≥ 0.35 individually.")
+    print(f"  Conservative (0.60 per-trade):  {0.60 * (new_trades_est / 20) ** 0.5:.2f}")
+    print("\n  Note: Run §17f backtest on PASS tickers against full 20yr period before")
+    print("  adding to production. Validate per-ticker Sharpe ≥ 0.35 individually.")
     print(f"\n*S&P 500 MR Candidate Screener · base discovery (thresh=35, ATR≥20) · {period_label}*")
 
 

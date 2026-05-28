@@ -20,19 +20,18 @@ Coverage targets:
 import numpy as np
 import pandas as pd
 import pytest
-
 from services.technicals import (
-    _np_sma,
-    _np_ewm,
     _np_atr,
-    calculate_indicators,
+    _np_ewm,
+    _np_sma,
     batch_calculate_indicators,
+    calculate_indicators,
 )
-
 
 # ---------------------------------------------------------------------------
 # DataFrame factories
 # ---------------------------------------------------------------------------
+
 
 def _make_ohlcv(n: int = 60, start_price: float = 100.0) -> pd.DataFrame:
     """Return a realistic synthetic OHLCV DataFrame with `n` rows."""
@@ -49,8 +48,7 @@ def _make_ohlcv(n: int = 60, start_price: float = 100.0) -> pd.DataFrame:
     low = low.clip(lower=0.01)
     vol = pd.Series(rng.integers(500_000, 2_000_000, n).astype(float), index=idx)
     return pd.DataFrame(
-        {"Open": open_.values, "High": high.values,
-         "Low": low.values, "Close": close.values, "Volume": vol.values},
+        {"Open": open_.values, "High": high.values, "Low": low.values, "Close": close.values, "Volume": vol.values},
     )
 
 
@@ -65,8 +63,8 @@ def _make_close_only(n: int = 60) -> pd.DataFrame:
 # _np_sma edge-case tests
 # ---------------------------------------------------------------------------
 
-class TestNpSmaEdgeCases:
 
+class TestNpSmaEdgeCases:
     def test_input_shorter_than_window_returns_all_nan(self):
         c = np.array([1.0, 2.0])
         out = _np_sma(c, n=5)
@@ -82,7 +80,7 @@ class TestNpSmaEdgeCases:
         assert out[-1] == pytest.approx(3.0)
 
     def test_large_window_produces_correct_trailing_mean(self):
-        c = np.arange(1.0, 11.0)   # [1, 2, ..., 10]
+        c = np.arange(1.0, 11.0)  # [1, 2, ..., 10]
         out = _np_sma(c, n=3)
         # Last value: mean(8, 9, 10) = 9
         assert out[-1] == pytest.approx(9.0)
@@ -92,8 +90,8 @@ class TestNpSmaEdgeCases:
 # _np_ewm edge-case tests
 # ---------------------------------------------------------------------------
 
-class TestNpEwmEdgeCases:
 
+class TestNpEwmEdgeCases:
     def test_single_element_returns_same_value(self):
         c = np.array([7.5])
         out = _np_ewm(c, span=3)
@@ -117,12 +115,12 @@ class TestNpEwmEdgeCases:
 # _np_atr edge-case tests
 # ---------------------------------------------------------------------------
 
-class TestNpAtrEdgeCases:
 
+class TestNpAtrEdgeCases:
     def test_minimal_two_element_arrays_returns_float(self):
         h = np.array([10.0, 11.0])
-        l = np.array([9.0,  10.0])
-        c = np.array([9.5,  10.5])
+        l = np.array([9.0, 10.0])
+        c = np.array([9.5, 10.5])
         result = _np_atr(h, l, c, period=1)
         assert isinstance(result, float)
         assert result > 0
@@ -146,7 +144,7 @@ class TestNpAtrEdgeCases:
         l_vol = c_vol - rng.uniform(1, 3, n)
 
         atr_flat = _np_atr(h_flat, l_flat, c_flat, period=5)
-        atr_vol  = _np_atr(h_vol,  l_vol,  c_vol,  period=5)
+        atr_vol = _np_atr(h_vol, l_vol, c_vol, period=5)
         assert atr_vol > atr_flat
 
 
@@ -154,8 +152,8 @@ class TestNpAtrEdgeCases:
 # calculate_indicators boundary / error-path tests
 # ---------------------------------------------------------------------------
 
-class TestCalculateIndicatorsBoundary:
 
+class TestCalculateIndicatorsBoundary:
     def test_none_df_returns_empty_dict(self):
         result = calculate_indicators(None)
         assert result == {}
@@ -192,13 +190,15 @@ class TestCalculateIndicatorsBoundary:
     def test_df_with_constant_close_price_does_not_raise(self):
         """Flat price series (zero variance) stresses division-by-zero guards."""
         n = 60
-        df = pd.DataFrame({
-            "Open":   np.full(n, 100.0),
-            "High":   np.full(n, 101.0),
-            "Low":    np.full(n, 99.0),
-            "Close":  np.full(n, 100.0),
-            "Volume": np.full(n, 1_000_000.0),
-        })
+        df = pd.DataFrame(
+            {
+                "Open": np.full(n, 100.0),
+                "High": np.full(n, 101.0),
+                "Low": np.full(n, 99.0),
+                "Close": np.full(n, 100.0),
+                "Volume": np.full(n, 1_000_000.0),
+            }
+        )
         try:
             result = calculate_indicators(df)
         except Exception as exc:
@@ -210,8 +210,8 @@ class TestCalculateIndicatorsBoundary:
 # calculate_indicators happy-path spot-checks (60 rows)
 # ---------------------------------------------------------------------------
 
-class TestCalculateIndicatorsHappyPath:
 
+class TestCalculateIndicatorsHappyPath:
     def setup_method(self):
         self.df = _make_ohlcv(60)
         self.result = calculate_indicators(self.df)
@@ -309,8 +309,8 @@ class TestCalculateIndicators80Rows:
 # batch_calculate_indicators tests
 # ---------------------------------------------------------------------------
 
-class TestBatchCalculateIndicators:
 
+class TestBatchCalculateIndicators:
     def test_empty_dict_returns_empty_dict(self):
         result = batch_calculate_indicators({})
         assert result == {}
@@ -339,12 +339,12 @@ class TestBatchCalculateIndicators:
         histories = {
             "AAPL": _make_ohlcv(60),
             "GOOG": _make_ohlcv(80),
-            "BAD":  _make_ohlcv(5),   # too short — should be skipped
+            "BAD": _make_ohlcv(5),  # too short — should be skipped
         }
         result = batch_calculate_indicators(histories)
         assert "AAPL" in result
         assert "GOOG" in result
-        assert "BAD"  not in result
+        assert "BAD" not in result
 
     def test_sma200_v_none_when_fewer_than_200_rows(self):
         """With only 60 rows SMA-200 cannot be computed — should be None."""

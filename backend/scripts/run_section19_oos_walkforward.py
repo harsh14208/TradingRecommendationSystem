@@ -19,13 +19,15 @@ Verdict threshold
 Run from backend/:
     python scripts/run_section19_oos_walkforward.py
 """
+
+import math
 import os
 import sys
-import math
 import warnings
+
 warnings.filterwarnings("ignore")
 
-_HERE   = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__))
 _PARENT = os.path.dirname(_HERE)
 for _p in [_PARENT, _HERE]:
     if _p not in sys.path:
@@ -34,24 +36,29 @@ for _p in [_PARENT, _HERE]:
 import numpy as np
 import pandas as pd
 import yfinance as yf
-
 from backtest_technicals import (
-    TICKERS, START, END,
-    compute_indicators, compute_scores,
-    simulate_ticker, stats, fmt_sharpe,
-    fetch_spy_trend, fetch_stlfsi4,
+    END,
+    START,
+    TICKERS,
+    compute_indicators,
+    compute_scores,
+    fetch_spy_trend,
+    fetch_stlfsi4,
+    fmt_sharpe,
+    simulate_ticker,
+    stats,
 )
 
 # ── Fixed §15f params (no per-window tuning) ─────────────────────────────────
 FIXED_PARAMS = dict(
-    mr_only                = True,
-    hold_days_override     = 10,
-    buy_thresh_override    = 38,
-    atr_pct_rank_min_override = 20.0,
-    vix_min_override       = None,
+    mr_only=True,
+    hold_days_override=10,
+    buy_thresh_override=38,
+    atr_pct_rank_min_override=20.0,
+    vix_min_override=None,
     # §17f gates (best combined stack)
-    atr_pct_rank_max_override = 70.0,
-    ret_jump_filter_override  = -6.0,
+    atr_pct_rank_max_override=70.0,
+    ret_jump_filter_override=-6.0,
 )
 
 # ── OOS Windows: (oos_start, oos_end) ─────────────────────────────────────────
@@ -64,14 +71,14 @@ OOS_WINDOWS = [
     ("2024-01-01", "2025-12-31"),
 ]
 
-PASS_SHARPE = 1.0   # Ann.Sharpe threshold per window
-PASS_N_MIN  = 3     # min trades in window to count
+PASS_SHARPE = 1.0  # Ann.Sharpe threshold per window
+PASS_N_MIN = 3  # min trades in window to count
 
 
 def _ann_sharpe(sv: dict, n_years: float) -> float:
     """Annualise per-trade Sharpe by trade frequency within the OOS window."""
     sh = sv.get("sharpe") or 0.0
-    n  = sv.get("n")      or 0
+    n = sv.get("n") or 0
     if n < 2:
         return float("nan")
     trades_per_year = n / n_years
@@ -79,23 +86,22 @@ def _ann_sharpe(sv: dict, n_years: float) -> float:
 
 
 def _section(title: str) -> None:
-    print(f"\n{'─'*60}")
+    print(f"\n{'─' * 60}")
     print(f"  {title}")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
 
 def main() -> None:
     _section("§19 OOS Walk-Forward Validation")
     print(f"  Universe : {len(TICKERS)} tickers")
-    print(f"  Params   : §15f/§17f fixed (no per-window tuning)")
+    print("  Params   : §15f/§17f fixed (no per-window tuning)")
     print(f"  Windows  : {len(OOS_WINDOWS)} × 2-year OOS")
     print(f"  Pass bar : Ann.Sharpe ≥ {PASS_SHARPE} AND N ≥ {PASS_N_MIN}\n")
 
     # ── 1. Download & prepare full-period data ────────────────────────────────
     _section("1. Market data (full 2006-2026)")
     print("  Downloading VIX …", flush=True)
-    vix_raw = yf.download("^VIX", start=START, end=END, interval="1d",
-                           auto_adjust=False, progress=False)
+    vix_raw = yf.download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
     if isinstance(vix_raw.columns, pd.MultiIndex):
         vix_raw.columns = vix_raw.columns.get_level_values(0)
     vix_full = {
@@ -121,16 +127,20 @@ def main() -> None:
     _section("2. Download & prepare ticker data")
     print(f"  Downloading {len(TICKERS)} tickers …", flush=True)
     raw_all = yf.download(
-        TICKERS, start=START, end=END,
-        auto_adjust=True, progress=False, threads=True,
+        TICKERS,
+        start=START,
+        end=END,
+        auto_adjust=True,
+        progress=False,
+        threads=True,
     )
     prepped: dict[str, pd.DataFrame] = {}
     for tkr in TICKERS:
         try:
             if isinstance(raw_all.columns, pd.MultiIndex):
-                df = raw_all.xs(tkr, axis=1, level=1)[["Open","High","Low","Close","Volume"]].copy()
+                df = raw_all.xs(tkr, axis=1, level=1)[["Open", "High", "Low", "Close", "Volume"]].copy()
             else:
-                df = raw_all[["Open","High","Low","Close","Volume"]].copy()
+                df = raw_all[["Open", "High", "Low", "Close", "Volume"]].copy()
             df = df.ffill().dropna(subset=["Close", "Volume"])
             if len(df) < 250:
                 print(f"  {tkr}: insufficient data — skipped")
@@ -150,19 +160,19 @@ def main() -> None:
 
     # ── 3. Walk-forward OOS evaluation ───────────────────────────────────────
     _section("3. OOS Windows")
-    hdr  = f"  {'Window':<20} {'N':>5} {'WR':>6} {'Avg':>7} {'Sh/trade':>9} {'Ann.Sh':>7}  Verdict"
-    sep  = "  " + "─" * 68
+    hdr = f"  {'Window':<20} {'N':>5} {'WR':>6} {'Avg':>7} {'Sh/trade':>9} {'Ann.Sh':>7}  Verdict"
+    sep = "  " + "─" * 68
     window_results: list[dict] = []
 
     for oos_start, oos_end in OOS_WINDOWS:
         ts_start = pd.Timestamp(oos_start)
-        ts_end   = pd.Timestamp(oos_end)
-        n_years  = (ts_end - ts_start).days / 365.25
+        ts_end = pd.Timestamp(oos_end)
+        n_years = (ts_end - ts_start).days / 365.25
 
         # Slice macro series to OOS window
-        vix_w       = {k: v for k, v in vix_full.items()       if ts_start <= k <= ts_end}
+        vix_w = {k: v for k, v in vix_full.items() if ts_start <= k <= ts_end}
         spy_trend_w = {k: v for k, v in spy_trend_full.items() if ts_start <= k <= ts_end}
-        stlfsi4_w   = {k: v for k, v in stlfsi4_full.items()   if ts_start <= k <= ts_end}
+        stlfsi4_w = {k: v for k, v in stlfsi4_full.items() if ts_start <= k <= ts_end}
 
         all_net: list[float] = []
         n_tickers_traded = 0
@@ -174,8 +184,7 @@ def main() -> None:
             if len(oos_df) < 20:
                 continue
             try:
-                trades = simulate_ticker(tkr, oos_df, vix_w, spy_trend_w, stlfsi4_w,
-                                         **FIXED_PARAMS)
+                trades = simulate_ticker(tkr, oos_df, vix_w, spy_trend_w, stlfsi4_w, **FIXED_PARAMS)
                 if trades.empty:
                     continue
                 nets = trades["net_pct"].tolist()
@@ -185,65 +194,71 @@ def main() -> None:
                 print(f"    [{tkr}] error in window {oos_start}: {e}")
 
         if not all_net:
-            window_results.append({"window": f"{oos_start[:4]}–{oos_end[:4]}", "n": 0,
-                                   "ann_sharpe": float("nan"), "passed": False})
+            window_results.append(
+                {"window": f"{oos_start[:4]}–{oos_end[:4]}", "n": 0, "ann_sharpe": float("nan"), "passed": False}
+            )
             print(sep)
             print(f"  {oos_start[:4]}–{oos_end[:4]:<16} {'0':>5}  (no trades)")
             continue
 
-        sv       = stats(all_net)
-        ann_sh   = _ann_sharpe(sv, n_years)
-        passed   = (sv.get("n", 0) >= PASS_N_MIN and
-                    not math.isnan(ann_sh) and ann_sh >= PASS_SHARPE)
-        verdict  = "✓ PASS" if passed else "✗ FAIL"
+        sv = stats(all_net)
+        ann_sh = _ann_sharpe(sv, n_years)
+        passed = sv.get("n", 0) >= PASS_N_MIN and not math.isnan(ann_sh) and ann_sh >= PASS_SHARPE
+        verdict = "✓ PASS" if passed else "✗ FAIL"
 
-        wr  = sv.get("wr")  or 0.0   # stats() returns 0-100 already
+        wr = sv.get("wr") or 0.0  # stats() returns 0-100 already
         avg = sv.get("avg") or 0.0
-        sh  = sv.get("sharpe") or 0.0
+        sh = sv.get("sharpe") or 0.0
 
-        window_results.append({
-            "window":     f"{oos_start[:4]}–{oos_end[:4]}",
-            "n":          sv.get("n", 0),
-            "wr":         wr,
-            "avg":        avg,
-            "sharpe":     sh,
-            "ann_sharpe": ann_sh,
-            "passed":     passed,
-            "n_tickers":  n_tickers_traded,
-        })
+        window_results.append(
+            {
+                "window": f"{oos_start[:4]}–{oos_end[:4]}",
+                "n": sv.get("n", 0),
+                "wr": wr,
+                "avg": avg,
+                "sharpe": sh,
+                "ann_sharpe": ann_sh,
+                "passed": passed,
+                "n_tickers": n_tickers_traded,
+            }
+        )
 
         if len(window_results) == 1:
             print(hdr)
             print(sep)
 
-        print(f"  {oos_start[:4]}–{oos_end[:4]:<16} {sv['n']:>5} {wr:>5.1f}%"
-              f" {avg:>+6.2f}% {fmt_sharpe(sh):>9} {ann_sh:>7.2f}  {verdict}")
+        print(
+            f"  {oos_start[:4]}–{oos_end[:4]:<16} {sv['n']:>5} {wr:>5.1f}%"
+            f" {avg:>+6.2f}% {fmt_sharpe(sh):>9} {ann_sh:>7.2f}  {verdict}"
+        )
 
     # ── 4. Verdict ────────────────────────────────────────────────────────────
     _section("4. Verdict")
     n_passed = sum(1 for r in window_results if r.get("passed"))
-    n_total  = len(window_results)
-    edge_real = n_passed >= math.ceil(n_total * 0.6)   # ≥ 60% windows pass
+    n_total = len(window_results)
+    edge_real = n_passed >= math.ceil(n_total * 0.6)  # ≥ 60% windows pass
 
     print(f"\n  OOS windows passed : {n_passed} / {n_total}")
-    print(f"  Threshold          : ≥ {math.ceil(n_total*0.6)} / {n_total} (60%)")
+    print(f"  Threshold          : ≥ {math.ceil(n_total * 0.6)} / {n_total} (60%)")
 
     if edge_real:
         print(f"\n  ✓ EDGE IS REAL — Ann.Sharpe ≥ {PASS_SHARPE} in {n_passed}/{n_total} OOS windows.")
-        print(f"    §15/§16 params generalise out-of-sample. Sector-specific thresholds")
-        print(f"    validated; curve-fit risk is low for the global gates.")
+        print("    §15/§16 params generalise out-of-sample. Sector-specific thresholds")
+        print("    validated; curve-fit risk is low for the global gates.")
     else:
         print(f"\n  ✗ EDGE NOT CONFIRMED — only {n_passed}/{n_total} OOS windows passed.")
-        print(f"    Sector-specific parameters likely overfit. Revert to global robust")
-        print(f"    params (ATR≥20 only) and re-test before tightening further.")
+        print("    Sector-specific parameters likely overfit. Revert to global robust")
+        print("    params (ATR≥20 only) and re-test before tightening further.")
 
-    print(f"\n  Window detail:")
+    print("\n  Window detail:")
     for r in window_results:
-        sym   = "✓" if r.get("passed") else "✗"
+        sym = "✓" if r.get("passed") else "✗"
         ann_s = f"{r['ann_sharpe']:.2f}" if not math.isnan(r.get("ann_sharpe", float("nan"))) else "n/a"
-        print(f"    {sym} {r['window']}  N={r.get('n',0):>4}  "
-              f"WR={r.get('wr',0):>5.1f}%  Avg={r.get('avg',0):>+5.2f}%  "
-              f"Ann.Sh={ann_s}")
+        print(
+            f"    {sym} {r['window']}  N={r.get('n', 0):>4}  "
+            f"WR={r.get('wr', 0):>5.1f}%  Avg={r.get('avg', 0):>+5.2f}%  "
+            f"Ann.Sh={ann_s}"
+        )
 
 
 if __name__ == "__main__":

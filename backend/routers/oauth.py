@@ -5,22 +5,20 @@ All providers share the same redirect→callback→one-time-code pattern:
   2. GET /api/auth/{provider}/callback  → exchange code, find/create user, issue JWT
   3. GET /api/auth/oauth-exchange?code= → frontend redeems one-time code for access_token
 """
+
 import asyncio
 import logging
 import secrets
 import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import aiohttp
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from config import get_settings
-from services.email_svc import send_welcome
 from database import get_db
-from models import User
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
+from models import RefreshToken, User
 from services.auth_svc import (
     create_access_token,
     generate_link_code,
@@ -28,26 +26,27 @@ from services.auth_svc import (
     hash_password,
     user_to_dict,
 )
-from models import RefreshToken
-from datetime import datetime, timedelta, timezone
+from services.email_svc import send_welcome
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger("signal.trade.oauth")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-GOOGLE_AUTH_URL   = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL  = "https://oauth2.googleapis.com/token"
-GOOGLE_INFO_URL   = "https://www.googleapis.com/oauth2/v2/userinfo"
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_INFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
-DISCORD_AUTH_URL  = "https://discord.com/api/oauth2/authorize"
+DISCORD_AUTH_URL = "https://discord.com/api/oauth2/authorize"
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
-DISCORD_INFO_URL  = "https://discord.com/api/users/@me"
+DISCORD_INFO_URL = "https://discord.com/api/users/@me"
 
 # In-memory stores (single-process safe; resets on restart which is acceptable)
-_state_store: dict[str, tuple[int | None, float]] = {}   # state → (ref_user_id, expires)
-_code_store:  dict[str, tuple[str, dict, float]]  = {}   # one-time-code → (access_token, user_dict, expires)
+_state_store: dict[str, tuple[int | None, float]] = {}  # state → (ref_user_id, expires)
+_code_store: dict[str, tuple[str, dict, float]] = {}  # one-time-code → (access_token, user_dict, expires)
 
-_STATE_TTL = 300   # 5 minutes
-_CODE_TTL  = 60    # 60 seconds
+_STATE_TTL = 300  # 5 minutes
+_CODE_TTL = 60  # 60 seconds
 
 
 def _prune(store: dict, now: float):
@@ -58,6 +57,7 @@ def _prune(store: dict, now: float):
 
 # ── Step 1: Redirect to Google ─────────────────────────────────────────────────
 
+
 @router.get("/google")
 async def google_oauth_start(ref: int | None = Query(None)):
     s = get_settings()
@@ -67,23 +67,26 @@ async def google_oauth_start(ref: int | None = Query(None)):
     state = secrets.token_urlsafe(24)
     _state_store[state] = (ref, time.monotonic() + _STATE_TTL)
 
-    params = urlencode({
-        "client_id":     s.google_client_id,
-        "redirect_uri":  f"{s.app_url}/api/auth/google/callback",
-        "response_type": "code",
-        "scope":         "openid email profile",
-        "access_type":   "offline",
-        "state":         state,
-        "prompt":        "select_account",
-    })
+    params = urlencode(
+        {
+            "client_id": s.google_client_id,
+            "redirect_uri": f"{s.app_url}/api/auth/google/callback",
+            "response_type": "code",
+            "scope": "openid email profile",
+            "access_type": "offline",
+            "state": state,
+            "prompt": "select_account",
+        }
+    )
     return RedirectResponse(f"{GOOGLE_AUTH_URL}?{params}")
 
 
 # ── Step 2: Google callback ────────────────────────────────────────────────────
 
+
 @router.get("/google/callback")
 async def google_oauth_callback(
-    code:  str = Query(...),
+    code: str = Query(...),
     state: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
@@ -98,13 +101,16 @@ async def google_oauth_callback(
 
     # Exchange code for tokens
     async with aiohttp.ClientSession() as session:
-        token_resp = await session.post(GOOGLE_TOKEN_URL, data={
-            "code":          code,
-            "client_id":     s.google_client_id,
-            "client_secret": s.google_client_secret,
-            "redirect_uri":  f"{s.app_url}/api/auth/google/callback",
-            "grant_type":    "authorization_code",
-        })
+        token_resp = await session.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": s.google_client_id,
+                "client_secret": s.google_client_secret,
+                "redirect_uri": f"{s.app_url}/api/auth/google/callback",
+                "grant_type": "authorization_code",
+            },
+        )
         if token_resp.status != 200:
             body = await token_resp.text()
             log.error(f"[oauth] token exchange failed: {body}")
@@ -119,17 +125,21 @@ async def google_oauth_callback(
             raise HTTPException(502, "Failed to fetch Google user info.")
         info = await info_resp.json()
 
-    email    = info.get("email", "").lower().strip()
-    sub      = info.get("id", "")
-    name     = info.get("name", "")
+    email = info.get("email", "").lower().strip()
+    sub = info.get("id", "")
+    name = info.get("name", "")
     verified = info.get("verified_email", False)
 
     if not email or not verified:
         raise HTTPException(400, "Google account has no verified email.")
 
     user = await _upsert_oauth_user(
-        db, provider="google", sub=sub,
-        email=email, name=name, ref_user_id=ref_user_id,
+        db,
+        provider="google",
+        sub=sub,
+        email=email,
+        name=name,
+        ref_user_id=ref_user_id,
     )
     otc = _issue_otc(user)
     return RedirectResponse(f"{s.app_url}/app?oauth_code={otc}")
@@ -145,13 +155,15 @@ def _utcnow_naive() -> datetime:
     """UTC timestamp compatible with existing naive SQLAlchemy DateTime columns."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+
 @router.get("/oauth-exchange")
 async def oauth_exchange(
     code: str = Query(...),
-    db:   AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    from fastapi.responses import JSONResponse
     import hashlib
+
+    from fastapi.responses import JSONResponse
 
     now = time.monotonic()
     _prune(_code_store, now)
@@ -183,7 +195,9 @@ async def oauth_exchange(
     )
     return resp
 
+
 # ── Shared helper ─────────────────────────────────────────────────────────────
+
 
 async def _upsert_oauth_user(
     db: AsyncSession,
@@ -242,6 +256,7 @@ def _issue_otc(user: User) -> str:
 
 # ── Discord: Step 1 ───────────────────────────────────────────────────────────
 
+
 @router.get("/discord")
 async def discord_oauth_start(ref: int | None = Query(None)):
     s = get_settings()
@@ -251,22 +266,25 @@ async def discord_oauth_start(ref: int | None = Query(None)):
     state = secrets.token_urlsafe(24)
     _state_store[state] = (ref, time.monotonic() + _STATE_TTL)
 
-    params = urlencode({
-        "client_id":     s.discord_client_id,
-        "redirect_uri":  f"{s.app_url}/api/auth/discord/callback",
-        "response_type": "code",
-        "scope":         "identify email",
-        "state":         state,
-        "prompt":        "none",   # skip consent if already authorised
-    })
+    params = urlencode(
+        {
+            "client_id": s.discord_client_id,
+            "redirect_uri": f"{s.app_url}/api/auth/discord/callback",
+            "response_type": "code",
+            "scope": "identify email",
+            "state": state,
+            "prompt": "none",  # skip consent if already authorised
+        }
+    )
     return RedirectResponse(f"{DISCORD_AUTH_URL}?{params}")
 
 
 # ── Discord: Step 2 ───────────────────────────────────────────────────────────
 
+
 @router.get("/discord/callback")
 async def discord_oauth_callback(
-    code:  str = Query(...),
+    code: str = Query(...),
     state: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
@@ -284,11 +302,11 @@ async def discord_oauth_callback(
         token_resp = await session.post(
             DISCORD_TOKEN_URL,
             data={
-                "client_id":     s.discord_client_id,
+                "client_id": s.discord_client_id,
                 "client_secret": s.discord_client_secret,
-                "grant_type":    "authorization_code",
-                "code":          code,
-                "redirect_uri":  f"{s.app_url}/api/auth/discord/callback",
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": f"{s.app_url}/api/auth/discord/callback",
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -307,11 +325,11 @@ async def discord_oauth_callback(
             raise HTTPException(502, "Failed to fetch Discord user info.")
         info = await info_resp.json()
 
-    email    = info.get("email", "").lower().strip()
+    email = info.get("email", "").lower().strip()
     verified = info.get("verified", False)
-    sub      = str(info.get("id", ""))
+    sub = str(info.get("id", ""))
     # Use global_name first (Discord display name), fall back to username
-    name     = info.get("global_name") or info.get("username") or ""
+    name = info.get("global_name") or info.get("username") or ""
 
     if not email:
         return RedirectResponse(f"{s.app_url}/login?error=discord_no_email")
@@ -319,8 +337,12 @@ async def discord_oauth_callback(
         return RedirectResponse(f"{s.app_url}/login?error=discord_unverified_email")
 
     user = await _upsert_oauth_user(
-        db, provider="discord", sub=f"discord:{sub}",
-        email=email, name=name, ref_user_id=ref_user_id,
+        db,
+        provider="discord",
+        sub=f"discord:{sub}",
+        email=email,
+        name=name,
+        ref_user_id=ref_user_id,
     )
     otc = _issue_otc(user)
     return RedirectResponse(f"{s.app_url}/app?oauth_code={otc}")

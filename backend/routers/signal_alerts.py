@@ -7,19 +7,21 @@ Endpoints:
   PATCH  /api/alerts/signals/{id}     — update rule
   DELETE /api/alerts/signals/{id}     — delete rule
 """
+
 import re
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
 from typing import Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+
 from database import get_db
+from fastapi import APIRouter, Depends, HTTPException
+from models import SignalAlert, User
+from pydantic import BaseModel, field_validator
 from services.auth_svc import get_current_user
-from models import User, SignalAlert
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/alerts/signals", tags=["signal-alerts"])
 
-_TICKER_RE = re.compile(r'^[A-Z]{1,5}$')
+_TICKER_RE = re.compile(r"^[A-Z]{1,5}$")
 _VALID_ACTIONS = {"BUY", "SELL", "any"}
 
 
@@ -87,9 +89,7 @@ async def list_signal_alerts(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = (await db.execute(
-        select(SignalAlert).where(SignalAlert.user_id == user.id)
-    )).scalars().all()
+    rows = (await db.execute(select(SignalAlert).where(SignalAlert.user_id == user.id))).scalars().all()
     return {"alerts": [_fmt(a) for a in rows]}
 
 
@@ -99,15 +99,19 @@ async def create_signal_alert(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    existing = (await db.execute(
-        select(SignalAlert).where(
-            SignalAlert.user_id == user.id,
-            SignalAlert.ticker == body.ticker,
-            SignalAlert.is_active == True,
+    existing = (
+        await db.execute(
+            select(SignalAlert).where(
+                SignalAlert.user_id == user.id,
+                SignalAlert.ticker == body.ticker,
+                SignalAlert.is_active == True,
+            )
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
     if existing:
-        raise HTTPException(status_code=409, detail=f"Active rule for {body.ticker} already exists — update or delete it first")
+        raise HTTPException(
+            status_code=409, detail=f"Active rule for {body.ticker} already exists — update or delete it first"
+        )
 
     alert = SignalAlert(
         user_id=user.id,

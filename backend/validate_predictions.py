@@ -9,6 +9,7 @@ Prediction validation script.
 Run from the backend/ directory:
     python validate_predictions.py
 """
+
 import asyncio
 import math
 import sys
@@ -17,16 +18,18 @@ from datetime import datetime, timezone
 
 import yfinance as yf
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, ".")
-from models import Signal
-
 import os as _os
 from pathlib import Path as _Path
+
+from models import Signal
+
 try:
     from dotenv import load_dotenv as _load_dotenv
+
     _load_dotenv(_Path(__file__).parent / ".env", override=False)
 except ImportError:
     pass
@@ -34,15 +37,16 @@ _raw = _os.getenv("DATABASE_URL", "")
 if _raw.startswith("postgresql://"):
     _raw = _raw.replace("postgresql://", "postgresql+asyncpg://", 1)
 DB_URL = _raw or "sqlite+aiosqlite:///./data/trading.db"
-BANDS  = [(0, 50), (50, 55), (55, 60), (60, 65), (65, 70), (70, 75), (75, 80), (80, 85), (85, 101)]
+BANDS = [(0, 50), (50, 55), (55, 60), (60, 65), (65, 70), (70, 75), (75, 80), (80, 85), (85, 101)]
 
 # Round-trip transaction cost estimate: bid-ask spread + entry/exit slippage.
 # Conservative for liquid large-caps; higher for small/mid-caps.
 # Any signal with outcome < FRICTION_PCT is a real-world loss even if mark-to-market positive.
-FRICTION_PCT = 0.50   # 0.50% round-trip (0.25% each leg)
+FRICTION_PCT = 0.50  # 0.50% round-trip (0.25% each leg)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def _pct(current: float, entry: float, action: str) -> float | None:
     if not current or not entry or entry <= 0:
@@ -133,14 +137,13 @@ def _fetch_prices(tickers: list[str]) -> dict[str, float]:
 
 # ── step 1: resolve pending outcomes ─────────────────────────────────────────
 
+
 async def resolve_outcomes() -> int:
     engine = create_async_engine(DB_URL, echo=False)
     Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with Session() as db:
-        rows = (await db.execute(
-            select(Signal).where(Signal.is_sent == True)
-        )).scalars().all()
+        rows = (await db.execute(select(Signal).where(Signal.is_sent == True))).scalars().all()
 
     # collect tickers that still need resolution
     need = [s for s in rows if s.entry and s.entry > 0]
@@ -155,9 +158,7 @@ async def resolve_outcomes() -> int:
 
     updated = 0
     async with Session() as db:
-        rows = (await db.execute(
-            select(Signal).where(Signal.is_sent == True)
-        )).scalars().all()
+        rows = (await db.execute(select(Signal).where(Signal.is_sent == True))).scalars().all()
 
         for sig in rows:
             if not sig.entry or sig.entry <= 0:
@@ -181,7 +182,7 @@ async def resolve_outcomes() -> int:
                 changed = True
             if age >= 7 and sig.outcome_pct is None and not already_closed:
                 sig.outcome_pct = _pct(current, sig.entry, sig.action)
-                sig.outcome_at  = datetime.now(timezone.utc).replace(tzinfo=None)
+                sig.outcome_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 changed = True
             if age >= 14 and sig.outcome_14d is None:
                 sig.outcome_14d = _pct(current, sig.entry, sig.action)
@@ -199,10 +200,12 @@ async def resolve_outcomes() -> int:
 
 # ── step 1b: MAE / MFE / stop-target hit tracking ────────────────────────────
 
+
 def _fetch_ohlcv(ticker: str, days: int = 20) -> list[tuple[float, float]]:
     """Return list of (high, low) for the last `days` trading days."""
     try:
         import yfinance as yf
+
         # Use Ticker.history — consistent non-MultiIndex columns across yfinance versions
         df = yf.Ticker(ticker).history(period=f"{days}d", auto_adjust=True)
         if df is None or df.empty:
@@ -222,19 +225,25 @@ async def resolve_mae_mfe() -> int:
       - mfe:        Maximum Favorable Excursion — best % move in favour of position
       - exit_type:  'target' | 'stop' | 'time' | 'pending'
     """
-    engine  = create_async_engine(DB_URL, echo=False)
+    engine = create_async_engine(DB_URL, echo=False)
     Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with Session() as db:
-        rows = (await db.execute(
-            select(Signal).where(
-                Signal.is_sent == True,
-                Signal.entry.isnot(None),
-                Signal.stop.isnot(None),
-                Signal.target.isnot(None),
-                Signal.mae.is_(None),   # not yet computed
+        rows = (
+            (
+                await db.execute(
+                    select(Signal).where(
+                        Signal.is_sent == True,
+                        Signal.entry.isnot(None),
+                        Signal.stop.isnot(None),
+                        Signal.target.isnot(None),
+                        Signal.mae.is_(None),  # not yet computed
+                    )
+                )
             )
-        )).scalars().all()
+            .scalars()
+            .all()
+        )
 
     # Only process signals old enough to have at least 1 day of OHLCV
     eligible = [s for s in rows if _age_days(s) >= 1 and s.entry and s.entry > 0]
@@ -254,39 +263,43 @@ async def resolve_mae_mfe() -> int:
             if not bars:
                 continue
             for sig in sigs:
-                entry  = sig.entry
-                stop   = sig.stop
+                entry = sig.entry
+                stop = sig.stop
                 target = sig.target
                 is_buy = sig.action == "BUY"
 
                 # Slice bars to those after signal creation
-                age     = int(_age_days(sig))
-                n_bars  = min(age, len(bars))
-                window  = bars[-n_bars:] if n_bars > 0 else bars
+                age = int(_age_days(sig))
+                n_bars = min(age, len(bars))
+                window = bars[-n_bars:] if n_bars > 0 else bars
 
-                worst_pct = 0.0   # adverse excursion (most negative)
-                best_pct  = 0.0   # favorable excursion (most positive)
-                _hit_stop   = False
+                worst_pct = 0.0  # adverse excursion (most negative)
+                best_pct = 0.0  # favorable excursion (most positive)
+                _hit_stop = False
                 _hit_target = False
 
                 for high, low in window:
                     if is_buy:
-                        adv = (high - entry) / entry * 100   # upside = favorable
-                        adrs = (low  - entry) / entry * 100   # downside = adverse
+                        adv = (high - entry) / entry * 100  # upside = favorable
+                        adrs = (low - entry) / entry * 100  # downside = adverse
                     else:
-                        adv = (entry - low)  / entry * 100   # downside = favorable for SELL
+                        adv = (entry - low) / entry * 100  # downside = favorable for SELL
                         adrs = (entry - high) / entry * 100  # upside = adverse for SELL
 
-                    best_pct  = max(best_pct,  adv)
+                    best_pct = max(best_pct, adv)
                     worst_pct = min(worst_pct, adrs)
 
                     # Check stop/target hit
                     if is_buy:
-                        if stop  and low  <= stop:   _hit_stop   = True
-                        if target and high >= target: _hit_target = True
+                        if stop and low <= stop:
+                            _hit_stop = True
+                        if target and high >= target:
+                            _hit_target = True
                     else:
-                        if stop  and high >= stop:   _hit_stop   = True
-                        if target and low  <= target: _hit_target = True
+                        if stop and high >= stop:
+                            _hit_stop = True
+                        if target and low <= target:
+                            _hit_target = True
 
                 # Determine exit type (chronological priority)
                 if _hit_target:
@@ -300,11 +313,11 @@ async def resolve_mae_mfe() -> int:
 
                 sig_db = (await db.execute(select(Signal).where(Signal.id == sig.id))).scalar_one_or_none()
                 if sig_db:
-                    sig_db.mae        = round(worst_pct, 2)
-                    sig_db.mfe        = round(best_pct,  2)
-                    sig_db.hit_stop   = _hit_stop
+                    sig_db.mae = round(worst_pct, 2)
+                    sig_db.mfe = round(best_pct, 2)
+                    sig_db.hit_stop = _hit_stop
                     sig_db.hit_target = _hit_target
-                    sig_db.exit_type  = exit_type
+                    sig_db.exit_type = exit_type
 
                     # Lock outcome_pct at the exit level for stop/target hits.
                     #
@@ -321,21 +334,20 @@ async def resolve_mae_mfe() -> int:
                     # Fix: also overwrite when the retrospective stop is detected AND
                     # the current outcome_pct is positive (the phantom condition).
                     # outcome_pct > 0 + hit_stop = True = phantom win by definition.
-                    _is_phantom_win = (
-                        exit_type == "stop" and
-                        sig_db.outcome_pct is not None and
-                        sig_db.outcome_pct > 0
-                    )
-                    if exit_type == "stop" and sig.stop and entry > 0 and (
-                        sig_db.outcome_pct is None or _is_phantom_win
+                    _is_phantom_win = exit_type == "stop" and sig_db.outcome_pct is not None and sig_db.outcome_pct > 0
+                    if (
+                        exit_type == "stop"
+                        and sig.stop
+                        and entry > 0
+                        and (sig_db.outcome_pct is None or _is_phantom_win)
                     ):
                         raw = (sig.stop - entry) / entry * 100
                         sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
-                        sig_db.outcome_at  = datetime.now(timezone.utc).replace(tzinfo=None)
+                        sig_db.outcome_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     elif exit_type == "target" and sig_db.outcome_pct is None and sig.target and entry > 0:
                         raw = (sig.target - entry) / entry * 100
                         sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
-                        sig_db.outcome_at  = datetime.now(timezone.utc).replace(tzinfo=None)
+                        sig_db.outcome_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     updated += 1
 
@@ -348,49 +360,49 @@ async def resolve_mae_mfe() -> int:
 
 # ── step 2: calibration report ───────────────────────────────────────────────
 
+
 async def calibration_report():
     engine = create_async_engine(DB_URL, echo=False)
     Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with Session() as db:
-        rows = (await db.execute(
-            select(Signal).where(Signal.is_sent == True)
-        )).scalars().all()
+        rows = (await db.execute(select(Signal).where(Signal.is_sent == True))).scalars().all()
     await engine.dispose()
 
     resolved = [s for s in rows if _best_outcome(s) is not None and s.action in ("BUY", "SELL")]
-    eff_n    = _effective_n(resolved)   # unique ticker-date pairs
+    eff_n = _effective_n(resolved)  # unique ticker-date pairs
 
-    print(f"\n{'='*62}")
-    print(f"  PREDICTION VALIDATION REPORT")
-    print(f"  Resolved signals : {len(resolved)} / {sum(1 for s in rows if s.action in ('BUY','SELL'))} sent BUY+SELL")
+    print(f"\n{'=' * 62}")
+    print("  PREDICTION VALIDATION REPORT")
+    print(f"  Resolved signals : {len(resolved)} / {sum(1 for s in rows if s.action in ('BUY', 'SELL'))} sent BUY+SELL")
     print(f"  Effective unique : {eff_n}  (unique ticker-date pairs — real independent bets)")
-    print(f"  Duplication rate : {(len(resolved)-eff_n)/len(resolved)*100:.1f}% of rows are same-ticker same-day repeats" if len(resolved) > eff_n else "  No same-ticker same-day duplicates.")
-    print(f"{'='*62}")
+    print(
+        f"  Duplication rate : {(len(resolved) - eff_n) / len(resolved) * 100:.1f}% of rows are same-ticker same-day repeats"
+        if len(resolved) > eff_n
+        else "  No same-ticker same-day duplicates."
+    )
+    print(f"{'=' * 62}")
 
     if not resolved:
         print("No resolved signals to analyse.")
         return
 
     # ── overall — raw (mark-to-market) ────────────────────────────────────────
-    total    = len(resolved)
+    total = len(resolved)
     wins_raw = sum(1 for s in resolved if _best_outcome(s) > 0)
-    avg_ret  = sum(_best_outcome(s) for s in resolved) / total
+    avg_ret = sum(_best_outcome(s) for s in resolved) / total
     avg_conf = sum(s.confidence for s in resolved) / total
-    brier    = sum(
-        ((s.confidence / 100) - (1 if _best_outcome(s) > 0 else 0)) ** 2
-        for s in resolved
-    ) / total
+    brier = sum(((s.confidence / 100) - (1 if _best_outcome(s) > 0 else 0)) ** 2 for s in resolved) / total
 
     # ── overall — friction-adjusted (realistic P&L) ────────────────────────────
     wins_adj = sum(1 for s in resolved if _is_win(s))
     n_with_exit = sum(1 for s in resolved if getattr(s, "exit_type", None) not in (None, "pending"))
     n_target_hit = sum(1 for s in resolved if getattr(s, "exit_type", None) == "target")
-    n_stop_hit   = sum(1 for s in resolved if getattr(s, "exit_type", None) == "stop")
+    n_stop_hit = sum(1 for s in resolved if getattr(s, "exit_type", None) == "stop")
 
-    print(f"\n  OVERALL (RAW — mark-to-market at fixed horizon)")
+    print("\n  OVERALL (RAW — mark-to-market at fixed horizon)")
     print(f"  {'Signals':<26} {total}  (effective: {eff_n} ticker-days)")
-    print(f"  {'Win rate (raw)':<26} {wins_raw/total*100:.1f}%")
+    print(f"  {'Win rate (raw)':<26} {wins_raw / total * 100:.1f}%")
     print(f"  {'Avg confidence':<26} {avg_conf:.1f}%")
     print(f"  {'Avg return':<26} {avg_ret:+.2f}%")
     print(f"  {'Brier score':<26} {brier:.4f}  (0=perfect, 0.25=random, lower=better)")
@@ -400,17 +412,14 @@ async def calibration_report():
     print(f"  {'Confidence gap':<26} {gap:+.1f}pp  ({direction})")
 
     print(f"\n  OVERALL (FRICTION-ADJUSTED — {FRICTION_PCT:.2f}% round-trip cost)")
-    print(f"  {'Win rate (after costs)':<26} {wins_adj/total*100:.1f}%")
+    print(f"  {'Win rate (after costs)':<26} {wins_adj / total * 100:.1f}%")
     print(f"  {'Avg return (after costs)':<26} {avg_ret - FRICTION_PCT:+.2f}%")
-    brier_adj = sum(
-        ((s.confidence / 100) - (1 if _is_win(s) else 0)) ** 2
-        for s in resolved
-    ) / total
+    brier_adj = sum(((s.confidence / 100) - (1 if _is_win(s) else 0)) ** 2 for s in resolved) / total
     print(f"  {'Brier score (adj)':<26} {brier_adj:.4f}")
     if n_with_exit > 0:
         print(f"\n  EXIT TYPE BREAKDOWN  ({n_with_exit}/{total} signals with stop/target data)")
-        print(f"  {'Target hit':<26} {n_target_hit}  ({n_target_hit/n_with_exit*100:.0f}% of resolved)")
-        print(f"  {'Stop hit':<26} {n_stop_hit}  ({n_stop_hit/n_with_exit*100:.0f}% of resolved)")
+        print(f"  {'Target hit':<26} {n_target_hit}  ({n_target_hit / n_with_exit * 100:.0f}% of resolved)")
+        print(f"  {'Stop hit':<26} {n_stop_hit}  ({n_stop_hit / n_with_exit * 100:.0f}% of resolved)")
         print(f"  {'Time/pending':<26} {n_with_exit - n_target_hit - n_stop_hit}")
 
     gap_adj = avg_conf - wins_adj / total * 100
@@ -418,9 +427,9 @@ async def calibration_report():
     print(f"  {'Confidence gap (adj)':<26} {gap_adj:+.1f}pp  ({direction_adj})")
 
     # ── by action ─────────────────────────────────────────────────────────────
-    print(f"\n  BY ACTION  (raw win% | friction-adj win%)")
+    print("\n  BY ACTION  (raw win% | friction-adj win%)")
     print(f"  {'Action':<8} {'N':>5} {'Win%(raw)':>10} {'Win%(adj)':>10} {'Avg Ret':>9} {'Avg Conf':>10}")
-    print(f"  {'-'*58}")
+    print(f"  {'-' * 58}")
     for action in ("BUY", "SELL"):
         sigs = [s for s in resolved if s.action == action]
         if not sigs:
@@ -430,13 +439,13 @@ async def calibration_report():
         n = len(sigs)
         ac = sum(s.confidence for s in sigs) / n
         ar = sum(_best_outcome(s) for s in sigs) / n
-        flag = " ⚠" if w_raw/n*100 - w_adj/n*100 > 5 else ""
-        print(f"  {action:<8} {n:>5} {w_raw/n*100:>9.1f}% {w_adj/n*100:>9.1f}% {ar:>+8.2f}% {ac:>9.1f}%{flag}")
+        flag = " ⚠" if w_raw / n * 100 - w_adj / n * 100 > 5 else ""
+        print(f"  {action:<8} {n:>5} {w_raw / n * 100:>9.1f}% {w_adj / n * 100:>9.1f}% {ar:>+8.2f}% {ac:>9.1f}%{flag}")
 
     # ── by style ──────────────────────────────────────────────────────────────
-    print(f"\n  BY TRADE STYLE  (raw win% | friction-adj win%)")
+    print("\n  BY TRADE STYLE  (raw win% | friction-adj win%)")
     print(f"  {'Style':<12} {'N':>5} {'Win%(raw)':>10} {'Win%(adj)':>10} {'Avg Ret':>9} {'Avg Conf':>10}")
-    print(f"  {'-'*61}")
+    print(f"  {'-' * 61}")
     for style in ("intraday", "swing", "position"):
         sigs = [s for s in resolved if (s.style or "swing") == style]
         if not sigs:
@@ -446,24 +455,24 @@ async def calibration_report():
         n = len(sigs)
         ac = sum(s.confidence for s in sigs) / n
         ar = sum(_best_outcome(s) for s in sigs) / n
-        cost_drag = w_raw/n*100 - w_adj/n*100
+        cost_drag = w_raw / n * 100 - w_adj / n * 100
         flag = f" ({cost_drag:+.1f}pp friction drag)" if cost_drag > 3 else ""
-        print(f"  {style:<12} {n:>5} {w_raw/n*100:>9.1f}% {w_adj/n*100:>9.1f}% {ar:>+8.2f}% {ac:>9.1f}%{flag}")
+        print(f"  {style:<12} {n:>5} {w_raw / n * 100:>9.1f}% {w_adj / n * 100:>9.1f}% {ar:>+8.2f}% {ac:>9.1f}%{flag}")
 
     # ── confidence band calibration ───────────────────────────────────────────
-    print(f"\n  CONFIDENCE BAND CALIBRATION  (friction-adjusted win%)")
+    print("\n  CONFIDENCE BAND CALIBRATION  (friction-adjusted win%)")
     print(f"  {'Band':<12} {'N':>5} {'Win%(adj)':>10} {'Avg Conf':>10} {'Avg Ret':>9} {'Gap':>8}  {'Calibrated?'}")
-    print(f"  {'-'*75}")
+    print(f"  {'-' * 75}")
     for lo, hi in BANDS:
         sigs = [s for s in resolved if lo <= s.confidence < hi]
         if not sigs:
             continue
-        w  = sum(1 for s in sigs if _is_win(s))
-        n  = len(sigs)
+        w = sum(1 for s in sigs if _is_win(s))
+        n = len(sigs)
         wr = w / n * 100
         ac = sum(s.confidence for s in sigs) / n
         ar = sum(_best_outcome(s) for s in sigs) / n
-        g  = ac - wr
+        g = ac - wr
         ok = "OK" if abs(g) <= 10 else ("OVER ⚠" if g > 0 else "UNDER ⚠")
         print(f"  {lo}-{hi}%{'':<6} {n:>5} {wr:>9.1f}% {ac:>9.1f}% {ar:>+8.2f}% {g:>+7.1f}pp  {ok}")
 
@@ -480,105 +489,126 @@ async def calibration_report():
         if _is_win(s):
             ts["w_adj"] += 1
 
-    print(f"\n  PER-TICKER (min 3 signals, sorted by friction-adj win%)")
+    print("\n  PER-TICKER (min 3 signals, sorted by friction-adj win%)")
     print(f"  {'Ticker':<8} {'N':>4} {'Win%raw':>8} {'Win%adj':>8} {'Avg Ret':>9} {'Gap':>8}")
-    print(f"  {'-'*58}")
+    print(f"  {'-' * 58}")
     rows_out = sorted(
         [(t, d) for t, d in ticker_stats.items() if d["n"] >= 3],
         key=lambda x: x[1]["w_adj"] / x[1]["n"],
         reverse=True,
     )
     for t, d in rows_out:
-        n      = d["n"]
-        wr_raw = d["w"]     / n * 100
+        n = d["n"]
+        wr_raw = d["w"] / n * 100
         wr_adj = d["w_adj"] / n * 100
-        ac     = d["conf"]  / n
-        ar     = d["ret"]   / n
-        g      = ac - wr_adj
-        flag   = " ⚠" if abs(g) > 15 else ""
+        ac = d["conf"] / n
+        ar = d["ret"] / n
+        g = ac - wr_adj
+        flag = " ⚠" if abs(g) > 15 else ""
         print(f"  {t:<8} {n:>4} {wr_raw:>7.1f}% {wr_adj:>7.1f}% {ar:>+8.2f}% {g:>+7.1f}pp{flag}")
 
     # ── horizon comparison ────────────────────────────────────────────────────
-    print(f"\n  WIN RATE BY OUTCOME HORIZON (signals that have each)")
+    print("\n  WIN RATE BY OUTCOME HORIZON (signals that have each)")
     print(f"  {'Horizon':<12} {'N':>5} {'Win%':>7} {'Avg Ret':>9}")
-    print(f"  {'-'*40}")
-    for label, field in [("1-day", "outcome_1d"), ("3-day", "outcome_3d"),
-                          ("7-day", "outcome_pct"), ("14-day", "outcome_14d")]:
-        sigs = [s for s in rows if s.action in ("BUY","SELL") and getattr(s, field) is not None]
+    print(f"  {'-' * 40}")
+    for label, field in [
+        ("1-day", "outcome_1d"),
+        ("3-day", "outcome_3d"),
+        ("7-day", "outcome_pct"),
+        ("14-day", "outcome_14d"),
+    ]:
+        sigs = [s for s in rows if s.action in ("BUY", "SELL") and getattr(s, field) is not None]
         if not sigs:
             continue
-        w  = sum(1 for s in sigs if getattr(s, field) > 0)
-        n  = len(sigs)
+        w = sum(1 for s in sigs if getattr(s, field) > 0)
+        n = len(sigs)
         ar = sum(getattr(s, field) for s in sigs) / n
-        print(f"  {label:<12} {n:>5} {w/n*100:>6.1f}% {ar:>+8.2f}%")
+        print(f"  {label:<12} {n:>5} {w / n * 100:>6.1f}% {ar:>+8.2f}%")
 
     # ── top losses ────────────────────────────────────────────────────────────
     worst = sorted(resolved, key=lambda s: _best_outcome(s))[:8]
-    print(f"\n  WORST SIGNALS")
+    print("\n  WORST SIGNALS")
     print(f"  {'Ticker':<7} {'Action':<6} {'Conf':>6} {'Ret':>8}  {'Date':<12}  {'Horizon used'}")
-    print(f"  {'-'*60}")
+    print(f"  {'-' * 60}")
     for s in worst:
         ret = _best_outcome(s)
-        h = "14d" if s.outcome_14d is not None else "7d" if s.outcome_pct is not None else "3d" if s.outcome_3d is not None else "1d"
+        h = (
+            "14d"
+            if s.outcome_14d is not None
+            else "7d"
+            if s.outcome_pct is not None
+            else "3d"
+            if s.outcome_3d is not None
+            else "1d"
+        )
         dt = s.created_at.strftime("%Y-%m-%d") if s.created_at else "?"
         print(f"  {s.ticker:<7} {s.action:<6} {s.confidence:>5.1f}% {ret:>+7.2f}%  {dt}  ({h})")
 
     # ── top wins ──────────────────────────────────────────────────────────────
     best = sorted(resolved, key=lambda s: _best_outcome(s), reverse=True)[:8]
-    print(f"\n  BEST SIGNALS")
+    print("\n  BEST SIGNALS")
     print(f"  {'Ticker':<7} {'Action':<6} {'Conf':>6} {'Ret':>8}  {'Date':<12}  {'Horizon used'}")
-    print(f"  {'-'*60}")
+    print(f"  {'-' * 60}")
     for s in best:
         ret = _best_outcome(s)
-        h = "14d" if s.outcome_14d is not None else "7d" if s.outcome_pct is not None else "3d" if s.outcome_3d is not None else "1d"
+        h = (
+            "14d"
+            if s.outcome_14d is not None
+            else "7d"
+            if s.outcome_pct is not None
+            else "3d"
+            if s.outcome_3d is not None
+            else "1d"
+        )
         dt = s.created_at.strftime("%Y-%m-%d") if s.created_at else "?"
         print(f"  {s.ticker:<7} {s.action:<6} {s.confidence:>5.1f}% {ret:>+7.2f}%  {dt}  ({h})")
 
     # ── MAE / MFE / stop-target summary ─────────────────────────────────────
-    mae_sigs = [s for s in rows if s.action in ("BUY","SELL") and getattr(s, "mae", None) is not None]
+    mae_sigs = [s for s in rows if s.action in ("BUY", "SELL") and getattr(s, "mae", None) is not None]
     if mae_sigs:
         n_mae = len(mae_sigs)
-        n_stop   = sum(1 for s in mae_sigs if s.hit_stop)
+        n_stop = sum(1 for s in mae_sigs if s.hit_stop)
         n_target = sum(1 for s in mae_sigs if s.hit_target)
-        n_time   = sum(1 for s in mae_sigs if s.exit_type == "time")
-        avg_mae  = sum(s.mae for s in mae_sigs) / n_mae
-        avg_mfe  = sum(s.mfe for s in mae_sigs) / n_mae
+        n_time = sum(1 for s in mae_sigs if s.exit_type == "time")
+        avg_mae = sum(s.mae for s in mae_sigs) / n_mae
+        avg_mfe = sum(s.mfe for s in mae_sigs) / n_mae
         mfe_mae_ratio = avg_mfe / abs(avg_mae) if avg_mae != 0 else float("inf")
 
         print(f"\n  MAE / MFE TRADE-PATH ANALYTICS (n={n_mae})")
         print(f"  {'Metric':<30} {'Value'}")
-        print(f"  {'-'*45}")
-        print(f"  {'Signals w/ stop hit':<30} {n_stop} ({n_stop/n_mae*100:.1f}%)")
-        print(f"  {'Signals w/ target hit':<30} {n_target} ({n_target/n_mae*100:.1f}%)")
-        print(f"  {'Signals exited by time':<30} {n_time} ({n_time/n_mae*100:.1f}%)")
+        print(f"  {'-' * 45}")
+        print(f"  {'Signals w/ stop hit':<30} {n_stop} ({n_stop / n_mae * 100:.1f}%)")
+        print(f"  {'Signals w/ target hit':<30} {n_target} ({n_target / n_mae * 100:.1f}%)")
+        print(f"  {'Signals exited by time':<30} {n_time} ({n_time / n_mae * 100:.1f}%)")
         print(f"  {'Avg MAE (worst drawdown)':<30} {avg_mae:+.2f}%")
         print(f"  {'Avg MFE (best excursion)':<30} {avg_mfe:+.2f}%")
         print(f"  {'MFE/MAE ratio':<30} {mfe_mae_ratio:.2f}×  (>1 = signals move right first)")
 
         if mfe_mae_ratio < 1.0:
-            print(f"\n  ⚠  MFE/MAE < 1.0: signals move AGAINST position before recovering.")
-            print(f"     Entries may be too early — consider waiting for confirmation.")
+            print("\n  ⚠  MFE/MAE < 1.0: signals move AGAINST position before recovering.")
+            print("     Entries may be too early — consider waiting for confirmation.")
         elif mfe_mae_ratio > 2.5:
-            print(f"\n  ✓  MFE/MAE > 2.5: signals strongly move right before any adverse excursion.")
-            print(f"     Entry timing is good; ensure stops aren't too tight.")
+            print("\n  ✓  MFE/MAE > 2.5: signals strongly move right before any adverse excursion.")
+            print("     Entry timing is good; ensure stops aren't too tight.")
 
         if n_stop / n_mae > 0.40:
-            print(f"\n  ⚠  Stop hit rate {n_stop/n_mae*100:.0f}% > 40%. Stops may be too tight")
-            print(f"     or entries are too aggressive. Consider ATR×3 stops.")
+            print(f"\n  ⚠  Stop hit rate {n_stop / n_mae * 100:.0f}% > 40%. Stops may be too tight")
+            print("     or entries are too aggressive. Consider ATR×3 stops.")
         if n_target / n_mae > 0.50:
-            print(f"\n  ✓  Target hit rate {n_target/n_mae*100:.0f}% > 50%. Target placement is realistic.")
+            print(f"\n  ✓  Target hit rate {n_target / n_mae * 100:.0f}% > 50%. Target placement is realistic.")
 
-    print(f"\n{'='*62}\n")
+    print(f"\n{'=' * 62}\n")
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+
 async def main():
     print("\nStep 1 — Resolving pending outcomes…")
     updated = await resolve_outcomes()
-    print(f"\nStep 1b — Computing MAE/MFE / stop-target tracking…")
+    print("\nStep 1b — Computing MAE/MFE / stop-target tracking…")
     await resolve_mae_mfe()
-    print(f"\nStep 2 — Running calibration report…")
+    print("\nStep 2 — Running calibration report…")
     await calibration_report()
 
 

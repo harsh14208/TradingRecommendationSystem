@@ -1,6 +1,8 @@
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, AsyncMock
 from services.massive_economy import get_economy_data
+
 
 @pytest.mark.asyncio
 async def test_get_economy_data_success():
@@ -13,26 +15,30 @@ async def test_get_economy_data_success():
             return [{"unemployment_rate": 3.9, "nonfarm_payrolls": 250000}]
         return []
 
-    with patch("services.massive_economy.os.getenv", return_value="TEST_KEY"), \
-         patch("services.massive_economy._fetch", side_effect=mock_fetch):
-        
+    with (
+        patch("services.massive_economy.os.getenv", return_value="TEST_KEY"),
+        patch("services.massive_economy._fetch", side_effect=mock_fetch),
+    ):
         # Clear cache to force fetch
         from services.massive_economy import _cache
+
         _cache["data"] = None
-        
+
         data = await get_economy_data()
-        
+
         assert data["yield_10y"] == 4.1
         assert data["cpi_yoy"] == 3.1
         assert data["unemployment"] == 3.9
         assert data["nfp_change_k"] == 250.0
+
 
 @pytest.mark.asyncio
 async def test_get_economy_data_no_key():
     with patch("services.massive_economy.os.getenv", return_value=None):
         # Clear cache
         from services.massive_economy import _cache
+
         _cache["data"] = None
-        
+
         data = await get_economy_data()
         assert data == {}

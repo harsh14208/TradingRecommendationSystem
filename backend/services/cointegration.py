@@ -7,9 +7,10 @@ diverges beyond ±2σ and the rolling correlation is ≥ 0.70.
 
 No external ML deps — uses numpy only.
 """
+
 import asyncio
 import time
-from typing import Optional
+
 import numpy as np
 
 from services.market_data import get_history
@@ -28,8 +29,8 @@ PAIRS: list[tuple[str, str]] = [
     ("META", "SNAP"),
     # Finance
     ("JPM", "BAC"),
-    ("GS",  "MS"),
-    ("V",   "MA"),
+    ("GS", "MS"),
+    ("V", "MA"),
     # Energy
     ("XOM", "CVX"),
     # EV
@@ -93,7 +94,7 @@ async def get_pairs_signals(watchlist: list[str]) -> dict[str, dict]:
             # Use first 80% as "training" window to compute mean/std,
             # z-score the most recent value against that history.
             cut = max(30, int(len(spread) * 0.80))
-            mu  = float(np.mean(spread[:cut]))
+            mu = float(np.mean(spread[:cut]))
             sig = float(np.std(spread[:cut]))
             if sig < 1e-8:
                 return
@@ -119,12 +120,12 @@ async def get_pairs_signals(watchlist: list[str]) -> dict[str, dict]:
                 direction_score = raw_score if sign > 0 else -raw_score
                 other = ticker_b if target == ticker_a else ticker_a
                 candidate = {
-                    "score":       round(direction_score, 1),
+                    "score": round(direction_score, 1),
                     "pair_ticker": other,
-                    "zscore":      round(float(zscore), 2),
+                    "zscore": round(float(zscore), 2),
                     "correlation": round(corr, 3),
-                    "direction":   "undervalued" if direction_score > 0 else "overvalued",
-                    "beta":        round(float(beta), 4),
+                    "direction": "undervalued" if direction_score > 0 else "overvalued",
+                    "beta": round(float(beta), 4),
                 }
                 # Keep the most extreme signal if two pairs compete for the same ticker
                 existing = results.get(target)

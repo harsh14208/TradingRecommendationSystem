@@ -2,12 +2,13 @@
 Auth router — register, login, refresh, me, logout, Telegram link code.
 All endpoints are under /api/auth.
 """
+
 import hashlib
 import logging
 import secrets as _secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, EmailStr, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -28,7 +29,7 @@ from services.auth_svc import (
     user_to_dict,
     verify_password,
 )
-from services.email_svc import send_welcome, send_verification_email
+from services.email_svc import send_verification_email, send_welcome
 
 log = logging.getLogger("signal.trade.auth")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -37,6 +38,7 @@ REFRESH_COOKIE = "st_refresh"
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
+
 
 class RegisterIn(BaseModel):
     email: str
@@ -47,8 +49,9 @@ class RegisterIn(BaseModel):
     @classmethod
     def email_format(cls, v: str) -> str:
         import re
+
         v = v.strip().lower()
-        if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', v):
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
             raise ValueError("Invalid email address")
         if len(v) > 254:
             raise ValueError("Email address too long")
@@ -106,6 +109,7 @@ def _hash_token(token: str) -> str:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _utcnow_naive() -> datetime:
     """UTC timestamp compatible with existing naive SQLAlchemy DateTime columns."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -114,11 +118,13 @@ def _utcnow_naive() -> datetime:
 def _set_refresh_cookie(response: Response, token: str):
     s = get_settings()
     response.set_cookie(
-        REFRESH_COOKIE, token,
-        httponly=True, samesite="lax", secure=get_settings().app_url.startswith("https"),
+        REFRESH_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=get_settings().app_url.startswith("https"),
         max_age=s.refresh_token_expire_days * 86400,
         path="/api/auth/refresh-cookie",
-
     )
 
 
@@ -139,13 +145,14 @@ async def _create_tokens(user: User, db: AsyncSession, response: Response) -> di
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+
 @router.post("/register", status_code=201)
 @_limiter.limit("10/minute")
 async def register(
     request: Request,
     body: RegisterIn,
     response: Response,
-    ref: int | None = Query(None),   # ?ref=<user_id> referral tracking
+    ref: int | None = Query(None),  # ?ref=<user_id> referral tracking
     db: AsyncSession = Depends(get_db),
 ):
     email = body.email.lower().strip()
@@ -163,7 +170,7 @@ async def register(
     verify_token = _secrets.token_urlsafe(32)
     s = get_settings()
     # Auto-verify when: (a) owner email, or (b) SMTP not configured (can't send email)
-    smtp_ready    = bool(s.smtp_host and s.smtp_user)
+    smtp_ready = bool(s.smtp_host and s.smtp_user)
     auto_verified = email == (s.owner_email or "").lower() or not smtp_ready
 
     user = User(
@@ -180,6 +187,7 @@ async def register(
     await db.refresh(user)
 
     import asyncio
+
     if auto_verified:
         asyncio.create_task(send_welcome(user.email, user.full_name or ""))
         if not smtp_ready:
@@ -206,7 +214,13 @@ async def login(request: Request, body: LoginIn, response: Response, db: AsyncSe
     if not user.is_active:
         raise HTTPException(403, "Account disabled. Contact support.")
     if not user.email_verified:
-        raise HTTPException(403, detail={"code": "email_unverified", "message": "Please verify your email before logging in. Check your inbox or request a new link."})
+        raise HTTPException(
+            403,
+            detail={
+                "code": "email_unverified",
+                "message": "Please verify your email before logging in. Check your inbox or request a new link.",
+            },
+        )
 
     user.last_seen_at = _utcnow_naive()
     await db.commit()
@@ -228,13 +242,15 @@ async def refresh_cookie(request: Request, response: Response, db: AsyncSession 
         raise HTTPException(401, "No refresh token.")
     hashed = hashlib.sha256(raw.encode()).hexdigest()
     now = _utcnow_naive()
-    token_row = (await db.execute(
-        select(RefreshToken).where(
-            RefreshToken.token_hash == hashed,
-            RefreshToken.revoked == False,
-            RefreshToken.expires_at > now,
+    token_row = (
+        await db.execute(
+            select(RefreshToken).where(
+                RefreshToken.token_hash == hashed,
+                RefreshToken.revoked == False,
+                RefreshToken.expires_at > now,
+            )
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
     if not token_row:
         _clear_refresh_cookie(response)
         raise HTTPException(401, "Invalid or expired refresh token.")
@@ -253,9 +269,8 @@ async def refresh_cookie(request: Request, response: Response, db: AsyncSession 
 async def logout(response: Response, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     # Revoke all refresh tokens for this user
     from sqlalchemy import update
-    await db.execute(
-        update(RefreshToken).where(RefreshToken.user_id == user.id).values(revoked=True)
-    )
+
+    await db.execute(update(RefreshToken).where(RefreshToken.user_id == user.id).values(revoked=True))
     await db.commit()
     _clear_refresh_cookie(response)
     return {"ok": True}
@@ -264,29 +279,31 @@ async def logout(response: Response, db: AsyncSession = Depends(get_db), user: U
 @router.delete("/me")
 async def delete_account(
     response: Response,
-    db:   AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """GDPR Article 17 — right to erasure. Anonymises PII, cancels Stripe, revokes tokens."""
-    from sqlalchemy import update as _upd
     import hashlib as _hl
+
+    from sqlalchemy import update as _upd
 
     # Anonymise all PII fields (one-way hash the email for audit trail without retaining it)
     anon_email = f"deleted_{_hl.sha256(user.email.encode()).hexdigest()[:20]}@deleted.invalid"
-    user.email             = anon_email
-    user.full_name         = None
-    user.password_hash     = ""
-    user.telegram_chat_id  = None
+    user.email = anon_email
+    user.full_name = None
+    user.password_hash = ""
+    user.telegram_chat_id = None
     user.telegram_link_code = None
-    user.oauth_sub         = None
-    user.oauth_provider    = None
+    user.oauth_sub = None
+    user.oauth_provider = None
     user.email_verify_token = None
-    user.is_active         = False
+    user.is_active = False
 
     # Cancel active Stripe subscription
     if user.stripe_subscription_id:
         try:
             import stripe as _stripe
+
             s = get_settings()
             _stripe.api_key = s.stripe_secret_key
             _stripe.Subscription.delete(user.stripe_subscription_id)
@@ -294,9 +311,7 @@ async def delete_account(
             pass  # best-effort; subscription will lapse naturally
 
     # Revoke all refresh tokens
-    await db.execute(
-        _upd(RefreshToken).where(RefreshToken.user_id == user.id).values(revoked=True)
-    )
+    await db.execute(_upd(RefreshToken).where(RefreshToken.user_id == user.id).values(revoked=True))
     await db.commit()
     _clear_refresh_cookie(response)
     log.info(f"[auth] account deletion completed for user id={user.id}")
@@ -312,10 +327,10 @@ _VALID_BROKERS = {"alpaca", "ibkr"}
 
 
 class UpdateMeIn(BaseModel):
-    full_name:             str | None   = None
-    auto_execute:          bool | None  = None
-    auto_execute_min_conf: float | None = None   # 50–100, or null to reset to 75
-    auto_execute_broker:   str | None   = None   # "alpaca" | "ibkr" | "" to clear
+    full_name: str | None = None
+    auto_execute: bool | None = None
+    auto_execute_min_conf: float | None = None  # 50–100, or null to reset to 75
+    auto_execute_broker: str | None = None  # "alpaca" | "ibkr" | "" to clear
 
     @field_validator("full_name")
     @classmethod
@@ -354,7 +369,7 @@ async def update_me(
         user.auto_execute = body.auto_execute
     if body.auto_execute_min_conf is not None:
         user.auto_execute_min_conf = body.auto_execute_min_conf
-    elif body.auto_execute_min_conf == 0:       # explicit null reset
+    elif body.auto_execute_min_conf == 0:  # explicit null reset
         user.auto_execute_min_conf = None
     if body.auto_execute_broker is not None:
         user.auto_execute_broker = body.auto_execute_broker or None
@@ -417,6 +432,7 @@ async def forgot_password(request: Request, body: ForgotPasswordIn, db: AsyncSes
         reset_url = f"{get_settings().app_url}/reset-password?token={token}"
         try:
             from services.email_svc import send_password_reset
+
             await send_password_reset(email, reset_url)
         except Exception as e:
             log.warning(f"[auth] password reset email failed: {e}")
@@ -427,13 +443,15 @@ async def forgot_password(request: Request, body: ForgotPasswordIn, db: AsyncSes
 @_limiter.limit("10/minute")
 async def reset_password(request: Request, body: ResetPasswordIn, db: AsyncSession = Depends(get_db)):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    row = (await db.execute(
-        select(PasswordResetToken).where(
-            PasswordResetToken.token_hash == _hash_token(body.token),
-            PasswordResetToken.used == False,
-            PasswordResetToken.expires_at > now,
+    row = (
+        await db.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == _hash_token(body.token),
+                PasswordResetToken.used == False,
+                PasswordResetToken.expires_at > now,
+            )
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
     if not row:
         raise HTTPException(400, "Invalid or expired reset token.")
     user = (await db.execute(select(User).where(User.email == row.email))).scalar_one_or_none()
@@ -459,14 +477,11 @@ async def get_referral_info(
     referral_url = f"{s.app_url}/signup?ref={user.id}"
     # Count users who signed up via this user's ref
     from sqlalchemy import func as sqlfunc
-    result = await db.execute(
-        select(sqlfunc.count()).select_from(User).where(User.referred_by == user.id)
-    )
+
+    result = await db.execute(select(sqlfunc.count()).select_from(User).where(User.referred_by == user.id))
     referrals_total = result.scalar() or 0
     rewarded = await db.execute(
-        select(sqlfunc.count()).select_from(User).where(
-            User.referred_by == user.id, User.referral_rewarded == True
-        )
+        select(sqlfunc.count()).select_from(User).where(User.referred_by == user.id, User.referral_rewarded == True)
     )
     rewards_claimed = rewarded.scalar() or 0
     return {
@@ -496,13 +511,16 @@ async def update_signal_prefs(
     await db.commit()
     return {
         "min_confidence_override": user.min_confidence_override,
-        "message": (f"Telegram threshold set to {body.min_confidence:.0f}%."
-                    if body.min_confidence is not None
-                    else "Reverted to global server default."),
+        "message": (
+            f"Telegram threshold set to {body.min_confidence:.0f}%."
+            if body.min_confidence is not None
+            else "Reverted to global server default."
+        ),
     }
 
 
 # ── Email Verification ────────────────────────────────────────────────────────
+
 
 @router.get("/verify-email")
 async def verify_email(response: Response, token: str = Query(...), db: AsyncSession = Depends(get_db)):
@@ -518,6 +536,7 @@ async def verify_email(response: Response, token: str = Query(...), db: AsyncSes
     await db.refresh(user)
     # Send welcome email now that they're verified
     import asyncio
+
     asyncio.create_task(send_welcome(user.email, user.full_name or ""))
     log.info(f"[auth] email verified {user.email}")
     # Return tokens — log them straight in
@@ -525,8 +544,8 @@ async def verify_email(response: Response, token: str = Query(...), db: AsyncSes
 
 
 class IntegrationsIn(BaseModel):
-    discord_webhook_url: str | None = None   # Discord channel webhook; None to clear
-    webhook_url:         str | None = None   # HMAC-signed outbound webhook; None to clear
+    discord_webhook_url: str | None = None  # Discord channel webhook; None to clear
+    webhook_url: str | None = None  # HMAC-signed outbound webhook; None to clear
 
 
 @router.patch("/integrations")
@@ -552,7 +571,9 @@ async def update_integrations(
             if not url.startswith("https://"):
                 raise HTTPException(400, "webhook_url must start with https://")
             # SSRF guard: block private/link-local/loopback hostnames
-            import urllib.parse as _up, ipaddress as _ip
+            import ipaddress as _ip
+            import urllib.parse as _up
+
             try:
                 parsed_host = _up.urlparse(url).hostname or ""
                 try:
@@ -572,7 +593,7 @@ async def update_integrations(
     await db.commit()
     return {
         "discord_webhook_url": user.discord_webhook_url,
-        "webhook_url":         user.webhook_url,
+        "webhook_url": user.webhook_url,
         "message": "Integrations updated.",
     }
 
@@ -592,7 +613,9 @@ async def resend_verification(request: Request, body: ResendVerificationIn, db: 
     # Always return 200 to avoid email enumeration
     if not user or user.email_verified:
         return {"message": "If an unverified account exists for this email, a new link has been sent."}
-    import asyncio, secrets as _sec
+    import asyncio
+    import secrets as _sec
+
     new_token = _sec.token_urlsafe(32)
     user.email_verify_token = new_token
     await db.commit()

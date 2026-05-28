@@ -3,7 +3,7 @@ Social sentiment signals — StockTwits + Reddit WSB mention velocity.
 Both use free public APIs (no key required).
 Cached per ticker: 30 minutes.
 """
-import asyncio
+
 import ssl
 import time
 from urllib.parse import quote
@@ -34,22 +34,29 @@ async def get_social_sentiment(ticker: str) -> dict:
                 if r.status == 200:
                     d = await r.json(content_type=None)
                     messages = d.get("messages", [])
-                    bull = sum(1 for m in messages if (m.get("entities", {}).get("sentiment", {}) or {}).get("basic") == "Bullish")
-                    bear = sum(1 for m in messages if (m.get("entities", {}).get("sentiment", {}) or {}).get("basic") == "Bearish")
+                    bull = sum(
+                        1
+                        for m in messages
+                        if (m.get("entities", {}).get("sentiment", {}) or {}).get("basic") == "Bullish"
+                    )
+                    bear = sum(
+                        1
+                        for m in messages
+                        if (m.get("entities", {}).get("sentiment", {}) or {}).get("basic") == "Bearish"
+                    )
                     total = bull + bear
                     if total > 0:
                         bull_pct = round(bull / total * 100, 1)
                         result["st_bull_pct"] = bull_pct
-                        result["st_total"]    = len(messages)
-                        result["st_bull"]     = bull
-                        result["st_bear"]     = bear
+                        result["st_total"] = len(messages)
+                        result["st_bull"] = bull
+                        result["st_bear"] = bear
         except Exception as e:
             print(f"[social] StockTwits {ticker}: {e}")
 
         # ── Reddit WSB mention velocity ───────────────────────────────────
         try:
-            url = (f"https://www.reddit.com/r/wallstreetbets/search.json"
-                   f"?q={quote(ticker)}&sort=new&t=week&limit=100")
+            url = f"https://www.reddit.com/r/wallstreetbets/search.json?q={quote(ticker)}&sort=new&t=week&limit=100"
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
                 if r.status == 200:
                     d = await r.json(content_type=None)

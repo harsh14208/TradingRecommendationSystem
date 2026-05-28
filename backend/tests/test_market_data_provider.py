@@ -1,18 +1,20 @@
-import pandas as pd
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pandas as pd
+import pytest
 from services import market_data
 
 
 def _df(close: float = 100.0) -> pd.DataFrame:
-    return pd.DataFrame({
-        "Open": [close - 1, close],
-        "High": [close, close + 1],
-        "Low": [close - 2, close - 1],
-        "Close": [close - 1, close],
-        "Volume": [1000, 1200],
-    })
+    return pd.DataFrame(
+        {
+            "Open": [close - 1, close],
+            "High": [close, close + 1],
+            "Low": [close - 2, close - 1],
+            "Close": [close - 1, close],
+            "Volume": [1000, 1200],
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -40,8 +42,13 @@ async def test_quotes_batch_prefers_polygon_and_falls_back_missing():
 
 @pytest.mark.asyncio
 async def test_infos_batch_prefers_polygon_and_falls_back_missing():
-    with patch("services.polygon_client.get_polygon_infos_batch", new=AsyncMock(return_value={"AAPL": {"company": "Apple Inc."}})):
-        with patch.object(market_data, "_rate_limited", new=AsyncMock(return_value={"company": "Microsoft Corporation"})):
+    with patch(
+        "services.polygon_client.get_polygon_infos_batch",
+        new=AsyncMock(return_value={"AAPL": {"company": "Apple Inc."}}),
+    ):
+        with patch.object(
+            market_data, "_rate_limited", new=AsyncMock(return_value={"company": "Microsoft Corporation"})
+        ):
             out = await market_data.get_infos_sequential(["AAPL", "MSFT"])
 
     assert out["AAPL"]["company"] == "Apple Inc."

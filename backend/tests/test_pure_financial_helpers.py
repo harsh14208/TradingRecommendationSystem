@@ -6,8 +6,10 @@ Tests for pure helper functions in financial service modules:
   - services/signal_scoring.py: remaining coverage
   - services/technicals.py: pure helpers
 """
-import sys
+
 import os
+import sys
+
 import pytest
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -23,7 +25,6 @@ from services.massive_ratios import _val
 
 
 class TestVal:
-
     def test_dict_with_value_key_returns_float(self):
         section = {"revenue": {"value": 1_000_000}}
         assert _val(section, "revenue") == 1_000_000.0
@@ -70,11 +71,10 @@ class TestVal:
 # services/signal_scoring.py — remaining coverage (stochastic/ADX combos)
 # ─────────────────────────────────────────────────────────────────────────────
 
-from services.signal_scoring import score_oscillators, score_obv_adx, score_moving_averages
+from services.signal_scoring import score_moving_averages, score_obv_adx, score_oscillators
 
 
 class TestOscillatorEdgeCases:
-
     def test_stochastic_overbought_no_cross(self):
         """Stoch K > 75 but no bearish cross → -5 penalty."""
         tech = {"stoch_k": 80.0, "stoch_d": 70.0, "stoch_k_prev": 78.0, "stoch_d_prev": 72.0}
@@ -102,7 +102,6 @@ class TestOscillatorEdgeCases:
 
 
 class TestMovingAverageEdgeCases:
-
     def test_price_between_sma200_bands_no_signal(self):
         """Price within ±1% of SMA200 → no delta."""
         ma_delta, rationale = score_moving_averages(200.5, sma50=None, sma200=200.0, poly_ind={})
@@ -123,7 +122,6 @@ class TestMovingAverageEdgeCases:
 
 
 class TestObvAdxEdgeCases:
-
     def test_obv_bearish_with_positive_score_lower_penalty(self):
         """OBV bearish but running_score > 0 → -4 (not -10)."""
         tech = {"obv_above": False, "obv_slope": -100000}
@@ -145,7 +143,6 @@ from services.massive_options import score_option_chain
 
 
 class TestScoreOptionChainEdgeCases:
-
     def test_positive_gex_sell_action_no_penalty(self):
         """GEX > 2M and action=SELL → no penalty (only BUY gets -3)."""
         score, rationale = score_option_chain({"net_gex": 5.0}, 100.0, "SELL")
@@ -177,7 +174,6 @@ from services.polygon_indicators import blend_rsi, polygon_sma_crossover
 
 
 class TestBlendRsiEdgeCases:
-
     def test_equal_rsi_values_blend_same(self):
         """When both RSIs are equal, blend returns same value."""
         result = blend_rsi(50.0, 50.0)
@@ -190,7 +186,6 @@ class TestBlendRsiEdgeCases:
 
 
 class TestPolygonSmaCrossoverEdgeCases:
-
     def test_death_cross_setup(self):
         """SMA50 < SMA200 * 1.01 → death cross setup."""
         result = polygon_sma_crossover({"sma50": 95.0, "sma200": 100.0}, 94.0)

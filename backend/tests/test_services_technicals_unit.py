@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
-
-from services.technicals import _np_sma, _np_ewm, _np_atr, calculate_indicators
+from services.technicals import _np_atr, _np_ewm, _np_sma, calculate_indicators
 
 
 def _make_ohlcv(n: int = 60) -> pd.DataFrame:

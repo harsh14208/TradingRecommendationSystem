@@ -1,5 +1,6 @@
 import hashlib
 import time as _time
+
 from pydantic_settings import BaseSettings
 
 # Stable dev-only fallback — derived from a fixed seed so it survives uvicorn
@@ -14,7 +15,7 @@ class Settings(BaseSettings):
     finnhub_api_key: str = ""
     watchlist: str = "NVDA,TSLA,AAPL,AMD,META,MSFT,PLTR,SMCI,QQQ,SPY,IWM,GLD,XLK,XLF,XLE"
     scan_interval: int = 60  # legacy fallback, unused
-    scan_times: str = ""     # legacy fixed-slot override (leave empty for continuous mode)
+    scan_times: str = ""  # legacy fixed-slot override (leave empty for continuous mode)
     # Continuous market-hours scanning: fire every N minutes from 09:30 to 16:00 ET.
     # Set to 0 to fall back to legacy scan_times fixed slots.
     scan_interval_min: int = 15
@@ -22,7 +23,7 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_api_secret: str = ""
     auto_send_notifications: bool = True
-    min_confidence: float = 57.0   # raised 55→57 (§31: 50-55% band adj-WR 52.2%, marginal)
+    min_confidence: float = 57.0  # raised 55→57 (§31: 50-55% band adj-WR 52.2%, marginal)
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     # Scale prep: when set, signals are posted to ONE broadcast channel instead of
@@ -31,9 +32,9 @@ class Settings(BaseSettings):
     telegram_broadcast_channel_id: str = ""
 
     # ── Auth ──────────────────────────────────────────────────────────────────
-    jwt_secret: str = ""                    # set in .env — MUST be a long random string
+    jwt_secret: str = ""  # set in .env — MUST be a long random string
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60     # 60 minutes; refresh tokens (30d) handle session persistence
+    access_token_expire_minutes: int = 60  # 60 minutes; refresh tokens (30d) handle session persistence
     refresh_token_expire_days: int = 30
 
     # Owner account — auto-created on first startup if set
@@ -41,19 +42,19 @@ class Settings(BaseSettings):
     owner_password: str = ""
 
     # ── Stripe ────────────────────────────────────────────────────────────────
-    stripe_secret_key: str = ""            # sk_live_... or sk_test_...
-    stripe_webhook_secret: str = ""        # whsec_...
-    stripe_price_basic: str = ""           # Stripe Price ID for Basic plan
-    stripe_price_pro: str = ""             # Stripe Price ID for Pro plan
-    app_url: str = "http://localhost:8000" # Public URL for Stripe redirect
+    stripe_secret_key: str = ""  # sk_live_... or sk_test_...
+    stripe_webhook_secret: str = ""  # whsec_...
+    stripe_price_basic: str = ""  # Stripe Price ID for Basic plan
+    stripe_price_pro: str = ""  # Stripe Price ID for Pro plan
+    app_url: str = "http://localhost:8000"  # Public URL for Stripe redirect
 
     # ── Google OAuth ──────────────────────────────────────────────────────────
-    google_client_id: str = ""      # from Google Cloud Console → Credentials
+    google_client_id: str = ""  # from Google Cloud Console → Credentials
     google_client_secret: str = ""  # from Google Cloud Console → Credentials
 
     # ── Discord OAuth ─────────────────────────────────────────────────────────
-    discord_client_id: str = ""     # from discord.com/developers/applications → OAuth2
-    discord_client_secret: str = "" # from discord.com/developers/applications → OAuth2
+    discord_client_id: str = ""  # from discord.com/developers/applications → OAuth2
+    discord_client_secret: str = ""  # from discord.com/developers/applications → OAuth2
 
     # ── Email (SMTP) ──────────────────────────────────────────────────────────
     smtp_host: str = ""
@@ -65,7 +66,7 @@ class Settings(BaseSettings):
 
     # ── Monetisation / Premium APIs ───────────────────────────────────────────
     unusual_whales_api_key: str = ""
-    massive_api_key: str = ""        # Massive.com API key (dark pool, options, financials)
+    massive_api_key: str = ""  # Massive.com API key (dark pool, options, financials)
 
     # Polygon (optional, but .env may contain POLYGON_API_KEY)
     polygon_api_key: str = ""
@@ -112,15 +113,15 @@ def get_settings() -> Settings:
 TIERS = ["free", "basic", "pro"]
 
 TIER_PRICES_CENTS = {
-    "free":  0,
+    "free": 0,
     "basic": 2900,
-    "pro":   7900,
+    "pro": 7900,
 }
 
 TIER_LABELS = {
-    "free":  "Free",
+    "free": "Free",
     "basic": "Basic · $29/mo",
-    "pro":   "Pro · $79/mo",
+    "pro": "Pro · $79/mo",
 }
 
 TIER_PLAN_FEATURES = {
@@ -149,11 +150,24 @@ TIER_PLAN_FEATURES = {
 }
 
 TIER_FEATURES = {
-    "free":  {"signals_view", "market_context"},
+    "free": {"signals_view", "market_context"},
     "basic": {"signals_view", "market_context", "telegram", "backtest", "watchlist", "history", "chart"},
-    "pro":   {"signals_view", "market_context", "telegram", "backtest", "watchlist", "history",
-              "chart", "paper_trading", "correlation", "predictive", "price_alerts", "sector_heatmap",
-              "backtest_simulate", "weekly_digest", "price_alerts"},
+    "pro": {
+        "signals_view",
+        "market_context",
+        "telegram",
+        "backtest",
+        "watchlist",
+        "history",
+        "chart",
+        "paper_trading",
+        "correlation",
+        "predictive",
+        "price_alerts",
+        "sector_heatmap",
+        "backtest_simulate",
+        "weekly_digest",
+    },
 }
 
 

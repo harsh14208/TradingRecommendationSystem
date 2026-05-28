@@ -5,10 +5,13 @@ Per-scan market-wide context (Fear & Greed, Macro) is fetched ONCE by the
 scanner and passed in via `market_ctx`.  Per-ticker data (technicals, news,
 EDGAR insider activity) is fetched concurrently for each ticker.
 """
+
 import asyncio
 import logging
-from datetime import datetime, time as dtime, timezone
+from datetime import datetime, timezone
+from datetime import time as dtime
 from typing import NamedTuple, Optional
+
 import numpy as _np
 import pytz
 
@@ -38,11 +41,11 @@ class _TickerData(NamedTuple):
 from services.google_trends import get_google_trends
 from services.quiverquant import get_congress_signal
 from services.signal_scoring import (
-    score_oscillators,
-    score_macd,
     score_ema_cross,
-    score_obv_adx,
+    score_macd,
     score_moving_averages,
+    score_obv_adx,
+    score_oscillators,
 )
 
 _ET = pytz.timezone("America/New_York")
@@ -72,33 +75,68 @@ _SECTOR_MR_CONFIG: dict[str, dict] = {
     # FIX: remove per-sector buy_thresh and vix_min. Keep only structurally-proven
     # gates: atr_rank_min (ATR≥20 is robust across all regimes) and hold_days
     # (already deployed in live recommendedHoldDays — low-harm to leave).
-    "XLK":  {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": None},  # Tech/FAANG
-    "XLF":  {"vix_min": None, "hold_days": 7,  "atr_rank_min": 30, "buy_thresh": None},  # Financials (blocked by delivery_gates XLF floor anyway)
-    "XLY":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Consumer Disc
-    "XLP":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Consumer Staples (blocked by delivery_gates)
-    "XLE":  {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": None},  # Energy
-    "XLC":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Telecom/Comm
-    "XLB":  {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": None},  # Materials
-    "XLU":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 999},   # Utilities — no viable MR edge; blocked
+    "XLK": {"vix_min": None, "hold_days": 5, "atr_rank_min": 20, "buy_thresh": None},  # Tech/FAANG
+    "XLF": {
+        "vix_min": None,
+        "hold_days": 7,
+        "atr_rank_min": 30,
+        "buy_thresh": None,
+    },  # Financials (blocked by delivery_gates XLF floor anyway)
+    "XLY": {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Consumer Disc
+    "XLP": {
+        "vix_min": None,
+        "hold_days": 10,
+        "atr_rank_min": 20,
+        "buy_thresh": None,
+    },  # Consumer Staples (blocked by delivery_gates)
+    "XLE": {"vix_min": None, "hold_days": 5, "atr_rank_min": 20, "buy_thresh": None},  # Energy
+    "XLC": {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Telecom/Comm
+    "XLB": {"vix_min": None, "hold_days": 5, "atr_rank_min": 20, "buy_thresh": None},  # Materials
+    "XLU": {
+        "vix_min": None,
+        "hold_days": 10,
+        "atr_rank_min": 20,
+        "buy_thresh": 999,
+    },  # Utilities — no viable MR edge; blocked
     # ── §16 confirmed-negative sectors — buy_thresh=999 blocks all MR entries ────
-    "XLV":  {"vix_min": None, "hold_days": 7,  "atr_rank_min": 30, "buy_thresh": 999},  # Healthcare — §16a Sharpe −0.17; blocked
-    "XLI":  {"vix_min": None, "hold_days": 7,  "atr_rank_min": 20, "buy_thresh": 999},  # Industrials — §16a Sharpe −0.48; blocked
-    "XLRE": {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 999},  # Real Estate — §16a Sharpe −15; blocked
+    "XLV": {
+        "vix_min": None,
+        "hold_days": 7,
+        "atr_rank_min": 30,
+        "buy_thresh": 999,
+    },  # Healthcare — §16a Sharpe −0.17; blocked
+    "XLI": {
+        "vix_min": None,
+        "hold_days": 7,
+        "atr_rank_min": 20,
+        "buy_thresh": 999,
+    },  # Industrials — §16a Sharpe −0.48; blocked
+    "XLRE": {
+        "vix_min": None,
+        "hold_days": 5,
+        "atr_rank_min": 20,
+        "buy_thresh": 999,
+    },  # Real Estate — §16a Sharpe −15; blocked
 }
+
 
 def _current_session() -> str:
     t = datetime.now(_ET).time()
-    if dtime(4, 0) <= t < dtime(9, 30):  return "pre"
-    if dtime(9, 30) <= t < dtime(16, 0): return "regular"
-    if dtime(16, 0) <= t < dtime(20, 0): return "after"
+    if dtime(4, 0) <= t < dtime(9, 30):
+        return "pre"
+    if dtime(9, 30) <= t < dtime(16, 0):
+        return "regular"
+    if dtime(16, 0) <= t < dtime(20, 0):
+        return "after"
     return "closed"
+
 
 import pandas as pd
 
 from services.earnings import get_earnings_calendar, get_earnings_surprise
 from services.edgar import get_insider_activity
 from services.fundamentals import get_fundamentals
-from services.market_data import get_history, get_info, get_extended_hours_data
+from services.market_data import get_extended_hours_data, get_history, get_info
 from services.news import get_analyst_recs, get_company_news
 from services.news_scraper import get_scraped_news
 from services.options import get_options_flow, score_options
@@ -123,6 +161,7 @@ def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
     not here — this function is the alpha score, not the final confidence number.
     """
     import math
+
     abs_s = abs(score)
     # Wider sigmoid: 50% at score=35, 70% at score=100, 76% at score=150
     # Calibration then maps this to the empirical win rate for each band.
@@ -134,7 +173,7 @@ def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
     # Thresholds are asymmetric: the system has a structural bullish bias (~+13 pts).
     # Raising BUY bar to 35 and SELL bar to -30 corrects for this.
     if score >= 35:
-        return "BUY",  confidence
+        return "BUY", confidence
     if score <= -30:
         return "SELL", confidence
     return "HOLD", max(38.0, min(52.0, confidence))
@@ -151,37 +190,37 @@ def _levels(price: float, atr: float, action: str, style: str = "swing"):
     # Avg MFE/MAE=1.74× — direction is right but intraday noise was clipping stops.
     # Widened swing to 2.0×/2.5× (R:R≈1.25). Position trades unchanged (already 2.5-3.5×).
     if style == "position":
-        if atr_pct > 0.025:   # high vol
+        if atr_pct > 0.025:  # high vol
             stop_mult, tgt_mult = 2.5, 3.5
-        elif atr_pct < 0.010: # low vol
+        elif atr_pct < 0.010:  # low vol
             stop_mult, tgt_mult = 3.5, 5.0
-        else:                  # normal vol
+        else:  # normal vol
             stop_mult, tgt_mult = 3.0, 4.5
     elif style == "intraday":
-        stop_mult, tgt_mult = 1.5, 2.0   # tight — short hold time
+        stop_mult, tgt_mult = 1.5, 2.0  # tight — short hold time
     else:  # swing
         # Widened from 1.5×/2.0× (§31 validate_predictions: 44.9% stop-hit rate at
         # old 1.5× — too tight; avg MFE/MAE=1.74× confirms direction is right but
         # stops were clipped by intraday noise). New 2.0×/2.5× R:R ≈ 1.25.
         if atr_pct > 0.025:
-            stop_mult, tgt_mult = 2.0, 2.5   # high vol: wider stop, proportional target
+            stop_mult, tgt_mult = 2.0, 2.5  # high vol: wider stop, proportional target
         elif atr_pct < 0.010:
-            stop_mult, tgt_mult = 2.5, 3.0   # low vol: most room needed, modest target
+            stop_mult, tgt_mult = 2.5, 3.0  # low vol: most room needed, modest target
         else:
-            stop_mult, tgt_mult = 2.0, 2.5   # normal: 2.0s/2.5t → R:R 1.25
+            stop_mult, tgt_mult = 2.0, 2.5  # normal: 2.0s/2.5t → R:R 1.25
 
-    stop   = round(entry - stop_mult * atr, 2) if action == "BUY" else round(entry + stop_mult * atr, 2)
-    target = round(entry + tgt_mult  * atr, 2) if action == "BUY" else round(entry - tgt_mult  * atr, 2)
-    risk   = abs(entry - stop)
+    stop = round(entry - stop_mult * atr, 2) if action == "BUY" else round(entry + stop_mult * atr, 2)
+    target = round(entry + tgt_mult * atr, 2) if action == "BUY" else round(entry - tgt_mult * atr, 2)
+    risk = abs(entry - stop)
     reward = abs(target - entry)
-    rr     = f"{reward / risk:.1f}" if risk > 0 else "—"
+    rr = f"{reward / risk:.1f}" if risk > 0 else "—"
     return round(entry, 2), stop, target, rr
 
 
 _TIMEFRAME = {
-    "intraday": ("within today's session (next few hours)",   "Today"),
-    "swing":    ("over the next 2–10 trading days",           "2–10 days"),
-    "position": ("over the coming weeks to months",           "Weeks–months"),
+    "intraday": ("within today's session (next few hours)", "Today"),
+    "swing": ("over the next 2–10 trading days", "2–10 days"),
+    "position": ("over the coming weeks to months", "Weeks–months"),
 }
 
 # Leveraged and inverse-leveraged ETFs. Scoring blocks that rely on company
@@ -190,63 +229,67 @@ _TIMEFRAME = {
 # daily-rebalancing derivative products. Technical and macro signals still run.
 # Style is capped at "swing" — holding beyond ~5 days incurs significant
 # volatility-decay drag that makes position-style targets unreliable.
-_LEVERAGED_ETFS: frozenset[str] = frozenset({
-    # ── 3× Bull ──────────────────────────────────────────────────────────────
-    "TQQQ",  # ProShares UltraPro QQQ
-    "UPRO",  # ProShares UltraPro S&P 500
-    "SPXL",  # Direxion Daily S&P 500 Bull 3×
-    "SOXL",  # Direxion Daily Semiconductor Bull 3×
-    "TECL",  # Direxion Daily Technology Bull 3×
-    "FAS",   # Direxion Daily Financial Bull 3×
-    "TNA",   # Direxion Daily Small Cap Bull 3×
-    "LABU",  # Direxion Daily S&P Biotech Bull 3×
-    "WEBL",  # Direxion Daily Dow Jones Internet Bull 3×
-    "FNGU",  # MicroSectors FANG+ Index 3× Leveraged
-    "NAIL",  # Direxion Daily Homebuilders & Supplies Bull 3×
-    "DPST",  # Direxion Daily Regional Banks Bull 3×
-    "YINN",  # Direxion Daily FTSE China Bull 3×
-    "DRN",   # Direxion Daily Real Estate Bull 3×
-    "TMF",   # Direxion Daily 20+ Year Treasury Bull 3×
-    "HIBL",  # Direxion Daily S&P 500 High Beta Bull 3×
-    "MIDU",  # Direxion Daily Mid Cap Bull 3×
-    "WANT",  # Direxion Daily Consumer Discretionary Bull 3×
-    "CURE",  # Direxion Daily Healthcare Bull 3×
-    "INDL",  # Direxion Daily MSCI India Bull 2×
-    "GUSH",  # Direxion Daily S&P Oil & Gas E&P Bull 2×
-    "NUGT",  # Direxion Daily Gold Miners Bull 2×
-    "JNUG",  # Direxion Daily Junior Gold Miners Bull 2×
-    "UCO",   # ProShares Ultra DJ-AIG Crude Oil 2×
-    "SSO",   # ProShares Ultra S&P 500 2×
-    "QLD",   # ProShares Ultra QQQ 2×
-    "ROM",   # ProShares Ultra Technology 2×
-    "UWM",   # ProShares Ultra Russell2000 2×
-    # ── 3× Bear / Inverse ────────────────────────────────────────────────────
-    "SQQQ",  # ProShares UltraPro Short QQQ
-    "SPXS",  # Direxion Daily S&P 500 Bear 3×
-    "SPXU",  # ProShares UltraPro Short S&P 500
-    "SOXS",  # Direxion Daily Semiconductor Bear 3×
-    "TECS",  # Direxion Daily Technology Bear 3×
-    "FAZ",   # Direxion Daily Financial Bear 3×
-    "TZA",   # Direxion Daily Small Cap Bear 3×
-    "LABD",  # Direxion Daily S&P Biotech Bear 3×
-    "FNGD",  # MicroSectors FANG+ Index −3× Inverse
-    "YANG",  # Direxion Daily FTSE China Bear 3×
-    "DRV",   # Direxion Daily Real Estate Bear 3×
-    "TMV",   # Direxion Daily 20+ Year Treasury Bear 3×
-    "HIBS",  # Direxion Daily S&P 500 High Beta Bear 3×
-    "SRTY",  # ProShares UltraPro Short Russell2000
-    "DRIP",  # Direxion Daily S&P Oil & Gas E&P Bear 2×
-    "DUST",  # Direxion Daily Gold Miners Bear 2×
-    "JDST",  # Direxion Daily Junior Gold Miners Bear 2×
-    "SCO",   # ProShares UltraShort DJ-AIG Crude Oil 2×
-    "SDS",   # ProShares UltraShort S&P 500 2×
-    "QID",   # ProShares UltraShort QQQ 2×
-    "REW",   # ProShares UltraShort Technology 2×
-    "TWM",   # ProShares UltraShort Russell2000 2×
-})
+_LEVERAGED_ETFS: frozenset[str] = frozenset(
+    {
+        # ── 3× Bull ──────────────────────────────────────────────────────────────
+        "TQQQ",  # ProShares UltraPro QQQ
+        "UPRO",  # ProShares UltraPro S&P 500
+        "SPXL",  # Direxion Daily S&P 500 Bull 3×
+        "SOXL",  # Direxion Daily Semiconductor Bull 3×
+        "TECL",  # Direxion Daily Technology Bull 3×
+        "FAS",  # Direxion Daily Financial Bull 3×
+        "TNA",  # Direxion Daily Small Cap Bull 3×
+        "LABU",  # Direxion Daily S&P Biotech Bull 3×
+        "WEBL",  # Direxion Daily Dow Jones Internet Bull 3×
+        "FNGU",  # MicroSectors FANG+ Index 3× Leveraged
+        "NAIL",  # Direxion Daily Homebuilders & Supplies Bull 3×
+        "DPST",  # Direxion Daily Regional Banks Bull 3×
+        "YINN",  # Direxion Daily FTSE China Bull 3×
+        "DRN",  # Direxion Daily Real Estate Bull 3×
+        "TMF",  # Direxion Daily 20+ Year Treasury Bull 3×
+        "HIBL",  # Direxion Daily S&P 500 High Beta Bull 3×
+        "MIDU",  # Direxion Daily Mid Cap Bull 3×
+        "WANT",  # Direxion Daily Consumer Discretionary Bull 3×
+        "CURE",  # Direxion Daily Healthcare Bull 3×
+        "INDL",  # Direxion Daily MSCI India Bull 2×
+        "GUSH",  # Direxion Daily S&P Oil & Gas E&P Bull 2×
+        "NUGT",  # Direxion Daily Gold Miners Bull 2×
+        "JNUG",  # Direxion Daily Junior Gold Miners Bull 2×
+        "UCO",  # ProShares Ultra DJ-AIG Crude Oil 2×
+        "SSO",  # ProShares Ultra S&P 500 2×
+        "QLD",  # ProShares Ultra QQQ 2×
+        "ROM",  # ProShares Ultra Technology 2×
+        "UWM",  # ProShares Ultra Russell2000 2×
+        # ── 3× Bear / Inverse ────────────────────────────────────────────────────
+        "SQQQ",  # ProShares UltraPro Short QQQ
+        "SPXS",  # Direxion Daily S&P 500 Bear 3×
+        "SPXU",  # ProShares UltraPro Short S&P 500
+        "SOXS",  # Direxion Daily Semiconductor Bear 3×
+        "TECS",  # Direxion Daily Technology Bear 3×
+        "FAZ",  # Direxion Daily Financial Bear 3×
+        "TZA",  # Direxion Daily Small Cap Bear 3×
+        "LABD",  # Direxion Daily S&P Biotech Bear 3×
+        "FNGD",  # MicroSectors FANG+ Index −3× Inverse
+        "YANG",  # Direxion Daily FTSE China Bear 3×
+        "DRV",  # Direxion Daily Real Estate Bear 3×
+        "TMV",  # Direxion Daily 20+ Year Treasury Bear 3×
+        "HIBS",  # Direxion Daily S&P 500 High Beta Bear 3×
+        "SRTY",  # ProShares UltraPro Short Russell2000
+        "DRIP",  # Direxion Daily S&P Oil & Gas E&P Bear 2×
+        "DUST",  # Direxion Daily Gold Miners Bear 2×
+        "JDST",  # Direxion Daily Junior Gold Miners Bear 2×
+        "SCO",  # ProShares UltraShort DJ-AIG Crude Oil 2×
+        "SDS",  # ProShares UltraShort S&P 500 2×
+        "QID",  # ProShares UltraShort QQQ 2×
+        "REW",  # ProShares UltraShort Technology 2×
+        "TWM",  # ProShares UltraShort Russell2000 2×
+    }
+)
 
-def _make_plain_english(action: str, ticker: str, style: str, rationale: list,
-                         confidence: float, entry, stop, target) -> dict:
+
+def _make_plain_english(
+    action: str, ticker: str, style: str, rationale: list, confidence: float, entry, stop, target
+) -> dict:
     direction = {"BUY": "rise", "SELL": "fall", "HOLD": "stay range-bound"}.get(action, "move")
     tf_long, tf_short = _TIMEFRAME.get(style, ("over the coming days", "Days"))
     conf_word = "high" if confidence >= 75 else "moderate" if confidence >= 60 else "low"
@@ -280,9 +323,9 @@ def _make_plain_english(action: str, ticker: str, style: str, rationale: list,
         )
 
     return {
-        "summary":    summary,
-        "timeframe":  tf_long,
-        "tf_short":   tf_short,
+        "summary": summary,
+        "timeframe": tf_long,
+        "tf_short": tf_short,
         "top_reasons": top,
     }
 
@@ -297,14 +340,19 @@ def _collect_fetch_results(
     warnings: list[dict] = []
     for source, result in zip(source_names, raw_results):
         if isinstance(result, BaseException):
-            warnings.append({
-                "source": source,
-                "error": type(result).__name__,
-                "message": str(result)[:160],
-            })
+            warnings.append(
+                {
+                    "source": source,
+                    "error": type(result).__name__,
+                    "message": str(result)[:160],
+                }
+            )
             log.debug(
                 "[signal_engine] %s: %s fetch failed: %s: %s",
-                ticker, source, type(result).__name__, str(result)[:160],
+                ticker,
+                source,
+                type(result).__name__,
+                str(result)[:160],
             )
             values.append(None)
         else:
@@ -322,12 +370,21 @@ async def _fetch_ticker_data(
     Returns a _TickerData namedtuple or None if df is invalid.
     """
     if prefetched_df is not None:
-        df   = prefetched_df
+        df = prefetched_df
         info = prefetched_info or {}
         _source_names = [
-            "company_news", "scraped_news", "insider_activity", "analyst_recs",
-            "earnings_calendar", "earnings_surprise", "options_flow", "fundamentals",
-            "social_sentiment", "google_trends", "congress_signal", "history_1h",
+            "company_news",
+            "scraped_news",
+            "insider_activity",
+            "analyst_recs",
+            "earnings_calendar",
+            "earnings_surprise",
+            "options_flow",
+            "fundamentals",
+            "social_sentiment",
+            "google_trends",
+            "congress_signal",
+            "history_1h",
             "extended_hours",
         ]
         _raw = await asyncio.gather(
@@ -347,23 +404,50 @@ async def _fetch_ticker_data(
             return_exceptions=True,
         )
         _values, data_warnings = _collect_fetch_results(ticker, _source_names, list(_raw))
-        news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = _values
+        (
+            news,
+            scraped_news,
+            insider,
+            analyst_recs,
+            earnings_cal,
+            earnings_surp,
+            opt_flow,
+            fundamentals,
+            social,
+            trends,
+            congress,
+            df_1h,
+            massive_sigs,
+        ) = _values
         try:
             sector_rs = await get_sector_relative_strength(ticker, df)
         except Exception as exc:
             sector_rs = None
-            data_warnings.append({
-                "source": "sector_relative_strength",
-                "error": type(exc).__name__,
-                "message": str(exc)[:160],
-            })
+            data_warnings.append(
+                {
+                    "source": "sector_relative_strength",
+                    "error": type(exc).__name__,
+                    "message": str(exc)[:160],
+                }
+            )
             log.debug("[signal_engine] %s: sector_relative_strength fetch failed: %s", ticker, exc)
     else:
         _source_names = [
-            "history_daily", "ticker_info", "company_news", "scraped_news",
-            "insider_activity", "analyst_recs", "earnings_calendar",
-            "earnings_surprise", "options_flow", "fundamentals", "social_sentiment",
-            "google_trends", "congress_signal", "history_1h", "extended_hours",
+            "history_daily",
+            "ticker_info",
+            "company_news",
+            "scraped_news",
+            "insider_activity",
+            "analyst_recs",
+            "earnings_calendar",
+            "earnings_surprise",
+            "options_flow",
+            "fundamentals",
+            "social_sentiment",
+            "google_trends",
+            "congress_signal",
+            "history_1h",
+            "extended_hours",
         ]
         _raw = await asyncio.gather(
             get_history(ticker, period="1y", interval="1d"),
@@ -384,16 +468,34 @@ async def _fetch_ticker_data(
             return_exceptions=True,
         )
         _values, data_warnings = _collect_fetch_results(ticker, _source_names, list(_raw))
-        df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs = _values
+        (
+            df,
+            info,
+            news,
+            scraped_news,
+            insider,
+            analyst_recs,
+            earnings_cal,
+            earnings_surp,
+            opt_flow,
+            fundamentals,
+            social,
+            trends,
+            congress,
+            df_1h,
+            massive_sigs,
+        ) = _values
         try:
             sector_rs = await get_sector_relative_strength(ticker, df)
         except Exception as exc:
             sector_rs = None
-            data_warnings.append({
-                "source": "sector_relative_strength",
-                "error": type(exc).__name__,
-                "message": str(exc)[:160],
-            })
+            data_warnings.append(
+                {
+                    "source": "sector_relative_strength",
+                    "error": type(exc).__name__,
+                    "message": str(exc)[:160],
+                }
+            )
             log.debug("[signal_engine] %s: sector_relative_strength fetch failed: %s", ticker, exc)
 
     if df is None or len(df) < 30:
@@ -402,12 +504,22 @@ async def _fetch_ticker_data(
     info = info or {}
 
     return _TickerData(
-        df=df, info=info, news=news, scraped_news=scraped_news,
-        insider=insider, analyst_recs=analyst_recs,
-        earnings_cal=earnings_cal, earnings_surp=earnings_surp,
-        opt_flow=opt_flow, fundamentals=fundamentals,
-        social=social, trends=trends, congress=congress,
-        df_1h=df_1h, massive_sigs=massive_sigs, sector_rs=sector_rs,
+        df=df,
+        info=info,
+        news=news,
+        scraped_news=scraped_news,
+        insider=insider,
+        analyst_recs=analyst_recs,
+        earnings_cal=earnings_cal,
+        earnings_surp=earnings_surp,
+        opt_flow=opt_flow,
+        fundamentals=fundamentals,
+        social=social,
+        trends=trends,
+        congress=congress,
+        df_1h=df_1h,
+        massive_sigs=massive_sigs,
+        sector_rs=sector_rs,
         data_warnings=data_warnings,
     )
 
@@ -441,20 +553,20 @@ def _assemble_signal(
     and confidence < threshold.
     """
     # Derive macro/regime variables from market_ctx inline.
-    macro        = (market_ctx or {}).get("macro") or {}
-    vix          = macro.get("vix")
-    sp500_trend  = macro.get("sp500_trend")
+    macro = (market_ctx or {}).get("macro") or {}
+    vix = macro.get("vix")
+    sp500_trend = macro.get("sp500_trend")
 
     # ── MR entry condition flags — computed early so all downstream gates can use them ─
     # These are referenced by the VIX gate (~line 829) and many later gates;
     # defining them here once prevents UnboundLocalError from forward-references.
-    _mr_bb   = tech.get("bb_pct_b")
-    _mr_ibs  = tech.get("ibs")
+    _mr_bb = tech.get("bb_pct_b")
+    _mr_ibs = tech.get("ibs")
     _mr_vwap = tech.get("vwap_pct")
-    _has_mr  = (
+    _has_mr = (
         float(tech.get("rsi") or 50) < 42
-        or (_mr_bb   is not None and float(_mr_bb)   < 0.22)
-        or (_mr_ibs  is not None and float(_mr_ibs)  < 0.15)
+        or (_mr_bb is not None and float(_mr_bb) < 0.22)
+        or (_mr_ibs is not None and float(_mr_ibs) < 0.15)
         or (_mr_vwap is not None and float(_mr_vwap) < -0.75)
     )
 
@@ -471,17 +583,19 @@ def _assemble_signal(
         sources.add("Data Quality")
         affected = ", ".join(w.get("source", "unknown") for w in data_warnings[:4])
         extra = "" if len(data_warnings) <= 4 else f" and {len(data_warnings) - 4} more"
-        rationale.append({
-            "src": "Data Quality",
-            "head": "Partial Data Degradation",
-            "body": (
-                f"{ticker} signal generated with partial provider coverage. "
-                f"Unavailable source(s): {affected}{extra}. Technical scoring still ran, "
-                "but confidence should be interpreted with this data gap in mind."
-            ),
-            "sentiment": "neu",
-            "meta": "missing_sources=" + ",".join(w.get("source", "unknown") for w in data_warnings),
-        })
+        rationale.append(
+            {
+                "src": "Data Quality",
+                "head": "Partial Data Degradation",
+                "body": (
+                    f"{ticker} signal generated with partial provider coverage. "
+                    f"Unavailable source(s): {affected}{extra}. Technical scoring still ran, "
+                    "but confidence should be interpreted with this data gap in mind."
+                ),
+                "sentiment": "neu",
+                "meta": "missing_sources=" + ",".join(w.get("source", "unknown") for w in data_warnings),
+            }
+        )
 
     # Agreement count excludes meta-signals that are artifacts of the scoring
     # machinery rather than independent evidence (Risk Gate, Orthogonalization,
@@ -489,9 +603,7 @@ def _assemble_signal(
     # any signal with many firing post-processing checks.
     _META_SRCS = {"Risk Gate", "Orthogonalization", "Signal Cluster", "Backtest"}
     agree_sent = "pos" if score > 0 else "neg"
-    agreement  = sum(1 for r in rationale
-                     if r.get("sentiment") == agree_sent
-                     and r.get("src") not in _META_SRCS)
+    agreement = sum(1 for r in rationale if r.get("sentiment") == agree_sent and r.get("src") not in _META_SRCS)
     action, confidence = _score_to_action(score, agreement)
 
     # Enforce blackout action regardless of what _score_to_action computed.
@@ -505,48 +617,90 @@ def _assemble_signal(
     if action == "BUY" and ticker_wr is not None and ticker_wr < 0.45:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Chronic Loser Exclusion — Win Rate {ticker_wr*100:.0f}%",
-            "body": (f"{ticker} has a historical win rate below 45%. BUY signals on "
-                     "persistent structural underperformers are mathematically "
-                     "negative expected value. Signal excluded."),
-            "sentiment": "neg",
-            "meta": f"Win rate {ticker_wr*100:.0f}% < 45%"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Chronic Loser Exclusion — Win Rate {ticker_wr * 100:.0f}%",
+                "body": (
+                    f"{ticker} has a historical win rate below 45%. BUY signals on "
+                    "persistent structural underperformers are mathematically "
+                    "negative expected value. Signal excluded."
+                ),
+                "sentiment": "neg",
+                "meta": f"Win rate {ticker_wr * 100:.0f}% < 45%",
+            }
+        )
 
     # ── True Orthogonality Minimum ──────────────────────────────────────
-    _core_families = {"Technical", "Options", "13F", "SEC EDGAR", "Congress", "Fundamentals", "Macro", "Dark Pool", "Short Interest", "Analyst", "Social"}
+    _core_families = {
+        "Technical",
+        "Options",
+        "13F",
+        "SEC EDGAR",
+        "Congress",
+        "Fundamentals",
+        "Macro",
+        "Dark Pool",
+        "Short Interest",
+        "Analyst",
+        "Social",
+    }
     _active_families = len([s for s in sources if s in _core_families])
     if action == "BUY" and _active_families < 3 and score < 50:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Orthogonality Gate — Only {_active_families}/3 Source Families",
-            "body": ("A reliable BUY signal requires convergence from at least 3 independent "
-                     "data families (e.g., Technical + Options + Fundamentals). Correlated "
-                     "indicators within the same family do not provide enough independent edge."),
-            "sentiment": "neg",
-            "meta": f"Active families: {_active_families} < 3"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Orthogonality Gate — Only {_active_families}/3 Source Families",
+                "body": (
+                    "A reliable BUY signal requires convergence from at least 3 independent "
+                    "data families (e.g., Technical + Options + Fundamentals). Correlated "
+                    "indicators within the same family do not provide enough independent edge."
+                ),
+                "sentiment": "neg",
+                "meta": f"Active families: {_active_families} < 3",
+            }
+        )
 
     # ── Technical-Only SELL Gate ────────────────────────────────────────
     # 30-year backtest shows technical-only SELL signals average -0.71%/trade.
     # Require at least one non-technical confirmation (Options, Macro, News, etc.)
     _alt_data_sources = {
-        "Options", "Macro", "13F", "SEC EDGAR", "Dark Pool", 
-        "Insider", "Congress", "Analyst", "Fundamentals", "Earnings", 
-        "Benzinga", "Finnhub", "Reuters", "Finviz", "Social"
+        "Options",
+        "Macro",
+        "13F",
+        "SEC EDGAR",
+        "Dark Pool",
+        "Insider",
+        "Congress",
+        "Analyst",
+        "Fundamentals",
+        "Earnings",
+        "Benzinga",
+        "Finnhub",
+        "Reuters",
+        "Finviz",
+        "Social",
     }
     _has_alt = any(s in _alt_data_sources for s in sources)
     if action == "SELL" and not _has_alt:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": "Technical-Only SELL Gate — Missing Alt-Data Confirmation",
-            "body": ("30-year backtesting shows technical-only SELL signals have negative "
-                     "expected value (-0.71% avg return). SELL signals require confirmation "
-                     "from at least one alternative data source (Options, Macro, News, etc.) "
-                     "to fire. Signal gated to HOLD."),
-            "sentiment": "neg",
-            "meta": "technical_only_sell=True"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": "Technical-Only SELL Gate — Missing Alt-Data Confirmation",
+                "body": (
+                    "30-year backtesting shows technical-only SELL signals have negative "
+                    "expected value (-0.71% avg return). SELL signals require confirmation "
+                    "from at least one alternative data source (Options, Macro, News, etc.) "
+                    "to fire. Signal gated to HOLD."
+                ),
+                "sentiment": "neg",
+                "meta": "technical_only_sell=True",
+            }
+        )
 
     # ── RVOL >= 1.2 BUY Prerequisite ────────────────────────────────────
     volume = tech.get("volume") or 0
@@ -559,56 +713,66 @@ def _assemble_signal(
     if action == "BUY" and vol_ratio is not None and vol_ratio < 1.2 and not is_oversold_play:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"RVOL Gate — Insufficient Volume ({vol_ratio:.1f}×)",
-            "body": ("BUY signals require Relative Volume (RVOL) ≥ 1.2 to confirm "
-                     "institutional participation. Low-volume breakouts fail at high rates "
-                     "regardless of score. Oversold bounce (RSI < 30) is the only waiver."),
-            "sentiment": "neg",
-            "meta": f"RVOL {vol_ratio:.1f}× < 1.2"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"RVOL Gate — Insufficient Volume ({vol_ratio:.1f}×)",
+                "body": (
+                    "BUY signals require Relative Volume (RVOL) ≥ 1.2 to confirm "
+                    "institutional participation. Low-volume breakouts fail at high rates "
+                    "regardless of score. Oversold bounce (RSI < 30) is the only waiver."
+                ),
+                "sentiment": "neg",
+                "meta": f"RVOL {vol_ratio:.1f}× < 1.2",
+            }
+        )
 
     # ── ADX minimum gate — no entries in completely directionless markets ────
     # 20-year backtest: ADX < 18 at entry has negative expected value for BUY
     # signals (crossovers whipsaw in flat/choppy markets). Waived for RSI < 30
     # oversold bounces — mean-reversion plays work even in low-trend environments.
     _adx_gate = tech.get("adx")
-    _rsi_gate  = float(tech.get("rsi") or 50)
-    if (action == "BUY"
-            and _adx_gate is not None
-            and float(_adx_gate) < 18
-            and _rsi_gate >= 30
-            and score < 45):
+    _rsi_gate = float(tech.get("rsi") or 50)
+    if action == "BUY" and _adx_gate is not None and float(_adx_gate) < 18 and _rsi_gate >= 30 and score < 45:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"ADX Minimum Gate — ADX {float(_adx_gate):.0f} < 18 (No Trend)",
-            "body": (f"ADX at {float(_adx_gate):.0f} — market is directionless. Momentum crossovers "
-                     "and breakout signals whipsaw in choppy flat markets. Requiring ADX ≥ 18 "
-                     "to confirm a minimum directional trend before issuing BUY."),
-            "sentiment": "neg",
-            "meta": f"ADX={float(_adx_gate):.1f} < 18 | Score={score:.1f}"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"ADX Minimum Gate — ADX {float(_adx_gate):.0f} < 18 (No Trend)",
+                "body": (
+                    f"ADX at {float(_adx_gate):.0f} — market is directionless. Momentum crossovers "
+                    "and breakout signals whipsaw in choppy flat markets. Requiring ADX ≥ 18 "
+                    "to confirm a minimum directional trend before issuing BUY."
+                ),
+                "sentiment": "neg",
+                "meta": f"ADX={float(_adx_gate):.1f} < 18 | Score={score:.1f}",
+            }
+        )
 
     # ── RSI overbought + weak trend gate (topping market filter) ─────────────
     # 20-year backtest: RSI > 70 entries in confirmed bull markets with ADX < 28
     # (weak/fading trend) are net-negative — these are stocks at local ATH that
     # are about to reverse, not continue. If the trend is STRONG (ADX ≥ 28),
     # RSI > 70 can persist — those are valid momentum entries.
-    _adx_now  = float(_adx_gate) if _adx_gate is not None else 25.0
-    if (action == "BUY"
-            and sp500_trend == "up"
-            and _rsi_gate > 70
-            and _adx_now < 28
-            and score < 40):
+    _adx_now = float(_adx_gate) if _adx_gate is not None else 25.0
+    if action == "BUY" and sp500_trend == "up" and _rsi_gate > 70 and _adx_now < 28 and score < 40:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Overbought + Weak Trend Gate — RSI {_rsi_gate:.0f}, ADX {_adx_now:.0f}",
-            "body": (f"RSI at {_rsi_gate:.0f} (overbought) while ADX at {_adx_now:.0f} (weak trend). "
-                     "This pattern — extended price + fading momentum — precedes reversals in bull "
-                     "markets. When ADX ≥ 28 (strong trend), RSI > 70 is a valid continuation; "
-                     "below 28 it is a topping signal. Marginal score blocked."),
-            "sentiment": "neg",
-            "meta": f"RSI={_rsi_gate:.1f} | ADX={_adx_now:.1f} < 28 | Score={score:.1f}"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Overbought + Weak Trend Gate — RSI {_rsi_gate:.0f}, ADX {_adx_now:.0f}",
+                "body": (
+                    f"RSI at {_rsi_gate:.0f} (overbought) while ADX at {_adx_now:.0f} (weak trend). "
+                    "This pattern — extended price + fading momentum — precedes reversals in bull "
+                    "markets. When ADX ≥ 28 (strong trend), RSI > 70 is a valid continuation; "
+                    "below 28 it is a topping signal. Marginal score blocked."
+                ),
+                "sentiment": "neg",
+                "meta": f"RSI={_rsi_gate:.1f} | ADX={_adx_now:.1f} < 28 | Score={score:.1f}",
+            }
+        )
 
     # ── Dollar-volume minimum gate ────────────────────────────────────────
     # A signal on a thinly-traded stock ($price × volume < $5M/day) is unreliable:
@@ -620,25 +784,37 @@ def _assemble_signal(
         _dv_pen = 8 if _dollar_vol < 1_000_000 else 4
         confidence = round(max(35.0, confidence - _dv_pen), 1)
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Thin Dollar Volume — ${_dollar_vol/1e6:.1f}M/day ({_dv_pen}pp confidence haircut)",
-            "body": (f"Daily dollar volume of ${_dollar_vol/1e6:.1f}M is below the $5M threshold. "
-                     "Thin liquidity means bid-ask spread costs erode signal edge, and large orders "
-                     "move price against the position. Use a smaller position size."),
-            "sentiment": "neg",
-            "meta": f"dollar_vol=${_dollar_vol/1e6:.1f}M | penalty={_dv_pen}pp"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Thin Dollar Volume — ${_dollar_vol / 1e6:.1f}M/day ({_dv_pen}pp confidence haircut)",
+                "body": (
+                    f"Daily dollar volume of ${_dollar_vol / 1e6:.1f}M is below the $5M threshold. "
+                    "Thin liquidity means bid-ask spread costs erode signal edge, and large orders "
+                    "move price against the position. Use a smaller position size."
+                ),
+                "sentiment": "neg",
+                "meta": f"dollar_vol=${_dollar_vol / 1e6:.1f}M | penalty={_dv_pen}pp",
+            }
+        )
 
     # Annotate the low-ATR regime switch if it was active this signal
     if _is_low_atr:
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Low-ATR Regime Switch Active — Momentum Bypassed",
-            "body": (f"ATR is only {_atr_pct_pre*100:.2f}% of price — structurally range-bound stock. "
-                     "Trend and momentum scoring families (MACD state, MA cross, ADX, ROC, Donchian) "
-                     "have been bypassed. Only mean-reversion signals (Bollinger, Z-score, RSI oversold, "
-                     "pivot support) are scored. This reduces false BUY signals on KO/PEP/T-style tickers."),
-            "sentiment": "neg" if action == "HOLD" else "pos",
-            "meta": f"low_atr_regime=True atr_pct={_atr_pct_pre*100:.2f}%"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": "Low-ATR Regime Switch Active — Momentum Bypassed",
+                "body": (
+                    f"ATR is only {_atr_pct_pre * 100:.2f}% of price — structurally range-bound stock. "
+                    "Trend and momentum scoring families (MACD state, MA cross, ADX, ROC, Donchian) "
+                    "have been bypassed. Only mean-reversion signals (Bollinger, Z-score, RSI oversold, "
+                    "pivot support) are scored. This reduces false BUY signals on KO/PEP/T-style tickers."
+                ),
+                "sentiment": "neg" if action == "HOLD" else "pos",
+                "meta": f"low_atr_regime=True atr_pct={_atr_pct_pre * 100:.2f}%",
+            }
+        )
 
     # ── Low-volatility stock BUY gate ───────────────────────────────────
     # Stocks with ATR < 0.8% of price (KO, PEP, T, JNJ, WFC, etc.) have
@@ -654,13 +830,19 @@ def _assemble_signal(
         # return by -0.20%+ even in positive macro environments.
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Minimum ATR Gate — ATR {atr_pct*100:.2f}% Below 0.7% Floor",
-            "body": (f"ATR is {atr_pct*100:.2f}% of price — stock moves too little to generate "
-                     "returns above friction in a 5-day hold. Backtest confirmed these trades "
-                     "are negative expected value across all macro environments."),
-            "sentiment": "neg",
-            "meta": f"ATR%: {atr_pct*100:.2f}% < 0.7% floor"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Minimum ATR Gate — ATR {atr_pct * 100:.2f}% Below 0.7% Floor",
+                "body": (
+                    f"ATR is {atr_pct * 100:.2f}% of price — stock moves too little to generate "
+                    "returns above friction in a 5-day hold. Backtest confirmed these trades "
+                    "are negative expected value across all macro environments."
+                ),
+                "sentiment": "neg",
+                "meta": f"ATR%: {atr_pct * 100:.2f}% < 0.7% floor",
+            }
+        )
 
     # ── Defensive-ticker BUY gate ────────────────────────────────────────
     # Tickers that showed 0% BUY win rate across ≥3 resolved signals in the
@@ -675,8 +857,20 @@ def _assemble_signal(
         # finding: hardcoding tickers found via historical backtest is look-ahead
         # selection bias). The dynamic AR(1) momentum-persistence gate below
         # replaces those exclusions with a point-in-time quantitative rule.
-        "KO", "PEP", "T", "NEE", "PG", "USB", "PNC", "C",
-        "AIG", "WM", "MCO", "TT", "DE", "TJX",
+        "KO",
+        "PEP",
+        "T",
+        "NEE",
+        "PG",
+        "USB",
+        "PNC",
+        "C",
+        "AIG",
+        "WM",
+        "MCO",
+        "TT",
+        "DE",
+        "TJX",
         # Live validated 0% WR (May 2026, §11b ticker analysis)
         "APH",  # 0/4 trades, avg -8.70% — worst live ticker
         "EOG",  # 0/2 trades, avg -7.00% — energy, structurally weak on MR signals
@@ -685,9 +879,14 @@ def _assemble_signal(
         "UPS",  # 0/1 trades, avg -6.31% — logistics, cyclical/macro not chart
         # Backtest-validated: event-driven / range-bound / non-technical
         # Pharma (drug-approval dominated, not chart-driven)
-        "ABBV", "MRK", "PFE", "LLY", "TMO",
+        "ABBV",
+        "MRK",
+        "PFE",
+        "LLY",
+        "TMO",
         # Consumer staples / tobacco (low-ATR, mean-reverting)
-        "PM", "WMT",
+        "PM",
+        "WMT",
         # Analog/commodity semiconductors (earnings-cycle driven)
         "TXN",
         # Consumer brand (fashion cycles, not technical)
@@ -701,14 +900,20 @@ def _assemble_signal(
     if action == "BUY" and ticker in _DEFENSIVE_BUY_BLOCK:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Defensive-Ticker BUY Gate — {ticker} Blocked",
-            "body": (f"{ticker} is in the defensive block: either 0% live BUY win rate (n≥3) "
-                     "or negative avg return across 20yr technical backtest. "
-                     "Price action is event-driven, macro-driven, or non-MR-responsive. "
-                     "BUY gated to HOLD until re-validation shows positive expected value."),
-            "sentiment": "neg",
-            "meta": f"Ticker: {ticker} | Gate: defensive_ticker_block"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Defensive-Ticker BUY Gate — {ticker} Blocked",
+                "body": (
+                    f"{ticker} is in the defensive block: either 0% live BUY win rate (n≥3) "
+                    "or negative avg return across 20yr technical backtest. "
+                    "Price action is event-driven, macro-driven, or non-MR-responsive. "
+                    "BUY gated to HOLD until re-validation shows positive expected value."
+                ),
+                "sentiment": "neg",
+                "meta": f"Ticker: {ticker} | Gate: defensive_ticker_block",
+            }
+        )
 
     # ── Fundamental Value-Trap Gate ──────────────────────────────────────────
     # MR bounces on fundamentally deteriorating companies are value traps —
@@ -717,26 +922,32 @@ def _assemble_signal(
     # Waived for leveraged ETFs (no fundamentals) and when data is unavailable.
     # Free data: revenue_growth from yfinance info; FCF yield computed inline.
     if action == "BUY" and not _is_lev_etf:
-        _rev_grow   = info.get("revenue_growth")   # YoY ratio: -0.25 = -25% YoY
-        _fcf_abs    = info.get("freeCashflow")      # absolute free cash flow ($)
-        _mktcap_v   = info.get("market_cap")
-        _fcf_yield  = (_fcf_abs / _mktcap_v * 100) if (_fcf_abs is not None and _mktcap_v and _mktcap_v > 0) else None
-        _rev_trap   = _rev_grow is not None and _rev_grow < -0.20   # revenue falling >20% YoY
-        _fcf_trap   = _fcf_yield is not None and _fcf_yield < -5.0  # burning >5% of mktcap/yr
+        _rev_grow = info.get("revenue_growth")  # YoY ratio: -0.25 = -25% YoY
+        _fcf_abs = info.get("freeCashflow")  # absolute free cash flow ($)
+        _mktcap_v = info.get("market_cap")
+        _fcf_yield = (_fcf_abs / _mktcap_v * 100) if (_fcf_abs is not None and _mktcap_v and _mktcap_v > 0) else None
+        _rev_trap = _rev_grow is not None and _rev_grow < -0.20  # revenue falling >20% YoY
+        _fcf_trap = _fcf_yield is not None and _fcf_yield < -5.0  # burning >5% of mktcap/yr
         if _rev_trap and _fcf_trap:
             action = "HOLD"
             sources.add("Risk Gate")
-            _rev_str = f"{_rev_grow*100:+.1f}%" if _rev_grow is not None else "—"
+            _rev_str = f"{_rev_grow * 100:+.1f}%" if _rev_grow is not None else "—"
             _fcf_str = f"{_fcf_yield:+.1f}%" if _fcf_yield is not None else "—"
-            rationale.append({"src": "Risk Gate",
-                "head": f"Value-Trap Gate — Revenue {_rev_str} YoY, FCF Yield {_fcf_str}",
-                "body": (f"Revenue declining {_rev_str} year-over-year with FCF yield of {_fcf_str}. "
-                         "Stocks that are technically oversold AND fundamentally deteriorating "
-                         "are value traps — the technical signal reflects a real business problem, "
-                         "not a temporary dip. MR bounces on cash-burning revenue-decliners "
-                         "have significantly lower win rates. Signal gated to HOLD."),
-                "sentiment": "neg",
-                "meta": f"rev_growth={_rev_str} | fcf_yield={_fcf_str} | gate=value_trap"})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Value-Trap Gate — Revenue {_rev_str} YoY, FCF Yield {_fcf_str}",
+                    "body": (
+                        f"Revenue declining {_rev_str} year-over-year with FCF yield of {_fcf_str}. "
+                        "Stocks that are technically oversold AND fundamentally deteriorating "
+                        "are value traps — the technical signal reflects a real business problem, "
+                        "not a temporary dip. MR bounces on cash-burning revenue-decliners "
+                        "have significantly lower win rates. Signal gated to HOLD."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"rev_growth={_rev_str} | fcf_yield={_fcf_str} | gate=value_trap",
+                }
+            )
 
     # ── Leveraged / inverse-leveraged ETF disclosure ─────────────────────
     # Always fire for any leveraged ETF signal, regardless of action.
@@ -744,31 +955,75 @@ def _assemble_signal(
     # this card surfaces the decay risk to the user and confirms the bypass.
     if ticker in _LEVERAGED_ETFS:
         _lev_bull = ticker not in {
-            "SQQQ","SPXS","SPXU","SOXS","TECS","FAZ","TZA","LABD",
-            "FNGD","YANG","DRV","TMV","HIBS","SRTY","DRIP","DUST",
-            "JDST","SCO","SDS","QID","REW","TWM",
+            "SQQQ",
+            "SPXS",
+            "SPXU",
+            "SOXS",
+            "TECS",
+            "FAZ",
+            "TZA",
+            "LABD",
+            "FNGD",
+            "YANG",
+            "DRV",
+            "TMV",
+            "HIBS",
+            "SRTY",
+            "DRIP",
+            "DUST",
+            "JDST",
+            "SCO",
+            "SDS",
+            "QID",
+            "REW",
+            "TWM",
         }
-        _mult = "3×" if ticker not in {"GUSH","DRIP","NUGT","DUST","JNUG","JDST",
-                                        "UCO","SCO","SSO","SDS","QLD","QID",
-                                        "ROM","REW","UWM","TWM","INDL"} else "2×"
-        _dir  = "Bull" if _lev_bull else "Bear (Inverse)"
+        _mult = (
+            "3×"
+            if ticker
+            not in {
+                "GUSH",
+                "DRIP",
+                "NUGT",
+                "DUST",
+                "JNUG",
+                "JDST",
+                "UCO",
+                "SCO",
+                "SSO",
+                "SDS",
+                "QLD",
+                "QID",
+                "ROM",
+                "REW",
+                "UWM",
+                "TWM",
+                "INDL",
+            }
+            else "2×"
+        )
+        _dir = "Bull" if _lev_bull else "Bear (Inverse)"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"{_mult} Leveraged ETF — {_dir} | Hold ≤5 Days",
-            "body": (
-                f"{ticker} is a {_mult} {_dir} leveraged ETF. Each 1% move in the "
-                f"underlying index produces approximately {_mult} in this ETF. "
-                "Key risks: (1) Volatility decay — daily rebalancing causes "
-                "compounding drag; a 10% round-trip in the underlying can cost "
-                "2–8% of NAV even if price returns to start. "
-                "(2) No fundamental scoring — P/E, FCF, earnings, insider activity, "
-                "and analyst revisions are not applicable and have been bypassed. "
-                "(3) Signals are based on technical and macro factors only. "
-                "Recommended maximum hold: swing (2–5 trading days). "
-                "Use position sizing of ⅓ or less vs an equivalent single-stock trade."
-            ),
-            "sentiment": "neg",
-            "meta": f"type=leveraged_etf | mult={_mult} | dir={'bull' if _lev_bull else 'bear'}"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"{_mult} Leveraged ETF — {_dir} | Hold ≤5 Days",
+                "body": (
+                    f"{ticker} is a {_mult} {_dir} leveraged ETF. Each 1% move in the "
+                    f"underlying index produces approximately {_mult} in this ETF. "
+                    "Key risks: (1) Volatility decay — daily rebalancing causes "
+                    "compounding drag; a 10% round-trip in the underlying can cost "
+                    "2–8% of NAV even if price returns to start. "
+                    "(2) No fundamental scoring — P/E, FCF, earnings, insider activity, "
+                    "and analyst revisions are not applicable and have been bypassed. "
+                    "(3) Signals are based on technical and macro factors only. "
+                    "Recommended maximum hold: swing (2–5 trading days). "
+                    "Use position sizing of ⅓ or less vs an equivalent single-stock trade."
+                ),
+                "sentiment": "neg",
+                "meta": f"type=leveraged_etf | mult={_mult} | dir={'bull' if _lev_bull else 'bear'}",
+            }
+        )
 
     # ── Market-cap tier modifier ──────────────────────────────────────────
     # Mega-caps ($500B+) have wall-to-wall analyst coverage, crowded positioning,
@@ -776,25 +1031,37 @@ def _assemble_signal(
     # Small-caps (<$2B) add a volatility premium notice to the rationale.
     _mktcap = info.get("market_cap")
     if _mktcap and action in ("BUY", "SELL") and not _is_lev_etf:
-        if _mktcap >= 500_000_000_000:          # mega-cap ≥ $500B
+        if _mktcap >= 500_000_000_000:  # mega-cap ≥ $500B
             confidence = round(max(35.0, confidence - 2), 1)
             sources.add("Risk Gate")
-            rationale.append({"src": "Risk Gate",
-                "head": f"Mega-Cap Crowding Haircut (${_mktcap/1e12:.1f}T)",
-                "body": (f"Market cap of ${_mktcap/1e12:.1f}T means this stock has wall-to-wall analyst "
-                         "coverage, crowded institutional positioning, and slower-decaying momentum. "
-                         "Edge is smaller vs mid/small cap — confidence haircut applied."),
-                "sentiment": "neg",
-                "meta": f"mktcap=${_mktcap/1e9:.0f}B | tier=mega | adj=-2pp"})
-        elif _mktcap < 2_000_000_000:           # small-cap < $2B
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Mega-Cap Crowding Haircut (${_mktcap / 1e12:.1f}T)",
+                    "body": (
+                        f"Market cap of ${_mktcap / 1e12:.1f}T means this stock has wall-to-wall analyst "
+                        "coverage, crowded institutional positioning, and slower-decaying momentum. "
+                        "Edge is smaller vs mid/small cap — confidence haircut applied."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"mktcap=${_mktcap / 1e9:.0f}B | tier=mega | adj=-2pp",
+                }
+            )
+        elif _mktcap < 2_000_000_000:  # small-cap < $2B
             sources.add("Risk Gate")
-            rationale.append({"src": "Risk Gate",
-                "head": f"Small-Cap Volatility Notice (${_mktcap/1e9:.1f}B)",
-                "body": (f"Market cap of ${_mktcap/1e9:.1f}B — small-cap territory. Higher volatility, "
-                         "wider bid-ask spreads, and lower liquidity amplify both gains and losses. "
-                         "Size position accordingly (suggest ½ of normal allocation)."),
-                "sentiment": "neg",
-                "meta": f"mktcap=${_mktcap/1e9:.1f}B | tier=small"})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Small-Cap Volatility Notice (${_mktcap / 1e9:.1f}B)",
+                    "body": (
+                        f"Market cap of ${_mktcap / 1e9:.1f}B — small-cap territory. Higher volatility, "
+                        "wider bid-ask spreads, and lower liquidity amplify both gains and losses. "
+                        "Size position accordingly (suggest ½ of normal allocation)."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"mktcap=${_mktcap / 1e9:.1f}B | tier=small",
+                }
+            )
 
     # ── Financial-stress + VIX regime hard-gate ─────────────────────────
     # When the St. Louis Financial Stress Index (STLFSI4) and spot VIX are both
@@ -802,56 +1069,73 @@ def _assemble_signal(
     # regime where individual-stock technical signals become unreliable — everything
     # moves together, fundamentals don't matter, and BUY signals systematically fail.
     # Hard-gate to HOLD; SELL signals remain valid (trend is your friend in stress).
-    _gate_macro   = (market_ctx or {}).get("macro") or {}
-    _stlfsi_gate  = _gate_macro.get("stlfsi")
-    if (action == "BUY"
-            and _stlfsi_gate is not None and _stlfsi_gate > 1.5
-            and vix is not None and vix > 30):
+    _gate_macro = (market_ctx or {}).get("macro") or {}
+    _stlfsi_gate = _gate_macro.get("stlfsi")
+    if action == "BUY" and _stlfsi_gate is not None and _stlfsi_gate > 1.5 and vix is not None and vix > 30:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Stress Regime Gate — BUY Blocked (STLFSI4 {_stlfsi_gate:+.2f}, VIX {vix:.0f})",
-            "body": (f"St. Louis Financial Stress Index at {_stlfsi_gate:+.2f} (crisis >1.5) with "
-                     f"VIX at {vix:.0f} — systemic stress regime active. In high-stress environments "
-                     "equity correlations spike toward 1.0, individual-stock signals have near-zero "
-                     "predictive power, and BUY signals fail at high rates. All BUY signals gated "
-                     "to HOLD until STLFSI4 drops below 1.0."),
-            "sentiment": "neg",
-            "meta": f"STLFSI4={_stlfsi_gate:+.2f} | VIX={vix:.0f} | hard_gate=stress_regime"})
-    elif (action == "BUY"
-            and _stlfsi_gate is not None and _stlfsi_gate > 1.0
-            and vix is not None and vix > 25
-            and score < 50):
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Stress Regime Gate — BUY Blocked (STLFSI4 {_stlfsi_gate:+.2f}, VIX {vix:.0f})",
+                "body": (
+                    f"St. Louis Financial Stress Index at {_stlfsi_gate:+.2f} (crisis >1.5) with "
+                    f"VIX at {vix:.0f} — systemic stress regime active. In high-stress environments "
+                    "equity correlations spike toward 1.0, individual-stock signals have near-zero "
+                    "predictive power, and BUY signals fail at high rates. All BUY signals gated "
+                    "to HOLD until STLFSI4 drops below 1.0."
+                ),
+                "sentiment": "neg",
+                "meta": f"STLFSI4={_stlfsi_gate:+.2f} | VIX={vix:.0f} | hard_gate=stress_regime",
+            }
+        )
+    elif (
+        action == "BUY"
+        and _stlfsi_gate is not None
+        and _stlfsi_gate > 1.0
+        and vix is not None
+        and vix > 25
+        and score < 50
+    ):
         # Elevated stress (not crisis): require stronger conviction before allowing BUY.
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Elevated Stress Gate — Marginal BUY Blocked (Score {score:.0f} < 50, STLFSI4 {_stlfsi_gate:+.2f})",
-            "body": (f"STLFSI4 at {_stlfsi_gate:+.2f} (elevated, threshold 1.0) with VIX at {vix:.0f}. "
-                     "Marginal BUY signals fail at elevated rates in stress regimes. "
-                     "Requiring score ≥50 for BUY until financial stress normalises."),
-            "sentiment": "neg",
-            "meta": f"STLFSI4={_stlfsi_gate:+.2f} | VIX={vix:.0f} | score={score:.1f} < 50"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Elevated Stress Gate — Marginal BUY Blocked (Score {score:.0f} < 50, STLFSI4 {_stlfsi_gate:+.2f})",
+                "body": (
+                    f"STLFSI4 at {_stlfsi_gate:+.2f} (elevated, threshold 1.0) with VIX at {vix:.0f}. "
+                    "Marginal BUY signals fail at elevated rates in stress regimes. "
+                    "Requiring score ≥50 for BUY until financial stress normalises."
+                ),
+                "sentiment": "neg",
+                "meta": f"STLFSI4={_stlfsi_gate:+.2f} | VIX={vix:.0f} | score={score:.1f} < 50",
+            }
+        )
 
     # ── Global VIX minimum gate (§12b: 103-ticker 23yr cross-universe) ──────────
     # Lo & MacKinlay (1990): MR reversal profits are highest in high-volatility regimes.
     # Low VIX = complacent market = shallow panic = weak MR bounces.
     # §12b 23yr backtest: VIX≥20 optimal → Sharpe 0.13→0.23, WR 61.2→64.1%, MaxDD -2.23→-0.87.
-    if (action == "BUY"
-            and _has_mr
-            and vix is not None
-            and vix < 20):
+    if action == "BUY" and _has_mr and vix is not None and vix < 20:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Global VIX Minimum Gate — Low Fear Regime (VIX {vix:.0f} < 20)",
-            "body": (f"VIX at {vix:.0f} is below the MR entry floor. "
-                     f"Mean-reversion bounces require a fear premium to close the gap — "
-                     f"low-VIX entries have insufficient panic depth for reliable reversal. "
-                     f"103-ticker 23yr backtest (§12b): VIX≥20 → Sharpe 0.23 vs 0.13 baseline, "
-                     f"WR 64.1%, MaxDD -0.87%. Waiting for VIX ≥ 20."),
-            "sentiment": "neg",
-            "meta": f"vix={vix:.0f} < 20 | mr_entry=True | global_vix_min_gate=True"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Global VIX Minimum Gate — Low Fear Regime (VIX {vix:.0f} < 20)",
+                "body": (
+                    f"VIX at {vix:.0f} is below the MR entry floor. "
+                    f"Mean-reversion bounces require a fear premium to close the gap — "
+                    f"low-VIX entries have insufficient panic depth for reliable reversal. "
+                    f"103-ticker 23yr backtest (§12b): VIX≥20 → Sharpe 0.23 vs 0.13 baseline, "
+                    f"WR 64.1%, MaxDD -0.87%. Waiting for VIX ≥ 20."
+                ),
+                "sentiment": "neg",
+                "meta": f"vix={vix:.0f} < 20 | mr_entry=True | global_vix_min_gate=True",
+            }
+        )
 
     # ── SMA200 downtrend BUY gate ────────────────────────────────────────
     # 30-year backtest: BUY signals when price < SMA200 are net-negative in
@@ -859,47 +1143,52 @@ def _assemble_signal(
     #   • deep oversold entries (RSI < 30) — mean-reversion bounce is valid
     #   • very high conviction (score ≥ 60) — alt-data strongly confirms
     _sma200_g = tech.get("sma200")
-    if (action == "BUY"
-            and _sma200_g is not None
-            and price < _sma200_g * 0.99
-            and _rsi_gate >= 25
-            and score < 60):
+    if action == "BUY" and _sma200_g is not None and price < _sma200_g * 0.99 and _rsi_gate >= 25 and score < 60:
         # RSI exception tightened 30→25: backtest showed RSI 25-30 "oversold bounce"
         # entries in downtrends are dead-cat bounces — only extreme oversold (< 25)
         # have genuine mean-reversion edge in a sustained downtrend.
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": "SMA200 Downtrend Gate — BUY Suppressed",
-            "body": (f"Price ${price:.2f} is {(price/_sma200_g-1)*100:.1f}% below the 200-day MA "
-                     f"(${_sma200_g:.2f}). 20-year backtest: BUY signals in long-term downtrends "
-                     "are net-negative. Gate waived only when RSI < 25 (extreme oversold) "
-                     "or score ≥ 60 (strong alt-data confirmation)."),
-            "sentiment": "neg",
-            "meta": f"price={price:.2f} sma200={_sma200_g:.2f} rsi={_rsi_gate:.1f} | gate=sma200_downtrend"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": "SMA200 Downtrend Gate — BUY Suppressed",
+                "body": (
+                    f"Price ${price:.2f} is {(price / _sma200_g - 1) * 100:.1f}% below the 200-day MA "
+                    f"(${_sma200_g:.2f}). 20-year backtest: BUY signals in long-term downtrends "
+                    "are net-negative. Gate waived only when RSI < 25 (extreme oversold) "
+                    "or score ≥ 60 (strong alt-data confirmation)."
+                ),
+                "sentiment": "neg",
+                "meta": f"price={price:.2f} sma200={_sma200_g:.2f} rsi={_rsi_gate:.1f} | gate=sma200_downtrend",
+            }
+        )
 
     # ── SELL uptrend alt-data gate ────────────────────────────────────────
     # 30-year backtest: technical-only SELL signals above SMA200 average
     # -0.71%/trade (Sharpe -1.62) in every bull market regime. The market's
     # long-term upward drift makes shorting without confirmation a losing
     # strategy 8 out of 10 years. Require at least one non-technical source.
-    _has_alt_uptrend = bool({"Options", "News", "Macro", "13F", "SEC EDGAR",
-                             "Dark Pool", "Short Interest"} & sources)
-    if (action == "SELL"
-            and _sma200_g is not None
-            and price > _sma200_g * 1.01
-            and not _has_alt_uptrend
-            and score > -45):   # tightened from -55 — Tier 3 backtest validated
+    _has_alt_uptrend = bool({"Options", "News", "Macro", "13F", "SEC EDGAR", "Dark Pool", "Short Interest"} & sources)
+    if (
+        action == "SELL" and _sma200_g is not None and price > _sma200_g * 1.01 and not _has_alt_uptrend and score > -45
+    ):  # tightened from -55 — Tier 3 backtest validated
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": "SELL Alt-Data Gate — Uptrend Confirmation Required",
-            "body": (f"Price ${price:.2f} is above 200-day MA (${_sma200_g:.2f}) — confirmed uptrend. "
-                     "30-year backtest: technical-only SELL signals in uptrends average -0.71%/trade "
-                     "across all market cycles. Requires options flow, news catalyst, macro signal, "
-                     "or institutional data to short into an uptrend."),
-            "sentiment": "neg",
-            "meta": f"price={price:.2f} sma200={_sma200_g:.2f} | gate=sell_uptrend_no_altdata"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": "SELL Alt-Data Gate — Uptrend Confirmation Required",
+                "body": (
+                    f"Price ${price:.2f} is above 200-day MA (${_sma200_g:.2f}) — confirmed uptrend. "
+                    "30-year backtest: technical-only SELL signals in uptrends average -0.71%/trade "
+                    "across all market cycles. Requires options flow, news catalyst, macro signal, "
+                    "or institutional data to short into an uptrend."
+                ),
+                "sentiment": "neg",
+                "meta": f"price={price:.2f} sma200={_sma200_g:.2f} | gate=sell_uptrend_no_altdata",
+            }
+        )
 
     # ── SPY SMA200 neutral zone gate ─────────────────────────────────────────
     # When SPY is within ±2% of its 200-day MA, the regime is transitioning —
@@ -911,55 +1200,68 @@ def _assemble_signal(
         action = "HOLD"
         sources.add("Risk Gate")
         _sma200_ratio = _gate_macro.get("sp500_sma200_ratio", 1.0)
-        rationale.append({"src": "Risk Gate",
-            "head": f"SPY Neutral Zone Gate — {(_sma200_ratio-1)*100:+.1f}% vs SMA200 (Score {score:.0f} < 45)",
-            "body": (f"SPY is {(_sma200_ratio-1)*100:+.1f}% vs its 200-day MA (±2% transition zone). "
-                     "Regime transitions create whipsaw signals — marginal BUY entries fail at "
-                     "high rates. Requiring score ≥ 45 for conviction before acting at this "
-                     "critical inflection point."),
-            "sentiment": "neg",
-            "meta": f"SPY/SMA200 ratio={_sma200_ratio:.4f} | neutral_zone=True | score={score:.1f}"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"SPY Neutral Zone Gate — {(_sma200_ratio - 1) * 100:+.1f}% vs SMA200 (Score {score:.0f} < 45)",
+                "body": (
+                    f"SPY is {(_sma200_ratio - 1) * 100:+.1f}% vs its 200-day MA (±2% transition zone). "
+                    "Regime transitions create whipsaw signals — marginal BUY entries fail at "
+                    "high rates. Requiring score ≥ 45 for conviction before acting at this "
+                    "critical inflection point."
+                ),
+                "sentiment": "neg",
+                "meta": f"SPY/SMA200 ratio={_sma200_ratio:.4f} | neutral_zone=True | score={score:.1f}",
+            }
+        )
 
     # ── Bear + high-VIX hard BUY gate ───────────────────────────────────
     # The regime multiplier (×0.82) lowers the score but the BUY threshold
     # stays at ±35, so marginal signals still cross into BUY. In a confirmed
     # downtrend + elevated VIX, require score ≥42 before allowing a BUY.
     # SELL signals in bear + high-VIX are NOT gated — the trend supports them.
-    if (action == "BUY"
-            and sp500_trend == "down"
-            and vix is not None and vix > 25
-            and score < 50):
+    if action == "BUY" and sp500_trend == "down" and vix is not None and vix > 25 and score < 50:
         # Threshold raised 42→50: 20-year backtest showed bear-market BUY signals
         # (even score≥42) average -1.7%/trade during confirmed downtrends with
         # elevated VIX. Only high-conviction alt-data-confirmed entries survive.
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"Bear+VIX Gate — BUY Blocked (Score {score:.0f} < 50, VIX {vix:.0f})",
-            "body": (f"S&P 500 is in a downtrend (below 50-DMA) and VIX is {vix:.0f}. "
-                     "20-year backtest: BUY signals in this regime average -1.7%/trade. "
-                     "Requiring score ≥50 — only high-conviction alt-data-confirmed entries."),
-            "sentiment": "neg",
-            "meta": f"SPX trend: down | VIX: {vix:.0f} | Score: {score:.1f}"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Bear+VIX Gate — BUY Blocked (Score {score:.0f} < 50, VIX {vix:.0f})",
+                "body": (
+                    f"S&P 500 is in a downtrend (below 50-DMA) and VIX is {vix:.0f}. "
+                    "20-year backtest: BUY signals in this regime average -1.7%/trade. "
+                    "Requiring score ≥50 — only high-conviction alt-data-confirmed entries."
+                ),
+                "sentiment": "neg",
+                "meta": f"SPX trend: down | VIX: {vix:.0f} | Score: {score:.1f}",
+            }
+        )
 
     # ── BUY:SELL saturation circuit breaker ─────────────────────────────
     # When the rolling 7-day BUY:SELL ratio exceeds 4:1, the system is over-
     # optimistic. Raise the effective BUY threshold to 42 so only high-conviction
     # signals survive. SELL signals are never suppressed by this gate — the
     # circuit breaker only corrects the bullish bias, not the bearish direction.
-    if (action == "BUY"
-            and (market_ctx or {}).get("buy_saturated")
-            and score < 42):
+    if action == "BUY" and (market_ctx or {}).get("buy_saturated") and score < 42:
         action = "HOLD"
         _ratio = (market_ctx or {}).get("buy_sell_ratio", 4.0)
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": f"BUY Saturation Gate — 7d BUY:SELL Ratio {_ratio:.1f}:1 (>4.0)",
-            "body": (f"The system has generated {_ratio:.1f} BUY signals for every SELL signal "
-                     "over the past 7 days — a sign of structural over-optimism. "
-                     "Marginal BUY signals (score <42) are suppressed until the ratio normalises below 4.0."),
-            "sentiment": "neg",
-            "meta": f"7d BUY:SELL = {_ratio:.1f}:1 | Score: {score:.1f}"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"BUY Saturation Gate — 7d BUY:SELL Ratio {_ratio:.1f}:1 (>4.0)",
+                "body": (
+                    f"The system has generated {_ratio:.1f} BUY signals for every SELL signal "
+                    "over the past 7 days — a sign of structural over-optimism. "
+                    "Marginal BUY signals (score <42) are suppressed until the ratio normalises below 4.0."
+                ),
+                "sentiment": "neg",
+                "meta": f"7d BUY:SELL = {_ratio:.1f}:1 | Score: {score:.1f}",
+            }
+        )
 
     # ── Broad market breadth BUY gate ───────────────────────────────────
     # When >70% of S&P 500 stocks are above their 200-DMA, the technical
@@ -969,18 +1271,24 @@ def _assemble_signal(
     # SELL signals are never gated here — breadth strength doesn't protect shorts.
     if action == "BUY" and score < 42:
         _breadth_ctx = (market_ctx or {}).get("breadth") or {}
-        _pct_200     = _breadth_ctx.get("pct_above_200d", 0) or 0
+        _pct_200 = _breadth_ctx.get("pct_above_200d", 0) or 0
         if _pct_200 > 70:
             action = "HOLD"
             sources.add("Risk Gate")
-            rationale.append({"src": "Risk Gate",
-                "head": f"Broad Market Breadth Gate — {_pct_200:.0f}% Above 200-DMA (Score {score:.0f} < 42)",
-                "body": (f"{_pct_200:.0f}% of S&P 500 stocks are above their 200-day average — "
-                         "technical baselines (Supertrend, momentum, price structure) are uniformly "
-                         "elevated, adding ~15 pts of structural noise to every BUY signal. "
-                         "Requiring score ≥42 ensures only genuine alpha clears the bar."),
-                "sentiment": "neg",
-                "meta": f"Breadth: {_pct_200:.0f}% >200d | Score: {score:.1f}"})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Broad Market Breadth Gate — {_pct_200:.0f}% Above 200-DMA (Score {score:.0f} < 42)",
+                    "body": (
+                        f"{_pct_200:.0f}% of S&P 500 stocks are above their 200-day average — "
+                        "technical baselines (Supertrend, momentum, price structure) are uniformly "
+                        "elevated, adding ~15 pts of structural noise to every BUY signal. "
+                        "Requiring score ≥42 ensures only genuine alpha clears the bar."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"Breadth: {_pct_200:.0f}% >200d | Score: {score:.1f}",
+                }
+            )
 
     # ── MR Entry Condition Gate (v5.12 backtest-validated) ──────────────────
     # 20-year backtest with 247 curated trades: MR-condition entries deliver
@@ -1003,52 +1311,65 @@ def _assemble_signal(
     # Scale (full): AR1=0.05 → -6pp | AR1=0.08 → -10pp cap. Haircut, not hard block.
     _mr_ar1 = tech.get("momentum_ar1")
     if action == "BUY" and _has_mr and _mr_ar1 is not None and float(_mr_ar1) > 0.05:
-        _ar1_val  = float(_mr_ar1)
+        _ar1_val = float(_mr_ar1)
         _ar1_full = round(min(10.0, (_ar1_val - 0.05) * 200), 1)
         # Fundamental context: revenue_growth from yfinance info dict (YoY ratio)
-        _ar1_rev  = info.get("revenue_growth")   # e.g. 0.12 = +12% | -0.25 = -25%
+        _ar1_rev = info.get("revenue_growth")  # e.g. 0.12 = +12% | -0.25 = -25%
         _ar1_growing = _ar1_rev is not None and float(_ar1_rev) > -0.10
-        _ar1_pen  = round(_ar1_full * 0.5, 1) if _ar1_growing else _ar1_full
+        _ar1_pen = round(_ar1_full * 0.5, 1) if _ar1_growing else _ar1_full
         if _ar1_pen > 0:
             confidence = round(max(35.0, confidence - _ar1_pen), 1)
             sources.add("Risk Gate")
-            _ar1_rev_str = f"{float(_ar1_rev)*100:+.1f}%" if _ar1_rev is not None else "unknown"
-            _ar1_regime  = "Dip in Momentum Stock" if _ar1_growing else "Value Trap Risk"
-            rationale.append({"src": "Risk Gate",
-                "head": (f"MR Persistence Gate — AR(1) {_ar1_val:.3f} "
-                         f"({_ar1_regime}, −{_ar1_pen:.0f}pp)"),
-                "body": (
-                    f"126-day return AR(1) coefficient: {_ar1_val:.3f}. "
-                    f"Positive autocorrelation means this stock is trend-following, not mean-reverting. "
-                    + (
-                        f"Revenue growth {_ar1_rev_str} suggests this is a healthy pullback "
-                        f"in a growing business — haircut halved to {_ar1_pen:.0f}pp. "
-                        if _ar1_growing else
-                        f"Revenue growth {_ar1_rev_str} combined with momentum persistence "
-                        f"raises value-trap risk — oversold for a real reason. Full {_ar1_pen:.0f}pp haircut. "
-                    ) +
-                    f"(Dynamic rule; reverts automatically when AR(1) drops below 0.05.)"
-                ),
-                "sentiment": "neg",
-                "meta": (f"ar1_126d={_ar1_val:.3f} > 0.05 | rev_growth={_ar1_rev_str} "
-                         f"| haircut={_ar1_pen:.1f}pp | regime={'dip' if _ar1_growing else 'value_trap'}")})
+            _ar1_rev_str = f"{float(_ar1_rev) * 100:+.1f}%" if _ar1_rev is not None else "unknown"
+            _ar1_regime = "Dip in Momentum Stock" if _ar1_growing else "Value Trap Risk"
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": (f"MR Persistence Gate — AR(1) {_ar1_val:.3f} ({_ar1_regime}, −{_ar1_pen:.0f}pp)"),
+                    "body": (
+                        f"126-day return AR(1) coefficient: {_ar1_val:.3f}. "
+                        f"Positive autocorrelation means this stock is trend-following, not mean-reverting. "
+                        + (
+                            f"Revenue growth {_ar1_rev_str} suggests this is a healthy pullback "
+                            f"in a growing business — haircut halved to {_ar1_pen:.0f}pp. "
+                            if _ar1_growing
+                            else f"Revenue growth {_ar1_rev_str} combined with momentum persistence "
+                            f"raises value-trap risk — oversold for a real reason. Full {_ar1_pen:.0f}pp haircut. "
+                        )
+                        + "(Dynamic rule; reverts automatically when AR(1) drops below 0.05.)"
+                    ),
+                    "sentiment": "neg",
+                    "meta": (
+                        f"ar1_126d={_ar1_val:.3f} > 0.05 | rev_growth={_ar1_rev_str} "
+                        f"| haircut={_ar1_pen:.1f}pp | regime={'dip' if _ar1_growing else 'value_trap'}"
+                    ),
+                }
+            )
 
     if action == "BUY" and not _has_mr and score < 65:
         action = "HOLD"
         sources.add("Risk Gate")
-        _mr_bb_s   = f"{float(_mr_bb):.2f}"   if _mr_bb   is not None else "—"
-        _mr_ibs_s  = f"{float(_mr_ibs):.2f}"  if _mr_ibs  is not None else "—"
+        _mr_bb_s = f"{float(_mr_bb):.2f}" if _mr_bb is not None else "—"
+        _mr_ibs_s = f"{float(_mr_ibs):.2f}" if _mr_ibs is not None else "—"
         _mr_vwap_s = f"{float(_mr_vwap):.1f}" if _mr_vwap is not None else "—"
-        rationale.append({"src": "Risk Gate",
-            "head": "MR Entry Condition Gate — No Oversold/Undervalued Setup",
-            "body": (f"BUY score {score:.0f} fired without a mean-reversion entry condition. "
-                     f"20yr backtest: entries without BB%%B<0.22, IBS<0.15, or VWAP%%<−0.75 "
-                     f"deliver −0.74%% avg vs +1.07%% for MR-condition entries (Sharpe 0.04 vs 0.27). "
-                     f"Current: BB%%B {_mr_bb_s} | IBS {_mr_ibs_s} | VWAP%% {_mr_vwap_s}. "
-                     "Require at least one MR condition. Exception: score≥65 (strong alt-data)."),
-            "sentiment": "neg",
-            "meta": (f"RSI={_rsi_gate:.1f} BB%B={_mr_bb_s} IBS={_mr_ibs_s} VWAP%={_mr_vwap_s} "
-                     f"score={score:.1f} | no_mr_condition=True")})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": "MR Entry Condition Gate — No Oversold/Undervalued Setup",
+                "body": (
+                    f"BUY score {score:.0f} fired without a mean-reversion entry condition. "
+                    f"20yr backtest: entries without BB%%B<0.22, IBS<0.15, or VWAP%%<−0.75 "
+                    f"deliver −0.74%% avg vs +1.07%% for MR-condition entries (Sharpe 0.04 vs 0.27). "
+                    f"Current: BB%%B {_mr_bb_s} | IBS {_mr_ibs_s} | VWAP%% {_mr_vwap_s}. "
+                    "Require at least one MR condition. Exception: score≥65 (strong alt-data)."
+                ),
+                "sentiment": "neg",
+                "meta": (
+                    f"RSI={_rsi_gate:.1f} BB%B={_mr_bb_s} IBS={_mr_ibs_s} VWAP%={_mr_vwap_s} "
+                    f"score={score:.1f} | no_mr_condition=True"
+                ),
+            }
+        )
 
     # ── IBS + multi-day SMA20 confluence gate (§17e research, Pagonidis 2013) ──
     # When IBS<0.15 is the SOLE MR trigger (RSI≥42, BB≥0.22, VWAP≥-0.75), require
@@ -1059,33 +1380,44 @@ def _assemble_signal(
     if action == "BUY" and _has_mr:
         _close_streak_ibs = tech.get("close_streak")
         _ibs_sole = (
-            _mr_ibs is not None and float(_mr_ibs) < 0.15
+            _mr_ibs is not None
+            and float(_mr_ibs) < 0.15
             and (_mr_bb is None or float(_mr_bb) >= 0.22)
             and (_mr_vwap is None or float(_mr_vwap) >= -0.75)
         )
         if _ibs_sole and _close_streak_ibs is not None and float(_close_streak_ibs) > -5:
             action = "HOLD"
             sources.add("Risk Gate")
-            rationale.append({"src": "Risk Gate",
-                "head": (f"IBS Sole Trigger — SMA20 Streak Insufficient "
-                         f"({abs(float(_close_streak_ibs)):.0f} days below, need ≥5)"),
-                "body": (f"IBS<0.15 is the only MR trigger (BB%B not oversold, VWAP not negative). "
-                         f"The stock has been below SMA20 for only {abs(float(_close_streak_ibs)):.0f} consecutive day(s). "
-                         f"Pagonidis (2013): IBS-triggered entries require ≥5 consecutive days below SMA20 to confirm "
-                         f"sustained selling pressure. A single bad day closing near the low may be a one-off event, "
-                         f"not a genuine capitulation. The bounce edge is significantly weaker without this confluence."),
-                "sentiment": "neg",
-                "meta": (f"ibs={float(_mr_ibs):.2f} close_streak={float(_close_streak_ibs):.0f} "
-                         f"rsi={_rsi_gate:.0f} | ibs_sole=True | sma20_streak_gate=True")})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": (
+                        f"IBS Sole Trigger — SMA20 Streak Insufficient "
+                        f"({abs(float(_close_streak_ibs)):.0f} days below, need ≥5)"
+                    ),
+                    "body": (
+                        f"IBS<0.15 is the only MR trigger (BB%B not oversold, VWAP not negative). "
+                        f"The stock has been below SMA20 for only {abs(float(_close_streak_ibs)):.0f} consecutive day(s). "
+                        f"Pagonidis (2013): IBS-triggered entries require ≥5 consecutive days below SMA20 to confirm "
+                        f"sustained selling pressure. A single bad day closing near the low may be a one-off event, "
+                        f"not a genuine capitulation. The bounce edge is significantly weaker without this confluence."
+                    ),
+                    "sentiment": "neg",
+                    "meta": (
+                        f"ibs={float(_mr_ibs):.2f} close_streak={float(_close_streak_ibs):.0f} "
+                        f"rsi={_rsi_gate:.0f} | ibs_sole=True | sma20_streak_gate=True"
+                    ),
+                }
+            )
 
     # ── ATR%Rank Dormant-Market MR Gate (§12e global + §15e sector-specific) ──
     # §12e: ATR%rank < 20 → structurally weak bounces (Sharpe 0.92→1.00 with gate).
     # §15e: Financials (XLF) benefits from stricter ATR%rank ≥ 30 floor
     # (Sh 0.56→0.60, Ann 0.62→0.66). Gate is sector-aware via _SECTOR_MR_CONFIG.
-    _se_sector_etf  = (sector_rs or {}).get("sector_etf", "")
-    _se_sector_cfg  = _SECTOR_MR_CONFIG.get(_se_sector_etf, {})
-    _atr_rank_min   = _se_sector_cfg.get("atr_rank_min", 20)
-    _atr_rank_gate  = tech.get("atr_pct_rank")
+    _se_sector_etf = (sector_rs or {}).get("sector_etf", "")
+    _se_sector_cfg = _SECTOR_MR_CONFIG.get(_se_sector_etf, {})
+    _atr_rank_min = _se_sector_cfg.get("atr_rank_min", 20)
+    _atr_rank_gate = tech.get("atr_pct_rank")
 
     # ── §21 VIX-Regime Conditional Thresholds ─────────────────────────────────
     # §20 OOS finding: strict §17f params fail in low-VIX windows (1/5 pass);
@@ -1094,24 +1426,31 @@ def _assemble_signal(
     #                     skip ATR ceiling (no trending-panic risk in calm market).
     #   HIGH-VIX (≥ 18): fear is present — keep quality gates to avoid falling knives.
     _VIX_REGIME_PIVOT = 18.0
-    _vix_regime_low  = (vix is not None and float(vix) < _VIX_REGIME_PIVOT)
-    if (action == "BUY"
-            and _has_mr
-            and _atr_rank_gate is not None
-            and float(_atr_rank_gate) < _atr_rank_min):
+    _vix_regime_low = vix is not None and float(vix) < _VIX_REGIME_PIVOT
+    if action == "BUY" and _has_mr and _atr_rank_gate is not None and float(_atr_rank_gate) < _atr_rank_min:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": (f"Dormant Volatility Gate — ATR Rank {float(_atr_rank_gate):.0f}th Percentile "
-                     f"(Floor: ≥{_atr_rank_min})"),
-            "body": (f"ATR is at the {float(_atr_rank_gate):.0f}th percentile of its 1-year range. "
-                     f"Alpha decomp §12e (74 tickers) + §15e (sector analysis): MR entries in dormant "
-                     f"regimes (ATR rank < {_atr_rank_min}th percentile) produce structurally weak "
-                     f"bounces. {'Financials sector requires stricter ATR≥30 (§15e). ' if _atr_rank_min > 20 else ''}"
-                     "Requiring ATR rank ≥ 20 improved annualized Sharpe from 0.92 → 1.00."),
-            "sentiment": "neg",
-            "meta": (f"atr_pct_rank={float(_atr_rank_gate):.0f} < {_atr_rank_min} "
-                     f"| sector={_se_sector_etf} | mr_entry=True | dormant_regime=True")})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": (
+                    f"Dormant Volatility Gate — ATR Rank {float(_atr_rank_gate):.0f}th Percentile "
+                    f"(Floor: ≥{_atr_rank_min})"
+                ),
+                "body": (
+                    f"ATR is at the {float(_atr_rank_gate):.0f}th percentile of its 1-year range. "
+                    f"Alpha decomp §12e (74 tickers) + §15e (sector analysis): MR entries in dormant "
+                    f"regimes (ATR rank < {_atr_rank_min}th percentile) produce structurally weak "
+                    f"bounces. {'Financials sector requires stricter ATR≥30 (§15e). ' if _atr_rank_min > 20 else ''}"
+                    "Requiring ATR rank ≥ 20 improved annualized Sharpe from 0.92 → 1.00."
+                ),
+                "sentiment": "neg",
+                "meta": (
+                    f"atr_pct_rank={float(_atr_rank_gate):.0f} < {_atr_rank_min} "
+                    f"| sector={_se_sector_etf} | mr_entry=True | dormant_regime=True"
+                ),
+            }
+        )
 
     # ── Per-sector VIX minimum for MR entries (§15c alpha-decomp) ────────────
     # §15c: VIX floors per sector eliminate low-quality low-fear entries.
@@ -1120,24 +1459,30 @@ def _assemble_signal(
     #   Consumer (XLY/XLP): VIX ≥ 13 → Sh 0.68→0.82, Ann 0.63→0.71
     # Only applied to MR-type entries; momentum setups unaffected.
     _se_vix_min = _se_sector_cfg.get("vix_min")
-    if (action == "BUY"
-            and _has_mr
-            and _se_vix_min is not None
-            and vix is not None
-            and vix < _se_vix_min):
+    if action == "BUY" and _has_mr and _se_vix_min is not None and vix is not None and vix < _se_vix_min:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": (f"Sector VIX Floor — {_se_sector_etf} MR Entry Requires VIX ≥ {_se_vix_min:.0f} "
-                     f"(Current VIX: {vix:.0f})"),
-            "body": (f"Alpha decomp §15c (68 tickers, 20-year): {_se_sector_etf} mean-reversion "
-                     f"entries require VIX ≥ {_se_vix_min:.0f} for statistical edge. "
-                     f"Low-VIX entries in this sector have significantly lower win rates — "
-                     f"the 'fear premium' that powers MR bounces is absent. "
-                     f"Current VIX {vix:.0f} is below the sector floor."),
-            "sentiment": "neg",
-            "meta": (f"sector={_se_sector_etf} vix={vix:.0f} < vix_min={_se_vix_min:.0f} "
-                     f"| mr_entry=True | sector_vix_floor=True")})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": (
+                    f"Sector VIX Floor — {_se_sector_etf} MR Entry Requires VIX ≥ {_se_vix_min:.0f} "
+                    f"(Current VIX: {vix:.0f})"
+                ),
+                "body": (
+                    f"Alpha decomp §15c (68 tickers, 20-year): {_se_sector_etf} mean-reversion "
+                    f"entries require VIX ≥ {_se_vix_min:.0f} for statistical edge. "
+                    f"Low-VIX entries in this sector have significantly lower win rates — "
+                    f"the 'fear premium' that powers MR bounces is absent. "
+                    f"Current VIX {vix:.0f} is below the sector floor."
+                ),
+                "sentiment": "neg",
+                "meta": (
+                    f"sector={_se_sector_etf} vix={vix:.0f} < vix_min={_se_vix_min:.0f} "
+                    f"| mr_entry=True | sector_vix_floor=True"
+                ),
+            }
+        )
 
     # ── ATR%rank ceiling — trending-panic filter (§17a research) ─────────────
     # ATR>70th pct = stock is in an extreme trending-panic, not a recoverable dip.
@@ -1148,25 +1493,34 @@ def _assemble_signal(
     # §21: in low-VIX calm markets there is no trending-panic risk — skip the
     # ceiling so that high-ATR-rank setups (e.g. rapid V-recovery after a spike)
     # are not filtered out when overall market fear is absent.
-    if (action == "BUY"
-            and _has_mr
-            and not _vix_regime_low
-            and _atr_rank_gate is not None
-            and float(_atr_rank_gate) > 70):
+    if (
+        action == "BUY"
+        and _has_mr
+        and not _vix_regime_low
+        and _atr_rank_gate is not None
+        and float(_atr_rank_gate) > 70
+    ):
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": (f"Trending-Panic Gate — ATR Rank {float(_atr_rank_gate):.0f}th Percentile "
-                     f"(Ceiling: ≤70)"),
-            "body": (f"ATR is at the {float(_atr_rank_gate):.0f}th percentile — extreme trending volatility. "
-                     f"At this regime, forced selling is accelerating, not exhausted. "
-                     f"MR bounces require panic-level volatility (ATR 20th–70th pct); "
-                     f"above the 70th pct the stock is in a breakdown, not a dip. "
-                     "Quantpedia ATR regime research: P70 is the optimal MR ceiling. "
-                     f"(Gate active when VIX ≥ {_VIX_REGIME_PIVOT:.0f}; current VIX {vix:.0f}.)"),
-            "sentiment": "neg",
-            "meta": (f"atr_pct_rank={float(_atr_rank_gate):.0f} > 70 "
-                     f"| mr_entry=True | trending_panic=True | vix_regime=high")})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": (f"Trending-Panic Gate — ATR Rank {float(_atr_rank_gate):.0f}th Percentile (Ceiling: ≤70)"),
+                "body": (
+                    f"ATR is at the {float(_atr_rank_gate):.0f}th percentile — extreme trending volatility. "
+                    f"At this regime, forced selling is accelerating, not exhausted. "
+                    f"MR bounces require panic-level volatility (ATR 20th–70th pct); "
+                    f"above the 70th pct the stock is in a breakdown, not a dip. "
+                    "Quantpedia ATR regime research: P70 is the optimal MR ceiling. "
+                    f"(Gate active when VIX ≥ {_VIX_REGIME_PIVOT:.0f}; current VIX {vix:.0f}.)"
+                ),
+                "sentiment": "neg",
+                "meta": (
+                    f"atr_pct_rank={float(_atr_rank_gate):.0f} > 70 "
+                    f"| mr_entry=True | trending_panic=True | vix_regime=high"
+                ),
+            }
+        )
 
     # ── Single-day return jump filter (§17b research) ─────────────────────────
     # Large single-day drops (< −6%) often signal fundamental repricing — earnings
@@ -1176,24 +1530,25 @@ def _assemble_signal(
     # but the setup is a structural dislocation, not a temporary panic. The stock may
     # continue lower for multiple sessions before any recovery begins.
     _day_chg_pct = tech.get("change_pct")
-    if (action == "BUY"
-            and _has_mr
-            and _day_chg_pct is not None
-            and float(_day_chg_pct) < -6.0):
+    if action == "BUY" and _has_mr and _day_chg_pct is not None and float(_day_chg_pct) < -6.0:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": (f"Return Jump Filter — Single-Day Drop {float(_day_chg_pct):.1f}% "
-                     f"Exceeds −6% Threshold"),
-            "body": (f"Today's {float(_day_chg_pct):.1f}% decline is above the −6% threshold "
-                     f"for fundamental repricing events (earnings miss, guidance cut, regulatory action). "
-                     f"Alpha Architect research: filtering single-day return jumps of this magnitude "
-                     f"tripled cumulative returns by removing stocks undergoing regime changes, "
-                     f"not temporary panics. Mean-reversion bounces require a recoverable dislocation; "
-                     f"drops exceeding 6% in a single session often reflect genuine value destruction."),
-            "sentiment": "neg",
-            "meta": (f"change_pct={float(_day_chg_pct):.1f}% < -6.0 "
-                     f"| mr_entry=True | return_jump=True")})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": (f"Return Jump Filter — Single-Day Drop {float(_day_chg_pct):.1f}% Exceeds −6% Threshold"),
+                "body": (
+                    f"Today's {float(_day_chg_pct):.1f}% decline is above the −6% threshold "
+                    f"for fundamental repricing events (earnings miss, guidance cut, regulatory action). "
+                    f"Alpha Architect research: filtering single-day return jumps of this magnitude "
+                    f"tripled cumulative returns by removing stocks undergoing regime changes, "
+                    f"not temporary panics. Mean-reversion bounces require a recoverable dislocation; "
+                    f"drops exceeding 6% in a single session often reflect genuine value destruction."
+                ),
+                "sentiment": "neg",
+                "meta": (f"change_pct={float(_day_chg_pct):.1f}% < -6.0 | mr_entry=True | return_jump=True"),
+            }
+        )
 
     # ── VIX direction gate — rising VIX blocks MR entry (§17c research) ───────
     # If VIX is still rising (3-day slope positive), the panic is still building —
@@ -1204,26 +1559,34 @@ def _assemble_signal(
     # Only applied when VIX is already above the sector floor (fear is present but
     # still accelerating — the most dangerous MR regime).
     _vix_3d_slope = (macro or {}).get("vix_3d_slope")
-    if (action == "BUY"
-            and _has_mr
-            and _vix_3d_slope is not None
-            and vix is not None
-            and vix > 16
-            and float(_vix_3d_slope) > 3.0):
+    if (
+        action == "BUY"
+        and _has_mr
+        and _vix_3d_slope is not None
+        and vix is not None
+        and vix > 16
+        and float(_vix_3d_slope) > 3.0
+    ):
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": (f"VIX Still Rising — Panic Building, Not Peaking "
-                     f"(3d Slope: +{float(_vix_3d_slope):.1f})"),
-            "body": (f"VIX has risen {float(_vix_3d_slope):.1f} points over the past 3 days "
-                     f"(current: {vix:.1f}). Academic research (VIX mean reversion studies): "
-                     f"MR bounces are most reliable after VIX peaks and begins declining — "
-                     f"the capitulation signal. A rising VIX indicates forced selling is still "
-                     f"accelerating. Waiting for VIX stabilization before MR entry avoids "
-                     f"catching a falling knife in the early phase of a panic."),
-            "sentiment": "neg",
-            "meta": (f"vix={vix:.1f} vix_3d_slope={float(_vix_3d_slope):.1f} > 3.0 "
-                     f"| mr_entry=True | vix_rising=True")})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": (f"VIX Still Rising — Panic Building, Not Peaking (3d Slope: +{float(_vix_3d_slope):.1f})"),
+                "body": (
+                    f"VIX has risen {float(_vix_3d_slope):.1f} points over the past 3 days "
+                    f"(current: {vix:.1f}). Academic research (VIX mean reversion studies): "
+                    f"MR bounces are most reliable after VIX peaks and begins declining — "
+                    f"the capitulation signal. A rising VIX indicates forced selling is still "
+                    f"accelerating. Waiting for VIX stabilization before MR entry avoids "
+                    f"catching a falling knife in the early phase of a panic."
+                ),
+                "sentiment": "neg",
+                "meta": (
+                    f"vix={vix:.1f} vix_3d_slope={float(_vix_3d_slope):.1f} > 3.0 | mr_entry=True | vix_rising=True"
+                ),
+            }
+        )
 
     # ── Options Flow / GEX confirmation gate (Pillar 0, free — yfinance + Polygon) ─
     # Hard block: extreme put dominance (P/C > 2.0) = professionals hedging downside,
@@ -1234,9 +1597,9 @@ def _assemble_signal(
     # Confidence penalty: negative GEX + put dominance + no unusual activity = no
     # institutional accumulation confirmation; MR bounce may not materialize.
     if action == "BUY" and _has_mr and opt_flow:
-        _of_pc  = opt_flow.get("pc_ratio")
+        _of_pc = opt_flow.get("pc_ratio")
         _of_gex = opt_flow.get("gex") or 0.0
-        _of_uv  = opt_flow.get("unusual_vol_ratio")
+        _of_uv = opt_flow.get("unusual_vol_ratio")
         _of_uv_s = f"{float(_of_uv):.2f}" if _of_uv is not None else "n/a"
 
         _of_sweep = bool(opt_flow.get("sweep_calls"))
@@ -1244,15 +1607,21 @@ def _assemble_signal(
         if _of_pc is not None and float(_of_pc) > 2.0:
             action = "HOLD"
             sources.add("Risk Gate")
-            rationale.append({"src": "Risk Gate",
-                "head": f"Extreme Put Dominance — Options Flow Blocks MR Entry (P/C {float(_of_pc):.2f})",
-                "body": (f"Put/call ratio of {float(_of_pc):.2f} across near-term expiries signals "
-                         f"institutional hedging at scale, not retail panic. When professionals are "
-                         f"buying puts this aggressively on an oversold stock, they expect further "
-                         f"downside — not a bounce. MR setups require fear exhaustion; extreme put "
-                         f"flow confirms the fear is still building."),
-                "sentiment": "neg",
-                "meta": f"pc_ratio={float(_of_pc):.2f} > 2.0 | mr_entry=True | options_flow_gate=True"})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Extreme Put Dominance — Options Flow Blocks MR Entry (P/C {float(_of_pc):.2f})",
+                    "body": (
+                        f"Put/call ratio of {float(_of_pc):.2f} across near-term expiries signals "
+                        f"institutional hedging at scale, not retail panic. When professionals are "
+                        f"buying puts this aggressively on an oversold stock, they expect further "
+                        f"downside — not a bounce. MR setups require fear exhaustion; extreme put "
+                        f"flow confirms the fear is still building."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"pc_ratio={float(_of_pc):.2f} > 2.0 | mr_entry=True | options_flow_gate=True",
+                }
+            )
 
         elif _of_sweep and float(_of_gex) > 0:
             # Strongest conviction: call sweep + positive dealer GEX at the same time.
@@ -1263,46 +1632,73 @@ def _assemble_signal(
             # are structurally forced to buy. +15pp vs the standard +5pp for GEX alone.
             confidence = round(min(95.0, confidence + 15), 1)
             sources.add("Options")
-            _of_gex_str = f"${float(_of_gex)/1e6:.1f}M" if abs(float(_of_gex)) >= 1e6 else f"${float(_of_gex):.0f}"
-            rationale.append({"src": "Options",
-                "head": f"Call Sweep + Positive GEX — Highest-Conviction MR Setup (+15pp)",
-                "body": (f"Call sweep detected (large cross-exchange institutional order) with positive "
-                         f"dealer GEX ({_of_gex_str}). Call sweeps signal urgency — institutions are "
-                         f"accumulating aggressively, not passively. Positive GEX means dealers must "
-                         f"mechanically buy the dip to stay hedged, creating a structural support floor. "
-                         f"These two forces reinforce the MR bounce thesis."),
-                "sentiment": "pos",
-                "meta": (f"sweep_calls=True gex={float(_of_gex):.0f} "
-                         f"| mr_entry=True | sweep_gex_combo=True | bonus=+15pp")})
+            _of_gex_str = f"${float(_of_gex) / 1e6:.1f}M" if abs(float(_of_gex)) >= 1e6 else f"${float(_of_gex):.0f}"
+            rationale.append(
+                {
+                    "src": "Options",
+                    "head": "Call Sweep + Positive GEX — Highest-Conviction MR Setup (+15pp)",
+                    "body": (
+                        f"Call sweep detected (large cross-exchange institutional order) with positive "
+                        f"dealer GEX ({_of_gex_str}). Call sweeps signal urgency — institutions are "
+                        f"accumulating aggressively, not passively. Positive GEX means dealers must "
+                        f"mechanically buy the dip to stay hedged, creating a structural support floor. "
+                        f"These two forces reinforce the MR bounce thesis."
+                    ),
+                    "sentiment": "pos",
+                    "meta": (
+                        f"sweep_calls=True gex={float(_of_gex):.0f} "
+                        f"| mr_entry=True | sweep_gex_combo=True | bonus=+15pp"
+                    ),
+                }
+            )
 
-        elif (_of_pc is not None and float(_of_gex) > 0 and float(_of_pc) < 0.75):
+        elif _of_pc is not None and float(_of_gex) > 0 and float(_of_pc) < 0.75:
             confidence = round(min(95.0, confidence + 5), 1)
             sources.add("Options")
-            rationale.append({"src": "Options",
-                "head": f"Options Flow Confirms MR Setup (P/C {float(_of_pc):.2f}, Positive GEX)",
-                "body": (f"Positive dealer GEX (${float(_of_gex)/1e6:.1f}M) with call-dominant flow "
-                         f"(P/C {float(_of_pc):.2f}): dealers are net long gamma and must buy stock as "
-                         f"it dips — creating a mechanical support floor. Call dominance confirms "
-                         f"institutional accumulation, not distribution."),
-                "sentiment": "pos",
-                "meta": (f"pc_ratio={float(_of_pc):.2f} gex={float(_of_gex):.0f} "
-                         f"| mr_entry=True | options_flow_confirmed=True")})
+            rationale.append(
+                {
+                    "src": "Options",
+                    "head": f"Options Flow Confirms MR Setup (P/C {float(_of_pc):.2f}, Positive GEX)",
+                    "body": (
+                        f"Positive dealer GEX (${float(_of_gex) / 1e6:.1f}M) with call-dominant flow "
+                        f"(P/C {float(_of_pc):.2f}): dealers are net long gamma and must buy stock as "
+                        f"it dips — creating a mechanical support floor. Call dominance confirms "
+                        f"institutional accumulation, not distribution."
+                    ),
+                    "sentiment": "pos",
+                    "meta": (
+                        f"pc_ratio={float(_of_pc):.2f} gex={float(_of_gex):.0f} "
+                        f"| mr_entry=True | options_flow_confirmed=True"
+                    ),
+                }
+            )
 
-        elif (_of_pc is not None and float(_of_gex) < 0
-              and float(_of_pc) > 1.5
-              and (_of_uv is None or float(_of_uv) < 0.5)):
+        elif (
+            _of_pc is not None
+            and float(_of_gex) < 0
+            and float(_of_pc) > 1.5
+            and (_of_uv is None or float(_of_uv) < 0.5)
+        ):
             confidence = round(max(35.0, confidence - 5), 1)
             sources.add("Risk Gate")
-            rationale.append({"src": "Risk Gate",
-                "head": f"Options Flow Unconfirmed — Negative GEX + Puts Dominating (P/C {float(_of_pc):.2f})",
-                "body": (f"Negative dealer GEX (${abs(float(_of_gex))/1e6:.1f}M) with put-dominant flow "
-                         f"(P/C {float(_of_pc):.2f}) and low unusual activity ratio ({_of_uv_s}). "
-                         f"Dealers short gamma will amplify moves in both directions — volatility unpinned. "
-                         f"Put dominance without unusual call activity signals no institutional accumulation. "
-                         f"Applying −5pp confidence haircut."),
-                "sentiment": "neg",
-                "meta": (f"pc_ratio={float(_of_pc):.2f} gex={float(_of_gex):.0f} uv={_of_uv_s} "
-                         f"| options_unconfirmed=True")})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Options Flow Unconfirmed — Negative GEX + Puts Dominating (P/C {float(_of_pc):.2f})",
+                    "body": (
+                        f"Negative dealer GEX (${abs(float(_of_gex)) / 1e6:.1f}M) with put-dominant flow "
+                        f"(P/C {float(_of_pc):.2f}) and low unusual activity ratio ({_of_uv_s}). "
+                        f"Dealers short gamma will amplify moves in both directions — volatility unpinned. "
+                        f"Put dominance without unusual call activity signals no institutional accumulation. "
+                        f"Applying −5pp confidence haircut."
+                    ),
+                    "sentiment": "neg",
+                    "meta": (
+                        f"pc_ratio={float(_of_pc):.2f} gex={float(_of_gex):.0f} uv={_of_uv_s} "
+                        f"| options_unconfirmed=True"
+                    ),
+                }
+            )
 
     # ── IV Rank flag (post-earnings IV crush awareness) ──────────────────────
     # IV Rank > 70 means current implied volatility is in the top 30% of its
@@ -1314,10 +1710,9 @@ def _assemble_signal(
     _iv_rank = opt_flow.get("iv_rank") if opt_flow else None
     if _iv_rank is not None and float(_iv_rank) > 70:
         _iv_days_since = earnings_cal.get("days_since_earnings")
-        _iv_days_to    = earnings_cal.get("days_to_earnings")
-        _near_earnings = (
-            (_iv_days_since is not None and 0 <= _iv_days_since <= 7)
-            or (_iv_days_to is not None and 0 <= _iv_days_to <= 14)
+        _iv_days_to = earnings_cal.get("days_to_earnings")
+        _near_earnings = (_iv_days_since is not None and 0 <= _iv_days_since <= 7) or (
+            _iv_days_to is not None and 0 <= _iv_days_to <= 14
         )
         _iv_head = (
             f"Elevated IV Rank {float(_iv_rank):.0f} — Post-Earnings IV Crush Risk"
@@ -1330,17 +1725,20 @@ def _assemble_signal(
             f"— options premium buyers lose value even on correct directional moves. "
             f"Favour stock entry over options; size equity positions accordingly."
             if _iv_days_since is not None and 0 <= (_iv_days_since or 999) <= 7
-            else
-            f"IV Rank of {float(_iv_rank):.0f} means implied volatility is elevated relative to the past year. "
+            else f"IV Rank of {float(_iv_rank):.0f} means implied volatility is elevated relative to the past year. "
             f"Buying calls or puts here means paying rich premium — a significant move is needed just to break even. "
             f"Consider stock entry instead of options, or wait for IV to normalise."
         )
         sources.add("Options")
-        rationale.append({"src": "Options",
-            "head": _iv_head,
-            "body": _iv_body,
-            "sentiment": "neg",
-            "meta": f"iv_rank={float(_iv_rank):.1f} | near_earnings={_near_earnings}"})
+        rationale.append(
+            {
+                "src": "Options",
+                "head": _iv_head,
+                "body": _iv_body,
+                "sentiment": "neg",
+                "meta": f"iv_rank={float(_iv_rank):.1f} | near_earnings={_near_earnings}",
+            }
+        )
 
     # ── Per-sector MR score threshold gate (§15d alpha-decomp) ──────────────
     # §15d: Each strong sector has an optimal minimum score for MR BUY entries.
@@ -1353,37 +1751,52 @@ def _assemble_signal(
     # loosen blocked sectors (buy_thresh ≥ 999).
     if _vix_regime_low and _se_buy_thresh is not None and _se_buy_thresh < 999:
         _se_buy_thresh = max(35, _se_buy_thresh - 3)
-    if (action == "BUY"
-            and _has_mr
-            and _se_buy_thresh is not None
-            and score < _se_buy_thresh):
+    if action == "BUY" and _has_mr and _se_buy_thresh is not None and score < _se_buy_thresh:
         action = "HOLD"
         sources.add("Risk Gate")
-        _sector_blocked = (_se_buy_thresh >= 999)
+        _sector_blocked = _se_buy_thresh >= 999
         if _sector_blocked:
-            rationale.append({"src": "Risk Gate",
-                "head": (f"Sector MR Blocked — {_se_sector_etf} Confirmed Negative Alpha (§16a Research)"),
-                "body": (f"§16a alpha decomp (94 tickers, 20-year): {_se_sector_etf} mean-reversion entries "
-                         f"show confirmed negative risk-adjusted returns. "
-                         f"{'Healthcare (XLV): §16a Sharpe −0.17, WR 29.4% — structural resistance to MR bounces. ' if _se_sector_etf == 'XLV' else ''}"
-                         f"{'Industrials (XLI): §16a Sharpe −0.48, WR 28.6% — cyclical noise overrides MR signal. ' if _se_sector_etf == 'XLI' else ''}"
-                         f"{'Real Estate (XLRE): §16a Sharpe −15 (N=2) — rate-sensitivity invalidates MR setup. ' if _se_sector_etf == 'XLRE' else ''}"
-                         f"This sector is excluded from MR signal delivery pending improved data."),
-                "sentiment": "neg",
-                "meta": (f"sector={_se_sector_etf} score={score:.0f} buy_thresh=999 "
-                         f"| mr_entry=True | sector_blocked=True | §16a_confirmed_negative=True")})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": (f"Sector MR Blocked — {_se_sector_etf} Confirmed Negative Alpha (§16a Research)"),
+                    "body": (
+                        f"§16a alpha decomp (94 tickers, 20-year): {_se_sector_etf} mean-reversion entries "
+                        f"show confirmed negative risk-adjusted returns. "
+                        f"{'Healthcare (XLV): §16a Sharpe −0.17, WR 29.4% — structural resistance to MR bounces. ' if _se_sector_etf == 'XLV' else ''}"
+                        f"{'Industrials (XLI): §16a Sharpe −0.48, WR 28.6% — cyclical noise overrides MR signal. ' if _se_sector_etf == 'XLI' else ''}"
+                        f"{'Real Estate (XLRE): §16a Sharpe −15 (N=2) — rate-sensitivity invalidates MR setup. ' if _se_sector_etf == 'XLRE' else ''}"
+                        f"This sector is excluded from MR signal delivery pending improved data."
+                    ),
+                    "sentiment": "neg",
+                    "meta": (
+                        f"sector={_se_sector_etf} score={score:.0f} buy_thresh=999 "
+                        f"| mr_entry=True | sector_blocked=True | §16a_confirmed_negative=True"
+                    ),
+                }
+            )
         else:
-            rationale.append({"src": "Risk Gate",
-                "head": (f"Sector Score Floor — {_se_sector_etf} MR Entry Requires Score ≥ {_se_buy_thresh} "
-                         f"(Current: {score:.0f})"),
-                "body": (f"Alpha decomp §15d (68 tickers, 20-year): {_se_sector_etf} mean-reversion "
-                         f"entries below score {_se_buy_thresh} have poor risk-adjusted returns. "
-                         f"{'Tech (XLK) thresh=40 is the quality boundary — lower scores add noise. ' if _se_sector_etf == 'XLK' else ''}"
-                         f"{'Financials (XLF) thresh=42 achieves 83.3% WR and Sharpe 0.89 in isolation. ' if _se_sector_etf == 'XLF' else ''}"
-                         f"Current composite score {score:.0f} is below the {_se_sector_etf} sector floor."),
-                "sentiment": "neg",
-                "meta": (f"sector={_se_sector_etf} score={score:.0f} < buy_thresh={_se_buy_thresh} "
-                         f"| mr_entry=True | sector_score_floor=True")})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": (
+                        f"Sector Score Floor — {_se_sector_etf} MR Entry Requires Score ≥ {_se_buy_thresh} "
+                        f"(Current: {score:.0f})"
+                    ),
+                    "body": (
+                        f"Alpha decomp §15d (68 tickers, 20-year): {_se_sector_etf} mean-reversion "
+                        f"entries below score {_se_buy_thresh} have poor risk-adjusted returns. "
+                        f"{'Tech (XLK) thresh=40 is the quality boundary — lower scores add noise. ' if _se_sector_etf == 'XLK' else ''}"
+                        f"{'Financials (XLF) thresh=42 achieves 83.3% WR and Sharpe 0.89 in isolation. ' if _se_sector_etf == 'XLF' else ''}"
+                        f"Current composite score {score:.0f} is below the {_se_sector_etf} sector floor."
+                    ),
+                    "sentiment": "neg",
+                    "meta": (
+                        f"sector={_se_sector_etf} score={score:.0f} < buy_thresh={_se_buy_thresh} "
+                        f"| mr_entry=True | sector_score_floor=True"
+                    ),
+                }
+            )
 
     # ── Near-Earnings Caution Gate (§11c → §34 live revision) ────────────────
     # §11c (pure-technical backtest): 8-14d pre-earnings without alt-data averaged
@@ -1396,41 +1809,53 @@ def _assemble_signal(
     # are a different distribution. Hard block replaced by tiered soft haircuts.
     # Delivery gate still enforces hard blackout at ≤2d to earnings.
     if action == "BUY" and days_to_earnings is not None and 8 <= days_to_earnings <= 14:
-        _has_pos_analyst = any(
-            r.get("src") == "Analyst" and r.get("sentiment") == "pos"
-            for r in rationale
-        )
-        _has_unusual_calls = (
-            bool(opt_flow and opt_flow.get("sweep_calls"))
-            or bool(opt_flow and (opt_flow.get("unusual_vol_ratio") or 0.0) > 2.0)
+        _has_pos_analyst = any(r.get("src") == "Analyst" and r.get("sentiment") == "pos" for r in rationale)
+        _has_unusual_calls = bool(opt_flow and opt_flow.get("sweep_calls")) or bool(
+            opt_flow and (opt_flow.get("unusual_vol_ratio") or 0.0) > 2.0
         )
         if not _has_pos_analyst and not _has_unusual_calls:
             # No alt-data at all: -3pp haircut. Live data still shows these pass the
             # 50.5% WR safe-zone baseline, so a hard block discards genuine MR setups.
             confidence = round(max(35.0, confidence - 3), 1)
             sources.add("Risk Gate")
-            rationale.append({"src": "Risk Gate",
-                "head": f"Near-Earnings Caution — {days_to_earnings}d to Earnings, No Alt-Data",
-                "body": (f"Earnings in {days_to_earnings} days (caution zone: 8-14d). "
-                         f"Neither analyst revision nor unusual call activity confirms the setup. "
-                         f"§34 live data: near-earnings zone still outperforms the safe zone (62.5% vs 50.5% WR) "
-                         f"overall — hard block replaced by −3pp haircut. Proceed with reduced size."),
-                "sentiment": "neg",
-                "meta": (f"days_to_earnings={days_to_earnings} | no_pos_revision=True "
-                         f"| no_unusual_calls=True | penalty=-3pp")})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Near-Earnings Caution — {days_to_earnings}d to Earnings, No Alt-Data",
+                    "body": (
+                        f"Earnings in {days_to_earnings} days (caution zone: 8-14d). "
+                        f"Neither analyst revision nor unusual call activity confirms the setup. "
+                        f"§34 live data: near-earnings zone still outperforms the safe zone (62.5% vs 50.5% WR) "
+                        f"overall — hard block replaced by −3pp haircut. Proceed with reduced size."
+                    ),
+                    "sentiment": "neg",
+                    "meta": (
+                        f"days_to_earnings={days_to_earnings} | no_pos_revision=True "
+                        f"| no_unusual_calls=True | penalty=-3pp"
+                    ),
+                }
+            )
         elif not _has_pos_analyst:
             # Calls present but no revision: -2pp haircut (stronger than no-confirmation
             # case because unusual flow suggests institutional awareness of the print).
             confidence = round(max(35.0, confidence - 2), 1)
             sources.add("Risk Gate")
-            rationale.append({"src": "Risk Gate",
-                "head": f"Near-Earnings Caution — {days_to_earnings}d to Earnings, No Analyst Revision",
-                "body": (f"Earnings in {days_to_earnings} days (caution zone: 8-14d). "
-                         f"Unusual call activity detected (partial confirmation) but no positive analyst "
-                         f"revision. Applying −2pp confidence haircut. Proceed with reduced size."),
-                "sentiment": "neg",
-                "meta": (f"days_to_earnings={days_to_earnings} | no_pos_revision=True "
-                         f"| has_unusual_calls={_has_unusual_calls} | penalty=-2pp")})
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Near-Earnings Caution — {days_to_earnings}d to Earnings, No Analyst Revision",
+                    "body": (
+                        f"Earnings in {days_to_earnings} days (caution zone: 8-14d). "
+                        f"Unusual call activity detected (partial confirmation) but no positive analyst "
+                        f"revision. Applying −2pp confidence haircut. Proceed with reduced size."
+                    ),
+                    "sentiment": "neg",
+                    "meta": (
+                        f"days_to_earnings={days_to_earnings} | no_pos_revision=True "
+                        f"| has_unusual_calls={_has_unusual_calls} | penalty=-2pp"
+                    ),
+                }
+            )
 
     # ── Deep-Bear Stricter RSI Gate (v5.12 validated) ─────────────────────
     # In systemic downturns (VIX>28 AND SPY>5% below SMA200), RSI<42 oversold
@@ -1438,21 +1863,31 @@ def _assemble_signal(
     # 20yr backtest: only RSI<35 (extreme capitulation) has positive edge here.
     # Rate-Hike Bear 2022 trades at RSI 35-42 averaged −2.03% across 4 trades.
     _sp500_sma200_ratio = float(_gate_macro.get("sp500_sma200_ratio") or 1.0)
-    _deep_bear = (vix is not None and vix > 28 and _sp500_sma200_ratio < 0.95)
+    _deep_bear = vix is not None and vix > 28 and _sp500_sma200_ratio < 0.95
     if action == "BUY" and _deep_bear and _rsi_gate >= 35:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": (f"Deep-Bear RSI Gate — Crisis Regime "
-                     f"(VIX {vix:.0f}, SPY {(_sp500_sma200_ratio-1)*100:.1f}% vs SMA200)"),
-            "body": (f"VIX at {vix:.0f} (>28) and SPY at {(_sp500_sma200_ratio-1)*100:.1f}% vs SMA200 "
-                     f"— confirmed crisis/systemic downturn. RSI {_rsi_gate:.0f} is oversold but not "
-                     "at capitulation levels. In panic regimes, RSI 35-42 entries are falling knives: "
-                     "backtest showed only RSI<35 has positive expected value here. "
-                     "Waiting for extreme oversold (RSI<35) before entering."),
-            "sentiment": "neg",
-            "meta": (f"VIX={vix:.0f}>28 SPY_vs_SMA200={(_sp500_sma200_ratio-1)*100:.1f}%<-5% "
-                     f"RSI={_rsi_gate:.1f}≥35 | deep_bear_rsi_gate=True")})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": (
+                    f"Deep-Bear RSI Gate — Crisis Regime "
+                    f"(VIX {vix:.0f}, SPY {(_sp500_sma200_ratio - 1) * 100:.1f}% vs SMA200)"
+                ),
+                "body": (
+                    f"VIX at {vix:.0f} (>28) and SPY at {(_sp500_sma200_ratio - 1) * 100:.1f}% vs SMA200 "
+                    f"— confirmed crisis/systemic downturn. RSI {_rsi_gate:.0f} is oversold but not "
+                    "at capitulation levels. In panic regimes, RSI 35-42 entries are falling knives: "
+                    "backtest showed only RSI<35 has positive expected value here. "
+                    "Waiting for extreme oversold (RSI<35) before entering."
+                ),
+                "sentiment": "neg",
+                "meta": (
+                    f"VIX={vix:.0f}>28 SPY_vs_SMA200={(_sp500_sma200_ratio - 1) * 100:.1f}%<-5% "
+                    f"RSI={_rsi_gate:.1f}≥35 | deep_bear_rsi_gate=True"
+                ),
+            }
+        )
 
     # ── Sustained-Bear Macro Gate (§34 live data finding) ────────────────────
     # Acute crises (VIX>28 + SPY<0.95×SMA200) are handled by _deep_bear above.
@@ -1460,26 +1895,32 @@ def _assemble_signal(
     # §34 live data: crash/bear regimes (COVID 2020, Rate-Hike Bear 2022) → 0% WR.
     # Proxy for sustained bear: SPY >3% below SMA200 AND down >7% over 1 month.
     _spy_1m_ret = float(_gate_macro.get("spy_1m_ret") or 0.0)
-    _sustained_bear = (
-        not _deep_bear
-        and _sp500_sma200_ratio < 0.97
-        and _spy_1m_ret < -7.0
-    )
+    _sustained_bear = not _deep_bear and _sp500_sma200_ratio < 0.97 and _spy_1m_ret < -7.0
     if action == "BUY" and _sustained_bear:
         _sb_haircut = 5.0
         confidence = round(max(35.0, confidence - _sb_haircut), 1)
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": (f"Sustained-Bear Gate — SPY {(_sp500_sma200_ratio-1)*100:.1f}% vs SMA200, "
-                     f"{_spy_1m_ret:.1f}% 1-Month"),
-            "body": (f"SPY is {(_sp500_sma200_ratio-1)*100:.1f}% below its 200-day SMA and has "
-                     f"returned {_spy_1m_ret:.1f}% over the past month — a confirmed sustained downtrend. "
-                     f"§34 live data: bear regimes (COVID 2020, Rate-Hike Bear 2022) produced 0% WR "
-                     f"for MR signals. Applying −{_sb_haircut:.0f}pp confidence haircut. "
-                     f"Only extreme-oversold setups with strong multi-source confirmation should proceed."),
-            "sentiment": "neg",
-            "meta": (f"sp500_sma200_ratio={_sp500_sma200_ratio:.4f} spy_1m_ret={_spy_1m_ret:.1f}% "
-                     f"| sustained_bear=True | haircut=-{_sb_haircut:.0f}pp")})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": (
+                    f"Sustained-Bear Gate — SPY {(_sp500_sma200_ratio - 1) * 100:.1f}% vs SMA200, "
+                    f"{_spy_1m_ret:.1f}% 1-Month"
+                ),
+                "body": (
+                    f"SPY is {(_sp500_sma200_ratio - 1) * 100:.1f}% below its 200-day SMA and has "
+                    f"returned {_spy_1m_ret:.1f}% over the past month — a confirmed sustained downtrend. "
+                    f"§34 live data: bear regimes (COVID 2020, Rate-Hike Bear 2022) produced 0% WR "
+                    f"for MR signals. Applying −{_sb_haircut:.0f}pp confidence haircut. "
+                    f"Only extreme-oversold setups with strong multi-source confirmation should proceed."
+                ),
+                "sentiment": "neg",
+                "meta": (
+                    f"sp500_sma200_ratio={_sp500_sma200_ratio:.4f} spy_1m_ret={_spy_1m_ret:.1f}% "
+                    f"| sustained_bear=True | haircut=-{_sb_haircut:.0f}pp"
+                ),
+            }
+        )
 
     # ── Price-SMA20 Distance Gate (v5.12 validated) ───────────────────────
     # Require price ≥2% below SMA20 for mid-conviction BUY entries (score<65).
@@ -1487,23 +1928,31 @@ def _assemble_signal(
     # oversold extension. The 2% gap confirms short-term displacement.
     # Backtest improvement when added: WR +2.1pp, avg +0.14%.
     _sma20_gate = tech.get("sma20")
-    if (action == "BUY"
-            and score < 65
-            and _sma20_gate is not None
-            and float(_sma20_gate) > 0
-            and price >= float(_sma20_gate) * 0.98):
+    if (
+        action == "BUY"
+        and score < 65
+        and _sma20_gate is not None
+        and float(_sma20_gate) > 0
+        and price >= float(_sma20_gate) * 0.98
+    ):
         action = "HOLD"
         sources.add("Risk Gate")
         _sma20_dist = (price / float(_sma20_gate) - 1) * 100
-        rationale.append({"src": "Risk Gate",
-            "head": f"Price-SMA20 Distance Gate — Only {abs(_sma20_dist):.1f}% Below 20-DMA",
-            "body": (f"Price ${price:.2f} is only {abs(_sma20_dist):.1f}% below the 20-day SMA "
-                     f"(${float(_sma20_gate):.2f}). Require ≥2% below SMA20 to confirm a genuine "
-                     "short-term oversold extension. A slow drift to SMA20 lacks the capitulation "
-                     "pressure needed for a reliable mean-reversion bounce. "
-                     "Gate waived at score≥65 (strong independent confirmation)."),
-            "sentiment": "neg",
-            "meta": f"price={price:.2f} sma20={float(_sma20_gate):.2f} dist={_sma20_dist:+.2f}% score={score:.1f}"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"Price-SMA20 Distance Gate — Only {abs(_sma20_dist):.1f}% Below 20-DMA",
+                "body": (
+                    f"Price ${price:.2f} is only {abs(_sma20_dist):.1f}% below the 20-day SMA "
+                    f"(${float(_sma20_gate):.2f}). Require ≥2% below SMA20 to confirm a genuine "
+                    "short-term oversold extension. A slow drift to SMA20 lacks the capitulation "
+                    "pressure needed for a reliable mean-reversion bounce. "
+                    "Gate waived at score≥65 (strong independent confirmation)."
+                ),
+                "sentiment": "neg",
+                "meta": f"price={price:.2f} sma20={float(_sma20_gate):.2f} dist={_sma20_dist:+.2f}% score={score:.1f}",
+            }
+        )
 
     # ── Day-of-Week Gate — No Friday BUY Entries ──────────────────────────
     # Friday entries carry 2-day weekend gap risk with no intraday management.
@@ -1514,14 +1963,20 @@ def _assemble_signal(
     if action == "BUY" and _today_dow == 4 and score < 65:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({"src": "Risk Gate",
-            "head": "Day-of-Week Gate — No Friday Entries (Weekend Gap Risk)",
-            "body": ("Friday BUY entries face a mandatory 2-day hold through the weekend with no "
-                     "intraday management capability. 20yr backtest: Friday entries underperform "
-                     "Mon–Thu by ~0.40% avg return due to gap-open risk. "
-                     "Signals with score≥65 (strong alt-data confirmation) are exempt."),
-            "sentiment": "neg",
-            "meta": f"weekday=Friday(4) score={score:.1f}<65 | dow_gate=True"})
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": "Day-of-Week Gate — No Friday Entries (Weekend Gap Risk)",
+                "body": (
+                    "Friday BUY entries face a mandatory 2-day hold through the weekend with no "
+                    "intraday management capability. 20yr backtest: Friday entries underperform "
+                    "Mon–Thu by ~0.40% avg return due to gap-open risk. "
+                    "Signals with score≥65 (strong alt-data confirmation) are exempt."
+                ),
+                "sentiment": "neg",
+                "meta": f"weekday=Friday(4) score={score:.1f}<65 | dow_gate=True",
+            }
+        )
 
     # Apply combined post-processing confidence penalty (warning signals + low volume)
     if total_confidence_penalty > 0 and action in ("BUY", "SELL"):
@@ -1544,32 +1999,44 @@ def _assemble_signal(
         if _m_contradiction:
             _conf_macro_cap = min(_conf_macro_cap, 65.0)
             confidence = round(min(confidence, 65.0), 1)
-            rationale.append({"src": "Macro",
-                "head": f"Macro Contradiction — Confidence Capped at 65%",
-                "body": (f"Macro score is {_m_score:+.0f} ({'bearish' if _m_score < 0 else 'bullish'}), "
-                         f"contradicting the {action} signal. High-confidence {action} signals "
-                         "in a contradictory macro environment have significantly lower win rates. "
-                         "Confidence capped at 65% until macro aligns."),
-                "sentiment": "neg",
-                "meta": f"Macro score: {_m_score:+.0f} | Action: {action}"})
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": "Macro Contradiction — Confidence Capped at 65%",
+                    "body": (
+                        f"Macro score is {_m_score:+.0f} ({'bearish' if _m_score < 0 else 'bullish'}), "
+                        f"contradicting the {action} signal. High-confidence {action} signals "
+                        "in a contradictory macro environment have significantly lower win rates. "
+                        "Confidence capped at 65% until macro aligns."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"Macro score: {_m_score:+.0f} | Action: {action}",
+                }
+            )
 
     # ── Macro News Sentiment BUY Cap ─────────────────────────────────────
     # When SPY/QQQ ETF news is strongly negative AND VIX > 20, cap all BUY signals at 65%.
     if action == "BUY":
         _news_sent = (macro or {}).get("macro_news_sentiment")
-        _vix_now   = (macro or {}).get("vix") or 0
+        _vix_now = (macro or {}).get("vix") or 0
         if _news_sent is not None and _news_sent < -0.3 and _vix_now > 20:
             _new_cap = 65.0
             _conf_macro_cap = min(_conf_macro_cap, _new_cap)
             if confidence > _new_cap:
                 confidence = round(min(confidence, _new_cap), 1)
-                rationale.append({"src": "Macro",
-                    "head": f"Macro News Negative (SPY/QQQ) — BUY Cap {_new_cap:.0f}%",
-                    "body": (f"ETF-level news sentiment is {_news_sent:+.2f} (negative) with VIX at {_vix_now:.1f}. "
-                             "Broad-market news fear combined with elevated volatility caps BUY confidence "
-                             "until macro news normalises."),
-                    "sentiment": "neg",
-                    "meta": f"macro_news_sentiment={_news_sent:+.2f} vix={_vix_now:.1f}"})
+                rationale.append(
+                    {
+                        "src": "Macro",
+                        "head": f"Macro News Negative (SPY/QQQ) — BUY Cap {_new_cap:.0f}%",
+                        "body": (
+                            f"ETF-level news sentiment is {_news_sent:+.2f} (negative) with VIX at {_vix_now:.1f}. "
+                            "Broad-market news fear combined with elevated volatility caps BUY confidence "
+                            "until macro news normalises."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"macro_news_sentiment={_news_sent:+.2f} vix={_vix_now:.1f}",
+                    }
+                )
 
     # ── Adaptive confidence from historical win rates (VIX-adjusted) ───────
     # In high-volatility regimes, historical win rates are less predictive —
@@ -1595,14 +2062,23 @@ def _assemble_signal(
             if abs(wr_delta) >= 3:
                 sources.add("Backtest")
                 direction_lbl = "boosted" if wr_delta > 0 else "reduced"
-                vix_note = (f" (VIX {vix:.0f} → {vix_dampener:.0%} dampener applied)"
-                            if vix is not None and vix_dampener < 1.0 else "")
-                rationale.append({"src": "Backtest",
-                    "head": f"Historical {action} Win Rate {win_rate*100:.0f}% — Confidence {direction_lbl}",
-                    "body": (f"Past {action} signals have a {win_rate*100:.0f}% win rate. "
-                             f"Confidence adjusted {'+' if wr_delta>0 else ''}{wr_delta:.1f} points.{vix_note}"),
-                    "sentiment": "pos" if wr_delta > 0 else "neg",
-                    "meta": f"{action} win rate: {win_rate*100:.0f}%"})
+                vix_note = (
+                    f" (VIX {vix:.0f} → {vix_dampener:.0%} dampener applied)"
+                    if vix is not None and vix_dampener < 1.0
+                    else ""
+                )
+                rationale.append(
+                    {
+                        "src": "Backtest",
+                        "head": f"Historical {action} Win Rate {win_rate * 100:.0f}% — Confidence {direction_lbl}",
+                        "body": (
+                            f"Past {action} signals have a {win_rate * 100:.0f}% win rate. "
+                            f"Confidence adjusted {'+' if wr_delta > 0 else ''}{wr_delta:.1f} points.{vix_note}"
+                        ),
+                        "sentiment": "pos" if wr_delta > 0 else "neg",
+                        "meta": f"{action} win rate: {win_rate * 100:.0f}%",
+                    }
+                )
 
     # ── Consecutive Loss Streak Suppression ─────────────────────────────
     # If this ticker has lost on N consecutive recent resolved signals, penalise
@@ -1615,12 +2091,18 @@ def _assemble_signal(
             _streak_penalty = round(min(20.0, (_streak - 1) * 5.0), 1)
             confidence = round(max(35.0, confidence - _streak_penalty), 1)
             sources.add("Backtest")
-            rationale.append({"src": "Backtest",
-                "head": f"{_streak}-Signal Loss Streak — Confidence Reduced",
-                "body": (f"{ticker} has lost on {_streak} consecutive resolved signals. "
-                         f"Confidence reduced by {_streak_penalty:.0f}pp until a winning signal breaks the streak."),
-                "sentiment": "neg",
-                "meta": f"Loss streak: {_streak} | Penalty: -{_streak_penalty:.0f}pp"})
+            rationale.append(
+                {
+                    "src": "Backtest",
+                    "head": f"{_streak}-Signal Loss Streak — Confidence Reduced",
+                    "body": (
+                        f"{ticker} has lost on {_streak} consecutive resolved signals. "
+                        f"Confidence reduced by {_streak_penalty:.0f}pp until a winning signal breaks the streak."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"Loss streak: {_streak} | Penalty: -{_streak_penalty:.0f}pp",
+                }
+            )
 
     # ── VIX Hard Confidence Floor ────────────────────────────────────────
     # Panic regimes (VIX > 30) mechanically increase realized volatility and
@@ -1630,18 +2112,20 @@ def _assemble_signal(
     if vix is not None and vix > 30 and action in ("BUY", "SELL") and confidence < 75:
         action = "HOLD"
         sources.add("Risk Gate")
-        rationale.append({
-            "src":  "Risk Gate",
-            "head": f"VIX Regime Floor — {confidence:.0f}% Below 75% Threshold (VIX {vix:.0f})",
-            "body": (
-                f"VIX at {vix:.0f} signals an active panic regime (threshold: 30). "
-                "In elevated-VIX environments, {}-confidence signals have historically poor "
-                "win rates — technical patterns break down as correlations spike and "
-                "liquidity thin outs. Signal gated to HOLD until VIX normalises below 30."
-            ).format(f"{confidence:.0f}%"),
-            "sentiment": "neg",
-            "meta": f"VIX = {vix:.0f} | Min confidence gate: 75% | Actual: {confidence:.0f}%",
-        })
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"VIX Regime Floor — {confidence:.0f}% Below 75% Threshold (VIX {vix:.0f})",
+                "body": (
+                    f"VIX at {vix:.0f} signals an active panic regime (threshold: 30). "
+                    "In elevated-VIX environments, {}-confidence signals have historically poor "
+                    "win rates — technical patterns break down as correlations spike and "
+                    "liquidity thin outs. Signal gated to HOLD until VIX normalises below 30."
+                ).format(f"{confidence:.0f}%"),
+                "sentiment": "neg",
+                "meta": f"VIX = {vix:.0f} | Min confidence gate: 75% | Actual: {confidence:.0f}%",
+            }
+        )
 
     # ── Style derivation from rationale composition ───────────────────────
     # Intraday wins over all — a fresh RSI extreme or Bollinger touch is a
@@ -1651,14 +2135,24 @@ def _assemble_signal(
     # Everything else defaults to swing.
     _heads_str = " || ".join(r.get("head", "") for r in rationale)
 
-    _is_intraday = any(kw in _heads_str for kw in [
-        "RSI Oversold", "RSI Overbought", "RSI Weakening", "RSI Elevated",
-        "Bollinger Band Touch",
-        "Bullish RSI Divergence", "Bearish RSI Divergence",
-        "Stochastic Bullish Cross", "Stochastic Bearish Cross",
-        "Williams %R Oversold", "Williams %R Overbought",
-        "CCI Oversold", "CCI Overbought",
-    ])
+    _is_intraday = any(
+        kw in _heads_str
+        for kw in [
+            "RSI Oversold",
+            "RSI Overbought",
+            "RSI Weakening",
+            "RSI Elevated",
+            "Bollinger Band Touch",
+            "Bullish RSI Divergence",
+            "Bearish RSI Divergence",
+            "Stochastic Bullish Cross",
+            "Stochastic Bearish Cross",
+            "Williams %R Oversold",
+            "Williams %R Overbought",
+            "CCI Oversold",
+            "CCI Overbought",
+        ]
+    )
 
     # "Position" requires STRONG fundamentals or CONFIRMED institutional
     # conviction — not just any Piotroski mention or minor institutional flow.
@@ -1672,13 +2166,18 @@ def _assemble_signal(
     #   • Active share buyback (management signalling)
     #   • Institutional conviction TREND (QoQ rising/falling — requires 2+ quarters data)
     #   • Very strong institutional flow (score >10, not just >5)
-    _is_position = (not _is_intraday) and any(kw in _heads_str for kw in [
-        "F-Score 7", "F-Score 8", "F-Score 9",   # only high-quality F-scores
-        "Strong FCF Yield",
-        "Active Share Buyback",
-        "Institutional Conviction Rising",        # QoQ trend required
-        "Institutional Conviction Falling",
-    ])
+    _is_position = (not _is_intraday) and any(
+        kw in _heads_str
+        for kw in [
+            "F-Score 7",
+            "F-Score 8",
+            "F-Score 9",  # only high-quality F-scores
+            "Strong FCF Yield",
+            "Active Share Buyback",
+            "Institutional Conviction Rising",  # QoQ trend required
+            "Institutional Conviction Falling",
+        ]
+    )
 
     _inst_score = abs(((market_ctx or {}).get("institutional_signals") or {}).get(ticker, {}).get("score", 0))
     if _inst_score > 10:
@@ -1708,51 +2207,63 @@ def _assemble_signal(
         # Growth / high-beta sectors require a larger premium (investors face more risk)
         sector_etf_key = (sector_rs or {}).get("sector_etf", "")
         high_beta = sector_etf_key in {"XLK", "XLC", "XLY", "XLB"}
-        required_premium = 3.5 if high_beta else 2.0   # pp above risk-free
+        required_premium = 3.5 if high_beta else 2.0  # pp above risk-free
         excess = projected_pct - t10y_rate - required_premium
 
         if excess < -required_premium:
             # Projected return doesn't even beat the risk-free rate outright
             confidence = round(max(35.0, confidence - 14), 1)
             sources.add("Macro")
-            rationale.append({"src": "Macro",
-                "head": f"Risk-Adjusted Return Negative vs Bonds ({projected_pct:.1f}% target vs {t10y_rate:.1f}% risk-free)",
-                "body": (
-                    f"Signal target implies a {projected_pct:.1f}% return — below the "
-                    f"{t10y_rate:.1f}% 10-Year Treasury yield. Holding risk-free bonds "
-                    "dominates this trade on a Sharpe basis. Confidence reduced significantly."
-                ),
-                "sentiment": "neg",
-                "meta": f"Projected {projected_pct:.1f}% | 10Y {t10y_rate:.1f}% | Premium: {excess:.1f}pp"})
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": f"Risk-Adjusted Return Negative vs Bonds ({projected_pct:.1f}% target vs {t10y_rate:.1f}% risk-free)",
+                    "body": (
+                        f"Signal target implies a {projected_pct:.1f}% return — below the "
+                        f"{t10y_rate:.1f}% 10-Year Treasury yield. Holding risk-free bonds "
+                        "dominates this trade on a Sharpe basis. Confidence reduced significantly."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"Projected {projected_pct:.1f}% | 10Y {t10y_rate:.1f}% | Premium: {excess:.1f}pp",
+                }
+            )
         elif excess < 0:
             # Return beats risk-free but misses the required risk premium
             penalty = round(abs(excess) / required_premium * 8, 1)
             confidence = round(max(35.0, confidence - penalty), 1)
             sources.add("Macro")
-            rationale.append({"src": "Macro",
-                "head": f"Thin Risk Premium Over Bonds ({projected_pct:.1f}% vs {t10y_rate:.1f}% + {required_premium:.1f}pp premium)",
-                "body": (
-                    f"Projected return of {projected_pct:.1f}% only clears the risk-free rate "
-                    f"by {projected_pct - t10y_rate:.1f}pp — below the {required_premium:.1f}pp "
-                    "risk premium required for this sector's beta. "
-                    "The marginal risk-adjusted case is weak."
-                ),
-                "sentiment": "neg",
-                "meta": f"Excess return: {projected_pct - t10y_rate:.1f}pp | Required: {required_premium:.1f}pp"})
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": f"Thin Risk Premium Over Bonds ({projected_pct:.1f}% vs {t10y_rate:.1f}% + {required_premium:.1f}pp premium)",
+                    "body": (
+                        f"Projected return of {projected_pct:.1f}% only clears the risk-free rate "
+                        f"by {projected_pct - t10y_rate:.1f}pp — below the {required_premium:.1f}pp "
+                        "risk premium required for this sector's beta. "
+                        "The marginal risk-adjusted case is weak."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"Excess return: {projected_pct - t10y_rate:.1f}pp | Required: {required_premium:.1f}pp",
+                }
+            )
         elif excess > required_premium * 2:
             # Generous excess return — genuine edge over risk-free
             boost = min(5.0, excess * 0.3)
             confidence = round(min(72.0, confidence + boost), 1)
             sources.add("Macro")
-            rationale.append({"src": "Macro",
-                "head": f"Strong Risk-Adjusted Return ({projected_pct:.1f}% target, {excess:.1f}pp above hurdle)",
-                "body": (
-                    f"Signal target of {projected_pct:.1f}% clears the {t10y_rate:.1f}% risk-free rate "
-                    f"by {projected_pct - t10y_rate:.1f}pp — {excess:.1f}pp above the "
-                    f"{required_premium:.1f}pp required premium. Genuine Sharpe-positive edge."
-                ),
-                "sentiment": "pos",
-                "meta": f"Excess return: {excess:.1f}pp above hurdle | 10Y: {t10y_rate:.1f}%"})
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": f"Strong Risk-Adjusted Return ({projected_pct:.1f}% target, {excess:.1f}pp above hurdle)",
+                    "body": (
+                        f"Signal target of {projected_pct:.1f}% clears the {t10y_rate:.1f}% risk-free rate "
+                        f"by {projected_pct - t10y_rate:.1f}pp — {excess:.1f}pp above the "
+                        f"{required_premium:.1f}pp required premium. Genuine Sharpe-positive edge."
+                    ),
+                    "sentiment": "pos",
+                    "meta": f"Excess return: {excess:.1f}pp above hurdle | 10Y: {t10y_rate:.1f}%",
+                }
+            )
     plain_english = _make_plain_english(action, ticker, style, rationale, confidence, entry, stop, target)
 
     headline = (
@@ -1768,6 +2279,7 @@ def _assemble_signal(
     # bins shift strongly toward reality. Refit weekly alongside factor mining.
     if action in ("BUY", "SELL"):
         from services.calibration import apply_calibration
+
         cal_map = (market_ctx or {}).get("calibration_map", {})
         if cal_map:
             pre_cal = confidence
@@ -1775,22 +2287,19 @@ def _assemble_signal(
             # can use the regime-specific isotonic curve trained on similar market states.
             _sp500_trend = macro.get("sp500_trend") if macro else None
             # sp500_trend is a string ("up"/"down"/None) set by macro.py
-            _cal_regime  = ("bull" if _sp500_trend == "up"
-                            else "bear" if _sp500_trend == "down"
-                            else "neutral")
-            confidence, _bin = apply_calibration(confidence, action, cal_map,
-                                                  regime=_cal_regime)
+            _cal_regime = "bull" if _sp500_trend == "up" else "bear" if _sp500_trend == "down" else "neutral"
+            confidence, _bin = apply_calibration(confidence, action, cal_map, regime=_cal_regime)
             if _bin and abs(confidence - pre_cal) >= 2:
-                _source   = _bin.get("source", "platt")
-                _emp_wr   = round((_bin.get("win_rate") or _bin.get("prob", pre_cal / 100)) * 100, 1)
-                _n        = _bin.get("n", 0)
-                _blend    = round((_bin.get("blend", 0)) * 100)
-                _gap      = round(_emp_wr - pre_cal, 1)
-                _bin_lo   = (int(pre_cal) // 5) * 5
-                _bin_hi   = _bin_lo + 5
-                _dir      = "DOWN" if confidence < pre_cal else "UP"
-                _over     = confidence < pre_cal  # True = was overconfident
-                _is_iso   = "isotonic" in _source
+                _source = _bin.get("source", "platt")
+                _emp_wr = round((_bin.get("win_rate") or _bin.get("prob", pre_cal / 100)) * 100, 1)
+                _n = _bin.get("n", 0)
+                _blend = round((_bin.get("blend", 0)) * 100)
+                _gap = round(_emp_wr - pre_cal, 1)
+                _bin_lo = (int(pre_cal) // 5) * 5
+                _bin_hi = _bin_lo + 5
+                _dir = "DOWN" if confidence < pre_cal else "UP"
+                _over = confidence < pre_cal  # True = was overconfident
+                _is_iso = "isotonic" in _source
 
                 if _is_iso:
                     _body = (
@@ -1812,18 +2321,21 @@ def _assemble_signal(
                         f"Bin {_bin_lo}–{_bin_hi}% | "
                         f"Empirical WR: {_emp_wr:.0f}% | "
                         f"n={_n} signals | "
-                        f"Blend: {_blend}% empirical + {100-_blend}% model"
+                        f"Blend: {_blend}% empirical + {100 - _blend}% model"
                     )
 
-                rationale.append({"src": "Backtest",
-                    "head": (
-                        f"Calibration {_dir}: {pre_cal:.0f}% → {confidence:.0f}%"
-                        f" ({'overconfident' if _over else 'underconfident'} by {abs(_gap):.0f}pp)"
-                    ),
-                    "body": _body,
-                    "sentiment": "pos" if not _over else "neg",
-                    "meta": _meta,
-                })
+                rationale.append(
+                    {
+                        "src": "Backtest",
+                        "head": (
+                            f"Calibration {_dir}: {pre_cal:.0f}% → {confidence:.0f}%"
+                            f" ({'overconfident' if _over else 'underconfident'} by {abs(_gap):.0f}pp)"
+                        ),
+                        "body": _body,
+                        "sentiment": "pos" if not _over else "neg",
+                        "meta": _meta,
+                    }
+                )
 
     # ── XGBoost confidence adjustment ────────────────────────────────────
     # Applies a multiplicative adjustment (0.75–1.25×) derived from the
@@ -1831,22 +2343,24 @@ def _assemble_signal(
     # so the ML layer refines — not replaces — empirical calibration.
     # Gracefully skipped when the model file is absent or xgboost is not installed.
     try:
-        from services.signal_ml import get_model, adjust_confidence as _ml_adjust
+        from services.signal_ml import adjust_confidence as _ml_adjust
+        from services.signal_ml import get_model
+
         _ml_model = get_model()
         if _ml_model is not None and action in ("BUY", "SELL"):
             _sig_dict_for_ml = {
                 "confidence": confidence,
-                "sentiment":  avg_sent,
-                "sources":    list(sources),
-                "rationale":  rationale,
-                "action":     action,
-                "style":      style,
-                "rr":         rr,
-                "entry":      entry,
-                "stop":       stop,
-                "target":     target,
-                "price":      price,
-                "session":    _current_session(),
+                "sentiment": avg_sent,
+                "sources": list(sources),
+                "rationale": rationale,
+                "action": action,
+                "style": style,
+                "rr": rr,
+                "entry": entry,
+                "stop": stop,
+                "target": target,
+                "price": price,
+                "session": _current_session(),
             }
             confidence = _ml_adjust(_sig_dict_for_ml, _ml_model)
     except Exception:
@@ -1895,16 +2409,13 @@ def _assemble_signal(
         if any(r.get("head") in oversold_heads for r in rationale):
             confidence = round(max(35.0, confidence * 0.92), 1)
 
-
     # Calibration warning: fires when signal confidence significantly exceeds the
     # historically observed win rate for this action type, or when strong conflicting
     # signals were penalised away but confidence still appears high to the user.
     confidence_warning = False
     if action in ("BUY", "SELL") and confidence >= 75:
         win_rate_hist = (adaptive or {}).get(f"{action}_win_rate")
-        if win_rate_hist is not None and confidence - win_rate_hist * 100 > 20:
-            confidence_warning = True
-        elif total_confidence_penalty >= 0.15:
+        if win_rate_hist is not None and confidence - win_rate_hist * 100 > 20 or total_confidence_penalty >= 0.15:
             confidence_warning = True
 
     # ── MR exit guidance (§35b: RSI45 adaptive exit — 47% hit rate, 100% WR) ──
@@ -1912,54 +2423,54 @@ def _assemble_signal(
     # Only added for BUY signals with a confirmed MR setup — not for momentum or
     # general BUYs — because the RSI45 threshold was calibrated on MR entries.
     if action == "BUY" and _has_mr:
-        _hold_rec = (_SECTOR_MR_CONFIG.get(
-            (sector_rs or {}).get("sector_etf", ""), {}
-        ).get("hold_days", 10))
-        rationale = list(rationale) + [{
-            "src":       "Risk Gate",
-            "head":      "MR Exit Signal: RSI > 45 While Profitable",
-            "body":      (
-                f"Mean-reversion bounces typically complete when RSI(14) crosses "
-                f"above 45 while the position is profitable (>0.5% gain). "
-                f"20-year backtest: this exit fires on 47% of MR trades at "
-                f"100% win rate, avg +3.0% return. "
-                f"If RSI stays below 45, hold up to {_hold_rec} days while the "
-                f"thesis is intact (price above entry, no stop breach)."
-            ),
-            "sentiment": "pos",
-            "meta":      "exit_guidance=rsi45 source=§35b",
-        }]
+        _hold_rec = _SECTOR_MR_CONFIG.get((sector_rs or {}).get("sector_etf", ""), {}).get("hold_days", 10)
+        rationale = list(rationale) + [
+            {
+                "src": "Risk Gate",
+                "head": "MR Exit Signal: RSI > 45 While Profitable",
+                "body": (
+                    f"Mean-reversion bounces typically complete when RSI(14) crosses "
+                    f"above 45 while the position is profitable (>0.5% gain). "
+                    f"20-year backtest: this exit fires on 47% of MR trades at "
+                    f"100% win rate, avg +3.0% return. "
+                    f"If RSI stays below 45, hold up to {_hold_rec} days while the "
+                    f"thesis is intact (price above entry, no stop breach)."
+                ),
+                "sentiment": "pos",
+                "meta": "exit_guidance=rsi45 source=§35b",
+            }
+        ]
 
     return {
-        "ticker":              ticker,
-        "company":             info.get("company", ticker),
-        "action":              action,
-        "confidence":          confidence,
-        "confidence_warning":  confidence_warning,
-        "price":               price,
-        "change":              tech.get("change",     0),
-        "changePct":           tech.get("change_pct", 0),
-        "entry":               entry,
-        "stop":                stop,
-        "target":              target,
-        "rr":                  rr,
-        "headline":            headline,
-        "sentiment":           round(avg_sent, 2),
-        "style":               style,
-        "sources":             sorted(sources),
-        "rationale":           rationale,
-        "ts":                  datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "session":             _current_session(),
-        "daysToEarnings":      days_to_earnings,
-        "nextEarningsDate":    earnings_cal.get("next_earnings_date"),
-        "sectorEtf":           sector_rs["sector_etf"] if sector_rs else None,
-        "rsVsSector":          sector_rs["rs_vs_sector"] if sector_rs else None,
-        "plain_english":       plain_english,
-        "beta":                info.get("beta"),
-        "dataWarnings":        data_warnings,
-        "recommendedHoldDays": (_SECTOR_MR_CONFIG.get(
-                                    (sector_rs or {}).get("sector_etf", ""), {}
-                                ).get("hold_days", 10) if _has_mr else 10),
+        "ticker": ticker,
+        "company": info.get("company", ticker),
+        "action": action,
+        "confidence": confidence,
+        "confidence_warning": confidence_warning,
+        "price": price,
+        "change": tech.get("change", 0),
+        "changePct": tech.get("change_pct", 0),
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "rr": rr,
+        "headline": headline,
+        "sentiment": round(avg_sent, 2),
+        "style": style,
+        "sources": sorted(sources),
+        "rationale": rationale,
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "session": _current_session(),
+        "daysToEarnings": days_to_earnings,
+        "nextEarningsDate": earnings_cal.get("next_earnings_date"),
+        "sectorEtf": sector_rs["sector_etf"] if sector_rs else None,
+        "rsVsSector": sector_rs["rs_vs_sector"] if sector_rs else None,
+        "plain_english": plain_english,
+        "beta": info.get("beta"),
+        "dataWarnings": data_warnings,
+        "recommendedHoldDays": (
+            _SECTOR_MR_CONFIG.get((sector_rs or {}).get("sector_etf", ""), {}).get("hold_days", 10) if _has_mr else 10
+        ),
     }
 
 
@@ -1967,17 +2478,14 @@ def _compute_1h_techs(df_1h) -> dict:
     """CPU-bound 1H technical indicator computation — runs in a thread pool."""
     c1h = df_1h["Close"].astype(float)
     # RSI(14) on 1H
-    _d  = c1h.diff()
+    _d = c1h.diff()
     _ag = _d.clip(lower=0).ewm(com=13, adjust=False).mean()
     _al = (-_d).clip(lower=0).ewm(com=13, adjust=False).mean()
     rsi_1h = float((100 - 100 / (1 + _ag / _al.replace(0, _np.nan))).iloc[-1])
     # MACD on 1H
-    _macd_1h = float(
-        (c1h.ewm(span=12, adjust=False).mean()
-         - c1h.ewm(span=26, adjust=False).mean()).iloc[-1])
+    _macd_1h = float((c1h.ewm(span=12, adjust=False).mean() - c1h.ewm(span=26, adjust=False).mean()).iloc[-1])
     # Price vs EMA20 on 1H
-    _above_ema_1h = float(c1h.iloc[-1]) > float(
-        c1h.ewm(span=20, adjust=False).mean().iloc[-1])
+    _above_ema_1h = float(c1h.iloc[-1]) > float(c1h.ewm(span=20, adjust=False).mean().iloc[-1])
     return {"rsi_1h": rsi_1h, "macd_1h": _macd_1h, "above_ema_1h": _above_ema_1h}
 
 
@@ -1992,7 +2500,25 @@ async def generate_signal(
         _fetched = await _fetch_ticker_data(ticker, prefetched_df, prefetched_info)
         if _fetched is None:
             return None
-        df, info, news, scraped_news, insider, analyst_recs, earnings_cal, earnings_surp, opt_flow, fundamentals, social, trends, congress, df_1h, massive_sigs, sector_rs, data_warnings = _fetched
+        (
+            df,
+            info,
+            news,
+            scraped_news,
+            insider,
+            analyst_recs,
+            earnings_cal,
+            earnings_surp,
+            opt_flow,
+            fundamentals,
+            social,
+            trends,
+            congress,
+            df_1h,
+            massive_sigs,
+            sector_rs,
+            data_warnings,
+        ) = _fetched
         ext_hours = massive_sigs  # unified: both branches fetch get_extended_hours_data
 
         # Leveraged/inverse ETFs: company fundamentals, earnings, and insider
@@ -2001,11 +2527,11 @@ async def generate_signal(
         _is_lev_etf = ticker in _LEVERAGED_ETFS
         if _is_lev_etf:
             fundamentals = {}
-            earnings_cal  = {}
+            earnings_cal = {}
             earnings_surp = {}
-            insider       = {}
-            analyst_recs  = {}
-            congress      = {}
+            insider = {}
+            analyst_recs = {}
+            congress = {}
 
         tech = calculate_indicators(df)
         if not tech or tech.get("price") is None:
@@ -2018,6 +2544,7 @@ async def generate_signal(
         # Replaces hardcoded backtest-derived exclusions with a live metric.
         try:
             import numpy as _np_ar1
+
             _rets_ar1 = df["Close"].pct_change().dropna().values
             if len(_rets_ar1) >= 60:
                 _n_ar1 = min(126, len(_rets_ar1))
@@ -2036,17 +2563,23 @@ async def generate_signal(
         _price_now = tech.get("price", 0) or 0
         try:
             from services.signal_workers import (
-                news_worker, fundamentals_worker, options_worker,
-                institutional_worker, sentiment_worker,
+                fundamentals_worker,
+                institutional_worker,
+                news_worker,
+                options_worker,
+                sentiment_worker,
             )
-            _worker_task = asyncio.ensure_future(asyncio.gather(
-                news_worker(ticker, news, scraped_news),
-                fundamentals_worker(ticker, fundamentals, market_ctx, _price_now),
-                options_worker(ticker, opt_flow, massive_sigs),
-                institutional_worker(ticker, insider, market_ctx),
-                sentiment_worker(ticker, social, trends, congress),
-                return_exceptions=True,
-            ))
+
+            _worker_task = asyncio.ensure_future(
+                asyncio.gather(
+                    news_worker(ticker, news, scraped_news),
+                    fundamentals_worker(ticker, fundamentals, market_ctx, _price_now),
+                    options_worker(ticker, opt_flow, massive_sigs),
+                    institutional_worker(ticker, insider, market_ctx),
+                    sentiment_worker(ticker, social, trends, congress),
+                    return_exceptions=True,
+                )
+            )
         except Exception:
             _worker_task = None
 
@@ -2077,11 +2610,12 @@ async def generate_signal(
         _weekly_ohlcv_score = 0
         try:
             from services.polygon_client import get_polygon_weekly_bars
+
             _wdf = await get_polygon_weekly_bars(ticker, weeks=26)
             if _wdf is not None and len(_wdf) >= 14:
                 _wclose = _wdf["Close"].values
                 _wsma13 = float(_np.mean(_wclose[-13:]))
-                _last10  = _wclose[-10:]
+                _last10 = _wclose[-10:]
                 _weeks_above = int(sum(1 for c in _last10 if c > _wsma13))
                 _weeks_below = 10 - _weeks_above
                 if _weeks_above >= 8:
@@ -2091,22 +2625,21 @@ async def generate_signal(
         except Exception:
             pass
 
-        price    = tech["price"]
-        atr      = tech.get("atr") or price * 0.02
-        rsi      = tech.get("rsi")
-        hist     = tech.get("macd_hist",      0) or 0
-        hist_p   = tech.get("macd_hist_prev", 0) or 0
-        sma20    = tech.get("sma20")
-        sma50    = tech.get("sma50")
-        sma200   = tech.get("sma200")
+        price = tech["price"]
+        atr = tech.get("atr") or price * 0.02
+        rsi = tech.get("rsi")
+        hist = tech.get("macd_hist", 0) or 0
+        hist_p = tech.get("macd_hist_prev", 0) or 0
+        sma20 = tech.get("sma20")
+        sma50 = tech.get("sma50")
+        sma200 = tech.get("sma200")
 
         # ── Polygon pre-computed indicators (validation + RSI blend) ───────────
         _poly_ind: dict = {}
         _poly_weekly: dict = {}
         try:
-            from services.polygon_indicators import (
-                get_indicators, get_weekly_indicators, blend_rsi
-            )
+            from services.polygon_indicators import blend_rsi, get_indicators, get_weekly_indicators
+
             _poly_ind, _poly_weekly = await asyncio.gather(
                 get_indicators(ticker),
                 get_weekly_indicators(ticker),
@@ -2126,15 +2659,15 @@ async def generate_signal(
             pass
         bb_upper = tech.get("bb_upper")
         bb_lower = tech.get("bb_lower")
-        volume   = tech.get("volume",     0)
-        avg_vol  = tech.get("avg_volume", 1) or 1
+        volume = tech.get("volume", 0)
+        avg_vol = tech.get("avg_volume", 1) or 1
 
-        score     = 0.0
+        score = 0.0
         rationale = []
-        sources   = {"Technical"}
-        dominant  = "macd"
-        vol_confidence_penalty     = 0.0
-        rs_confidence_penalty      = 0.0
+        sources = {"Technical"}
+        dominant = "macd"
+        vol_confidence_penalty = 0.0
+        rs_confidence_penalty = 0.0
         insider_confidence_penalty = 0.0
         # Hard-HOLD flag — set by earnings/sector blackouts mid-scoring.
         # score=0 alone is NOT sufficient because subsequent signal blocks
@@ -2150,7 +2683,7 @@ async def generate_signal(
         # mean-reversion only (Z-Score, Bollinger, pivot). Oscillators (RSI
         # oversold/overbought) still apply as they measure magnitude, not trend.
         _atr_pct_pre = (atr / price) if price > 0 else 0.02
-        _is_low_atr  = _atr_pct_pre < 0.010   # ATR < 1.0% of price
+        _is_low_atr = _atr_pct_pre < 0.010  # ATR < 1.0% of price
 
         # Oscillator group (RSI/Stoch/WR/CCI/MFI): correlated — cap at ±28.
         osc_score = 0.0
@@ -2210,7 +2743,7 @@ async def generate_signal(
         # ── OBV + ADX ───────────────────────────────────────────────────────
         _vol_delta, _adx_td, _vol_rat = score_obv_adx(tech, score)
         volume_score += _vol_delta
-        trend_score  += _adx_td
+        trend_score += _adx_td
         rationale.extend(_vol_rat)
 
         # ── Regime classifier — variables used at two application points ────────
@@ -2218,11 +2751,11 @@ async def generate_signal(
         # multiplier applies before trend_score is capped and added to score.
         # mean_rev_score is 0 here (filled by Bollinger/Z-score below);
         # its multiplier is applied at line ~1900 where osc+mean_rev are combined.
-        _adx_regime       = tech.get("adx") or 0
+        _adx_regime = tech.get("adx") or 0
         _is_trending_bull = _adx_regime > 25 and sma200 and price > sma200
-        _is_ranging_mkt   = _adx_regime < 25   # raised from 20 — more markets treated as ranging
+        _is_ranging_mkt = _adx_regime < 25  # raised from 20 — more markets treated as ranging
         if _is_ranging_mkt:
-            trend_score *= 0.25   # suppress momentum 75% — crossovers whipsaw in chop (raised from 60%)
+            trend_score *= 0.25  # suppress momentum 75% — crossovers whipsaw in chop (raised from 60%)
 
         # ── MACD + RSI joint confirmation (arXiv 2022: 73-86% WR validated) ────
         # Research: MACD cross is most powerful when RSI confirms the direction.
@@ -2231,9 +2764,7 @@ async def generate_signal(
         # Suppression factor tightened 0.50→0.30 (Tier 3 backtest: +0.36 Sharpe).
         # Applied here — BEFORE trend_score is capped and added to score.
         if rsi is not None:
-            if trend_score > 0 and rsi > 60:
-                trend_score *= 0.30
-            elif trend_score < 0 and rsi < 40:
+            if trend_score > 0 and rsi > 60 or trend_score < 0 and rsi < 40:
                 trend_score *= 0.30
 
         # Apply volume and trend-continuation family caps before MA section.
@@ -2271,14 +2802,26 @@ async def generate_signal(
                 # Contribution reduced ±10→±4: Auckland Univ. research found Bollinger
                 # Bands lost predictive ability post-2002 due to market adaptation.
                 mean_rev_score += 4
-                rationale.append({"src": "Technical", "head": "Lower Bollinger Band Touch",
-                    "body": "Price at lower BB — potential mean-reversion bounce.",
-                    "sentiment": "pos", "meta": f"BB Lower ${bb_lower:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Lower Bollinger Band Touch",
+                        "body": "Price at lower BB — potential mean-reversion bounce.",
+                        "sentiment": "pos",
+                        "meta": f"BB Lower ${bb_lower:.2f}",
+                    }
+                )
             elif price >= bb_upper * 0.995:
                 mean_rev_score -= 4
-                rationale.append({"src": "Technical", "head": "Upper Bollinger Band Touch",
-                    "body": "Price at upper BB — potential overextension.",
-                    "sentiment": "neg", "meta": f"BB Upper ${bb_upper:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Upper Bollinger Band Touch",
+                        "body": "Price at upper BB — potential overextension.",
+                        "sentiment": "neg",
+                        "meta": f"BB Upper ${bb_upper:.2f}",
+                    }
+                )
 
         # ── 52-Week High / Low Proximity ────────────────────────────────
         # 52W high = momentum/breakout signal → momentum_score bucket.
@@ -2287,52 +2830,100 @@ async def generate_signal(
         wk52_l = tech.get("week52_low")
         if wk52_h and wk52_l and wk52_h > wk52_l:
             pct_from_high = (price - wk52_h) / wk52_h * 100
-            pct_from_low  = (price - wk52_l) / wk52_l * 100
+            pct_from_low = (price - wk52_l) / wk52_l * 100
             if pct_from_high > -3:
                 momentum_score += 10
-                rationale.append({"src": "Technical", "head": "Near 52-Week High — Breakout Zone",
-                    "body": f"Price is within 3% of its 52-week high (${wk52_h:.2f}). Potential breakout; strong momentum.",
-                    "sentiment": "pos", "meta": f"52W High ${wk52_h:.2f} | {pct_from_high:.1f}% away"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Near 52-Week High — Breakout Zone",
+                        "body": f"Price is within 3% of its 52-week high (${wk52_h:.2f}). Potential breakout; strong momentum.",
+                        "sentiment": "pos",
+                        "meta": f"52W High ${wk52_h:.2f} | {pct_from_high:.1f}% away",
+                    }
+                )
             elif pct_from_low < 10:
                 mean_rev_score += 8
-                rationale.append({"src": "Technical", "head": "Near 52-Week Low — Deep Value Zone",
-                    "body": f"Price is within 10% of its 52-week low (${wk52_l:.2f}). Oversold on annual basis.",
-                    "sentiment": "pos", "meta": f"52W Low ${wk52_l:.2f} | +{pct_from_low:.1f}% from bottom"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Near 52-Week Low — Deep Value Zone",
+                        "body": f"Price is within 10% of its 52-week low (${wk52_l:.2f}). Oversold on annual basis.",
+                        "sentiment": "pos",
+                        "meta": f"52W Low ${wk52_l:.2f} | +{pct_from_low:.1f}% from bottom",
+                    }
+                )
 
         # ── Candlestick Pattern ─────────────────────────────────────────
         pattern = tech.get("candle_pattern")
         if pattern == "hammer":
             score += 12
-            rationale.append({"src": "Technical", "head": "Hammer Candle — Bullish Reversal",
-                "body": "Hammer pattern detected: buyers rejected lower prices, closing near the high. Classic reversal signal.",
-                "sentiment": "pos", "meta": "Candlestick: Hammer"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "Hammer Candle — Bullish Reversal",
+                    "body": "Hammer pattern detected: buyers rejected lower prices, closing near the high. Classic reversal signal.",
+                    "sentiment": "pos",
+                    "meta": "Candlestick: Hammer",
+                }
+            )
         elif pattern == "bullish_engulfing":
             score += 12
-            rationale.append({"src": "Technical", "head": "Bullish Engulfing Pattern",
-                "body": "Today's candle fully engulfs yesterday's bearish candle. Strong buyer conviction.",
-                "sentiment": "pos", "meta": "Candlestick: Bullish Engulfing"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "Bullish Engulfing Pattern",
+                    "body": "Today's candle fully engulfs yesterday's bearish candle. Strong buyer conviction.",
+                    "sentiment": "pos",
+                    "meta": "Candlestick: Bullish Engulfing",
+                }
+            )
         elif pattern == "shooting_star":
             score -= 12
-            rationale.append({"src": "Technical", "head": "Shooting Star — Bearish Reversal",
-                "body": "Shooting star detected: sellers rejected higher prices, closing near the low. Distribution signal.",
-                "sentiment": "neg", "meta": "Candlestick: Shooting Star"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "Shooting Star — Bearish Reversal",
+                    "body": "Shooting star detected: sellers rejected higher prices, closing near the low. Distribution signal.",
+                    "sentiment": "neg",
+                    "meta": "Candlestick: Shooting Star",
+                }
+            )
         elif pattern == "bearish_engulfing":
             score -= 12
-            rationale.append({"src": "Technical", "head": "Bearish Engulfing Pattern",
-                "body": "Today's candle fully engulfs yesterday's bullish candle. Strong seller conviction.",
-                "sentiment": "neg", "meta": "Candlestick: Bearish Engulfing"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "Bearish Engulfing Pattern",
+                    "body": "Today's candle fully engulfs yesterday's bullish candle. Strong seller conviction.",
+                    "sentiment": "neg",
+                    "meta": "Candlestick: Bearish Engulfing",
+                }
+            )
         elif pattern == "doji":
             # Doji = indecision; only noteworthy in context of a strong prior trend
             if score > 15:
                 score -= 5
-                rationale.append({"src": "Technical", "head": "Doji — Momentum Stalling",
-                    "body": "Doji candle after bullish run. Buyers and sellers at equilibrium — potential reversal.",
-                    "sentiment": "neg", "meta": "Candlestick: Doji"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Doji — Momentum Stalling",
+                        "body": "Doji candle after bullish run. Buyers and sellers at equilibrium — potential reversal.",
+                        "sentiment": "neg",
+                        "meta": "Candlestick: Doji",
+                    }
+                )
             elif score < -15:
                 score += 5
-                rationale.append({"src": "Technical", "head": "Doji — Bearish Momentum Stalling",
-                    "body": "Doji candle after bearish run. Potential exhaustion of selling pressure.",
-                    "sentiment": "pos", "meta": "Candlestick: Doji"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Doji — Bearish Momentum Stalling",
+                        "body": "Doji candle after bearish run. Potential exhaustion of selling pressure.",
+                        "sentiment": "pos",
+                        "meta": "Candlestick: Doji",
+                    }
+                )
 
         # PIVOT (S1/R1) scoring removed — alpha decomp v6/v7 confirmed redundant
         # (ΔSharpe = +0.01 when removed; information already captured by BB/VWAP bands)
@@ -2342,22 +2933,33 @@ async def generate_signal(
         if vol_ratio < 0.80:
             # Low-volume signal — flag for confidence penalty applied at the end
             vol_confidence_penalty = 0.10
-            rationale.append({"src": "Technical",
-                "head": f"Low Volume — Conviction Reduced ({vol_ratio:.0%} of avg)",
-                "body": (f"Today's volume ({volume:,}) is only {vol_ratio:.0%} of the 20-day average. "
-                         "Low-volume price moves lack institutional participation and are more "
-                         "prone to reversal. Signal confidence reduced."),
-                "sentiment": "neg",
-                "meta": f"RVOL {vol_ratio:.2f}× | Avg {avg_vol:,}"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": f"Low Volume — Conviction Reduced ({vol_ratio:.0%} of avg)",
+                    "body": (
+                        f"Today's volume ({volume:,}) is only {vol_ratio:.0%} of the 20-day average. "
+                        "Low-volume price moves lack institutional participation and are more "
+                        "prone to reversal. Signal confidence reduced."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"RVOL {vol_ratio:.2f}× | Avg {avg_vol:,}",
+                }
+            )
         elif vol_ratio > 1.5:
             # Routed into volume_score (not direct score) so it is capped alongside
             # OBV/CMF — prevents 8 pts bypassing the volume family cap entirely.
             _vol_conf = 8 if score >= 0 else -8
             volume_score += _vol_conf
-            rationale.append({"src": "Technical", "head": "High-Volume Confirmation",
-                "body": f"Volume {vol_ratio:.1f}× 20-day average — conviction behind the move.",
-                "sentiment": "pos" if _vol_conf > 0 else "neg",
-                "meta": f"Vol {volume:,} | Avg {avg_vol:,}"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "High-Volume Confirmation",
+                    "body": f"Volume {vol_ratio:.1f}× 20-day average — conviction behind the move.",
+                    "sentiment": "pos" if _vol_conf > 0 else "neg",
+                    "meta": f"Vol {volume:,} | Avg {avg_vol:,}",
+                }
+            )
 
         # ── Short Interest (squeeze potential) ──────────────────────────
         short_float = info.get("short_float_pct")
@@ -2367,6 +2969,7 @@ async def generate_signal(
         if short_float is None:
             try:
                 from services.polygon_reference import get_float_data
+
                 _fdata = await get_float_data(ticker)
                 _float_shares = _fdata.get("float_shares")
                 _total_shares = _fdata.get("total_shares")
@@ -2377,8 +2980,10 @@ async def generate_signal(
                 _shares_short = info.get("shares_short")
                 if _float_shares and _float_shares > 0 and _shares_short:
                     short_float = round(_shares_short / _float_shares * 100, 1)
-                    log.debug(f"[signal_engine] {ticker} float from Polygon: "
-                              f"{_float_shares:,} → short_float={short_float:.1f}%")
+                    log.debug(
+                        f"[signal_engine] {ticker} float from Polygon: "
+                        f"{_float_shares:,} → short_float={short_float:.1f}%"
+                    )
             except Exception:
                 pass
         if short_float is not None:
@@ -2387,51 +2992,79 @@ async def generate_signal(
                 # Classic squeeze setup: both thresholds met — high conviction
                 score += 12
                 sources.add("Short Interest")
-                rationale.append({"src": "Short Interest",
-                    "head": f"High-Conviction Squeeze Setup — {short_float:.1f}% Float Short",
-                    "body": (f"{short_float:.1f}% of float is sold short with {short_ratio:.1f} days-to-cover. "
-                             "Both thresholds confirm a short squeeze setup: any sustained upward move forces "
-                             "rapid, mechanically-driven short covering."),
-                    "sentiment": "pos",
-                    "meta": f"Short Float {short_float:.1f}% | DTC {short_ratio:.1f}d"})
+                rationale.append(
+                    {
+                        "src": "Short Interest",
+                        "head": f"High-Conviction Squeeze Setup — {short_float:.1f}% Float Short",
+                        "body": (
+                            f"{short_float:.1f}% of float is sold short with {short_ratio:.1f} days-to-cover. "
+                            "Both thresholds confirm a short squeeze setup: any sustained upward move forces "
+                            "rapid, mechanically-driven short covering."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Short Float {short_float:.1f}% | DTC {short_ratio:.1f}d",
+                    }
+                )
             elif short_float > 20 and score > 5:
                 # High float short but low days-to-cover — partial squeeze signal
                 score += 7
                 sources.add("Short Interest")
                 ratio_str = f" Days-to-cover: {short_ratio:.1f}." if short_ratio else ""
-                rationale.append({"src": "Short Interest",
-                    "head": f"High Short Float {short_float:.1f}% — Squeeze Potential",
-                    "body": (f"{short_float:.1f}% of float is sold short.{ratio_str} "
-                             "Rising price with heavy short interest can trigger forced short covering."),
-                    "sentiment": "pos",
-                    "meta": f"Short Float {short_float:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Short Interest",
+                        "head": f"High Short Float {short_float:.1f}% — Squeeze Potential",
+                        "body": (
+                            f"{short_float:.1f}% of float is sold short.{ratio_str} "
+                            "Rising price with heavy short interest can trigger forced short covering."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Short Float {short_float:.1f}%",
+                    }
+                )
             elif short_float > 20 and dtc_ok and score < -10:
                 # Symmetric to the +12 squeeze BUY: high short interest with strong
                 # days-to-cover, but on a confirmed bearish signal = institutional
                 # conviction confirmation. Was previously asymmetric (only -5 pts).
                 score -= 12
                 sources.add("Short Interest")
-                rationale.append({"src": "Short Interest",
-                    "head": f"High Short Interest Confirms Bear — {short_float:.1f}% Float Short",
-                    "body": (f"{short_float:.1f}% of float is sold short with {short_ratio:.1f}d DTC. "
-                             "High institutional conviction backs the bearish thesis — significant "
-                             "short positioning rarely placed without fundamental justification."),
-                    "sentiment": "neg",
-                    "meta": f"Short Float {short_float:.1f}% | DTC {short_ratio:.1f}d"})
+                rationale.append(
+                    {
+                        "src": "Short Interest",
+                        "head": f"High Short Interest Confirms Bear — {short_float:.1f}% Float Short",
+                        "body": (
+                            f"{short_float:.1f}% of float is sold short with {short_ratio:.1f}d DTC. "
+                            "High institutional conviction backs the bearish thesis — significant "
+                            "short positioning rarely placed without fundamental justification."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Short Float {short_float:.1f}% | DTC {short_ratio:.1f}d",
+                    }
+                )
             elif short_float > 20 and score < -10:
                 score -= 7
                 sources.add("Short Interest")
-                rationale.append({"src": "Short Interest",
-                    "head": f"Heavy Short Float Confirms Bear — {short_float:.1f}%",
-                    "body": f"{short_float:.1f}% of float is short — strong institutional conviction in the bearish thesis.",
-                    "sentiment": "neg", "meta": f"Short Float {short_float:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Short Interest",
+                        "head": f"Heavy Short Float Confirms Bear — {short_float:.1f}%",
+                        "body": f"{short_float:.1f}% of float is short — strong institutional conviction in the bearish thesis.",
+                        "sentiment": "neg",
+                        "meta": f"Short Float {short_float:.1f}%",
+                    }
+                )
             elif short_float > 15 and score < -5:
                 score -= 5
                 sources.add("Short Interest")
-                rationale.append({"src": "Short Interest",
-                    "head": f"Elevated Short Interest {short_float:.1f}%",
-                    "body": f"{short_float:.1f}% of float is short — moderate institutional conviction in bearish thesis.",
-                    "sentiment": "neg", "meta": f"Short Float {short_float:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Short Interest",
+                        "head": f"Elevated Short Interest {short_float:.1f}%",
+                        "body": f"{short_float:.1f}% of float is short — moderate institutional conviction in bearish thesis.",
+                        "sentiment": "neg",
+                        "meta": f"Short Float {short_float:.1f}%",
+                    }
+                )
 
         # ── 52-Week Range Position ───────────────────────────────────────────
         # George & Hwang (2004): stocks within 5% of their 52wk high outperform
@@ -2446,67 +3079,111 @@ async def generate_signal(
             sources.add("Technicals")
             if _pos >= 0.90:
                 score += 4
-                rationale.append({"src": "Technicals",
-                    "head": f"Near 52-Week High — {_pos_pct:.0f}th Percentile of Range",
-                    "body": (f"Price is in the top {100-_pos_pct:.0f}% of its 52-week range "
-                             f"(${_wk52l:.2f}–${_wk52h:.2f}). Near-52wk-high stocks outperform by "
-                             "6-8% annually in academic studies — momentum continuation signal."),
-                    "sentiment": "pos", "meta": f"52w_pos={_pos_pct:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technicals",
+                        "head": f"Near 52-Week High — {_pos_pct:.0f}th Percentile of Range",
+                        "body": (
+                            f"Price is in the top {100 - _pos_pct:.0f}% of its 52-week range "
+                            f"(${_wk52l:.2f}–${_wk52h:.2f}). Near-52wk-high stocks outperform by "
+                            "6-8% annually in academic studies — momentum continuation signal."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"52w_pos={_pos_pct:.1f}%",
+                    }
+                )
             elif _pos >= 0.75:
                 score += 2
-                rationale.append({"src": "Technicals",
-                    "head": f"Upper Quartile of 52-Week Range — {_pos_pct:.0f}th Percentile",
-                    "body": f"Price in upper 25% of 52-week range — mild momentum confirmation.",
-                    "sentiment": "pos", "meta": f"52w_pos={_pos_pct:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technicals",
+                        "head": f"Upper Quartile of 52-Week Range — {_pos_pct:.0f}th Percentile",
+                        "body": "Price in upper 25% of 52-week range — mild momentum confirmation.",
+                        "sentiment": "pos",
+                        "meta": f"52w_pos={_pos_pct:.1f}%",
+                    }
+                )
             elif _pos <= 0.10:
                 score -= 4
-                rationale.append({"src": "Technicals",
-                    "head": f"Near 52-Week Low — {_pos_pct:.0f}th Percentile of Range",
-                    "body": (f"Price in the bottom {_pos_pct:.0f}% of its 52-week range. "
-                             "Near-52wk-low stocks systematically underperform — value trap risk. "
-                             "Require much stronger fundamental catalyst before buying."),
-                    "sentiment": "neg", "meta": f"52w_pos={_pos_pct:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technicals",
+                        "head": f"Near 52-Week Low — {_pos_pct:.0f}th Percentile of Range",
+                        "body": (
+                            f"Price in the bottom {_pos_pct:.0f}% of its 52-week range. "
+                            "Near-52wk-low stocks systematically underperform — value trap risk. "
+                            "Require much stronger fundamental catalyst before buying."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"52w_pos={_pos_pct:.1f}%",
+                    }
+                )
             elif _pos <= 0.25:
                 score -= 2
-                rationale.append({"src": "Technicals",
-                    "head": f"Lower Quartile of 52-Week Range — {_pos_pct:.0f}th Percentile",
-                    "body": f"Price in bottom 25% of 52-week range — mild downtrend confirmation.",
-                    "sentiment": "neg", "meta": f"52w_pos={_pos_pct:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technicals",
+                        "head": f"Lower Quartile of 52-Week Range — {_pos_pct:.0f}th Percentile",
+                        "body": "Price in bottom 25% of 52-week range — mild downtrend confirmation.",
+                        "sentiment": "neg",
+                        "meta": f"52w_pos={_pos_pct:.1f}%",
+                    }
+                )
 
         # ── Institutional & Insider Ownership ────────────────────────────────
         # High insider ownership = management conviction (skin-in-the-game).
         # High institutional ownership validates the thesis but also signals
         # crowded positioning risk. Uses yfinance free fields.
-        action = _score_to_action(score)[0]   # preliminary direction for conditional checks
-        _inst_own  = info.get("held_pct_inst")     # e.g. 0.657 = 65.7%
+        action = _score_to_action(score)[0]  # preliminary direction for conditional checks
+        _inst_own = info.get("held_pct_inst")  # e.g. 0.657 = 65.7%
         _insid_own = info.get("held_pct_insiders")  # e.g. 0.016 = 1.6%
         if _insid_own is not None and not _is_lev_etf:
-            if _insid_own > 0.15:   # >15% insider ownership
+            if _insid_own > 0.15:  # >15% insider ownership
                 score += 3
                 sources.add("Fundamentals")
-                rationale.append({"src": "Fundamentals",
-                    "head": f"High Insider Ownership — {_insid_own*100:.1f}%",
-                    "body": (f"Insiders hold {_insid_own*100:.1f}% of shares — strong skin-in-the-game "
-                             "alignment. High insider ownership is a quality signal: management is "
-                             "directly incentivised by share price performance."),
-                    "sentiment": "pos", "meta": f"insider_own={_insid_own*100:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"High Insider Ownership — {_insid_own * 100:.1f}%",
+                        "body": (
+                            f"Insiders hold {_insid_own * 100:.1f}% of shares — strong skin-in-the-game "
+                            "alignment. High insider ownership is a quality signal: management is "
+                            "directly incentivised by share price performance."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"insider_own={_insid_own * 100:.1f}%",
+                    }
+                )
             elif _insid_own < 0.005 and action == "BUY":  # <0.5% insider ownership
                 score -= 1
-                rationale.append({"src": "Fundamentals",
-                    "head": f"Very Low Insider Ownership — {_insid_own*100:.2f}%",
-                    "body": (f"Insiders hold only {_insid_own*100:.2f}% — management has minimal "
-                             "direct financial stake. Slightly reduces conviction on BUY signals."),
-                    "sentiment": "neg", "meta": f"insider_own={_insid_own*100:.2f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Very Low Insider Ownership — {_insid_own * 100:.2f}%",
+                        "body": (
+                            f"Insiders hold only {_insid_own * 100:.2f}% — management has minimal "
+                            "direct financial stake. Slightly reduces conviction on BUY signals."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"insider_own={_insid_own * 100:.2f}%",
+                    }
+                )
         if _inst_own is not None and not _is_lev_etf:
-            if _inst_own > 0.80:    # >80% = very crowded institutional trade
+            if _inst_own > 0.80:  # >80% = very crowded institutional trade
                 sources.add("Fundamentals")
-                rationale.append({"src": "Fundamentals",
-                    "head": f"Crowded Institutional Trade — {_inst_own*100:.1f}% Held",
-                    "body": (f"{_inst_own*100:.1f}% of shares are held by institutions — heavily crowded. "
-                             "While this validates the thesis, crowded trades are vulnerable to "
-                             "rapid de-risking when sentiment shifts."),
-                    "sentiment": "neg" if action == "BUY" else "pos",
-                    "meta": f"inst_own={_inst_own*100:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Crowded Institutional Trade — {_inst_own * 100:.1f}% Held",
+                        "body": (
+                            f"{_inst_own * 100:.1f}% of shares are held by institutions — heavily crowded. "
+                            "While this validates the thesis, crowded trades are vulnerable to "
+                            "rapid de-risking when sentiment shifts."
+                        ),
+                        "sentiment": "neg" if action == "BUY" else "pos",
+                        "meta": f"inst_own={_inst_own * 100:.1f}%",
+                    }
+                )
 
         # ── News sentiment (Benzinga RT + Finnhub + Reuters/Finviz) ─────────
         # Priority: Massive Benzinga (pre-scored, <2min latency) first.
@@ -2518,15 +3195,18 @@ async def generate_signal(
         # Inject Benzinga articles (already scored, age-decayed) as highest-priority
         try:
             from services.benzinga_news import get_benzinga_news
+
             _bzg_articles = await get_benzinga_news(ticker)
             for _a in _bzg_articles:
-                _all_news.append({
-                    "headline":  _a["headline"],
-                    "sentiment": _a["sentiment"],   # already age-decayed
-                    "hours_ago": 0,                 # decay already applied
-                    "source":    "Benzinga",
-                    "summary":   _a["headline"],
-                })
+                _all_news.append(
+                    {
+                        "headline": _a["headline"],
+                        "sentiment": _a["sentiment"],  # already age-decayed
+                        "hours_ago": 0,  # decay already applied
+                        "source": "Benzinga",
+                        "summary": _a["headline"],
+                    }
+                )
             if _bzg_articles:
                 sources.add("Benzinga")
         except Exception:
@@ -2534,6 +3214,7 @@ async def generate_signal(
 
         def _nws(s: str) -> frozenset:
             import re as _re
+
             return frozenset(w.lower() for w in _re.split(r"\W+", s) if len(w) > 4)
 
         for _item in list(news or []) + list(scraped_news or []):
@@ -2548,7 +3229,7 @@ async def generate_signal(
             for n in _all_news:
                 w = 1.0 / (1.0 + n.get("hours_ago", 48) / 24.0)
                 weighted_s += n["sentiment"] * w
-                total_w    += w
+                total_w += w
             avg_sent = weighted_s / total_w if total_w > 0 else 0.0
 
             # Which external sources contributed?
@@ -2564,48 +3245,54 @@ async def generate_signal(
             _src_lbl = _top.get("source", "News")
             if avg_sent > 0.25:
                 score += min(15, round(avg_sent * 22))
-                rationale.append({
-                    "src":       _src_lbl,
-                    "head":      _top["headline"][:90],
-                    "body":      _top.get("summary", _top["headline"])[:250],
-                    "sentiment": "pos",
-                    "meta":      f"{_src_lbl} · {_top.get('hours_ago', '?')}h ago | {len(_all_news)} articles",
-                })
+                rationale.append(
+                    {
+                        "src": _src_lbl,
+                        "head": _top["headline"][:90],
+                        "body": _top.get("summary", _top["headline"])[:250],
+                        "sentiment": "pos",
+                        "meta": f"{_src_lbl} · {_top.get('hours_ago', '?')}h ago | {len(_all_news)} articles",
+                    }
+                )
             elif avg_sent < -0.25:
                 score += max(-15, round(avg_sent * 22))
-                rationale.append({
-                    "src":       _src_lbl,
-                    "head":      _top["headline"][:90],
-                    "body":      _top.get("summary", _top["headline"])[:250],
-                    "sentiment": "neg",
-                    "meta":      f"{_src_lbl} · {_top.get('hours_ago', '?')}h ago | {len(_all_news)} articles",
-                })
+                rationale.append(
+                    {
+                        "src": _src_lbl,
+                        "head": _top["headline"][:90],
+                        "body": _top.get("summary", _top["headline"])[:250],
+                        "sentiment": "neg",
+                        "meta": f"{_src_lbl} · {_top.get('hours_ago', '?')}h ago | {len(_all_news)} articles",
+                    }
+                )
 
         # ── SEC EDGAR — insider trades (Form 4) ─────────────────────────
         if insider and insider.get("filings", 0) > 0:
-            iscore   = insider["score"]
-            score   += iscore
+            iscore = insider["score"]
+            score += iscore
             if abs(iscore) >= 4:
                 sources.add("SEC EDGAR")
-                net  = insider["net_shares"]
+                net = insider["net_shares"]
                 verb = "Buying" if net > 0 else "Selling"
-                rationale.append({
-                    "src":       "SEC EDGAR",
-                    "head":      f"Insiders {verb} — {insider['filings']} Form 4s (30d)",
-                    "body":      (
-                        f"{insider['filings']} insider filings in last 30 days. "
-                        f"Net: {abs(net):,} shares {'acquired' if net > 0 else 'disposed'}. "
-                        f"Buy value ${insider['buy_value']:,.0f} | Sell value ${insider['sell_value']:,.0f}."
-                    ),
-                    "sentiment": "pos" if iscore > 0 else "neg",
-                    "meta":      f"Buys {insider['buys']:,} | Sells {insider['sells']:,}",
-                })
+                rationale.append(
+                    {
+                        "src": "SEC EDGAR",
+                        "head": f"Insiders {verb} — {insider['filings']} Form 4s (30d)",
+                        "body": (
+                            f"{insider['filings']} insider filings in last 30 days. "
+                            f"Net: {abs(net):,} shares {'acquired' if net > 0 else 'disposed'}. "
+                            f"Buy value ${insider['buy_value']:,.0f} | Sell value ${insider['sell_value']:,.0f}."
+                        ),
+                        "sentiment": "pos" if iscore > 0 else "neg",
+                        "meta": f"Buys {insider['buys']:,} | Sells {insider['sells']:,}",
+                    }
+                )
             # Confidence-level penalty when insider activity directly contradicts direction
             # (score already penalises the direction; this adds a conviction-level haircut)
             if insider.get("filings", 0) >= 3:
-                net       = insider.get("net_shares", 0) or 0
-                sell_val  = insider.get("sell_value",  0) or 0
-                buy_val   = insider.get("buy_value",   0) or 0
+                net = insider.get("net_shares", 0) or 0
+                sell_val = insider.get("sell_value", 0) or 0
+                buy_val = insider.get("buy_value", 0) or 0
                 if score > 0 and net < 0 and sell_val > 250_000:
                     insider_confidence_penalty = 0.10
                 elif score < 0 and net > 0 and buy_val > 250_000:
@@ -2614,33 +3301,49 @@ async def generate_signal(
         # ── Liquidity Ceiling (NAAIM > 90%) ─────────────────────────────
         aaii = (market_ctx or {}).get("aaii") or {}
         naaim_exposure = aaii.get("exposure", 50)
-        liquidity_ceiling = (naaim_exposure > 90)
+        liquidity_ceiling = naaim_exposure > 90
 
         # ── Relative Strength vs S&P 500 ────────────────────────────────
-        macro     = (market_ctx or {}).get("macro") or {}
-        spy_1m    = macro.get("spy_1m_ret")
+        macro = (market_ctx or {}).get("macro") or {}
+        spy_1m = macro.get("spy_1m_ret")
         if spy_1m is not None and len(df) >= 21:
-            close_arr   = df["Close"].astype(float)
-            ticker_1m   = (float(close_arr.iloc[-1]) / float(close_arr.iloc[-21]) - 1) * 100
+            close_arr = df["Close"].astype(float)
+            ticker_1m = (float(close_arr.iloc[-1]) / float(close_arr.iloc[-21]) - 1) * 100
             rel_strength = round(ticker_1m - spy_1m, 2)
             if rel_strength > 8:
                 if not liquidity_ceiling:
                     score += 12
                     sources.add("Relative Strength")
-                    rationale.append({"src": "Relative Strength", "head": f"Outperforming S&P 500 by {rel_strength:.1f}%",
-                        "body": (f"1-month return: {ticker_1m:+.1f}% vs S&P 500 {spy_1m:+.1f}%. "
-                                 f"Relative strength of +{rel_strength:.1f}% signals institutional accumulation."),
-                        "sentiment": "pos", "meta": f"1M: {ticker_1m:+.1f}% | SPY: {spy_1m:+.1f}%"})
+                    rationale.append(
+                        {
+                            "src": "Relative Strength",
+                            "head": f"Outperforming S&P 500 by {rel_strength:.1f}%",
+                            "body": (
+                                f"1-month return: {ticker_1m:+.1f}% vs S&P 500 {spy_1m:+.1f}%. "
+                                f"Relative strength of +{rel_strength:.1f}% signals institutional accumulation."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"1M: {ticker_1m:+.1f}% | SPY: {spy_1m:+.1f}%",
+                        }
+                    )
             elif rel_strength > 2:
                 if not liquidity_ceiling:
                     score += 4  # mild outperformance still a positive signal
             elif rel_strength < -8:
                 score -= 12
                 sources.add("Relative Strength")
-                rationale.append({"src": "Relative Strength", "head": f"Underperforming S&P 500 by {abs(rel_strength):.1f}%",
-                    "body": (f"1-month return: {ticker_1m:+.1f}% vs S&P 500 {spy_1m:+.1f}%. "
-                             f"Persistent underperformance suggests institutional selling or fundamental weakness."),
-                    "sentiment": "neg", "meta": f"1M: {ticker_1m:+.1f}% | SPY: {spy_1m:+.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Relative Strength",
+                        "head": f"Underperforming S&P 500 by {abs(rel_strength):.1f}%",
+                        "body": (
+                            f"1-month return: {ticker_1m:+.1f}% vs S&P 500 {spy_1m:+.1f}%. "
+                            f"Persistent underperformance suggests institutional selling or fundamental weakness."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"1M: {ticker_1m:+.1f}% | SPY: {spy_1m:+.1f}%",
+                    }
+                )
             elif rel_strength < -2:
                 score -= 5  # mild underperformance is a negative signal
             # Confidence penalty only for persistent underperformers (> -5% vs SPY).
@@ -2656,18 +3359,22 @@ async def generate_signal(
             score += bias
             if abs(bias) >= 7:
                 sources.add("Fear&Greed")
-                rationale.append({
-                    "src":       "Fear & Greed",
-                    "head":      f"Market {fg['label']} — F&G {fg['score']:.0f}/100",
-                    "body":      (
-                        f"CNN Fear & Greed Index at {fg['score']:.0f}/100 ({fg['label']}). "
-                        + ("Contrarian signal: extreme fear historically marks bottoms."
-                           if bias > 0 else
-                           "Contrarian signal: extreme greed historically precedes corrections.")
-                    ),
-                    "sentiment": fg["sentiment"],
-                    "meta":      f"F&G = {fg['score']:.0f} | 1w ago: {fg.get('prev_1w', '?')}",
-                })
+                rationale.append(
+                    {
+                        "src": "Fear & Greed",
+                        "head": f"Market {fg['label']} — F&G {fg['score']:.0f}/100",
+                        "body": (
+                            f"CNN Fear & Greed Index at {fg['score']:.0f}/100 ({fg['label']}). "
+                            + (
+                                "Contrarian signal: extreme fear historically marks bottoms."
+                                if bias > 0
+                                else "Contrarian signal: extreme greed historically precedes corrections."
+                            )
+                        ),
+                        "sentiment": fg["sentiment"],
+                        "meta": f"F&G = {fg['score']:.0f} | 1w ago: {fg.get('prev_1w', '?')}",
+                    }
+                )
 
         # ── Macro context (market-wide, passed from scanner) ────────────
         # Cap at ±8 per ticker so macro can't single-handedly push a weak
@@ -2675,7 +3382,7 @@ async def generate_signal(
         if macro and macro.get("macro_score"):
             m_score = macro["macro_score"]
             m_rationale = list(macro.get("rationale", []))
-            
+
             if liquidity_ceiling:
                 for item in list(m_rationale):
                     if "Copper/Gold" in item.get("head", "") and item.get("sentiment") == "pos":
@@ -2693,14 +3400,26 @@ async def generate_signal(
         if roc10 is not None:
             if roc10 > 8:
                 momentum_score += 8
-                rationale.append({"src": "Technical", "head": f"Strong Price Momentum +{roc10:.1f}% (10d)",
-                    "body": f"Price is up {roc10:.1f}% over the last 10 sessions. Momentum traders will follow.",
-                    "sentiment": "pos", "meta": f"ROC(10) = +{roc10:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Strong Price Momentum +{roc10:.1f}% (10d)",
+                        "body": f"Price is up {roc10:.1f}% over the last 10 sessions. Momentum traders will follow.",
+                        "sentiment": "pos",
+                        "meta": f"ROC(10) = +{roc10:.1f}%",
+                    }
+                )
             elif roc10 < -8:
                 momentum_score -= 8
-                rationale.append({"src": "Technical", "head": f"Negative Price Momentum {roc10:.1f}% (10d)",
-                    "body": f"Price is down {abs(roc10):.1f}% over the last 10 sessions. Selling pressure persists.",
-                    "sentiment": "neg", "meta": f"ROC(10) = {roc10:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Negative Price Momentum {roc10:.1f}% (10d)",
+                        "body": f"Price is down {abs(roc10):.1f}% over the last 10 sessions. Selling pressure persists.",
+                        "sentiment": "neg",
+                        "meta": f"ROC(10) = {roc10:.1f}%",
+                    }
+                )
             elif roc10 > 4:
                 momentum_score += 4
             elif roc10 < -4:
@@ -2714,38 +3433,74 @@ async def generate_signal(
         # three MACD signals (crossover, state, zero-cross) share one cap.
         if tech.get("macd_zero_cross_up"):
             trend_score += 10
-            rationale.append({"src": "Technical", "head": "MACD Crossed Zero — Trend Flipping Bullish",
-                "body": "MACD just crossed above zero. The underlying trend has shifted from bearish to bullish — stronger than a signal-line cross alone.",
-                "sentiment": "pos", "meta": f"MACD = {tech.get('macd', 0):.5f}"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "MACD Crossed Zero — Trend Flipping Bullish",
+                    "body": "MACD just crossed above zero. The underlying trend has shifted from bearish to bullish — stronger than a signal-line cross alone.",
+                    "sentiment": "pos",
+                    "meta": f"MACD = {tech.get('macd', 0):.5f}",
+                }
+            )
         elif tech.get("macd_zero_cross_down"):
             trend_score -= 10
-            rationale.append({"src": "Technical", "head": "MACD Crossed Zero — Trend Flipping Bearish",
-                "body": "MACD just crossed below zero. The underlying trend has shifted from bullish to bearish — stronger than a signal-line cross alone.",
-                "sentiment": "neg", "meta": f"MACD = {tech.get('macd', 0):.5f}"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "MACD Crossed Zero — Trend Flipping Bearish",
+                    "body": "MACD just crossed below zero. The underlying trend has shifted from bullish to bearish — stronger than a signal-line cross alone.",
+                    "sentiment": "neg",
+                    "meta": f"MACD = {tech.get('macd', 0):.5f}",
+                }
+            )
 
         # ── Z-Score Mean Reversion ───────────────────────────────────────
         zscore = tech.get("zscore")
         if zscore is not None:
             if zscore < -2.5:
                 mean_rev_score += 14
-                rationale.append({"src": "Technical", "head": f"Z-Score Extreme Oversold ({zscore:.1f}σ)",
-                    "body": f"Price is {abs(zscore):.1f} standard deviations below its 20-day average — statistically rare. Strong mean-reversion setup.",
-                    "sentiment": "pos", "meta": f"Z-Score = {zscore:.2f}σ"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Z-Score Extreme Oversold ({zscore:.1f}σ)",
+                        "body": f"Price is {abs(zscore):.1f} standard deviations below its 20-day average — statistically rare. Strong mean-reversion setup.",
+                        "sentiment": "pos",
+                        "meta": f"Z-Score = {zscore:.2f}σ",
+                    }
+                )
             elif zscore < -2.0:
                 mean_rev_score += 8
-                rationale.append({"src": "Technical", "head": f"Z-Score Oversold ({zscore:.1f}σ)",
-                    "body": f"Price {abs(zscore):.1f}σ below 20-day mean. Statistically stretched to the downside.",
-                    "sentiment": "pos", "meta": f"Z-Score = {zscore:.2f}σ"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Z-Score Oversold ({zscore:.1f}σ)",
+                        "body": f"Price {abs(zscore):.1f}σ below 20-day mean. Statistically stretched to the downside.",
+                        "sentiment": "pos",
+                        "meta": f"Z-Score = {zscore:.2f}σ",
+                    }
+                )
             elif zscore > 2.5:
                 mean_rev_score -= 14
-                rationale.append({"src": "Technical", "head": f"Z-Score Extreme Overbought (+{zscore:.1f}σ)",
-                    "body": f"Price is {zscore:.1f} standard deviations above its 20-day average — statistically rare. Mean-reversion risk is high.",
-                    "sentiment": "neg", "meta": f"Z-Score = +{zscore:.2f}σ"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Z-Score Extreme Overbought (+{zscore:.1f}σ)",
+                        "body": f"Price is {zscore:.1f} standard deviations above its 20-day average — statistically rare. Mean-reversion risk is high.",
+                        "sentiment": "neg",
+                        "meta": f"Z-Score = +{zscore:.2f}σ",
+                    }
+                )
             elif zscore > 2.0:
                 mean_rev_score -= 8
-                rationale.append({"src": "Technical", "head": f"Z-Score Overbought (+{zscore:.1f}σ)",
-                    "body": f"Price {zscore:.1f}σ above 20-day mean. Statistically stretched to the upside.",
-                    "sentiment": "neg", "meta": f"Z-Score = +{zscore:.2f}σ"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Z-Score Overbought (+{zscore:.1f}σ)",
+                        "body": f"Price {zscore:.1f}σ above 20-day mean. Statistically stretched to the upside.",
+                        "sentiment": "neg",
+                        "meta": f"Z-Score = +{zscore:.2f}σ",
+                    }
+                )
 
         # MFI scoring removed — alpha decomp v6/v7 confirmed redundant
         # (ΔSharpe = +0.04 when removed; volume-weighted RSI already captured by OBV + RSI)
@@ -2758,24 +3513,43 @@ async def generate_signal(
             sources.add("Technical")
             if ibs < 0.10:
                 mean_rev_score += 12
-                rationale.append({"src": "Technical",
-                    "head": f"IBS Extreme Oversold ({ibs:.2f}) — Close Near Daily Low",
-                    "body": (f"Close landed at only {ibs*100:.0f}% of today's range — extremely close to the session low. "
-                             "Strong single-bar mean-reversion signal: sellers exhausted, bounce likely next session."),
-                    "sentiment": "pos", "meta": f"IBS = {ibs:.3f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"IBS Extreme Oversold ({ibs:.2f}) — Close Near Daily Low",
+                        "body": (
+                            f"Close landed at only {ibs * 100:.0f}% of today's range — extremely close to the session low. "
+                            "Strong single-bar mean-reversion signal: sellers exhausted, bounce likely next session."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"IBS = {ibs:.3f}",
+                    }
+                )
             elif ibs < 0.20:
                 mean_rev_score += 8
-                rationale.append({"src": "Technical",
-                    "head": f"IBS Oversold ({ibs:.2f}) — Close Near Low",
-                    "body": f"IBS at {ibs:.2f} — close near the daily low. Sellers dominated intraday but may be tiring. Daily mean-reversion setup.",
-                    "sentiment": "pos", "meta": f"IBS = {ibs:.3f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"IBS Oversold ({ibs:.2f}) — Close Near Low",
+                        "body": f"IBS at {ibs:.2f} — close near the daily low. Sellers dominated intraday but may be tiring. Daily mean-reversion setup.",
+                        "sentiment": "pos",
+                        "meta": f"IBS = {ibs:.3f}",
+                    }
+                )
             elif ibs > 0.90:
                 mean_rev_score -= 10
-                rationale.append({"src": "Technical",
-                    "head": f"IBS Overbought ({ibs:.2f}) — Close Near Daily High",
-                    "body": (f"Close at {ibs*100:.0f}% of today's range — extremely close to the session high. "
-                             "Buyers dominated but may be exhausted. Distribution risk next session."),
-                    "sentiment": "neg", "meta": f"IBS = {ibs:.3f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"IBS Overbought ({ibs:.2f}) — Close Near Daily High",
+                        "body": (
+                            f"Close at {ibs * 100:.0f}% of today's range — extremely close to the session high. "
+                            "Buyers dominated but may be exhausted. Distribution risk next session."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"IBS = {ibs:.3f}",
+                    }
+                )
             elif ibs > 0.80:
                 mean_rev_score -= 6
             # Combined extremes: IBS + RSI both confirming = higher conviction
@@ -2793,60 +3567,96 @@ async def generate_signal(
         # Weekly RSI < 40 AND daily RSI < 35 = double-confirmed oversold (72% win rate).
         # Weekly price above SMA(20) AND daily above SMA(200) = multi-timeframe uptrend.
         if _poly_weekly:
-            _w_rsi  = _poly_weekly.get("weekly_rsi")
+            _w_rsi = _poly_weekly.get("weekly_rsi")
             _w_sma20 = _poly_weekly.get("weekly_sma20")
             if _w_rsi is not None and rsi is not None:
                 if _w_rsi < 40 and rsi < 35:
                     osc_score += 8  # double-confirmed oversold — into osc_score (capped in stretch bucket)
-                    rationale.append({"src": "Technical",
-                        "head": f"Double-Confirmed Oversold: Weekly RSI {_w_rsi:.1f} + Daily RSI {rsi:.1f}",
-                        "body": (f"Weekly RSI ({_w_rsi:.1f}) and daily RSI ({rsi:.1f}) are both in oversold territory. "
-                                 "Multi-timeframe RSI confluence has a 72% historical win rate vs 58% daily-only. "
-                                 "Institutional buyers watching this level."),
-                        "sentiment": "pos",
-                        "meta": f"W-RSI={_w_rsi:.1f} D-RSI={rsi:.1f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Double-Confirmed Oversold: Weekly RSI {_w_rsi:.1f} + Daily RSI {rsi:.1f}",
+                            "body": (
+                                f"Weekly RSI ({_w_rsi:.1f}) and daily RSI ({rsi:.1f}) are both in oversold territory. "
+                                "Multi-timeframe RSI confluence has a 72% historical win rate vs 58% daily-only. "
+                                "Institutional buyers watching this level."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"W-RSI={_w_rsi:.1f} D-RSI={rsi:.1f}",
+                        }
+                    )
                 elif _w_rsi > 70 and rsi > 65:
                     osc_score -= 6  # into osc_score (capped in stretch bucket)
-                    rationale.append({"src": "Technical",
-                        "head": f"Double-Confirmed Overbought: Weekly RSI {_w_rsi:.1f} + Daily RSI {rsi:.1f}",
-                        "body": (f"Both weekly ({_w_rsi:.1f}) and daily ({rsi:.1f}) RSI are elevated. "
-                                 "Multi-timeframe overbought alignment increases pullback risk significantly."),
-                        "sentiment": "neg",
-                        "meta": f"W-RSI={_w_rsi:.1f} D-RSI={rsi:.1f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Double-Confirmed Overbought: Weekly RSI {_w_rsi:.1f} + Daily RSI {rsi:.1f}",
+                            "body": (
+                                f"Both weekly ({_w_rsi:.1f}) and daily ({rsi:.1f}) RSI are elevated. "
+                                "Multi-timeframe overbought alignment increases pullback risk significantly."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"W-RSI={_w_rsi:.1f} D-RSI={rsi:.1f}",
+                        }
+                    )
             if _w_sma20 and sma200 and price:
                 _w_above = price > _w_sma20
                 _d_above = price > sma200
                 if _w_above and _d_above:
                     score += 4
-                    rationale.append({"src": "Technical",
-                        "head": "Multi-Timeframe Uptrend Confirmed",
-                        "body": (f"Price is above both weekly SMA(20) (${_w_sma20:.2f}) and daily SMA(200) (${sma200:.2f}). "
-                                 "Dual-timeframe trend alignment: intermediate and long-term trends both bullish."),
-                        "sentiment": "pos",
-                        "meta": f"W-SMA20=${_w_sma20:.2f} D-SMA200=${sma200:.2f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": "Multi-Timeframe Uptrend Confirmed",
+                            "body": (
+                                f"Price is above both weekly SMA(20) (${_w_sma20:.2f}) and daily SMA(200) (${sma200:.2f}). "
+                                "Dual-timeframe trend alignment: intermediate and long-term trends both bullish."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"W-SMA20=${_w_sma20:.2f} D-SMA200=${sma200:.2f}",
+                        }
+                    )
                 elif not _w_above and not _d_above:
                     score -= 4
-                    rationale.append({"src": "Technical",
-                        "head": "Multi-Timeframe Downtrend Confirmed",
-                        "body": (f"Price is below both weekly SMA(20) (${_w_sma20:.2f}) and daily SMA(200) (${sma200:.2f}). "
-                                 "Dual-timeframe downtrend."),
-                        "sentiment": "neg",
-                        "meta": f"W-SMA20=${_w_sma20:.2f} D-SMA200=${sma200:.2f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": "Multi-Timeframe Downtrend Confirmed",
+                            "body": (
+                                f"Price is below both weekly SMA(20) (${_w_sma20:.2f}) and daily SMA(200) (${sma200:.2f}). "
+                                "Dual-timeframe downtrend."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"W-SMA20=${_w_sma20:.2f} D-SMA200=${sma200:.2f}",
+                        }
+                    )
 
         # ── Bollinger Band Squeeze + %B ──────────────────────────────────
         bb_squeeze = tech.get("bb_squeeze", False)
-        bb_pct_b   = tech.get("bb_pct_b")
+        bb_pct_b = tech.get("bb_pct_b")
         if bb_squeeze and bb_pct_b is not None:
             if bb_pct_b > 0.5:
                 mean_rev_score += 8
-                rationale.append({"src": "Technical", "head": "Bollinger Squeeze — Upside Breakout Setup",
-                    "body": "Bollinger Bands are at their tightest in 20 days (low volatility). Price sits in the upper half — compression before expansion, likely upward.",
-                    "sentiment": "pos", "meta": f"BB%B = {bb_pct_b:.2f} | Squeeze ON"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Bollinger Squeeze — Upside Breakout Setup",
+                        "body": "Bollinger Bands are at their tightest in 20 days (low volatility). Price sits in the upper half — compression before expansion, likely upward.",
+                        "sentiment": "pos",
+                        "meta": f"BB%B = {bb_pct_b:.2f} | Squeeze ON",
+                    }
+                )
             else:
                 mean_rev_score -= 8
-                rationale.append({"src": "Technical", "head": "Bollinger Squeeze — Downside Breakout Risk",
-                    "body": "Bollinger Bands at 20-day minimum width. Price in lower half — volatility compression before a likely breakdown.",
-                    "sentiment": "neg", "meta": f"BB%B = {bb_pct_b:.2f} | Squeeze ON"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Bollinger Squeeze — Downside Breakout Risk",
+                        "body": "Bollinger Bands at 20-day minimum width. Price in lower half — volatility compression before a likely breakdown.",
+                        "sentiment": "neg",
+                        "meta": f"BB%B = {bb_pct_b:.2f} | Squeeze ON",
+                    }
+                )
         elif bb_pct_b is not None:
             if bb_pct_b < 0.05:
                 mean_rev_score += 5
@@ -2876,12 +3686,19 @@ async def generate_signal(
             _kc_rsi = rsi if isinstance(rsi, (int, float)) else 50.0
             if price > kc_upper:
                 score += 8
-                rationale.append({"src": "Technical",
-                    "head": f"Keltner Channel Breakout (${kc_upper:.2f})",
-                    "body": (f"Price ${price:.2f} broke above the upper Keltner Channel "
-                             f"(${kc_upper:.2f}). ATR-based channels filter noise better than "
-                             "Bollinger — a KC breakout signals genuine momentum, not just volatility expansion."),
-                    "sentiment": "pos", "meta": f"KC Upper: ${kc_upper:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Keltner Channel Breakout (${kc_upper:.2f})",
+                        "body": (
+                            f"Price ${price:.2f} broke above the upper Keltner Channel "
+                            f"(${kc_upper:.2f}). ATR-based channels filter noise better than "
+                            "Bollinger — a KC breakout signals genuine momentum, not just volatility expansion."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"KC Upper: ${kc_upper:.2f}",
+                    }
+                )
             elif price < kc_lower:
                 if _kc_rsi is not None and _kc_rsi < 42:
                     # MR-contrarian: ATR-extreme oversold = bounce candidate (direct score)
@@ -2889,79 +3706,125 @@ async def generate_signal(
                     # was already assembled at line ~2200; second-block additions only affect
                     # the _stretch_total momentum dampener, not the score itself.
                     score += 8
-                    rationale.append({"src": "Technical",
-                        "head": f"Keltner Lower Breach — ATR-Extreme Oversold (RSI {_kc_rsi:.1f})",
-                        "body": (f"Price ${price:.2f} below lower Keltner Channel (${kc_lower:.2f}) "
-                                 f"with RSI {_kc_rsi:.1f}. KC breach on oversold RSI marks "
-                                 "ATR-extreme oversold — statistically strong mean-reversion setup."),
-                        "sentiment": "pos", "meta": f"KC Lower: ${kc_lower:.2f} | RSI: {_kc_rsi:.1f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Keltner Lower Breach — ATR-Extreme Oversold (RSI {_kc_rsi:.1f})",
+                            "body": (
+                                f"Price ${price:.2f} below lower Keltner Channel (${kc_lower:.2f}) "
+                                f"with RSI {_kc_rsi:.1f}. KC breach on oversold RSI marks "
+                                "ATR-extreme oversold — statistically strong mean-reversion setup."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"KC Lower: ${kc_lower:.2f} | RSI: {_kc_rsi:.1f}",
+                        }
+                    )
                 else:
                     # Momentum breakdown when not oversold
                     score -= 8
-                    rationale.append({"src": "Technical",
-                        "head": f"Keltner Channel Breakdown (${kc_lower:.2f})",
-                        "body": (f"Price ${price:.2f} fell below the lower Keltner Channel "
-                                 f"(${kc_lower:.2f}). KC breakdowns are high-conviction distribution signals."),
-                        "sentiment": "neg", "meta": f"KC Lower: ${kc_lower:.2f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Keltner Channel Breakdown (${kc_lower:.2f})",
+                            "body": (
+                                f"Price ${price:.2f} fell below the lower Keltner Channel "
+                                f"(${kc_lower:.2f}). KC breakdowns are high-conviction distribution signals."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"KC Lower: ${kc_lower:.2f}",
+                        }
+                    )
             elif price < kc_lower * 1.01 and _kc_rsi is not None and _kc_rsi < 50:
                 # Approaching lower KC from above = nearing support zone (direct score)
                 score += 5
-                rationale.append({"src": "Technical",
-                    "head": f"Approaching Keltner Support (${kc_lower:.2f})",
-                    "body": f"Price ${price:.2f} within 1% of lower Keltner Channel. ATR-based support approaching — watch for bounce.",
-                    "sentiment": "pos", "meta": f"KC Lower: ${kc_lower:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Approaching Keltner Support (${kc_lower:.2f})",
+                        "body": f"Price ${price:.2f} within 1% of lower Keltner Channel. ATR-based support approaching — watch for bounce.",
+                        "sentiment": "pos",
+                        "meta": f"KC Lower: ${kc_lower:.2f}",
+                    }
+                )
             # Bollinger Bands entirely inside KC = maximum volatility squeeze
             if bb_upper and bb_lower and bb_upper < kc_upper and bb_lower > kc_lower:
                 squeeze_sentiment = "pos" if score > 0 else "neg"
                 score += 4 if score > 0 else (-4 if score < 0 else 0)
-                rationale.append({"src": "Technical",
-                    "head": "Keltner–Bollinger Squeeze — Maximum Coil",
-                    "body": ("Bollinger Bands are fully contained within Keltner Channels — "
-                             "the tightest possible volatility compression. Historically this precedes "
-                             "explosive directional moves. The breakout direction is likely set."),
-                    "sentiment": squeeze_sentiment,
-                    "meta": f"BB inside KC | KC: ${kc_lower:.2f}–${kc_upper:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Keltner–Bollinger Squeeze — Maximum Coil",
+                        "body": (
+                            "Bollinger Bands are fully contained within Keltner Channels — "
+                            "the tightest possible volatility compression. Historically this precedes "
+                            "explosive directional moves. The breakout direction is likely set."
+                        ),
+                        "sentiment": squeeze_sentiment,
+                        "meta": f"BB inside KC | KC: ${kc_lower:.2f}–${kc_upper:.2f}",
+                    }
+                )
 
         # ── Donchian Channel (20-day) — MR-contrarian ────────────────────
         # Backtest-validated (alpha decomp v3): near 20-day low = extreme oversold
         # over a 20-session window = high-probability mean-reversion bounce setup.
         # Near 20-day high = momentum continuation (routes to momentum_score).
-        _dc_low  = tech.get("donchian_low")
+        _dc_low = tech.get("donchian_low")
         _dc_high = tech.get("donchian_high")
         _dc_lowp = tech.get("donchian_low_p")
-        _dc_hip  = tech.get("donchian_high_p")
+        _dc_hip = tech.get("donchian_high_p")
         _dc_rsi = rsi if isinstance(rsi, (int, float)) else 50.0
         if _dc_low and _dc_high and _dc_high > _dc_low:
             sources.add("Technical")
             _dc_range = _dc_high - _dc_low
-            _dc_pos   = (price - _dc_low) / _dc_range   # 0 = at 20d low, 1 = at 20d high
+            _dc_pos = (price - _dc_low) / _dc_range  # 0 = at 20d low, 1 = at 20d high
             # MR path: only activate when approaching oversold (RSI < 45)
             # avoids double-counting with the existing Donchian momentum block (line ~3460)
             if _dc_lowp and price <= _dc_lowp * 1.002 and _dc_rsi is not None and _dc_rsi < 45:
                 # New 20-day low on oversold RSI (direct score — mean_rev_score already assembled)
                 score += 8
-                rationale.append({"src": "Technical",
-                    "head": f"New 20-Day Low — Donchian Oversold Extension (RSI {_dc_rsi:.1f})",
-                    "body": (f"Price ${price:.2f} at new 20-session low (${_dc_low:.2f}) "
-                             f"with RSI {_dc_rsi:.1f}. Double-confirmed oversold: Donchian extension + "
-                             "approaching RSI oversold. High-probability mean-reversion bounce zone."),
-                    "sentiment": "pos", "meta": f"20d Low: ${_dc_low:.2f} | RSI: {_dc_rsi:.1f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"New 20-Day Low — Donchian Oversold Extension (RSI {_dc_rsi:.1f})",
+                        "body": (
+                            f"Price ${price:.2f} at new 20-session low (${_dc_low:.2f}) "
+                            f"with RSI {_dc_rsi:.1f}. Double-confirmed oversold: Donchian extension + "
+                            "approaching RSI oversold. High-probability mean-reversion bounce zone."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"20d Low: ${_dc_low:.2f} | RSI: {_dc_rsi:.1f}",
+                    }
+                )
             elif _dc_pos <= 0.10 and _dc_rsi is not None and _dc_rsi < 50:
                 # In bottom 10% of 20-day range with weakening RSI (direct score)
                 score += 5
-                rationale.append({"src": "Technical",
-                    "head": f"Near 20-Day Donchian Low — Oversold Zone",
-                    "body": (f"Price in bottom {_dc_pos*100:.0f}% of its 20-session range "
-                             f"(${_dc_low:.2f}–${_dc_high:.2f}). Extended below near-term value."),
-                    "sentiment": "pos", "meta": f"Donchian pos: {_dc_pos*100:.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Near 20-Day Donchian Low — Oversold Zone",
+                        "body": (
+                            f"Price in bottom {_dc_pos * 100:.0f}% of its 20-session range "
+                            f"(${_dc_low:.2f}–${_dc_high:.2f}). Extended below near-term value."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Donchian pos: {_dc_pos * 100:.0f}%",
+                    }
+                )
             elif _dc_hip and price >= _dc_hip * 0.998:
                 # At new 20-day high = momentum breakout
                 momentum_score += 8
-                rationale.append({"src": "Technical",
-                    "head": f"New 20-Day High — Donchian Breakout",
-                    "body": (f"Price ${price:.2f} at new 20-session high (${_dc_high:.2f}). "
-                             "20-day channel breakout signals accumulating institutional momentum."),
-                    "sentiment": "pos", "meta": f"20d High: ${_dc_high:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "New 20-Day High — Donchian Breakout",
+                        "body": (
+                            f"Price ${price:.2f} at new 20-session high (${_dc_high:.2f}). "
+                            "20-day channel breakout signals accumulating institutional momentum."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"20d High: ${_dc_high:.2f}",
+                    }
+                )
             elif _dc_pos >= 0.90:
                 # In top 10% of 20-day range = approaching breakout zone
                 momentum_score += 4
@@ -2973,18 +3836,31 @@ async def generate_signal(
         streak = tech.get("close_streak", 0)
         if streak >= 7:
             momentum_score += 8
-            rationale.append({"src": "Technical", "head": f"{streak} Straight Closes Above SMA20",
-                "body": f"Price has closed above its 20-day average for {streak} consecutive sessions. Persistent institutional buying.",
-                "sentiment": "pos", "meta": f"Streak: {streak} days above SMA20"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": f"{streak} Straight Closes Above SMA20",
+                    "body": f"Price has closed above its 20-day average for {streak} consecutive sessions. Persistent institutional buying.",
+                    "sentiment": "pos",
+                    "meta": f"Streak: {streak} days above SMA20",
+                }
+            )
         elif streak <= -7:
             # Extended weakness below SMA20 = bounce candidate (direct score — after mean_rev assembly)
             score += 7
-            rationale.append({"src": "Technical",
-                "head": f"{abs(streak)} Days Below SMA20 — Mean-Reversion Setup",
-                "body": (f"Price has closed below its 20-day average for {abs(streak)} straight sessions. "
-                         "Extended SMA20 undercuts are statistically reliable mean-reversion setups — "
-                         "the longer the streak, the higher the probability of a bounce to the moving average."),
-                "sentiment": "pos", "meta": f"Streak: {streak} days below SMA20"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": f"{abs(streak)} Days Below SMA20 — Mean-Reversion Setup",
+                    "body": (
+                        f"Price has closed below its 20-day average for {abs(streak)} straight sessions. "
+                        "Extended SMA20 undercuts are statistically reliable mean-reversion setups — "
+                        "the longer the streak, the higher the probability of a bounce to the moving average."
+                    ),
+                    "sentiment": "pos",
+                    "meta": f"Streak: {streak} days below SMA20",
+                }
+            )
         elif streak >= 4:
             momentum_score += 4
         elif streak <= -4:
@@ -2997,15 +3873,27 @@ async def generate_signal(
             if hyg_1m < -3:
                 score -= 8
                 sources.add("Macro")
-                rationale.append({"src": "Macro", "head": f"Credit Stress: HYG Down {hyg_1m:.1f}% (1M)",
-                    "body": "High-yield bonds are falling — a sign of rising credit stress. Risk assets (stocks) tend to follow bonds lower when credit deteriorates.",
-                    "sentiment": "neg", "meta": f"HYG 1M = {hyg_1m:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Macro",
+                        "head": f"Credit Stress: HYG Down {hyg_1m:.1f}% (1M)",
+                        "body": "High-yield bonds are falling — a sign of rising credit stress. Risk assets (stocks) tend to follow bonds lower when credit deteriorates.",
+                        "sentiment": "neg",
+                        "meta": f"HYG 1M = {hyg_1m:.1f}%",
+                    }
+                )
             elif hyg_1m > 2:
                 score += 5
                 sources.add("Macro")
-                rationale.append({"src": "Macro", "head": f"Credit Healthy: HYG Up {hyg_1m:.1f}% (1M)",
-                    "body": "High-yield bonds rising — credit markets are healthy. Risk-on environment favours equities.",
-                    "sentiment": "pos", "meta": f"HYG 1M = {hyg_1m:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Macro",
+                        "head": f"Credit Healthy: HYG Up {hyg_1m:.1f}% (1M)",
+                        "body": "High-yield bonds rising — credit markets are healthy. Risk-on environment favours equities.",
+                        "sentiment": "pos",
+                        "meta": f"HYG 1M = {hyg_1m:.1f}%",
+                    }
+                )
 
         # ── Post-Earnings Cooldown ───────────────────────────────────────
         # Days 0-2 after an earnings release: price discovery is still underway,
@@ -3018,23 +3906,35 @@ async def generate_signal(
             sources.add("Earnings")
             if _days_since <= 2:
                 score = 0
-                _force_hold = True   # subsequent signals must not re-open a directional trade
+                _force_hold = True  # subsequent signals must not re-open a directional trade
                 sources.add("Risk Gate")
-                rationale.append({"src": "Risk Gate",
-                    "head": f"Post-Earnings Blackout — {_days_since}d After Report ({_last_earnings})",
-                    "body": (f"Earnings were reported {_days_since} day(s) ago ({_last_earnings}). "
-                             "Price discovery and IV crush are still in progress — technical signals "
-                             "are unreliable immediately after earnings. Signal forced to HOLD."),
-                    "sentiment": "neg",
-                    "meta": f"POST-EARNINGS: {_days_since}d after {_last_earnings}"})
+                rationale.append(
+                    {
+                        "src": "Risk Gate",
+                        "head": f"Post-Earnings Blackout — {_days_since}d After Report ({_last_earnings})",
+                        "body": (
+                            f"Earnings were reported {_days_since} day(s) ago ({_last_earnings}). "
+                            "Price discovery and IV crush are still in progress — technical signals "
+                            "are unreliable immediately after earnings. Signal forced to HOLD."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"POST-EARNINGS: {_days_since}d after {_last_earnings}",
+                    }
+                )
             else:
                 score *= 0.80
-                rationale.append({"src": "Earnings",
-                    "head": f"Post-Earnings Settling — {_days_since}d After Report",
-                    "body": (f"Earnings {_days_since} days ago. Initial post-earnings reaction is "
-                             "still settling — conviction reduced until price normalises."),
-                    "sentiment": "neg",
-                    "meta": f"Last earnings: {_last_earnings}"})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"Post-Earnings Settling — {_days_since}d After Report",
+                        "body": (
+                            f"Earnings {_days_since} days ago. Initial post-earnings reaction is "
+                            "still settling — conviction reduced until price normalises."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Last earnings: {_last_earnings}",
+                    }
+                )
 
         # ── Earnings Proximity Risk ──────────────────────────────────────
         days_to_earnings = earnings_cal.get("days_to_earnings")
@@ -3045,77 +3945,118 @@ async def generate_signal(
                 # Hard blackout: binary event risk overrides ALL technical signals.
                 # IV typically spikes 20–50% into earnings — directional analysis fails.
                 score = 0
-                _force_hold = True   # subsequent signals must not re-open a directional trade
+                _force_hold = True  # subsequent signals must not re-open a directional trade
                 sources.add("Risk Gate")
-                rationale.append({"src": "Risk Gate",
-                    "head": f"Earnings Blackout — {days_to_earnings}d to Binary Event ({edate})",
-                    "body": (
-                        f"Earnings report in {days_to_earnings} day(s) ({edate}). "
-                        "All directional signals are hard-blocked: options implied volatility "
-                        "spikes 20–50% ahead of earnings, making price targets statistically "
-                        "unreliable. Signal forced to HOLD — reassess after the print."
-                    ),
-                    "sentiment": "neg", "meta": f"BLACKOUT: earnings {edate}"})
+                rationale.append(
+                    {
+                        "src": "Risk Gate",
+                        "head": f"Earnings Blackout — {days_to_earnings}d to Binary Event ({edate})",
+                        "body": (
+                            f"Earnings report in {days_to_earnings} day(s) ({edate}). "
+                            "All directional signals are hard-blocked: options implied volatility "
+                            "spikes 20–50% ahead of earnings, making price targets statistically "
+                            "unreliable. Signal forced to HOLD — reassess after the print."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"BLACKOUT: earnings {edate}",
+                    }
+                )
             elif days_to_earnings <= 5:
                 # No score penalty: live data (529 trades, §11c) shows 3-7d pre-earnings
                 # signals achieve 100% WR and +7.34% avg return vs 48.8% WR in the safe
                 # zone. Pre-earnings MR setups mean-revert sharply ahead of the print.
                 # Score multiplier removed — awareness note only.
-                rationale.append({"src": "Earnings",
-                    "head": f"Earnings in {days_to_earnings}d — Pre-Earnings Setup",
-                    "body": (f"Earnings report in {days_to_earnings} days ({edate}). "
-                             "IV will expand — options directional trades are expensive. "
-                             "Live data shows pre-earnings MR setups outperform: size accordingly."),
-                    "sentiment": "neg", "meta": f"Next earnings: {edate}"})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"Earnings in {days_to_earnings}d — Pre-Earnings Setup",
+                        "body": (
+                            f"Earnings report in {days_to_earnings} days ({edate}). "
+                            "IV will expand — options directional trades are expensive. "
+                            "Live data shows pre-earnings MR setups outperform: size accordingly."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Next earnings: {edate}",
+                    }
+                )
             elif days_to_earnings <= 7:
                 # Same rationale as ≤5d: live data shows 3-7d zone outperforms safe zone.
-                rationale.append({"src": "Earnings",
-                    "head": f"Earnings in {days_to_earnings}d — Pre-Earnings Awareness",
-                    "body": (f"Earnings report in {days_to_earnings} days ({edate}). "
-                             "Stocks often build positioning ahead of earnings — can support MR bounces."),
-                    "sentiment": "neg", "meta": f"Next earnings: {edate}"})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"Earnings in {days_to_earnings}d — Pre-Earnings Awareness",
+                        "body": (
+                            f"Earnings report in {days_to_earnings} days ({edate}). "
+                            "Stocks often build positioning ahead of earnings — can support MR bounces."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Next earnings: {edate}",
+                    }
+                )
             elif days_to_earnings <= 14:
                 # Live data: 8-14d zone shows 75% WR, +7.93% avg ret (vs 48.8% safe zone).
                 # Penalty removed — informational note only.
-                rationale.append({"src": "Earnings",
-                    "head": f"Earnings in {days_to_earnings}d — Awareness",
-                    "body": (f"Earnings report in {days_to_earnings} days ({edate}). "
-                             "Monitor IV expansion and analyst estimate revisions as the date approaches."),
-                    "sentiment": "neg", "meta": f"Next earnings: {edate}"})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"Earnings in {days_to_earnings}d — Awareness",
+                        "body": (
+                            f"Earnings report in {days_to_earnings} days ({edate}). "
+                            "Monitor IV expansion and analyst estimate revisions as the date approaches."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Next earnings: {edate}",
+                    }
+                )
 
         # ── Earnings Surprise History ─────────────────────────────────────
-        consec_beats    = earnings_surp.get("consec_beats", 0)
-        misses_4q       = earnings_surp.get("misses_last_4q", 0)
-        avg_surp_pct    = earnings_surp.get("avg_surprise_pct")
-        last_surp_pct   = earnings_surp.get("last_surprise_pct")
+        consec_beats = earnings_surp.get("consec_beats", 0)
+        misses_4q = earnings_surp.get("misses_last_4q", 0)
+        avg_surp_pct = earnings_surp.get("avg_surprise_pct")
+        last_surp_pct = earnings_surp.get("last_surprise_pct")
         if earnings_surp:
             sources.add("Earnings")
             if consec_beats >= 4:
                 mag_bonus = min(5, round(avg_surp_pct / 5)) if avg_surp_pct and avg_surp_pct > 0 else 0
                 score += 10 + mag_bonus
                 surp_str = f" avg beat magnitude: +{avg_surp_pct:.1f}%." if avg_surp_pct else ""
-                rationale.append({"src": "Earnings",
-                    "head": f"{consec_beats} Consecutive EPS Beats",
-                    "body": f"Company has beaten analyst EPS estimates for {consec_beats} consecutive quarters.{surp_str} Management consistently delivers positive surprises — strong execution.",
-                    "sentiment": "pos",
-                    "meta": f"Consec. beats: {consec_beats}" + (f" | Avg beat: +{avg_surp_pct:.1f}%" if avg_surp_pct else "")})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"{consec_beats} Consecutive EPS Beats",
+                        "body": f"Company has beaten analyst EPS estimates for {consec_beats} consecutive quarters.{surp_str} Management consistently delivers positive surprises — strong execution.",
+                        "sentiment": "pos",
+                        "meta": f"Consec. beats: {consec_beats}"
+                        + (f" | Avg beat: +{avg_surp_pct:.1f}%" if avg_surp_pct else ""),
+                    }
+                )
             elif consec_beats >= 2:
                 score += 5
-                surp_str = f" Last quarter beat by +{last_surp_pct:.1f}%." if last_surp_pct and last_surp_pct > 0 else ""
-                rationale.append({"src": "Earnings",
-                    "head": f"{consec_beats} Consecutive EPS Beats",
-                    "body": f"Company beat EPS estimates in the last {consec_beats} quarters.{surp_str}",
-                    "sentiment": "pos",
-                    "meta": f"Consec. beats: {consec_beats}"})
+                surp_str = (
+                    f" Last quarter beat by +{last_surp_pct:.1f}%." if last_surp_pct and last_surp_pct > 0 else ""
+                )
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"{consec_beats} Consecutive EPS Beats",
+                        "body": f"Company beat EPS estimates in the last {consec_beats} quarters.{surp_str}",
+                        "sentiment": "pos",
+                        "meta": f"Consec. beats: {consec_beats}",
+                    }
+                )
             elif misses_4q >= 3:
                 mag_penalty = min(4, round(abs(avg_surp_pct) / 5)) if avg_surp_pct and avg_surp_pct < 0 else 0
                 score -= 8 + mag_penalty
                 surp_str = f" avg miss magnitude: {avg_surp_pct:.1f}%." if avg_surp_pct else ""
-                rationale.append({"src": "Earnings",
-                    "head": f"Repeated EPS Misses ({misses_4q}/4 Quarters)",
-                    "body": f"Company missed analyst EPS estimates in {misses_4q} of the last 4 quarters.{surp_str} Guidance and execution are unreliable.",
-                    "sentiment": "neg",
-                    "meta": f"Misses: {misses_4q} of last 4Q"})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"Repeated EPS Misses ({misses_4q}/4 Quarters)",
+                        "body": f"Company missed analyst EPS estimates in {misses_4q} of the last 4 quarters.{surp_str} Guidance and execution are unreliable.",
+                        "sentiment": "neg",
+                        "meta": f"Misses: {misses_4q} of last 4Q",
+                    }
+                )
 
         # ── EPS Surprise Acceleration ─────────────────────────────────────────
         # Compares most-recent quarter surprise% to oldest (of last 4 quarters).
@@ -3123,44 +4064,64 @@ async def generate_signal(
         # kitchen-sink risk even if the company is technically still beating.
         # Data from Finnhub company_earnings() (free, added to earnings_surp dict).
         _surp_accel = (earnings_surp or {}).get("surprise_acceleration")
-        _surp_qtrs  = (earnings_surp or {}).get("quarterly_surprises", [])
+        _surp_qtrs = (earnings_surp or {}).get("quarterly_surprises", [])
         if _surp_accel is not None and not _is_lev_etf:
             sources.add("Earnings")
             _qtrs_str = " → ".join(f"{s:+.1f}%" for s in _surp_qtrs) if _surp_qtrs else ""
             if _surp_accel >= 5:
                 score += 5
-                rationale.append({"src": "Earnings",
-                    "head": f"EPS Beat Acceleration (+{_surp_accel:.1f}pp trend)",
-                    "body": (f"EPS surprise trajectory: {_qtrs_str}. "
-                             f"Beat magnitude accelerated by {_surp_accel:.1f}pp over 4 quarters. "
-                             "Accelerating beats signal improving execution and guidance credibility — "
-                             "analysts are systematically underestimating this company."),
-                    "sentiment": "pos",
-                    "meta": f"surp_acceleration={_surp_accel:+.1f}pp | quarters={_qtrs_str}"})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"EPS Beat Acceleration (+{_surp_accel:.1f}pp trend)",
+                        "body": (
+                            f"EPS surprise trajectory: {_qtrs_str}. "
+                            f"Beat magnitude accelerated by {_surp_accel:.1f}pp over 4 quarters. "
+                            "Accelerating beats signal improving execution and guidance credibility — "
+                            "analysts are systematically underestimating this company."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"surp_acceleration={_surp_accel:+.1f}pp | quarters={_qtrs_str}",
+                    }
+                )
             elif _surp_accel >= 2:
                 score += 2
-                rationale.append({"src": "Earnings",
-                    "head": f"EPS Beat Momentum (+{_surp_accel:.1f}pp)",
-                    "body": f"EPS surprises mildly accelerating: {_qtrs_str}. Modest positive momentum.",
-                    "sentiment": "pos",
-                    "meta": f"surp_acceleration={_surp_accel:+.1f}pp"})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"EPS Beat Momentum (+{_surp_accel:.1f}pp)",
+                        "body": f"EPS surprises mildly accelerating: {_qtrs_str}. Modest positive momentum.",
+                        "sentiment": "pos",
+                        "meta": f"surp_acceleration={_surp_accel:+.1f}pp",
+                    }
+                )
             elif _surp_accel <= -5:
                 score -= 5
-                rationale.append({"src": "Earnings",
-                    "head": f"EPS Beat Deceleration ({_surp_accel:.1f}pp trend)",
-                    "body": (f"EPS surprise trajectory: {_qtrs_str}. "
-                             f"Beat magnitude shrank by {abs(_surp_accel):.1f}pp over 4 quarters — "
-                             "deceleration risk. Even if the company is still beating, shrinking margins "
-                             "of surprise often precede an outright miss."),
-                    "sentiment": "neg",
-                    "meta": f"surp_acceleration={_surp_accel:+.1f}pp | quarters={_qtrs_str}"})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"EPS Beat Deceleration ({_surp_accel:.1f}pp trend)",
+                        "body": (
+                            f"EPS surprise trajectory: {_qtrs_str}. "
+                            f"Beat magnitude shrank by {abs(_surp_accel):.1f}pp over 4 quarters — "
+                            "deceleration risk. Even if the company is still beating, shrinking margins "
+                            "of surprise often precede an outright miss."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"surp_acceleration={_surp_accel:+.1f}pp | quarters={_qtrs_str}",
+                    }
+                )
             elif _surp_accel <= -2:
                 score -= 2
-                rationale.append({"src": "Earnings",
-                    "head": f"EPS Beat Momentum Fading ({_surp_accel:.1f}pp)",
-                    "body": f"EPS surprises mildly decelerating: {_qtrs_str}. Monitor closely.",
-                    "sentiment": "neg",
-                    "meta": f"surp_acceleration={_surp_accel:+.1f}pp"})
+                rationale.append(
+                    {
+                        "src": "Earnings",
+                        "head": f"EPS Beat Momentum Fading ({_surp_accel:.1f}pp)",
+                        "body": f"EPS surprises mildly decelerating: {_qtrs_str}. Monitor closely.",
+                        "sentiment": "neg",
+                        "meta": f"surp_acceleration={_surp_accel:+.1f}pp",
+                    }
+                )
 
         # ── NLP Earnings Tone Analysis (local LLM) ───────────────────────────
         # Analyses the most recent earnings-related news headlines for management
@@ -3168,21 +4129,30 @@ async def generate_signal(
         # indicators of fundamental weakness before financials reveal it.
         # Only fires when earnings are within 14 days or just passed (3 days).
         _days_to_earnings = (earnings_cal or {}).get("days_to_earnings")
-        _in_earnings_window = (
-            _days_to_earnings is not None and (
-                -3 <= _days_to_earnings <= 14
-            )
-        )
+        _in_earnings_window = _days_to_earnings is not None and (-3 <= _days_to_earnings <= 14)
         if _in_earnings_window and news:
             try:
-                from services.local_llm import get_llm_client, analyze_news_sentiment
+                from services.local_llm import analyze_news_sentiment, get_llm_client
+
                 _llm = get_llm_client()
                 if _llm:
                     _ear_headlines = [
-                        n.get("headline", "") for n in (news or [])[:5]
-                        if any(kw in n.get("headline", "").lower()
-                               for kw in ("earnings", "eps", "revenue", "guidance",
-                                          "outlook", "quarter", "miss", "beat", "warn"))
+                        n.get("headline", "")
+                        for n in (news or [])[:5]
+                        if any(
+                            kw in n.get("headline", "").lower()
+                            for kw in (
+                                "earnings",
+                                "eps",
+                                "revenue",
+                                "guidance",
+                                "outlook",
+                                "quarter",
+                                "miss",
+                                "beat",
+                                "warn",
+                            )
+                        )
                     ]
                     if _ear_headlines:
                         _ear_result = await asyncio.to_thread(
@@ -3193,61 +4163,89 @@ async def generate_signal(
                             _ear_pts = round(_ear_score_raw * 8)  # scale to ±8 pts
                             score += _ear_pts
                             sources.add("Earnings")
-                            rationale.append({"src": "Earnings",
-                                "head": (f"LLM Earnings Tone: {'Positive' if _ear_pts > 0 else 'Negative'} "
-                                         f"({_ear_pts:+d}pts)"),
-                                "body": (_ear_result.reasoning or
-                                         f"NLP analysis of {len(_ear_headlines)} earnings-related headlines "
-                                         f"detected {'bullish' if _ear_pts > 0 else 'bearish'} management tone."),
-                                "sentiment": "pos" if _ear_pts > 0 else "neg",
-                                "meta": (f"llm_earnings_score={_ear_score_raw:.2f} "
-                                         f"conf={_ear_result.confidence:.0%} "
-                                         f"src={_ear_result.source}")})
+                            rationale.append(
+                                {
+                                    "src": "Earnings",
+                                    "head": (
+                                        f"LLM Earnings Tone: {'Positive' if _ear_pts > 0 else 'Negative'} "
+                                        f"({_ear_pts:+d}pts)"
+                                    ),
+                                    "body": (
+                                        _ear_result.reasoning
+                                        or f"NLP analysis of {len(_ear_headlines)} earnings-related headlines "
+                                        f"detected {'bullish' if _ear_pts > 0 else 'bearish'} management tone."
+                                    ),
+                                    "sentiment": "pos" if _ear_pts > 0 else "neg",
+                                    "meta": (
+                                        f"llm_earnings_score={_ear_score_raw:.2f} "
+                                        f"conf={_ear_result.confidence:.0%} "
+                                        f"src={_ear_result.source}"
+                                    ),
+                                }
+                            )
             except Exception:
                 pass
 
         # ── Sector Relative Strength ──────────────────────────────────────
         if sector_rs:
-            rs  = sector_rs["rs_vs_sector"]
+            rs = sector_rs["rs_vs_sector"]
             etf = sector_rs["sector_etf"]
             sources.add("Sector RS")
             if rs > 8:
                 score += 10
-                rationale.append({"src": "Sector RS",
-                    "head": f"Leading {etf} Sector by +{rs:.1f}%",
-                    "body": (f"1-month return is {rs:.1f}% above its {etf} sector ETF. "
-                             "Outperforming sector peers signals stock-specific institutional demand."),
-                    "sentiment": "pos",
-                    "meta": f"RS vs {etf}: +{rs:.1f}% | Sector 1M: {sector_rs['sector_1m_ret']:+.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Sector RS",
+                        "head": f"Leading {etf} Sector by +{rs:.1f}%",
+                        "body": (
+                            f"1-month return is {rs:.1f}% above its {etf} sector ETF. "
+                            "Outperforming sector peers signals stock-specific institutional demand."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"RS vs {etf}: +{rs:.1f}% | Sector 1M: {sector_rs['sector_1m_ret']:+.1f}%",
+                    }
+                )
             elif rs > 4:
                 score += 5
             elif rs < -8:
                 score -= 10
-                rationale.append({"src": "Sector RS",
-                    "head": f"Lagging {etf} Sector by {abs(rs):.1f}%",
-                    "body": (f"1-month return is {abs(rs):.1f}% below its {etf} sector ETF. "
-                             "Stock is a sector laggard — possible company-specific weakness."),
-                    "sentiment": "neg",
-                    "meta": f"RS vs {etf}: {rs:.1f}% | Sector 1M: {sector_rs['sector_1m_ret']:+.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Sector RS",
+                        "head": f"Lagging {etf} Sector by {abs(rs):.1f}%",
+                        "body": (
+                            f"1-month return is {abs(rs):.1f}% below its {etf} sector ETF. "
+                            "Stock is a sector laggard — possible company-specific weakness."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"RS vs {etf}: {rs:.1f}% | Sector 1M: {sector_rs['sector_1m_ret']:+.1f}%",
+                    }
+                )
             elif rs < -4:
                 score -= 5
 
             # Sector RS filter: "strong stock in dying sector" trap.
             # A stock outperforming its sector while the sector itself lags SPY is a
             # false leader — the sector tide is falling and will drag it down.
-            sector_1m  = sector_rs.get("sector_1m_ret", 0) or 0
+            sector_1m = sector_rs.get("sector_1m_ret", 0) or 0
             spy_1m_ref = macro.get("spy_1m_ret") or 0
             sector_lag = spy_1m_ref - sector_1m  # positive = sector underperforming SPY
             if score > 0 and rs > 4 and sector_lag > 5:
                 score *= 0.82  # ~-18% penalty on BUY conviction
                 sources.add("Sector RS")
-                rationale.append({"src": "Sector RS",
-                    "head": f"Sector Trap Warning — {etf} Lagging SPY by {sector_lag:.1f}%",
-                    "body": (f"{ticker} leads its {etf} sector by +{rs:.1f}% but the {etf} sector "
-                             f"itself trails SPY by {sector_lag:.1f}%. A strong stock in a "
-                             "deteriorating sector is a common trap — the sector tide eventually drags leaders down."),
-                    "sentiment": "neg",
-                    "meta": f"{etf}: {sector_1m:+.1f}% | SPY: {spy_1m_ref:+.1f}% | Gap: -{sector_lag:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Sector RS",
+                        "head": f"Sector Trap Warning — {etf} Lagging SPY by {sector_lag:.1f}%",
+                        "body": (
+                            f"{ticker} leads its {etf} sector by +{rs:.1f}% but the {etf} sector "
+                            f"itself trails SPY by {sector_lag:.1f}%. A strong stock in a "
+                            "deteriorating sector is a common trap — the sector tide eventually drags leaders down."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"{etf}: {sector_1m:+.1f}% | SPY: {spy_1m_ref:+.1f}% | Gap: -{sector_lag:.1f}%",
+                    }
+                )
 
         # ── Sector downtrend BUY gate ─────────────────────────────────────
         # If the sector ETF is itself in a confirmed 1-month downtrend (< -5%),
@@ -3256,110 +4254,190 @@ async def generate_signal(
         # regardless of company-level technical setup.
         if sector_rs and score > 0:
             sector_1m_gate = sector_rs.get("sector_1m_ret", 0) or 0
-            etf_gate       = sector_rs.get("sector_etf", "")
+            etf_gate = sector_rs.get("sector_etf", "")
             if sector_1m_gate < -5.0 and score < 40:
                 score = 0
-                _force_hold = True   # sector blackout — subsequent signals must not re-open
+                _force_hold = True  # sector blackout — subsequent signals must not re-open
                 sources.add("Risk Gate")
-                rationale.append({"src": "Risk Gate",
-                    "head": f"Sector Downtrend Gate — {etf_gate} {sector_1m_gate:+.1f}% (1M)",
-                    "body": (f"{etf_gate} sector is down {abs(sector_1m_gate):.1f}% over the past month "
-                             f"(threshold: −5%). A marginal BUY signal (score <40) in a deteriorating "
-                             "sector has very low win rates — gate to HOLD until sector stabilises."),
-                    "sentiment": "neg",
-                    "meta": f"{etf_gate} 1M: {sector_1m_gate:+.1f}% | Score: {score:.1f}"})
+                rationale.append(
+                    {
+                        "src": "Risk Gate",
+                        "head": f"Sector Downtrend Gate — {etf_gate} {sector_1m_gate:+.1f}% (1M)",
+                        "body": (
+                            f"{etf_gate} sector is down {abs(sector_1m_gate):.1f}% over the past month "
+                            f"(threshold: −5%). A marginal BUY signal (score <40) in a deteriorating "
+                            "sector has very low win rates — gate to HOLD until sector stabilises."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"{etf_gate} 1M: {sector_1m_gate:+.1f}% | Score: {score:.1f}",
+                    }
+                )
 
         # ── Analyst Price Target (yfinance info) ─────────────────────────
-        target_mean   = info.get("target_mean")
+        target_mean = info.get("target_mean")
         analyst_count = info.get("analyst_count") or 0
         if target_mean and analyst_count >= 3 and price > 0:
             upside = (target_mean - price) / price * 100
             target_high = info.get("target_high")
-            target_low  = info.get("target_low")
+            target_low = info.get("target_low")
             sources.add("Analyst")
             if upside > 20:
                 analyst_score += 15
-                rationale.append({"src": "Analyst", "head": f"Analysts See {upside:.0f}% Upside",
-                    "body": (f"{analyst_count} analysts set a consensus price target of ${target_mean:.2f} "
-                             f"vs current ${price:.2f} — {upside:.1f}% implied upside."
-                             + (f" High: ${target_high:.2f} | Low: ${target_low:.2f}." if target_high and target_low else "")),
-                    "sentiment": "pos", "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts"})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": f"Analysts See {upside:.0f}% Upside",
+                        "body": (
+                            f"{analyst_count} analysts set a consensus price target of ${target_mean:.2f} "
+                            f"vs current ${price:.2f} — {upside:.1f}% implied upside."
+                            + (
+                                f" High: ${target_high:.2f} | Low: ${target_low:.2f}."
+                                if target_high and target_low
+                                else ""
+                            )
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts",
+                    }
+                )
             elif upside > 10:
                 analyst_score += 8
-                rationale.append({"src": "Analyst", "head": f"Analysts See {upside:.0f}% Upside",
-                    "body": (f"Consensus target ${target_mean:.2f} implies {upside:.1f}% upside from ${price:.2f} "
-                             f"across {analyst_count} analysts."),
-                    "sentiment": "pos", "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts"})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": f"Analysts See {upside:.0f}% Upside",
+                        "body": (
+                            f"Consensus target ${target_mean:.2f} implies {upside:.1f}% upside from ${price:.2f} "
+                            f"across {analyst_count} analysts."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts",
+                    }
+                )
             elif upside < -15:
                 analyst_score -= 12
-                rationale.append({"src": "Analyst", "head": f"Analysts See {abs(upside):.0f}% Downside",
-                    "body": (f"Consensus target ${target_mean:.2f} is {abs(upside):.1f}% below current price ${price:.2f}. "
-                             f"{analyst_count} analysts collectively see limited upside."),
-                    "sentiment": "neg", "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts"})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": f"Analysts See {abs(upside):.0f}% Downside",
+                        "body": (
+                            f"Consensus target ${target_mean:.2f} is {abs(upside):.1f}% below current price ${price:.2f}. "
+                            f"{analyst_count} analysts collectively see limited upside."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts",
+                    }
+                )
             elif upside < -5:
                 analyst_score -= 6
-                rationale.append({"src": "Analyst", "head": f"Analyst Target Below Market Price",
-                    "body": (f"Consensus target ${target_mean:.2f} is {abs(upside):.1f}% below ${price:.2f}. "
-                             f"Street expects limited near-term upside."),
-                    "sentiment": "neg", "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts"})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": "Analyst Target Below Market Price",
+                        "body": (
+                            f"Consensus target ${target_mean:.2f} is {abs(upside):.1f}% below ${price:.2f}. "
+                            f"Street expects limited near-term upside."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts",
+                    }
+                )
 
         # ── Analyst Recommendation Consensus (yfinance info) ─────────────
-        rec_key  = info.get("rec_key", "")
+        rec_key = info.get("rec_key", "")
         rec_mean = info.get("rec_mean")
         if rec_key:
             sources.add("Analyst")
             if rec_key in ("strong_buy", "strongBuy") or (rec_mean and rec_mean <= 1.5):
                 analyst_score += 10
-                rationale.append({"src": "Analyst", "head": "Analysts Rate Stock: Strong Buy",
-                    "body": "Majority of covering analysts have a Strong Buy consensus. Institutional conviction is high.",
-                    "sentiment": "pos", "meta": f"Consensus: {rec_key} (score {rec_mean:.1f}/5)" if rec_mean else f"Consensus: {rec_key}"})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": "Analysts Rate Stock: Strong Buy",
+                        "body": "Majority of covering analysts have a Strong Buy consensus. Institutional conviction is high.",
+                        "sentiment": "pos",
+                        "meta": f"Consensus: {rec_key} (score {rec_mean:.1f}/5)"
+                        if rec_mean
+                        else f"Consensus: {rec_key}",
+                    }
+                )
             elif rec_key == "buy" or (rec_mean and rec_mean <= 2.2):
                 analyst_score += 6
-                rationale.append({"src": "Analyst", "head": "Analysts Rate Stock: Buy",
-                    "body": "Analyst consensus leans towards a Buy rating.",
-                    "sentiment": "pos", "meta": f"Consensus: {rec_key}" + (f" ({rec_mean:.1f}/5)" if rec_mean else "")})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": "Analysts Rate Stock: Buy",
+                        "body": "Analyst consensus leans towards a Buy rating.",
+                        "sentiment": "pos",
+                        "meta": f"Consensus: {rec_key}" + (f" ({rec_mean:.1f}/5)" if rec_mean else ""),
+                    }
+                )
             elif rec_key == "sell" or (rec_mean and rec_mean >= 3.8):
                 analyst_score -= 8
-                rationale.append({"src": "Analyst", "head": "Analysts Rate Stock: Sell",
-                    "body": "Analyst consensus leans towards a Sell rating. Street is bearish.",
-                    "sentiment": "neg", "meta": f"Consensus: {rec_key}" + (f" ({rec_mean:.1f}/5)" if rec_mean else "")})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": "Analysts Rate Stock: Sell",
+                        "body": "Analyst consensus leans towards a Sell rating. Street is bearish.",
+                        "sentiment": "neg",
+                        "meta": f"Consensus: {rec_key}" + (f" ({rec_mean:.1f}/5)" if rec_mean else ""),
+                    }
+                )
             elif rec_key in ("strong_sell", "strongSell") or (rec_mean and rec_mean >= 4.5):
                 analyst_score -= 12
-                rationale.append({"src": "Analyst", "head": "Analysts Rate Stock: Strong Sell",
-                    "body": "Strong Sell consensus across covering analysts. Institutional conviction is bearish.",
-                    "sentiment": "neg", "meta": f"Consensus: {rec_key}" + (f" ({rec_mean:.1f}/5)" if rec_mean else "")})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": "Analysts Rate Stock: Strong Sell",
+                        "body": "Strong Sell consensus across covering analysts. Institutional conviction is bearish.",
+                        "sentiment": "neg",
+                        "meta": f"Consensus: {rec_key}" + (f" ({rec_mean:.1f}/5)" if rec_mean else ""),
+                    }
+                )
 
         # ── Finnhub Analyst Recommendation Trends ────────────────────────
         if analyst_recs:
-            sb  = analyst_recs.get("strong_buy",  0)
-            b   = analyst_recs.get("buy",         0)
-            h   = analyst_recs.get("hold",        0)
-            s   = analyst_recs.get("sell",        0)
-            ss  = analyst_recs.get("strong_sell", 0)
+            sb = analyst_recs.get("strong_buy", 0)
+            b = analyst_recs.get("buy", 0)
+            h = analyst_recs.get("hold", 0)
+            s = analyst_recs.get("sell", 0)
+            ss = analyst_recs.get("strong_sell", 0)
             total_recs = sb + b + h + s + ss
             if total_recs >= 5:
                 sources.add("Analyst")
                 bull_pct = (sb + b) / total_recs * 100
                 bear_pct = (s + ss) / total_recs * 100
-                period   = analyst_recs.get("period", "")
+                period = analyst_recs.get("period", "")
                 if bull_pct >= 70:
                     analyst_score += 10
-                    rationale.append({"src": "Analyst",
-                        "head": f"{bull_pct:.0f}% of Analysts are Bullish",
-                        "body": (f"Finnhub consensus ({period}): {sb} Strong Buy + {b} Buy out of {total_recs} analysts. "
-                                 f"Strong institutional buy-side conviction."),
-                        "sentiment": "pos",
-                        "meta": f"SB:{sb} B:{b} H:{h} S:{s} SS:{ss}"})
+                    rationale.append(
+                        {
+                            "src": "Analyst",
+                            "head": f"{bull_pct:.0f}% of Analysts are Bullish",
+                            "body": (
+                                f"Finnhub consensus ({period}): {sb} Strong Buy + {b} Buy out of {total_recs} analysts. "
+                                f"Strong institutional buy-side conviction."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"SB:{sb} B:{b} H:{h} S:{s} SS:{ss}",
+                        }
+                    )
                 elif bull_pct >= 55:
                     analyst_score += 5
                 elif bear_pct >= 60:
                     analyst_score -= 8
-                    rationale.append({"src": "Analyst",
-                        "head": f"{bear_pct:.0f}% of Analysts are Bearish",
-                        "body": (f"Finnhub consensus ({period}): {s} Sell + {ss} Strong Sell out of {total_recs} analysts. "
-                                 f"Street is broadly negative on this stock."),
-                        "sentiment": "neg",
-                        "meta": f"SB:{sb} B:{b} H:{h} S:{s} SS:{ss}"})
+                    rationale.append(
+                        {
+                            "src": "Analyst",
+                            "head": f"{bear_pct:.0f}% of Analysts are Bearish",
+                            "body": (
+                                f"Finnhub consensus ({period}): {s} Sell + {ss} Strong Sell out of {total_recs} analysts. "
+                                f"Street is broadly negative on this stock."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"SB:{sb} B:{b} H:{h} S:{s} SS:{ss}",
+                        }
+                    )
 
         # ── Analyst estimate revision momentum ───────────────────────────────
         # Compare this month's bull/bear scores to last month's. Rising upgrades
@@ -3375,29 +4453,42 @@ async def generate_signal(
             bear_d = analyst_recs.get("bear_delta", 0)
             rev_period = analyst_recs.get("revision_period", "prior month")
             if rev_pts > 0:
-                rationale.append({"src": "Analyst",
-                    "head": f"Analyst Upgrade Momentum (+{rev_pts:.0f}pts vs {rev_period})",
-                    "body": (f"Bull score rose by {bull_d:+.0f} and bear score changed by {bear_d:+.0f} "
-                             f"vs {rev_period}. Rising upgrades with falling downgrades is one of the "
-                             "strongest documented equity alpha factors — price follows estimates."),
-                    "sentiment": "pos",
-                    "meta": f"rev_pts={rev_pts:+.0f} | bull_delta={bull_d:+.0f} | bear_delta={bear_d:+.0f}"})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": f"Analyst Upgrade Momentum (+{rev_pts:.0f}pts vs {rev_period})",
+                        "body": (
+                            f"Bull score rose by {bull_d:+.0f} and bear score changed by {bear_d:+.0f} "
+                            f"vs {rev_period}. Rising upgrades with falling downgrades is one of the "
+                            "strongest documented equity alpha factors — price follows estimates."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"rev_pts={rev_pts:+.0f} | bull_delta={bull_d:+.0f} | bear_delta={bear_d:+.0f}",
+                    }
+                )
             else:
-                rationale.append({"src": "Analyst",
-                    "head": f"Analyst Downgrade Momentum ({rev_pts:.0f}pts vs {rev_period})",
-                    "body": (f"Bull score fell by {abs(bull_d):.0f} and bear score rose by {abs(bear_d):.0f} "
-                             f"vs {rev_period}. Analysts are cutting estimates — forward earnings are "
-                             "deteriorating. Negative revision momentum precedes price weakness."),
-                    "sentiment": "neg",
-                    "meta": f"rev_pts={rev_pts:+.0f} | bull_delta={bull_d:+.0f} | bear_delta={bear_d:+.0f}"})
+                rationale.append(
+                    {
+                        "src": "Analyst",
+                        "head": f"Analyst Downgrade Momentum ({rev_pts:.0f}pts vs {rev_period})",
+                        "body": (
+                            f"Bull score fell by {abs(bull_d):.0f} and bear score rose by {abs(bear_d):.0f} "
+                            f"vs {rev_period}. Analysts are cutting estimates — forward earnings are "
+                            "deteriorating. Negative revision momentum precedes price weakness."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"rev_pts={rev_pts:+.0f} | bull_delta={bull_d:+.0f} | bear_delta={bear_d:+.0f}",
+                    }
+                )
 
         # ── Massive Analyst Intelligence (Bulls Bears Say + Guidance) ───────
         try:
             from services.massive_analyst import get_analyst_intelligence
+
             ai = await get_analyst_intelligence(ticker)
             if ai:
                 bbs = ai.get("bulls_bears", {})
-                gd  = ai.get("guidance", {})
+                gd = ai.get("guidance", {})
                 # Bulls Bears Say — adds colour to rationale
                 bbs_score = bbs.get("score", 0.0)
                 if abs(bbs_score) >= 2.0:
@@ -3405,20 +4496,28 @@ async def generate_signal(
                     bbs_label = bbs.get("label", "neutral").capitalize()
                     bc, rc = bbs.get("bull_count", 0), bbs.get("bear_count", 0)
                     text = bbs.get("bull_text" if bbs_score > 0 else "bear_text", "")
-                    rationale.append({"src": "Analyst",
-                        "head": f"Bulls Bears Say: {bbs_label} ({bc} bull / {rc} bear analysts)",
-                        "body": text[:250] or f"{bc} analysts bullish vs {rc} bearish on {ticker}.",
-                        "sentiment": "pos" if bbs_score > 0 else "neg",
-                        "meta": f"bbs_score={bbs_score:+.1f}"})
+                    rationale.append(
+                        {
+                            "src": "Analyst",
+                            "head": f"Bulls Bears Say: {bbs_label} ({bc} bull / {rc} bear analysts)",
+                            "body": text[:250] or f"{bc} analysts bullish vs {rc} bearish on {ticker}.",
+                            "sentiment": "pos" if bbs_score > 0 else "neg",
+                            "meta": f"bbs_score={bbs_score:+.1f}",
+                        }
+                    )
                 # Corporate Guidance signal (high-weight catalyst)
                 gd_score = gd.get("score", 0.0)
                 if abs(gd_score) >= 4.0:
                     analyst_score += gd_score
-                    rationale.append({"src": "Analyst",
-                        "head": f"Corporate Guidance {'Raised' if gd_score > 0 else 'Cut'}",
-                        "body": gd.get("summary", "Company updated EPS/revenue guidance."),
-                        "sentiment": "pos" if gd_score > 0 else "neg",
-                        "meta": f"guidance_score={gd_score:+.1f}"})
+                    rationale.append(
+                        {
+                            "src": "Analyst",
+                            "head": f"Corporate Guidance {'Raised' if gd_score > 0 else 'Cut'}",
+                            "body": gd.get("summary", "Company updated EPS/revenue guidance."),
+                            "sentiment": "pos" if gd_score > 0 else "neg",
+                            "meta": f"guidance_score={gd_score:+.1f}",
+                        }
+                    )
         except Exception:
             pass
 
@@ -3434,47 +4533,74 @@ async def generate_signal(
         # by detecting transitions in the latent state before they appear in prices.
         vix = macro.get("vix")
         hmm = (market_ctx or {}).get("hmm_regime", {})
-        hmm_regime    = hmm.get("regime", "")
-        bull_prob     = hmm.get("bull_prob", 0.5)
-        bear_prob     = hmm.get("bear_prob", 0.5)
-        trans_risk    = hmm.get("transition_risk", 0.1)
-        vix_z         = hmm.get("vix_z", 0.0)
+        hmm_regime = hmm.get("regime", "")
+        bull_prob = hmm.get("bull_prob", 0.5)
+        bear_prob = hmm.get("bear_prob", 0.5)
+        trans_risk = hmm.get("transition_risk", 0.1)
+        vix_z = hmm.get("vix_z", 0.0)
 
         if hmm_regime:
             # HMM data available — use continuous probability weighting
             if hmm_regime == "bear" and bear_prob >= 0.70:
                 score *= 0.72
-                rationale.append({"src": "Macro",
-                    "head": f"HMM Bear Regime ({bear_prob:.0%} probability) — Score Reduced",
-                    "body": (f"The macro regime model assigns {bear_prob:.0%} probability to a risk-off state. "
-                             f"VIX z-score: {vix_z:+.1f}σ. Signal reliability is structurally lower in bear regimes — "
-                             f"reduce position size and widen stops."),
-                    "sentiment": "neg", "meta": f"HMM bear={bear_prob:.0%} vix_z={vix_z:+.1f}σ"})
+                rationale.append(
+                    {
+                        "src": "Macro",
+                        "head": f"HMM Bear Regime ({bear_prob:.0%} probability) — Score Reduced",
+                        "body": (
+                            f"The macro regime model assigns {bear_prob:.0%} probability to a risk-off state. "
+                            f"VIX z-score: {vix_z:+.1f}σ. Signal reliability is structurally lower in bear regimes — "
+                            f"reduce position size and widen stops."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"HMM bear={bear_prob:.0%} vix_z={vix_z:+.1f}σ",
+                    }
+                )
             elif hmm_regime == "transition" or trans_risk > 0.15:
                 score *= 0.88
-                rationale.append({"src": "Macro",
-                    "head": f"HMM Regime Transition Risk ({trans_risk:.0%}) — Caution",
-                    "body": (f"The HMM detects elevated probability of a regime shift "
-                             f"(bull→bear or vice versa) within 1–3 days. "
-                             f"P(bull)={bull_prob:.0%} P(bear)={bear_prob:.0%}. "
-                             f"Consider tighter stops until regime resolves."),
-                    "sentiment": "neg", "meta": f"trans_risk={trans_risk:.0%}"})
+                rationale.append(
+                    {
+                        "src": "Macro",
+                        "head": f"HMM Regime Transition Risk ({trans_risk:.0%}) — Caution",
+                        "body": (
+                            f"The HMM detects elevated probability of a regime shift "
+                            f"(bull→bear or vice versa) within 1–3 days. "
+                            f"P(bull)={bull_prob:.0%} P(bear)={bear_prob:.0%}. "
+                            f"Consider tighter stops until regime resolves."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"trans_risk={trans_risk:.0%}",
+                    }
+                )
             elif hmm_regime == "bull" and bull_prob >= 0.75 and vix_z < -0.5:
                 score *= 1.06
-                rationale.append({"src": "Macro",
-                    "head": f"HMM Bull Regime ({bull_prob:.0%}) — Favourable",
-                    "body": (f"Macro regime model: {bull_prob:.0%} probability of risk-on state. "
-                             f"VIX below historical mean ({vix_z:+.1f}σ). "
-                             f"Trend-following signals are more reliable in this environment."),
-                    "sentiment": "pos", "meta": f"HMM bull={bull_prob:.0%} vix_z={vix_z:+.1f}σ"})
+                rationale.append(
+                    {
+                        "src": "Macro",
+                        "head": f"HMM Bull Regime ({bull_prob:.0%}) — Favourable",
+                        "body": (
+                            f"Macro regime model: {bull_prob:.0%} probability of risk-on state. "
+                            f"VIX below historical mean ({vix_z:+.1f}σ). "
+                            f"Trend-following signals are more reliable in this environment."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"HMM bull={bull_prob:.0%} vix_z={vix_z:+.1f}σ",
+                    }
+                )
         else:
             # Fallback to legacy static VIX thresholds when HMM data unavailable
             if vix is not None:
                 if vix > 35:
                     score *= 0.60
-                    rationale.append({"src": "Macro", "head": f"VIX Extreme Fear ({vix:.0f}) — Confidence Reduced",
-                        "body": f"VIX at {vix:.0f} signals panic-level volatility. Technical patterns break down in these conditions. Reduce position size significantly.",
-                        "sentiment": "neg", "meta": f"VIX = {vix:.0f}"})
+                    rationale.append(
+                        {
+                            "src": "Macro",
+                            "head": f"VIX Extreme Fear ({vix:.0f}) — Confidence Reduced",
+                            "body": f"VIX at {vix:.0f} signals panic-level volatility. Technical patterns break down in these conditions. Reduce position size significantly.",
+                            "sentiment": "neg",
+                            "meta": f"VIX = {vix:.0f}",
+                        }
+                    )
                 elif vix > 25:
                     score *= 0.82
                     sources.add("Macro")
@@ -3488,10 +4614,10 @@ async def generate_signal(
         # into the regular session (vs ~52% for low-volume gaps that often fill).
         session = _current_session()
         if ext_hours and session in ("pre", "after"):
-            eh_gap    = ext_hours.get("gap_pct",   0) or 0
-            eh_vol_r  = ext_hours.get("vol_ratio",  1) or 1
-            eh_price  = ext_hours.get("price")
-            eh_prev   = ext_hours.get("prev_close")
+            eh_gap = ext_hours.get("gap_pct", 0) or 0
+            eh_vol_r = ext_hours.get("vol_ratio", 1) or 1
+            eh_price = ext_hours.get("price")
+            eh_prev = ext_hours.get("prev_close")
             sources.add("Technical")
 
             # Gap magnitude signal — direction-aware
@@ -3501,56 +4627,95 @@ async def generate_signal(
                 if eh_gap >= 3.0:
                     bonus = 12 if high_vol else 6
                     score += bonus
-                    rationale.append({"src": "Technical",
-                        "head": f"{'Pre' if session=='pre' else 'After'}-Market Gap Up +{eh_gap:.1f}%{' (High Vol)' if high_vol else ''}",
-                        "body": (f"Price gapped {eh_gap:.1f}% above the prior regular-session close "
-                                 f"(${eh_prev:.2f} → ${eh_price:.2f}) in extended hours. "
-                                 + ("High volume ({:.1f}× avg) confirms institutional conviction — gap likely to hold.".format(eh_vol_r)
-                                    if high_vol else
-                                    "Light volume ({:.1f}× avg) — gap may fill at open.".format(eh_vol_r))),
-                        "sentiment": "pos",
-                        "meta": f"EH gap: +{eh_gap:.1f}% | Vol ratio: {eh_vol_r:.1f}×"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"{'Pre' if session == 'pre' else 'After'}-Market Gap Up +{eh_gap:.1f}%{' (High Vol)' if high_vol else ''}",
+                            "body": (
+                                f"Price gapped {eh_gap:.1f}% above the prior regular-session close "
+                                f"(${eh_prev:.2f} → ${eh_price:.2f}) in extended hours. "
+                                + (
+                                    f"High volume ({eh_vol_r:.1f}× avg) confirms institutional conviction — gap likely to hold."
+                                    if high_vol
+                                    else f"Light volume ({eh_vol_r:.1f}× avg) — gap may fill at open."
+                                )
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"EH gap: +{eh_gap:.1f}% | Vol ratio: {eh_vol_r:.1f}×",
+                        }
+                    )
                 elif eh_gap >= 1.0:
                     bonus = 6 if high_vol else 3
                     score += bonus
-                    rationale.append({"src": "Technical",
-                        "head": f"{'Pre' if session=='pre' else 'After'}-Market Gap Up +{eh_gap:.1f}%",
-                        "body": (f"Moderate extended-hours gap of +{eh_gap:.1f}%. "
-                                 + ("Volume confirms the move.".format() if high_vol else "Watch for fill at open.")),
-                        "sentiment": "pos",
-                        "meta": f"EH gap: +{eh_gap:.1f}% | Vol: {eh_vol_r:.1f}×"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"{'Pre' if session == 'pre' else 'After'}-Market Gap Up +{eh_gap:.1f}%",
+                            "body": (
+                                f"Moderate extended-hours gap of +{eh_gap:.1f}%. "
+                                + ("Volume confirms the move.".format() if high_vol else "Watch for fill at open.")
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"EH gap: +{eh_gap:.1f}% | Vol: {eh_vol_r:.1f}×",
+                        }
+                    )
                 elif eh_gap <= -3.0:
                     penalty = -12 if high_vol else -6
                     score += penalty
-                    rationale.append({"src": "Technical",
-                        "head": f"{'Pre' if session=='pre' else 'After'}-Market Gap Down {eh_gap:.1f}%{' (High Vol)' if high_vol else ''}",
-                        "body": (f"Price gapped {eh_gap:.1f}% below the prior close "
-                                 f"(${eh_prev:.2f} → ${eh_price:.2f}) in extended hours. "
-                                 + ("High volume confirms distribution — gap likely to persist.".format()
-                                    if high_vol else "Low volume — gap may partially fill at open.")),
-                        "sentiment": "neg",
-                        "meta": f"EH gap: {eh_gap:.1f}% | Vol ratio: {eh_vol_r:.1f}×"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"{'Pre' if session == 'pre' else 'After'}-Market Gap Down {eh_gap:.1f}%{' (High Vol)' if high_vol else ''}",
+                            "body": (
+                                f"Price gapped {eh_gap:.1f}% below the prior close "
+                                f"(${eh_prev:.2f} → ${eh_price:.2f}) in extended hours. "
+                                + (
+                                    "High volume confirms distribution — gap likely to persist.".format()
+                                    if high_vol
+                                    else "Low volume — gap may partially fill at open."
+                                )
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"EH gap: {eh_gap:.1f}% | Vol ratio: {eh_vol_r:.1f}×",
+                        }
+                    )
                 elif eh_gap <= -1.0:
                     penalty = -6 if high_vol else -3
                     score += penalty
-                    rationale.append({"src": "Technical",
-                        "head": f"{'Pre' if session=='pre' else 'After'}-Market Gap Down {eh_gap:.1f}%",
-                        "body": (f"Moderate extended-hours gap of {eh_gap:.1f}%. "
-                                 + ("Volume confirms selling pressure." if high_vol else "Low volume — may recover at open.")),
-                        "sentiment": "neg",
-                        "meta": f"EH gap: {eh_gap:.1f}% | Vol: {eh_vol_r:.1f}×"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"{'Pre' if session == 'pre' else 'After'}-Market Gap Down {eh_gap:.1f}%",
+                            "body": (
+                                f"Moderate extended-hours gap of {eh_gap:.1f}%. "
+                                + (
+                                    "Volume confirms selling pressure."
+                                    if high_vol
+                                    else "Low volume — may recover at open."
+                                )
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"EH gap: {eh_gap:.1f}% | Vol: {eh_vol_r:.1f}×",
+                        }
+                    )
 
             # Extended-hours volume surge even with a small gap = institutional activity
             if eh_vol_r >= 3.0 and abs(eh_gap) < 1.0:
                 direction_bonus = 4 if eh_gap >= 0 else -4
                 score += direction_bonus
-                rationale.append({"src": "Technical",
-                    "head": f"Extended-Hours Volume Surge ({eh_vol_r:.1f}×) — Flat Price",
-                    "body": (f"Extended-hours volume is {eh_vol_r:.1f}× above average with only a "
-                             f"{eh_gap:+.2f}% price move. Unusual volume without price movement often "
-                             "signals institutional positioning ahead of the regular session."),
-                    "sentiment": "pos" if direction_bonus > 0 else "neg",
-                    "meta": f"EH vol: {eh_vol_r:.1f}× | Gap: {eh_gap:+.2f}%"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Extended-Hours Volume Surge ({eh_vol_r:.1f}×) — Flat Price",
+                        "body": (
+                            f"Extended-hours volume is {eh_vol_r:.1f}× above average with only a "
+                            f"{eh_gap:+.2f}% price move. Unusual volume without price movement often "
+                            "signals institutional positioning ahead of the regular session."
+                        ),
+                        "sentiment": "pos" if direction_bonus > 0 else "neg",
+                        "meta": f"EH vol: {eh_vol_r:.1f}× | Gap: {eh_gap:+.2f}%",
+                    }
+                )
 
         # ── Options flow (yfinance multi-expiry enhanced sweep detection) ───
         if opt_flow:
@@ -3560,28 +4725,35 @@ async def generate_signal(
                 sources.add("Options")
                 rationale.extend(opt_rationale)
 
-
         # ── 8-K Material Events ───────────────────────────────────────────────
         try:
             from services.eightk_events import get_8k_signals
+
             ek = await get_8k_signals(ticker)
             if ek and abs(ek.get("score", 0)) >= 3.0:
                 sources.add("Fundamentals")
                 score += ek["score"]
                 for ev_label in ek.get("events", [])[:2]:
-                    rationale.append({"src": "Fundamentals",
-                        "head": f"8-K Event: {ev_label}",
-                        "body": ("SEC Form 8-K reports material corporate events within 4 business days. "
-                                 "These are the earliest public disclosures of M&A, CEO changes, "
-                                 "material agreements, and guidance updates."),
-                        "sentiment": "pos" if ek["score"] > 0 else "neg",
-                        "meta": f"8k_score={ek['score']:+.1f}"})
+                    rationale.append(
+                        {
+                            "src": "Fundamentals",
+                            "head": f"8-K Event: {ev_label}",
+                            "body": (
+                                "SEC Form 8-K reports material corporate events within 4 business days. "
+                                "These are the earliest public disclosures of M&A, CEO changes, "
+                                "material agreements, and guidance updates."
+                            ),
+                            "sentiment": "pos" if ek["score"] > 0 else "neg",
+                            "meta": f"8k_score={ek['score']:+.1f}",
+                        }
+                    )
         except Exception:
             pass
 
         # ── Massive Financial Ratios (augment yfinance fundamentals) ─────────
         try:
             from services.massive_ratios import get_ratios, merge_with_yfinance
+
             massive_r = await get_ratios(ticker)
             if massive_r and fundamentals:
                 fundamentals = merge_with_yfinance(fundamentals, massive_r)
@@ -3591,6 +4763,7 @@ async def generate_signal(
         # ── Full Option Chain Analysis (GEX + Skew + Max Pain) ───────────────
         try:
             from services.massive_options import get_option_chain_signals, score_option_chain
+
             chain_signals = await get_option_chain_signals(ticker, price)
             if chain_signals:
                 chain_score, chain_rat = score_option_chain(chain_signals, price, action)
@@ -3603,9 +4776,10 @@ async def generate_signal(
 
         # ── ETF Constituent Flow Amplification ────────────────────────────────
         try:
-            from services.sector import SECTOR_MAP
             from services.etf_constituents import get_flow_amplifier
             from services.etf_flows import get_flow_score_for_ticker
+            from services.sector import SECTOR_MAP
+
             etf_for_ticker = SECTOR_MAP.get(ticker)
             if etf_for_ticker:
                 amp = get_flow_amplifier(ticker, etf_for_ticker)
@@ -3620,9 +4794,9 @@ async def generate_signal(
         # ── 13F Institutional flow (with QoQ trend) ──────────────────────────
         inst_signals = (market_ctx or {}).get("institutional_signals", {})
         if ticker in inst_signals:
-            inst_sig   = inst_signals[ticker]
+            inst_sig = inst_signals[ticker]
             inst_score = inst_sig.get("score", 0)
-            qoq_trend  = inst_sig.get("qoq_trend", "neutral")
+            qoq_trend = inst_sig.get("qoq_trend", "neutral")
             if inst_score != 0:
                 score += inst_score
                 sources.add("13F")
@@ -3631,54 +4805,60 @@ async def generate_signal(
                     rationale.append(rat)
                 # Add an extra QoQ-specific rationale item for rising/falling trends
                 if qoq_trend == "rising" and inst_score > 0:
-                    rationale.append({
-                        "src": "13F",
-                        "head": "Institutional Conviction Rising — 2+ Consecutive Quarters Buying",
-                        "body": (
-                            f"Multiple institutional investors have increased their {ticker} position "
-                            "for two or more consecutive quarters. Sustained accumulation signals "
-                            "growing conviction rather than a one-off position initiation."
-                        ),
-                        "sentiment": "pos",
-                        "meta": "QoQ trend: rising",
-                    })
+                    rationale.append(
+                        {
+                            "src": "13F",
+                            "head": "Institutional Conviction Rising — 2+ Consecutive Quarters Buying",
+                            "body": (
+                                f"Multiple institutional investors have increased their {ticker} position "
+                                "for two or more consecutive quarters. Sustained accumulation signals "
+                                "growing conviction rather than a one-off position initiation."
+                            ),
+                            "sentiment": "pos",
+                            "meta": "QoQ trend: rising",
+                        }
+                    )
                 elif qoq_trend == "falling" and inst_score < 0:
-                    rationale.append({
-                        "src": "13F",
-                        "head": "Institutional Conviction Falling — 2+ Consecutive Quarters Exiting",
-                        "body": (
-                            f"Institutions have reduced their {ticker} stake for two or more consecutive "
-                            "quarters. Sequential selling is an early exit warning — smart money is "
-                            "methodically reducing exposure."
-                        ),
-                        "sentiment": "neg",
-                        "meta": "QoQ trend: falling",
-                    })
+                    rationale.append(
+                        {
+                            "src": "13F",
+                            "head": "Institutional Conviction Falling — 2+ Consecutive Quarters Exiting",
+                            "body": (
+                                f"Institutions have reduced their {ticker} stake for two or more consecutive "
+                                "quarters. Sequential selling is an early exit warning — smart money is "
+                                "methodically reducing exposure."
+                            ),
+                            "sentiment": "neg",
+                            "meta": "QoQ trend: falling",
+                        }
+                    )
 
         # ── Cointegration / Pairs Trading ────────────────────────────────────────
         pairs_signals = (market_ctx or {}).get("pairs_signals", {})
         if ticker in pairs_signals:
-            ps       = pairs_signals[ticker]
+            ps = pairs_signals[ticker]
             ps_score = ps.get("score", 0)
             if abs(ps_score) >= 5:
                 score += ps_score
                 sources.add("Stat Arb")
-                pair      = ps.get("pair_ticker", "?")
-                zscore    = ps.get("zscore", 0)
+                pair = ps.get("pair_ticker", "?")
+                zscore = ps.get("zscore", 0)
                 direction = ps.get("direction", "")
-                corr      = ps.get("correlation", 0)
-                rationale.append({
-                    "src":       "Stat Arb",
-                    "head":      f"Pairs Divergence vs {pair} — {direction.title()} ({zscore:+.1f}σ)",
-                    "body":      (
-                        f"{ticker} is {direction} relative to its cointegrated pair {pair} "
-                        f"(spread z-score {zscore:+.1f}σ, {corr:.0%} rolling correlation). "
-                        "Statistical arbitrage signals of this magnitude mean-revert "
-                        "within 5–15 trading days historically."
-                    ),
-                    "sentiment": "pos" if ps_score > 0 else "neg",
-                    "meta":      f"Z-score: {zscore:+.1f}σ | Pair: {pair} | Corr: {corr:.2f}",
-                })
+                corr = ps.get("correlation", 0)
+                rationale.append(
+                    {
+                        "src": "Stat Arb",
+                        "head": f"Pairs Divergence vs {pair} — {direction.title()} ({zscore:+.1f}σ)",
+                        "body": (
+                            f"{ticker} is {direction} relative to its cointegrated pair {pair} "
+                            f"(spread z-score {zscore:+.1f}σ, {corr:.0%} rolling correlation). "
+                            "Statistical arbitrage signals of this magnitude mean-revert "
+                            "within 5–15 trading days historically."
+                        ),
+                        "sentiment": "pos" if ps_score > 0 else "neg",
+                        "meta": f"Z-score: {zscore:+.1f}σ | Pair: {pair} | Corr: {corr:.2f}",
+                    }
+                )
 
         # ── CBOE Put/Call Ratio (contrarian sentiment) ───────────────────────
         pc = (market_ctx or {}).get("put_call")
@@ -3688,13 +4868,22 @@ async def generate_signal(
             if abs(bias) >= 8:
                 sources.add("Options")
                 signal_txt = "extreme put buying (fear)" if bias > 0 else "extreme call buying (complacency)"
-                rationale.append({"src": "Options",
-                    "head": f"CBOE P/C Ratio {pc['ratio']} — {signal_txt.split('(')[1].rstrip(')')} signal",
-                    "body": (f"CBOE total put/call ratio at {pc['ratio']}. "
-                             + ("Ratio >1.15 signals excessive fear — contrarian bullish."
-                                if bias > 0 else "Ratio <0.65 signals complacency — contrarian bearish.")),
-                    "sentiment": "pos" if bias > 0 else "neg",
-                    "meta": f"P/C = {pc['ratio']}"})
+                rationale.append(
+                    {
+                        "src": "Options",
+                        "head": f"CBOE P/C Ratio {pc['ratio']} — {signal_txt.split('(')[1].rstrip(')')} signal",
+                        "body": (
+                            f"CBOE total put/call ratio at {pc['ratio']}. "
+                            + (
+                                "Ratio >1.15 signals excessive fear — contrarian bullish."
+                                if bias > 0
+                                else "Ratio <0.65 signals complacency — contrarian bearish."
+                            )
+                        ),
+                        "sentiment": "pos" if bias > 0 else "neg",
+                        "meta": f"P/C = {pc['ratio']}",
+                    }
+                )
 
         # ── Options Flow Direction Confirmation ──────────────────────────────
         # Directional layer: does the options market flow align with or contradict
@@ -3707,39 +4896,67 @@ async def generate_signal(
                     # Calls dominating — options market is directionally bullish, confirms BUY
                     pc_score += 6
                     sources.add("Options")
-                    rationale.append({"src": "Options",
-                        "head": f"Options Flow Confirms BUY (P/C {pc_ratio:.2f})",
-                        "body": (f"CBOE P/C ratio of {pc_ratio:.2f} shows call volume dominating puts. "
-                                 "The options market is directionally bullish — confirming this BUY signal."),
-                        "sentiment": "pos", "meta": f"P/C = {pc_ratio:.2f} (calls dominant)"})
+                    rationale.append(
+                        {
+                            "src": "Options",
+                            "head": f"Options Flow Confirms BUY (P/C {pc_ratio:.2f})",
+                            "body": (
+                                f"CBOE P/C ratio of {pc_ratio:.2f} shows call volume dominating puts. "
+                                "The options market is directionally bullish — confirming this BUY signal."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"P/C = {pc_ratio:.2f} (calls dominant)",
+                        }
+                    )
                 elif pc_ratio > 1.50:
                     # Puts dominating — options market is directionally bearish, contradicts BUY
                     pc_score -= 10
                     sources.add("Options")
-                    rationale.append({"src": "Options",
-                        "head": f"Options Flow Contradicts BUY (P/C {pc_ratio:.2f})",
-                        "body": (f"CBOE P/C ratio of {pc_ratio:.2f} shows put volume dominating calls. "
-                                 "The options market is positioning bearishly — this conflicts with the BUY signal."),
-                        "sentiment": "neg", "meta": f"P/C = {pc_ratio:.2f} (puts dominant)"})
+                    rationale.append(
+                        {
+                            "src": "Options",
+                            "head": f"Options Flow Contradicts BUY (P/C {pc_ratio:.2f})",
+                            "body": (
+                                f"CBOE P/C ratio of {pc_ratio:.2f} shows put volume dominating calls. "
+                                "The options market is positioning bearishly — this conflicts with the BUY signal."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"P/C = {pc_ratio:.2f} (puts dominant)",
+                        }
+                    )
             elif score < 0:  # SELL signal
                 if pc_ratio > 1.50:
                     # Puts dominating — confirms SELL direction
                     pc_score -= 6
                     sources.add("Options")
-                    rationale.append({"src": "Options",
-                        "head": f"Options Flow Confirms SELL (P/C {pc_ratio:.2f})",
-                        "body": (f"CBOE P/C ratio of {pc_ratio:.2f} shows heavy put buying. "
-                                 "The options market is directionally bearish — confirming this SELL signal."),
-                        "sentiment": "neg", "meta": f"P/C = {pc_ratio:.2f} (puts dominant)"})
+                    rationale.append(
+                        {
+                            "src": "Options",
+                            "head": f"Options Flow Confirms SELL (P/C {pc_ratio:.2f})",
+                            "body": (
+                                f"CBOE P/C ratio of {pc_ratio:.2f} shows heavy put buying. "
+                                "The options market is directionally bearish — confirming this SELL signal."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"P/C = {pc_ratio:.2f} (puts dominant)",
+                        }
+                    )
                 elif pc_ratio < 0.70:
                     # Calls dominating — contradicts SELL direction
                     pc_score += 10
                     sources.add("Options")
-                    rationale.append({"src": "Options",
-                        "head": f"Options Flow Contradicts SELL (P/C {pc_ratio:.2f})",
-                        "body": (f"CBOE P/C ratio of {pc_ratio:.2f} shows calls dominating. "
-                                 "Options market is bullish — this contradicts the SELL signal."),
-                        "sentiment": "pos", "meta": f"P/C = {pc_ratio:.2f} (calls dominant)"})
+                    rationale.append(
+                        {
+                            "src": "Options",
+                            "head": f"Options Flow Contradicts SELL (P/C {pc_ratio:.2f})",
+                            "body": (
+                                f"CBOE P/C ratio of {pc_ratio:.2f} shows calls dominating. "
+                                "Options market is bullish — this contradicts the SELL signal."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"P/C = {pc_ratio:.2f} (calls dominant)",
+                        }
+                    )
 
         # Apply P/C ratio bucket cap: contrarian bias + directional confirmation both
         # derived from the same ratio — prevent the same data point scoring twice.
@@ -3749,95 +4966,133 @@ async def generate_signal(
         # ── Market Breadth (% of S&P 500 basket above SMA50/200) ────────────
         breadth = (market_ctx or {}).get("breadth")
         if breadth and breadth.get("signal") != "neutral" and breadth.get("score"):
-            b_score  = breadth["score"]
-            pct_200  = breadth["pct_above_200d"]
-            pct_50   = breadth["pct_above_50d"]
-            score   += b_score
+            b_score = breadth["score"]
+            pct_200 = breadth["pct_above_200d"]
+            pct_50 = breadth["pct_above_50d"]
+            score += b_score
             sources.add("Market Breadth")
             if b_score >= 10:
-                rationale.append({
-                    "src":  "Market Breadth",
-                    "head": f"Broad Market Participation — {pct_200:.0f}% of S&P 500 Above 200-DMA",
-                    "body": (f"{pct_200:.0f}% of leading S&P 500 stocks trade above their 200-day average "
-                             f"and {pct_50:.0f}% are above their 50-day average. "
-                             "Wide participation confirms the uptrend and provides a strong tailwind for long positions."),
-                    "sentiment": "pos",
-                    "meta": f"Breadth: {pct_200:.0f}% >200d | {pct_50:.0f}% >50d",
-                })
+                rationale.append(
+                    {
+                        "src": "Market Breadth",
+                        "head": f"Broad Market Participation — {pct_200:.0f}% of S&P 500 Above 200-DMA",
+                        "body": (
+                            f"{pct_200:.0f}% of leading S&P 500 stocks trade above their 200-day average "
+                            f"and {pct_50:.0f}% are above their 50-day average. "
+                            "Wide participation confirms the uptrend and provides a strong tailwind for long positions."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Breadth: {pct_200:.0f}% >200d | {pct_50:.0f}% >50d",
+                    }
+                )
             elif b_score >= 5:
-                rationale.append({
-                    "src":  "Market Breadth",
-                    "head": f"Healthy Market Breadth — {pct_200:.0f}% Above 200-DMA",
-                    "body": (f"More than half of S&P 500 benchmark stocks trade above their 200-day average. "
-                             "Market internals are constructive — the broad trend supports new longs."),
-                    "sentiment": "pos",
-                    "meta": f"Breadth: {pct_200:.0f}% >200d | {pct_50:.0f}% >50d",
-                })
+                rationale.append(
+                    {
+                        "src": "Market Breadth",
+                        "head": f"Healthy Market Breadth — {pct_200:.0f}% Above 200-DMA",
+                        "body": (
+                            "More than half of S&P 500 benchmark stocks trade above their 200-day average. "
+                            "Market internals are constructive — the broad trend supports new longs."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Breadth: {pct_200:.0f}% >200d | {pct_50:.0f}% >50d",
+                    }
+                )
             elif b_score <= -10:
-                rationale.append({
-                    "src":  "Market Breadth",
-                    "head": f"Market Breadth Deteriorating — Only {pct_200:.0f}% Above 200-DMA",
-                    "body": (f"Fewer than 1 in 3 S&P 500 stocks trade above their 200-day average "
-                             f"({pct_200:.0f}%). Broad market deterioration reduces the probability of "
-                             "individual stock gains — favour defensive positioning or reduced exposure."),
-                    "sentiment": "neg",
-                    "meta": f"Breadth: {pct_200:.0f}% >200d | {pct_50:.0f}% >50d",
-                })
+                rationale.append(
+                    {
+                        "src": "Market Breadth",
+                        "head": f"Market Breadth Deteriorating — Only {pct_200:.0f}% Above 200-DMA",
+                        "body": (
+                            f"Fewer than 1 in 3 S&P 500 stocks trade above their 200-day average "
+                            f"({pct_200:.0f}%). Broad market deterioration reduces the probability of "
+                            "individual stock gains — favour defensive positioning or reduced exposure."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Breadth: {pct_200:.0f}% >200d | {pct_50:.0f}% >50d",
+                    }
+                )
             elif b_score <= -5:
-                rationale.append({
-                    "src":  "Market Breadth",
-                    "head": f"Weakening Market Breadth — {pct_200:.0f}% Above 200-DMA",
-                    "body": (f"Less than half of S&P 500 benchmark stocks are above their 200-day average. "
-                             "Market internals are weakening — be selective with new long entries."),
-                    "sentiment": "neg",
-                    "meta": f"Breadth: {pct_200:.0f}% >200d | {pct_50:.0f}% >50d",
-                })
+                rationale.append(
+                    {
+                        "src": "Market Breadth",
+                        "head": f"Weakening Market Breadth — {pct_200:.0f}% Above 200-DMA",
+                        "body": (
+                            "Less than half of S&P 500 benchmark stocks are above their 200-day average. "
+                            "Market internals are weakening — be selective with new long entries."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Breadth: {pct_200:.0f}% >200d | {pct_50:.0f}% >50d",
+                    }
+                )
 
         # ── Normalise gathered values ────────────────────────────────────────
-        social       = social       or {}
+        social = social or {}
         fundamentals = fundamentals or {}
 
         # ── Ichimoku Cloud ───────────────────────────────────────────────────
-        ichi_tenkan    = tech.get("ichi_tenkan")
-        ichi_kijun     = tech.get("ichi_kijun")
-        ichi_tenkan_p  = tech.get("ichi_tenkan_p")
-        ichi_kijun_p   = tech.get("ichi_kijun_p")
+        ichi_tenkan = tech.get("ichi_tenkan")
+        ichi_kijun = tech.get("ichi_kijun")
+        ichi_tenkan_p = tech.get("ichi_tenkan_p")
+        ichi_kijun_p = tech.get("ichi_kijun_p")
         ichi_cloud_top = tech.get("ichi_cloud_top")
         ichi_cloud_bot = tech.get("ichi_cloud_bot")
         ichi_cloud_bull = tech.get("ichi_cloud_bull")
-        ichi_chikou    = tech.get("ichi_chikou_above")
+        ichi_chikou = tech.get("ichi_chikou_above")
         if ichi_tenkan and ichi_kijun:
             sources.add("Technical")
             # Tenkan/Kijun cross
-            if (ichi_tenkan_p and ichi_kijun_p and
-                    ichi_tenkan_p <= ichi_kijun_p and ichi_tenkan > ichi_kijun):
+            if ichi_tenkan_p and ichi_kijun_p and ichi_tenkan_p <= ichi_kijun_p and ichi_tenkan > ichi_kijun:
                 ichimoku_score += 10
-                rationale.append({"src": "Technical", "head": "Ichimoku Bullish Cross (TK Cross)",
-                    "body": "Tenkan-sen crossed above Kijun-sen — a classic Ichimoku buy signal called the 'TK Cross'. Momentum has shifted bullish.",
-                    "sentiment": "pos", "meta": f"Tenkan {ichi_tenkan:.2f} > Kijun {ichi_kijun:.2f}"})
-            elif (ichi_tenkan_p and ichi_kijun_p and
-                    ichi_tenkan_p >= ichi_kijun_p and ichi_tenkan < ichi_kijun):
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Ichimoku Bullish Cross (TK Cross)",
+                        "body": "Tenkan-sen crossed above Kijun-sen — a classic Ichimoku buy signal called the 'TK Cross'. Momentum has shifted bullish.",
+                        "sentiment": "pos",
+                        "meta": f"Tenkan {ichi_tenkan:.2f} > Kijun {ichi_kijun:.2f}",
+                    }
+                )
+            elif ichi_tenkan_p and ichi_kijun_p and ichi_tenkan_p >= ichi_kijun_p and ichi_tenkan < ichi_kijun:
                 ichimoku_score -= 10
-                rationale.append({"src": "Technical", "head": "Ichimoku Bearish Cross (Dead Cross)",
-                    "body": "Tenkan-sen crossed below Kijun-sen — a classic Ichimoku sell signal. Momentum has shifted bearish.",
-                    "sentiment": "neg", "meta": f"Tenkan {ichi_tenkan:.2f} < Kijun {ichi_kijun:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Ichimoku Bearish Cross (Dead Cross)",
+                        "body": "Tenkan-sen crossed below Kijun-sen — a classic Ichimoku sell signal. Momentum has shifted bearish.",
+                        "sentiment": "neg",
+                        "meta": f"Tenkan {ichi_tenkan:.2f} < Kijun {ichi_kijun:.2f}",
+                    }
+                )
             # Price vs Cloud
             if ichi_cloud_top and ichi_cloud_bot:
                 if price > ichi_cloud_top:
                     ichimoku_score += 8
-                    rationale.append({"src": "Technical", "head": f"Price Above Ichimoku Cloud (${ichi_cloud_top:.2f})",
-                        "body": f"Price is trading above the Kumo cloud — the Ichimoku trend filter is bullish. The cloud acts as strong support at ${ichi_cloud_bot:.2f}–${ichi_cloud_top:.2f}.",
-                        "sentiment": "pos", "meta": f"Cloud: {ichi_cloud_bot:.2f}–{ichi_cloud_top:.2f} | {'Green (bullish)' if ichi_cloud_bull else 'Red (bearish)'}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Price Above Ichimoku Cloud (${ichi_cloud_top:.2f})",
+                            "body": f"Price is trading above the Kumo cloud — the Ichimoku trend filter is bullish. The cloud acts as strong support at ${ichi_cloud_bot:.2f}–${ichi_cloud_top:.2f}.",
+                            "sentiment": "pos",
+                            "meta": f"Cloud: {ichi_cloud_bot:.2f}–{ichi_cloud_top:.2f} | {'Green (bullish)' if ichi_cloud_bull else 'Red (bearish)'}",
+                        }
+                    )
                 elif price < ichi_cloud_bot:
                     ichimoku_score -= 8
-                    rationale.append({"src": "Technical", "head": f"Price Below Ichimoku Cloud (${ichi_cloud_bot:.2f})",
-                        "body": f"Price is below the Kumo cloud — the Ichimoku trend filter is bearish. The cloud acts as resistance at ${ichi_cloud_bot:.2f}–${ichi_cloud_top:.2f}.",
-                        "sentiment": "neg", "meta": f"Cloud: {ichi_cloud_bot:.2f}–{ichi_cloud_top:.2f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Price Below Ichimoku Cloud (${ichi_cloud_bot:.2f})",
+                            "body": f"Price is below the Kumo cloud — the Ichimoku trend filter is bearish. The cloud acts as resistance at ${ichi_cloud_bot:.2f}–${ichi_cloud_top:.2f}.",
+                            "sentiment": "neg",
+                            "meta": f"Cloud: {ichi_cloud_bot:.2f}–{ichi_cloud_top:.2f}",
+                        }
+                    )
             # Chikou confirmation — symmetric: confirm = ±4, contradict = ∓4
             if ichi_chikou is True:
-                ichimoku_score += 4   # Chikou above price 26 bars ago: bullish
+                ichimoku_score += 4  # Chikou above price 26 bars ago: bullish
             elif ichi_chikou is False:
-                ichimoku_score -= 4   # Chikou below price 26 bars ago: bearish
+                ichimoku_score -= 4  # Chikou below price 26 bars ago: bearish
 
             # Apply Ichimoku system bucket cap: TK cross + cloud + chikou are three
             # readings from one indicator — prevent the system from triple-counting.
@@ -3847,7 +5102,7 @@ async def generate_signal(
         # ── Chaikin Money Flow ───────────────────────────────────────────────
         # CMF and OBV both measure volume-weighted money flow direction.
         # Routed into volume_score (same bucket as OBV) so they contribute once.
-        cmf      = tech.get("cmf")
+        cmf = tech.get("cmf")
         cmf_prev = tech.get("cmf_prev")
         change_pct_abs = abs(tech.get("change_pct", 0) or 0)
         if cmf is not None:
@@ -3855,23 +5110,45 @@ async def generate_signal(
             if cmf > 0.20:
                 # Strong accumulation — boosted weight vs the 0.15 threshold
                 volume_score += 10
-                rationale.append({"src": "Technical", "head": f"CMF Strong Accumulation ({cmf:+.2f})",
-                    "body": (f"CMF at {cmf:+.2f} — heavy institutional accumulation. "
-                             "Money flow is well above the +0.1 threshold, confirming sustained smart-money buying."),
-                    "sentiment": "pos", "meta": f"CMF(20) = {cmf:+.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"CMF Strong Accumulation ({cmf:+.2f})",
+                        "body": (
+                            f"CMF at {cmf:+.2f} — heavy institutional accumulation. "
+                            "Money flow is well above the +0.1 threshold, confirming sustained smart-money buying."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"CMF(20) = {cmf:+.2f}",
+                    }
+                )
             elif cmf > 0.15:
                 volume_score += 8
                 # Stealth accumulation: strong CMF on a flat price = institutional buying quietly
                 if change_pct_abs < 0.5:
                     volume_score += 4
-                    rationale.append({"src": "Technical", "head": f"CMF Stealth Accumulation ({cmf:+.2f})",
-                        "body": (f"CMF at {cmf:+.2f} while price is nearly flat ({tech.get('change_pct', 0):+.2f}%). "
-                                 "Institutions are quietly accumulating without moving the price — a very reliable precursor to a breakout."),
-                        "sentiment": "pos", "meta": f"CMF(20) = {cmf:+.2f} | Price flat"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"CMF Stealth Accumulation ({cmf:+.2f})",
+                            "body": (
+                                f"CMF at {cmf:+.2f} while price is nearly flat ({tech.get('change_pct', 0):+.2f}%). "
+                                "Institutions are quietly accumulating without moving the price — a very reliable precursor to a breakout."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"CMF(20) = {cmf:+.2f} | Price flat",
+                        }
+                    )
                 else:
-                    rationale.append({"src": "Technical", "head": f"Chaikin Money Flow Bullish ({cmf:+.2f})",
-                        "body": f"CMF at {cmf:+.2f} — sustained accumulation. Money is flowing into this stock on high volume. Institutional buyers are active.",
-                        "sentiment": "pos", "meta": f"CMF(20) = {cmf:+.2f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Chaikin Money Flow Bullish ({cmf:+.2f})",
+                            "body": f"CMF at {cmf:+.2f} — sustained accumulation. Money is flowing into this stock on high volume. Institutional buyers are active.",
+                            "sentiment": "pos",
+                            "meta": f"CMF(20) = {cmf:+.2f}",
+                        }
+                    )
             elif cmf > 0.05:
                 volume_score += 4
                 # CMF rising (accelerating) is better than stable
@@ -3879,22 +5156,44 @@ async def generate_signal(
                     volume_score += 2
             elif cmf < -0.20:
                 volume_score -= 10
-                rationale.append({"src": "Technical", "head": f"CMF Strong Distribution ({cmf:+.2f})",
-                    "body": (f"CMF at {cmf:+.2f} — heavy institutional distribution. "
-                             "Persistent outflows at this level signal sustained smart-money selling."),
-                    "sentiment": "neg", "meta": f"CMF(20) = {cmf:+.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"CMF Strong Distribution ({cmf:+.2f})",
+                        "body": (
+                            f"CMF at {cmf:+.2f} — heavy institutional distribution. "
+                            "Persistent outflows at this level signal sustained smart-money selling."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"CMF(20) = {cmf:+.2f}",
+                    }
+                )
             elif cmf < -0.15:
                 volume_score -= 8
                 if change_pct_abs < 0.5:
                     volume_score -= 3  # stealth distribution penalty
-                    rationale.append({"src": "Technical", "head": f"CMF Stealth Distribution ({cmf:+.2f})",
-                        "body": (f"CMF at {cmf:+.2f} while price is nearly flat. "
-                                 "Institutions are quietly selling into price stability — bearish divergence."),
-                        "sentiment": "neg", "meta": f"CMF(20) = {cmf:+.2f} | Price flat"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"CMF Stealth Distribution ({cmf:+.2f})",
+                            "body": (
+                                f"CMF at {cmf:+.2f} while price is nearly flat. "
+                                "Institutions are quietly selling into price stability — bearish divergence."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"CMF(20) = {cmf:+.2f} | Price flat",
+                        }
+                    )
                 else:
-                    rationale.append({"src": "Technical", "head": f"Chaikin Money Flow Bearish ({cmf:+.2f})",
-                        "body": f"CMF at {cmf:+.2f} — sustained distribution. Money is flowing out of this stock. Institutional sellers are dominating.",
-                        "sentiment": "neg", "meta": f"CMF(20) = {cmf:+.2f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Chaikin Money Flow Bearish ({cmf:+.2f})",
+                            "body": f"CMF at {cmf:+.2f} — sustained distribution. Money is flowing out of this stock. Institutional sellers are dominating.",
+                            "sentiment": "neg",
+                            "meta": f"CMF(20) = {cmf:+.2f}",
+                        }
+                    )
             elif cmf < -0.05:
                 volume_score -= 4
                 if cmf_prev is not None and cmf < cmf_prev - 0.05:
@@ -3911,7 +5210,7 @@ async def generate_signal(
         # Price below VWAP means the average participant is underwater — a structural
         # liquidity headwind for BUY signals (selling pressure from break-even sellers).
         # Exemption: mean-reversion / oversold plays legitimately buy below VWAP.
-        vwap_20  = tech.get("vwap_20")
+        vwap_20 = tech.get("vwap_20")
         vwap_pct = tech.get("vwap_pct")  # positive = above VWAP, negative = below
         if vwap_20 is not None and vwap_pct is not None:
             sources.add("Technical")
@@ -3919,30 +5218,38 @@ async def generate_signal(
             if score > 0 and vwap_pct < -2.0 and not is_oversold_play:
                 # BUY signal with price meaningfully below VWAP — liquidity headwind
                 penalty = min(12, abs(vwap_pct) * 1.0)  # 1pt per % below, cap 12
-                score  -= penalty
-                rationale.append({"src": "Technical",
-                    "head": f"Price Below 20-Day VWAP ({vwap_pct:+.1f}%) — Liquidity Headwind",
-                    "body": (
-                        f"Price is {abs(vwap_pct):.1f}% below the 20-day VWAP (${vwap_20:.2f}). "
-                        "Participants who bought over the past 20 sessions are on average underwater, "
-                        "creating overhead supply as they exit at break-even. "
-                        "BUY signals below VWAP have lower win rates unless confirmed by volume expansion."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"Price ${price:.2f} vs VWAP ${vwap_20:.2f} ({vwap_pct:+.1f}%)"})
+                score -= penalty
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Price Below 20-Day VWAP ({vwap_pct:+.1f}%) — Liquidity Headwind",
+                        "body": (
+                            f"Price is {abs(vwap_pct):.1f}% below the 20-day VWAP (${vwap_20:.2f}). "
+                            "Participants who bought over the past 20 sessions are on average underwater, "
+                            "creating overhead supply as they exit at break-even. "
+                            "BUY signals below VWAP have lower win rates unless confirmed by volume expansion."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Price ${price:.2f} vs VWAP ${vwap_20:.2f} ({vwap_pct:+.1f}%)",
+                    }
+                )
             elif score > 0 and vwap_pct >= 1.0:
                 # Price above VWAP: participants are in profit — less overhead supply
                 bonus = min(5, vwap_pct * 0.4)
                 score += bonus
-                rationale.append({"src": "Technical",
-                    "head": f"Price Above VWAP ({vwap_pct:+.1f}%) — Institutional Cost Basis Holds",
-                    "body": (
-                        f"Price is {vwap_pct:.1f}% above the 20-day VWAP (${vwap_20:.2f}). "
-                        "The average participant over the last 20 sessions is in profit — "
-                        "reduced overhead supply, supportive for continued upside."
-                    ),
-                    "sentiment": "pos",
-                    "meta": f"Price ${price:.2f} vs VWAP ${vwap_20:.2f} ({vwap_pct:+.1f}%)"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Price Above VWAP ({vwap_pct:+.1f}%) — Institutional Cost Basis Holds",
+                        "body": (
+                            f"Price is {vwap_pct:.1f}% above the 20-day VWAP (${vwap_20:.2f}). "
+                            "The average participant over the last 20 sessions is in profit — "
+                            "reduced overhead supply, supportive for continued upside."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Price ${price:.2f} vs VWAP ${vwap_20:.2f} ({vwap_pct:+.1f}%)",
+                    }
+                )
 
         # ── VWAP Slope — institutional direction ─────────────────────────────
         vwap_slope_pos = tech.get("vwap_slope_pos")
@@ -3950,20 +5257,34 @@ async def generate_signal(
             sources.add("Technical")
             if vwap_slope_pos and vwap_pct > 0:
                 ma_score += 6
-                rationale.append({"src": "Technical",
-                    "head": f"VWAP Rising + Price Above ({vwap_pct:+.1f}%) — Institutional Accumulation",
-                    "body": (f"The 20-day VWAP (${vwap_20:.2f}) is trending upward and price is above it. "
-                             "Rising VWAP means the average cost basis is improving — institutional buyers "
-                             "are consistently accumulating at higher prices."),
-                    "sentiment": "pos", "meta": f"VWAP slope=up | Price {vwap_pct:+.1f}% above"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"VWAP Rising + Price Above ({vwap_pct:+.1f}%) — Institutional Accumulation",
+                        "body": (
+                            f"The 20-day VWAP (${vwap_20:.2f}) is trending upward and price is above it. "
+                            "Rising VWAP means the average cost basis is improving — institutional buyers "
+                            "are consistently accumulating at higher prices."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"VWAP slope=up | Price {vwap_pct:+.1f}% above",
+                    }
+                )
             elif not vwap_slope_pos and vwap_pct < 0:
                 ma_score -= 5
-                rationale.append({"src": "Technical",
-                    "head": f"VWAP Falling + Price Below ({vwap_pct:+.1f}%) — Institutional Distribution",
-                    "body": (f"The 20-day VWAP (${vwap_20:.2f}) is declining and price is below it. "
-                             "Falling VWAP reflects persistent institutional selling — the average participant "
-                             "is underwater and selling into any recovery."),
-                    "sentiment": "neg", "meta": f"VWAP slope=down | Price {vwap_pct:+.1f}% below"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"VWAP Falling + Price Below ({vwap_pct:+.1f}%) — Institutional Distribution",
+                        "body": (
+                            f"The 20-day VWAP (${vwap_20:.2f}) is declining and price is below it. "
+                            "Falling VWAP reflects persistent institutional selling — the average participant "
+                            "is underwater and selling into any recovery."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"VWAP slope=down | Price {vwap_pct:+.1f}% below",
+                    }
+                )
 
         # ── VWAP σ Bands — mean reversion extremes ───────────────────────────
         # σ bands use std dev of price around VWAP (not Bollinger — different distribution).
@@ -3979,112 +5300,185 @@ async def generate_signal(
         if all(v is not None for v in (vwap_b2u, vwap_b2l, vwap_b1u, vwap_b1l, vwap_20)):
             sources.add("Technical")
             if price >= vwap_b2u:
-                mean_rev_score -= 14   # keeps _stretch_total dampening
-                score -= 10            # direct score contribution (backtest parity)
-                rationale.append({"src": "Technical",
-                    "head": f"VWAP +2σ Band Touch (${vwap_b2u:.2f}) — Extreme Overbought",
-                    "body": (f"Price at ${price:.2f} has reached the VWAP +2σ band (${vwap_b2u:.2f}). "
-                             "Statistically rare overextension above institutional cost basis. "
-                             f"High-probability mean reversion back toward VWAP (${vwap_20:.2f})."),
-                    "sentiment": "neg", "meta": f"+2σ band = ${vwap_b2u:.2f}"})
+                mean_rev_score -= 14  # keeps _stretch_total dampening
+                score -= 10  # direct score contribution (backtest parity)
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"VWAP +2σ Band Touch (${vwap_b2u:.2f}) — Extreme Overbought",
+                        "body": (
+                            f"Price at ${price:.2f} has reached the VWAP +2σ band (${vwap_b2u:.2f}). "
+                            "Statistically rare overextension above institutional cost basis. "
+                            f"High-probability mean reversion back toward VWAP (${vwap_20:.2f})."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"+2σ band = ${vwap_b2u:.2f}",
+                    }
+                )
             elif price >= vwap_b1u:
                 mean_rev_score -= 8
                 score -= 6
-                rationale.append({"src": "Technical",
-                    "head": f"VWAP +1σ Band Touch (${vwap_b1u:.2f}) — Overbought vs VWAP",
-                    "body": (f"Price at the VWAP +1σ band (${vwap_b1u:.2f}). "
-                             "Extended above the average institutional cost basis — distribution risk."),
-                    "sentiment": "neg", "meta": f"+1σ band = ${vwap_b1u:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"VWAP +1σ Band Touch (${vwap_b1u:.2f}) — Overbought vs VWAP",
+                        "body": (
+                            f"Price at the VWAP +1σ band (${vwap_b1u:.2f}). "
+                            "Extended above the average institutional cost basis — distribution risk."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"+1σ band = ${vwap_b1u:.2f}",
+                    }
+                )
             elif price <= vwap_b2l:
                 mean_rev_score += 14
-                score += 10            # direct score contribution
-                rationale.append({"src": "Technical",
-                    "head": f"VWAP −2σ Band Touch (${vwap_b2l:.2f}) — Extreme Oversold",
-                    "body": (f"Price at ${price:.2f} has reached the VWAP −2σ band (${vwap_b2l:.2f}). "
-                             "Extreme statistical discount to institutional cost basis — "
-                             f"high-probability bounce back toward VWAP (${vwap_20:.2f})."),
-                    "sentiment": "pos", "meta": f"−2σ band = ${vwap_b2l:.2f}"})
+                score += 10  # direct score contribution
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"VWAP −2σ Band Touch (${vwap_b2l:.2f}) — Extreme Oversold",
+                        "body": (
+                            f"Price at ${price:.2f} has reached the VWAP −2σ band (${vwap_b2l:.2f}). "
+                            "Extreme statistical discount to institutional cost basis — "
+                            f"high-probability bounce back toward VWAP (${vwap_20:.2f})."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"−2σ band = ${vwap_b2l:.2f}",
+                    }
+                )
             elif price <= vwap_b1l:
                 mean_rev_score += 8
                 score += 6
-                rationale.append({"src": "Technical",
-                    "head": f"VWAP −1σ Band Touch (${vwap_b1l:.2f}) — Oversold vs VWAP",
-                    "body": (f"Price at the VWAP −1σ band (${vwap_b1l:.2f}). "
-                             "Discounted below the average institutional cost basis — bounce potential."),
-                    "sentiment": "pos", "meta": f"−1σ band = ${vwap_b1l:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"VWAP −1σ Band Touch (${vwap_b1l:.2f}) — Oversold vs VWAP",
+                        "body": (
+                            f"Price at the VWAP −1σ band (${vwap_b1l:.2f}). "
+                            "Discounted below the average institutional cost basis — bounce potential."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"−1σ band = ${vwap_b1l:.2f}",
+                    }
+                )
 
         # ── VWAP Cross + RVOL — confirmed institutional shift ────────────────
         _vwap_pct_prev = tech.get("vwap_pct_prev")
-        _rvol_now      = tech.get("rvol") or 0
-        if (vwap_pct is not None and _vwap_pct_prev is not None and _rvol_now >= 2.0 and vwap_20 is not None):
+        _rvol_now = tech.get("rvol") or 0
+        if vwap_pct is not None and _vwap_pct_prev is not None and _rvol_now >= 2.0 and vwap_20 is not None:
             sources.add("Technical")
             if _vwap_pct_prev < 0 <= vwap_pct:
                 ma_score += 16
-                rationale.append({"src": "Technical",
-                    "head": f"VWAP Cross Bullish + RVOL {_rvol_now:.1f}× — Institutional Shift",
-                    "body": (f"Price just crossed above the 20-day VWAP (${vwap_20:.2f}) on "
-                             f"{_rvol_now:.1f}× average volume. High-volume VWAP reclaims signal "
-                             "a genuine institutional sentiment shift — not a low-conviction drift."),
-                    "sentiment": "pos", "meta": f"VWAP cross UP | RVOL {_rvol_now:.1f}×"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"VWAP Cross Bullish + RVOL {_rvol_now:.1f}× — Institutional Shift",
+                        "body": (
+                            f"Price just crossed above the 20-day VWAP (${vwap_20:.2f}) on "
+                            f"{_rvol_now:.1f}× average volume. High-volume VWAP reclaims signal "
+                            "a genuine institutional sentiment shift — not a low-conviction drift."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"VWAP cross UP | RVOL {_rvol_now:.1f}×",
+                    }
+                )
             elif _vwap_pct_prev > 0 >= vwap_pct:
                 ma_score -= 14
-                rationale.append({"src": "Technical",
-                    "head": f"VWAP Cross Bearish + RVOL {_rvol_now:.1f}× — Institutional Exit",
-                    "body": (f"Price just crossed below the 20-day VWAP (${vwap_20:.2f}) on "
-                             f"{_rvol_now:.1f}× average volume. Confirmed institutional distribution — "
-                             "smart money is exiting on elevated volume."),
-                    "sentiment": "neg", "meta": f"VWAP cross DOWN | RVOL {_rvol_now:.1f}×"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"VWAP Cross Bearish + RVOL {_rvol_now:.1f}× — Institutional Exit",
+                        "body": (
+                            f"Price just crossed below the 20-day VWAP (${vwap_20:.2f}) on "
+                            f"{_rvol_now:.1f}× average volume. Confirmed institutional distribution — "
+                            "smart money is exiting on elevated volume."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"VWAP cross DOWN | RVOL {_rvol_now:.1f}×",
+                    }
+                )
 
         # ── Donchian Channel Breakout ────────────────────────────────────────
-        dc_high   = tech.get("donchian_high")
-        dc_low    = tech.get("donchian_low")
+        dc_high = tech.get("donchian_high")
+        dc_low = tech.get("donchian_low")
         dc_high_p = tech.get("donchian_high_p")
-        dc_low_p  = tech.get("donchian_low_p")
+        dc_low_p = tech.get("donchian_low_p")
         if dc_high and dc_low and dc_high_p and dc_low_p:
             if price >= dc_high and price > dc_high_p:
                 momentum_score += 10
                 sources.add("Technical")
-                rationale.append({"src": "Technical", "head": f"Donchian 20-Day High Breakout (${dc_high:.2f})",
-                    "body": f"Price broke out above the 20-day Donchian channel high (${dc_high:.2f}). The original Turtle Trading breakout signal — momentum is accelerating.",
-                    "sentiment": "pos", "meta": f"20d High = ${dc_high:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Donchian 20-Day High Breakout (${dc_high:.2f})",
+                        "body": f"Price broke out above the 20-day Donchian channel high (${dc_high:.2f}). The original Turtle Trading breakout signal — momentum is accelerating.",
+                        "sentiment": "pos",
+                        "meta": f"20d High = ${dc_high:.2f}",
+                    }
+                )
             elif price <= dc_low and price < dc_low_p:
                 momentum_score -= 10
                 sources.add("Technical")
-                rationale.append({"src": "Technical", "head": f"Donchian 20-Day Low Breakdown (${dc_low:.2f})",
-                    "body": f"Price broke below the 20-day Donchian channel low (${dc_low:.2f}). Classic momentum breakdown — selling pressure is accelerating.",
-                    "sentiment": "neg", "meta": f"20d Low = ${dc_low:.2f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Donchian 20-Day Low Breakdown (${dc_low:.2f})",
+                        "body": f"Price broke below the 20-day Donchian channel low (${dc_low:.2f}). Classic momentum breakdown — selling pressure is accelerating.",
+                        "sentiment": "neg",
+                        "meta": f"20d Low = ${dc_low:.2f}",
+                    }
+                )
 
         # ── Price Structure (HH/HL or LH/LL) ────────────────────────────────
         # Backtest-validated (alpha decomp v4): LH/LL on approaching-oversold RSI = MR
         # bounce candidate (sustained downtrend extended = bounce setup), not bearish momentum.
         # HH/HL remains a momentum confirmation signal (unchanged direction).
-        ps     = tech.get("price_structure")
+        ps = tech.get("price_structure")
         _ps_rsi = rsi if isinstance(rsi, (int, float)) else 50.0
         if ps == "hh_hl":
             momentum_score += 7
             sources.add("Technical")
-            rationale.append({"src": "Technical", "head": "Bullish Price Structure — Higher Highs & Higher Lows",
-                "body": "Recent swing highs and lows are both ascending — the classic definition of an uptrend. Bias remains long until structure breaks.",
-                "sentiment": "pos", "meta": "HH + HL pattern (20-bar)"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "Bullish Price Structure — Higher Highs & Higher Lows",
+                    "body": "Recent swing highs and lows are both ascending — the classic definition of an uptrend. Bias remains long until structure breaks.",
+                    "sentiment": "pos",
+                    "meta": "HH + HL pattern (20-bar)",
+                }
+            )
         elif ps == "lh_ll":
             sources.add("Technical")
             if _ps_rsi is not None and _ps_rsi < 45:
                 # Downtrend + approaching oversold = MR bounce setup (v4 alpha finding)
                 # LH/LL signals sustained weakness that creates a mean-reversion opportunity.
                 score += 7
-                rationale.append({"src": "Technical",
-                    "head": "Bearish Price Structure (LH/LL) — Extended Downtrend = MR Setup",
-                    "body": (f"Price structure shows Lower Highs & Lower Lows — sustained downtrend — "
-                             f"with RSI {_ps_rsi:.1f} approaching oversold. Extended LH/LL structures "
-                             "resolve with mean-reversion bounces when selling exhausts. "
-                             "Both the structure and RSI confirm the setup."),
-                    "sentiment": "pos", "meta": f"LH + LL | RSI {_ps_rsi:.1f}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Bearish Price Structure (LH/LL) — Extended Downtrend = MR Setup",
+                        "body": (
+                            f"Price structure shows Lower Highs & Lower Lows — sustained downtrend — "
+                            f"with RSI {_ps_rsi:.1f} approaching oversold. Extended LH/LL structures "
+                            "resolve with mean-reversion bounces when selling exhausts. "
+                            "Both the structure and RSI confirm the setup."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"LH + LL | RSI {_ps_rsi:.1f}",
+                    }
+                )
             else:
                 # Trending down without oversold confirmation = momentum signal (unchanged)
                 momentum_score -= 7
-                rationale.append({"src": "Technical", "head": "Bearish Price Structure — Lower Highs & Lower Lows",
-                    "body": "Recent swing highs and lows are both declining — the classic definition of a downtrend. Bias remains short until structure reverses.",
-                    "sentiment": "neg", "meta": "LH + LL pattern (20-bar)"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Bearish Price Structure — Lower Highs & Lower Lows",
+                        "body": "Recent swing highs and lows are both declining — the classic definition of a downtrend. Bias remains short until structure reverses.",
+                        "sentiment": "neg",
+                        "meta": "LH + LL pattern (20-bar)",
+                    }
+                )
 
         # ── Gap Analysis ─────────────────────────────────────────────────────
         gap_pct = tech.get("gap_pct")
@@ -4092,14 +5486,26 @@ async def generate_signal(
             sources.add("Technical")
             if gap_pct >= 2.5:
                 momentum_score += 8
-                rationale.append({"src": "Technical", "head": f"Bullish Gap Up +{gap_pct:.1f}%",
-                    "body": f"Today's open gapped {gap_pct:.1f}% above yesterday's close. Gaps of this size reflect strong institutional conviction — unfilled gaps above prior resistance are particularly bullish.",
-                    "sentiment": "pos", "meta": f"Gap: +{gap_pct:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Bullish Gap Up +{gap_pct:.1f}%",
+                        "body": f"Today's open gapped {gap_pct:.1f}% above yesterday's close. Gaps of this size reflect strong institutional conviction — unfilled gaps above prior resistance are particularly bullish.",
+                        "sentiment": "pos",
+                        "meta": f"Gap: +{gap_pct:.1f}%",
+                    }
+                )
             elif gap_pct <= -2.5:
                 momentum_score -= 8
-                rationale.append({"src": "Technical", "head": f"Bearish Gap Down {gap_pct:.1f}%",
-                    "body": f"Today's open gapped {abs(gap_pct):.1f}% below yesterday's close. Downside gaps reflect urgent selling — institutional distribution overnight.",
-                    "sentiment": "neg", "meta": f"Gap: {gap_pct:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Bearish Gap Down {gap_pct:.1f}%",
+                        "body": f"Today's open gapped {abs(gap_pct):.1f}% below yesterday's close. Downside gaps reflect urgent selling — institutional distribution overnight.",
+                        "sentiment": "neg",
+                        "meta": f"Gap: {gap_pct:.1f}%",
+                    }
+                )
             elif 1.5 <= gap_pct < 2.5:
                 momentum_score += 4
             elif -2.5 < gap_pct <= -1.5:
@@ -4116,55 +5522,93 @@ async def generate_signal(
             if rvol < 0.5:
                 # No participation — no institutional conviction on either side; dampen momentum
                 momentum_score = momentum_score * 0.5
-                rationale.append({"src": "Technical",
-                    "head": f"Volume Drought — No Participation ({rvol:.2f}×)",
-                    "body": (f"Today's volume is only {rvol:.2f}× the 20-day average. "
-                             "Institutional players are absent — any price move is likely a low-conviction drift. "
-                             "Momentum signals are unreliable without volume confirmation."),
-                    "sentiment": "neu", "meta": f"RVOL = {rvol:.2f}× (< 0.5 = no participation)"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Volume Drought — No Participation ({rvol:.2f}×)",
+                        "body": (
+                            f"Today's volume is only {rvol:.2f}× the 20-day average. "
+                            "Institutional players are absent — any price move is likely a low-conviction drift. "
+                            "Momentum signals are unreliable without volume confirmation."
+                        ),
+                        "sentiment": "neu",
+                        "meta": f"RVOL = {rvol:.2f}× (< 0.5 = no participation)",
+                    }
+                )
             elif rvol >= 3.0:
                 # Major catalyst — institutional conviction in the current direction
                 if change >= 0:
                     momentum_score += 10
-                    rationale.append({"src": "Technical",
-                        "head": f"Volume Surge — Major Catalyst ({rvol:.1f}×)",
-                        "body": (f"Volume at {rvol:.1f}× the 20-day average — a major catalyst event. "
-                                 "Institutional participation is confirmed. High-volume breakouts and trend "
-                                 "signals carry significantly higher follow-through probability."),
-                        "sentiment": "pos", "meta": f"RVOL = {rvol:.1f}× (≥ 3.0 = catalyst)"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Volume Surge — Major Catalyst ({rvol:.1f}×)",
+                            "body": (
+                                f"Volume at {rvol:.1f}× the 20-day average — a major catalyst event. "
+                                "Institutional participation is confirmed. High-volume breakouts and trend "
+                                "signals carry significantly higher follow-through probability."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"RVOL = {rvol:.1f}× (≥ 3.0 = catalyst)",
+                        }
+                    )
                 else:
                     momentum_score -= 10
-                    rationale.append({"src": "Technical",
-                        "head": f"Volume Surge on Sell-Off ({rvol:.1f}×) — Capitulation Risk",
-                        "body": (f"Volume at {rvol:.1f}× average on a down day. "
-                                 "Either panic selling or institutional distribution — either way, "
-                                 "the selling pressure is institutional-grade."),
-                        "sentiment": "neg", "meta": f"RVOL = {rvol:.1f}× (≥ 3.0 on down day)"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Volume Surge on Sell-Off ({rvol:.1f}×) — Capitulation Risk",
+                            "body": (
+                                f"Volume at {rvol:.1f}× average on a down day. "
+                                "Either panic selling or institutional distribution — either way, "
+                                "the selling pressure is institutional-grade."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"RVOL = {rvol:.1f}× (≥ 3.0 on down day)",
+                        }
+                    )
             elif rvol >= 2.0:
                 # Elevated institutional activity — direction-aware
                 if change >= 0:
                     momentum_score += 5
-                    rationale.append({"src": "Technical",
-                        "head": f"Elevated Volume on Up Day ({rvol:.1f}×)",
-                        "body": f"Today's volume is {rvol:.1f}× the 20-day average on a positive price day — institutional accumulation.",
-                        "sentiment": "pos", "meta": f"RVOL = {rvol:.1f}×"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"Elevated Volume on Up Day ({rvol:.1f}×)",
+                            "body": f"Today's volume is {rvol:.1f}× the 20-day average on a positive price day — institutional accumulation.",
+                            "sentiment": "pos",
+                            "meta": f"RVOL = {rvol:.1f}×",
+                        }
+                    )
                 else:
                     # Oversold + high volume on down day = stealth institutional accumulation
                     is_oversold_rvol = rsi is not None and rsi < 40
                     if is_oversold_rvol:
                         mean_rev_score += 10
-                        rationale.append({"src": "Technical",
-                            "head": f"Stealth Accumulation — Down Day + High Volume + Oversold ({rvol:.1f}×)",
-                            "body": (f"Volume is {rvol:.1f}× average on a red day while RSI is oversold ({rsi:.0f}). "
-                                     "Paradox: high volume on a sell-off in an oversold stock often means institutional "
-                                     "buyers absorbing retail panic. This is a strong mean-reversion buy setup."),
-                            "sentiment": "pos", "meta": f"RVOL {rvol:.1f}× | RSI {rsi:.0f} | Down day"})
+                        rationale.append(
+                            {
+                                "src": "Technical",
+                                "head": f"Stealth Accumulation — Down Day + High Volume + Oversold ({rvol:.1f}×)",
+                                "body": (
+                                    f"Volume is {rvol:.1f}× average on a red day while RSI is oversold ({rsi:.0f}). "
+                                    "Paradox: high volume on a sell-off in an oversold stock often means institutional "
+                                    "buyers absorbing retail panic. This is a strong mean-reversion buy setup."
+                                ),
+                                "sentiment": "pos",
+                                "meta": f"RVOL {rvol:.1f}× | RSI {rsi:.0f} | Down day",
+                            }
+                        )
                     else:
                         momentum_score -= 5
-                        rationale.append({"src": "Technical",
-                            "head": f"Elevated Volume on Down Day ({rvol:.1f}×)",
-                            "body": f"Today's volume is {rvol:.1f}× the 20-day average on a negative price day — institutional distribution.",
-                            "sentiment": "neg", "meta": f"RVOL = {rvol:.1f}×"})
+                        rationale.append(
+                            {
+                                "src": "Technical",
+                                "head": f"Elevated Volume on Down Day ({rvol:.1f}×)",
+                                "body": f"Today's volume is {rvol:.1f}× the 20-day average on a negative price day — institutional distribution.",
+                                "sentiment": "neg",
+                                "meta": f"RVOL = {rvol:.1f}×",
+                            }
+                        )
 
         # Apply momentum family bucket cap: ROC10 + streak + Donchian + price
         # structure + gap + RVOL all confirm the same directional momentum.
@@ -4192,9 +5636,15 @@ async def generate_signal(
             adr = tech.get("adr_pct", 0)
             adr_hi = tech.get("adr_6m_high", adr)
             sources.add("Technical")
-            rationale.append({"src": "Technical", "head": "Volatility Coiling — ADR% at 6-Month Low",
-                "body": f"Average daily range compressed to {adr:.2f}% vs 6-month high of {adr_hi:.2f}%. Volatility compression historically precedes large directional moves. Watch for a Donchian or Bollinger breakout.",
-                "sentiment": "neu", "meta": f"ADR = {adr:.2f}% (6M high: {adr_hi:.2f}%)"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "Volatility Coiling — ADR% at 6-Month Low",
+                    "body": f"Average daily range compressed to {adr:.2f}% vs 6-month high of {adr_hi:.2f}%. Volatility compression historically precedes large directional moves. Watch for a Donchian or Bollinger breakout.",
+                    "sentiment": "neu",
+                    "meta": f"ADR = {adr:.2f}% (6M high: {adr_hi:.2f}%)",
+                }
+            )
 
         # ── ATR Percentile Rank — Volatility Regime ──────────────────────────
         # Backtest-validated (alpha decomp v4): ATR_REG was the strongest new family
@@ -4207,72 +5657,115 @@ async def generate_signal(
             if _atr_pct_rank < 10:
                 # Volatility at historical 10th percentile — maximum coil → MR premium
                 score += 6
-                rationale.append({"src": "Technical",
-                    "head": f"Volatility at 10th Percentile — MR-Optimal Environment",
-                    "body": (f"ATR is at the {_atr_pct_rank:.0f}th percentile of its 1-year range. "
-                             "Extreme volatility compression creates a mean-reverting environment — "
-                             "price moves are limited and reversals are faster and more reliable."),
-                    "sentiment": "pos", "meta": f"ATR pct rank = {_atr_pct_rank:.0f}th"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Volatility at 10th Percentile — MR-Optimal Environment",
+                        "body": (
+                            f"ATR is at the {_atr_pct_rank:.0f}th percentile of its 1-year range. "
+                            "Extreme volatility compression creates a mean-reverting environment — "
+                            "price moves are limited and reversals are faster and more reliable."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"ATR pct rank = {_atr_pct_rank:.0f}th",
+                    }
+                )
             elif _atr_pct_rank < 20:
                 # Low volatility — mild MR premium
                 score += 3
-                rationale.append({"src": "Technical",
-                    "head": f"Low Volatility Regime — {_atr_pct_rank:.0f}th Percentile",
-                    "body": f"ATR at the {_atr_pct_rank:.0f}th percentile. Quiet tape favours mean-reversion over momentum.",
-                    "sentiment": "pos", "meta": f"ATR pct rank = {_atr_pct_rank:.0f}th"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Low Volatility Regime — {_atr_pct_rank:.0f}th Percentile",
+                        "body": f"ATR at the {_atr_pct_rank:.0f}th percentile. Quiet tape favours mean-reversion over momentum.",
+                        "sentiment": "pos",
+                        "meta": f"ATR pct rank = {_atr_pct_rank:.0f}th",
+                    }
+                )
             elif _atr_pct_rank > 90:
                 # Expanding volatility — momentum dominant, MR less reliable
                 score -= 5
-                rationale.append({"src": "Technical",
-                    "head": f"Volatility Expanding — {_atr_pct_rank:.0f}th Percentile",
-                    "body": f"ATR at the {_atr_pct_rank:.0f}th percentile. High and expanding volatility favours momentum — mean-reversion signals are less reliable and stops are frequently hit.",
-                    "sentiment": "neg", "meta": f"ATR pct rank = {_atr_pct_rank:.0f}th"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Volatility Expanding — {_atr_pct_rank:.0f}th Percentile",
+                        "body": f"ATR at the {_atr_pct_rank:.0f}th percentile. High and expanding volatility favours momentum — mean-reversion signals are less reliable and stops are frequently hit.",
+                        "sentiment": "neg",
+                        "meta": f"ATR pct rank = {_atr_pct_rank:.0f}th",
+                    }
+                )
 
         # ── Supertrend(7, 3) ─────────────────────────────────────────────────
-        st_dir      = tech.get("supertrend_dir",      0) or 0
+        st_dir = tech.get("supertrend_dir", 0) or 0
         st_dir_prev = tech.get("supertrend_dir_prev", 0) or 0
-        st_val      = tech.get("supertrend_val")
+        st_val = tech.get("supertrend_val")
         if st_dir != 0:
             sources.add("Technical")
-            flip_to_bull = st_dir == 1  and st_dir_prev == -1
-            flip_to_bear = st_dir == -1 and st_dir_prev ==  1
-            val_str      = f" ${st_val:.2f}" if st_val else ""
+            flip_to_bull = st_dir == 1 and st_dir_prev == -1
+            flip_to_bear = st_dir == -1 and st_dir_prev == 1
+            val_str = f" ${st_val:.2f}" if st_val else ""
             if flip_to_bull:
                 # Routed into momentum_score so Supertrend competes within the
                 # momentum family cap (±26) alongside ROC, Donchian, streak, gap.
-                momentum_score += 14; dominant = "macd"
-                rationale.append({"src": "Technical",
-                    "head": "Supertrend Bullish Flip ↑",
-                    "body": (f"Supertrend(7,3) just flipped from bearish to bullish. "
-                             f"The ATR-based trailing stop{val_str} now acts as dynamic support. "
-                             "A fresh Supertrend flip is one of the cleanest momentum-reversal signals."),
-                    "sentiment": "pos",
-                    "meta": f"Supertrend flipped BULLISH{val_str}"})
+                momentum_score += 14
+                dominant = "macd"
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Supertrend Bullish Flip ↑",
+                        "body": (
+                            f"Supertrend(7,3) just flipped from bearish to bullish. "
+                            f"The ATR-based trailing stop{val_str} now acts as dynamic support. "
+                            "A fresh Supertrend flip is one of the cleanest momentum-reversal signals."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Supertrend flipped BULLISH{val_str}",
+                    }
+                )
             elif flip_to_bear:
-                momentum_score -= 14; dominant = "macd"
-                rationale.append({"src": "Technical",
-                    "head": "Supertrend Bearish Flip ↓",
-                    "body": (f"Supertrend(7,3) just flipped from bullish to bearish. "
-                             f"The trailing stop{val_str} now acts as overhead resistance. "
-                             "High-probability reversal with ATR-confirmed downside momentum."),
-                    "sentiment": "neg",
-                    "meta": f"Supertrend flipped BEARISH{val_str}"})
+                momentum_score -= 14
+                dominant = "macd"
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Supertrend Bearish Flip ↓",
+                        "body": (
+                            f"Supertrend(7,3) just flipped from bullish to bearish. "
+                            f"The trailing stop{val_str} now acts as overhead resistance. "
+                            "High-probability reversal with ATR-confirmed downside momentum."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"Supertrend flipped BEARISH{val_str}",
+                    }
+                )
             elif st_dir == 1:
                 momentum_score += 6
-                rationale.append({"src": "Technical",
-                    "head": f"Supertrend Bullish — ATR Support{val_str}",
-                    "body": (f"Supertrend(7,3) is in bullish mode. Price is above its ATR-based "
-                             f"trailing stop{val_str} — the trend is intact and stop is rising."),
-                    "sentiment": "pos",
-                    "meta": f"ST bullish{val_str}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Supertrend Bullish — ATR Support{val_str}",
+                        "body": (
+                            f"Supertrend(7,3) is in bullish mode. Price is above its ATR-based "
+                            f"trailing stop{val_str} — the trend is intact and stop is rising."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"ST bullish{val_str}",
+                    }
+                )
             elif st_dir == -1:
                 momentum_score -= 6
-                rationale.append({"src": "Technical",
-                    "head": f"Supertrend Bearish — ATR Resistance{val_str}",
-                    "body": (f"Supertrend(7,3) is in bearish mode. Price is below its ATR-based "
-                             f"trailing stop{val_str} — overhead resistance prevents sustained recoveries."),
-                    "sentiment": "neg",
-                    "meta": f"ST bearish{val_str}"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Supertrend Bearish — ATR Resistance{val_str}",
+                        "body": (
+                            f"Supertrend(7,3) is in bearish mode. Price is below its ATR-based "
+                            f"trailing stop{val_str} — overhead resistance prevents sustained recoveries."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"ST bearish{val_str}",
+                    }
+                )
 
         # ── Hurst Exponent — Regime Classification ────────────────────────────
         hurst = tech.get("hurst")
@@ -4282,24 +5775,36 @@ async def generate_signal(
                 # Persistent trending regime — trust momentum signals more
                 trend_bonus = 5 if score > 0 else (-5 if score < 0 else 0)
                 score += trend_bonus
-                rationale.append({"src": "Technical",
-                    "head": f"Hurst Exponent {hurst:.2f} — Trending Regime",
-                    "body": (f"Hurst exponent of {hurst:.2f} > 0.5 confirms persistent price momentum. "
-                             "This stock is in a 'trending' state — breakout and momentum signals "
-                             "carry higher win rates here than oscillator-based reversals."),
-                    "sentiment": "pos" if score > 0 else "neg",
-                    "meta": f"Hurst = {hurst:.2f} (>0.6 = strong trend)"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Hurst Exponent {hurst:.2f} — Trending Regime",
+                        "body": (
+                            f"Hurst exponent of {hurst:.2f} > 0.5 confirms persistent price momentum. "
+                            "This stock is in a 'trending' state — breakout and momentum signals "
+                            "carry higher win rates here than oscillator-based reversals."
+                        ),
+                        "sentiment": "pos" if score > 0 else "neg",
+                        "meta": f"Hurst = {hurst:.2f} (>0.6 = strong trend)",
+                    }
+                )
             elif hurst < 0.40:
                 # Anti-persistent mean-reverting regime — moderate strong directional signals
                 if abs(score) > 15:
                     score *= 0.87
-                rationale.append({"src": "Technical",
-                    "head": f"Hurst Exponent {hurst:.2f} — Mean-Reverting Regime",
-                    "body": (f"Hurst exponent of {hurst:.2f} < 0.5 indicates anti-persistent "
-                             "price behaviour — recent trends are likely to reverse. "
-                             "Momentum/breakout signals are suspect; oversold/overbought reversals are more reliable."),
-                    "sentiment": "neu",
-                    "meta": f"Hurst = {hurst:.2f} (<0.4 = mean-reverting)"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"Hurst Exponent {hurst:.2f} — Mean-Reverting Regime",
+                        "body": (
+                            f"Hurst exponent of {hurst:.2f} < 0.5 indicates anti-persistent "
+                            "price behaviour — recent trends are likely to reverse. "
+                            "Momentum/breakout signals are suspect; oversold/overbought reversals are more reliable."
+                        ),
+                        "sentiment": "neu",
+                        "meta": f"Hurst = {hurst:.2f} (<0.4 = mean-reverting)",
+                    }
+                )
 
         # ── Fractal Dimension Index — Donchian & Bollinger regime filter ─────────
         # FDI complements Hurst: while Hurst uses variance scaling, FDI uses the ratio
@@ -4312,24 +5817,36 @@ async def generate_signal(
                 # Low fractal dimension — nearly linear trend; breakouts are reliable
                 fdi_bonus = 5 if score > 0 else (-5 if score < 0 else 0)
                 score += fdi_bonus
-                rationale.append({"src": "Technical",
-                    "head": f"FDI {fdi:.2f} — Trending Market (Trust Breakouts)",
-                    "body": (f"Fractal Dimension Index of {fdi:.2f} is well below 1.5 — price is "
-                             "moving in a linear, directional fashion. Donchian and Bollinger breakout "
-                             "signals are more reliable in this low-fractal regime."),
-                    "sentiment": "pos" if score > 0 else "neg",
-                    "meta": f"FDI = {fdi:.2f} (<1.25 = trending)"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"FDI {fdi:.2f} — Trending Market (Trust Breakouts)",
+                        "body": (
+                            f"Fractal Dimension Index of {fdi:.2f} is well below 1.5 — price is "
+                            "moving in a linear, directional fashion. Donchian and Bollinger breakout "
+                            "signals are more reliable in this low-fractal regime."
+                        ),
+                        "sentiment": "pos" if score > 0 else "neg",
+                        "meta": f"FDI = {fdi:.2f} (<1.25 = trending)",
+                    }
+                )
             elif fdi > 1.45:
                 # High fractal dimension — choppy; breakouts are traps
                 if abs(score) > 15:
                     score *= 0.88
-                rationale.append({"src": "Technical",
-                    "head": f"FDI {fdi:.2f} — Choppy Market (Fade Breakouts)",
-                    "body": (f"Fractal Dimension Index of {fdi:.2f} indicates fractal, "
-                             "non-directional price action. Breakout signals are more likely to fail — "
-                             "mean-reversion setups and oscillator signals are preferred."),
-                    "sentiment": "neu",
-                    "meta": f"FDI = {fdi:.2f} (>1.45 = choppy)"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": f"FDI {fdi:.2f} — Choppy Market (Fade Breakouts)",
+                        "body": (
+                            f"Fractal Dimension Index of {fdi:.2f} indicates fractal, "
+                            "non-directional price action. Breakout signals are more likely to fail — "
+                            "mean-reversion setups and oscillator signals are preferred."
+                        ),
+                        "sentiment": "neu",
+                        "meta": f"FDI = {fdi:.2f} (>1.45 = choppy)",
+                    }
+                )
 
         # ── VIX Term Structure (from macro context) ──────────────────────────
         vix_ratio = (market_ctx or {}).get("macro", {}).get("vix_term_ratio") if market_ctx else None
@@ -4337,32 +5854,46 @@ async def generate_signal(
             vix_ratio = (market_ctx.get("macro") or {}).get("vix_term_ratio")
 
         # ── VIX9D — Near-Term Event Risk ─────────────────────────────────────
-        action = _score_to_action(score)[0]   # re-evaluate after all mid-scoring overrides
+        action, confidence = _score_to_action(score)  # re-evaluate after all mid-scoring overrides
         _macro_now = (market_ctx or {}).get("macro") or {}
         _vix9d_ratio = _macro_now.get("vix9d_ratio")
         if _vix9d_ratio is not None and _vix9d_ratio > 1.10 and action in ("BUY", "SELL"):
             _vix9d = _macro_now.get("vix9d", 0)
             confidence = round(max(35.0, confidence - 4), 1)
             sources.add("Macro")
-            rationale.append({"src": "Macro",
-                "head": f"Near-Term Event Risk (VIX9D/VIX {_vix9d_ratio:.2f}×) — Confidence −4pp",
-                "body": (f"9-day VIX ({_vix9d:.1f}) is {_vix9d_ratio:.2f}× the spot VIX. "
-                         "Near-term options demand is concentrated — a known upcoming event (earnings, "
-                         "FOMC, CPI) is distorting short-horizon signals. Wait for post-event clarity "
-                         "before acting on this signal."),
-                "sentiment": "neg", "meta": f"VIX9D/VIX = {_vix9d_ratio:.2f}×"})
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": f"Near-Term Event Risk (VIX9D/VIX {_vix9d_ratio:.2f}×) — Confidence −4pp",
+                    "body": (
+                        f"9-day VIX ({_vix9d:.1f}) is {_vix9d_ratio:.2f}× the spot VIX. "
+                        "Near-term options demand is concentrated — a known upcoming event (earnings, "
+                        "FOMC, CPI) is distorting short-horizon signals. Wait for post-event clarity "
+                        "before acting on this signal."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"VIX9D/VIX = {_vix9d_ratio:.2f}×",
+                }
+            )
 
         # ── MOVE Index — Bond Market Stress ──────────────────────────────────
         _move = _macro_now.get("move")
         if _move is not None and _move > 140 and action == "BUY":
             confidence = round(max(35.0, confidence - 5), 1)
             sources.add("Macro")
-            rationale.append({"src": "Macro",
-                "head": f"Treasury Vol Stress (MOVE {_move:.0f}) — Confidence −5pp",
-                "body": (f"CBOE MOVE Index at {_move:.0f} — bond market implied vol is highly elevated. "
-                         "Elevated MOVE historically leads equity drawdowns by 2–3 weeks. "
-                         "Reduce position sizing until MOVE normalises below 120."),
-                "sentiment": "neg", "meta": f"^MOVE = {_move:.0f}"})
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": f"Treasury Vol Stress (MOVE {_move:.0f}) — Confidence −5pp",
+                    "body": (
+                        f"CBOE MOVE Index at {_move:.0f} — bond market implied vol is highly elevated. "
+                        "Elevated MOVE historically leads equity drawdowns by 2–3 weeks. "
+                        "Reduce position sizing until MOVE normalises below 120."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"^MOVE = {_move:.0f}",
+                }
+            )
 
         # ── STLFSI4 — Financial Stress (macro signal into single-stock) ───────
         # Already scored globally in macro.py; here we apply a confidence cap
@@ -4371,28 +5902,41 @@ async def generate_signal(
         if _stlfsi is not None and _stlfsi > 1.0 and action == "BUY":
             confidence = round(min(confidence, 58.0), 1)
             sources.add("Macro")
-            rationale.append({"src": "Macro",
-                "head": f"Financial Stress Override (STLFSI4 {_stlfsi:+.2f}) — BUY Cap 58%",
-                "body": (f"St. Louis Financial Stress Index at {_stlfsi:+.2f} (>1.0 = crisis). "
-                         "In high-stress regimes, even strong individual-stock setups frequently fail "
-                         "because correlated forced selling overrides fundamentals. BUY confidence "
-                         "capped at 58% until FSI returns below 0.5."),
-                "sentiment": "neg", "meta": f"STLFSI4 = {_stlfsi:+.3f}"})
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": f"Financial Stress Override (STLFSI4 {_stlfsi:+.2f}) — BUY Cap 58%",
+                    "body": (
+                        f"St. Louis Financial Stress Index at {_stlfsi:+.2f} (>1.0 = crisis). "
+                        "In high-stress regimes, even strong individual-stock setups frequently fail "
+                        "because correlated forced selling overrides fundamentals. BUY confidence "
+                        "capped at 58% until FSI returns below 0.5."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"STLFSI4 = {_stlfsi:+.3f}",
+                }
+            )
 
         # ── Consumer Sentiment Sector Penalty (UMCSENT) ───────────────────────
         _umcsent = _macro_now.get("umcsent")
         _sector_etf = (sector_rs or {}).get("sector_etf", "")
         _consumer_sectors = {"XLY", "XLP", "XLC"}
-        if (_umcsent is not None and _umcsent < 60
-                and action == "BUY" and _sector_etf in _consumer_sectors):
+        if _umcsent is not None and _umcsent < 60 and action == "BUY" and _sector_etf in _consumer_sectors:
             score -= 3
             sources.add("Macro")
-            rationale.append({"src": "Macro",
-                "head": f"Consumer Distress Headwind (UMCSENT {_umcsent:.1f})",
-                "body": (f"U. Michigan Consumer Sentiment at {_umcsent:.1f} — historically distressed "
-                         f"(avg ~85). {_sector_etf} sector stocks face direct demand headwind when "
-                         "household confidence is this weak. XLY/XLC/XLP names are first to reprice."),
-                "sentiment": "neg", "meta": f"UMCSENT={_umcsent:.1f} | sector={_sector_etf}"})
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": f"Consumer Distress Headwind (UMCSENT {_umcsent:.1f})",
+                    "body": (
+                        f"U. Michigan Consumer Sentiment at {_umcsent:.1f} — historically distressed "
+                        f"(avg ~85). {_sector_etf} sector stocks face direct demand headwind when "
+                        "household confidence is this weak. XLY/XLC/XLP names are first to reprice."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"UMCSENT={_umcsent:.1f} | sector={_sector_etf}",
+                }
+            )
 
         # ── Yield Curve (from macro context) ────────────────────────────────
         yc_spread = ((market_ctx or {}).get("macro") or {}).get("yc_spread")
@@ -4407,77 +5951,137 @@ async def generate_signal(
             # Get sector from sector_rs if available
             sector_etf = (sector_rs or {}).get("sector_etf", "")
             sources.add("Macro")
-            int_sectors  = {"XLK", "XLV", "XLY", "XLC"}  # multinationals — hurt by strong $
-            dom_sectors  = {"XLU", "XLF", "XLRE"}          # domestic — less affected
-            comm_sectors = {"XLB", "XLE"}                  # commodities — hurt by strong $
+            int_sectors = {"XLK", "XLV", "XLY", "XLC"}  # multinationals — hurt by strong $
+            dom_sectors = {"XLU", "XLF", "XLRE"}  # domestic — less affected
+            comm_sectors = {"XLB", "XLE"}  # commodities — hurt by strong $
             if dxy_1m > 2.5:  # strengthening dollar
                 if sector_etf in int_sectors or sector_etf in comm_sectors:
                     score -= 5
-                    rationale.append({"src": "Macro", "head": f"Strong Dollar Headwind (+{dxy_1m:.1f}% DXY)",
-                        "body": f"The US Dollar Index rose {dxy_1m:.1f}% over the past month. A stronger dollar reduces overseas revenue and compresses commodity prices — headwind for this sector.",
-                        "sentiment": "neg", "meta": f"DXY 1M = +{dxy_1m:.1f}%"})
+                    rationale.append(
+                        {
+                            "src": "Macro",
+                            "head": f"Strong Dollar Headwind (+{dxy_1m:.1f}% DXY)",
+                            "body": f"The US Dollar Index rose {dxy_1m:.1f}% over the past month. A stronger dollar reduces overseas revenue and compresses commodity prices — headwind for this sector.",
+                            "sentiment": "neg",
+                            "meta": f"DXY 1M = +{dxy_1m:.1f}%",
+                        }
+                    )
             elif dxy_1m < -2.5:  # weakening dollar
                 if sector_etf in int_sectors or sector_etf in comm_sectors:
                     score += 5
-                    rationale.append({"src": "Macro", "head": f"Weak Dollar Tailwind ({dxy_1m:.1f}% DXY)",
-                        "body": f"The US Dollar Index fell {abs(dxy_1m):.1f}% over the past month. A weaker dollar boosts overseas earnings when translated back to USD — tailwind for this sector.",
-                        "sentiment": "pos", "meta": f"DXY 1M = {dxy_1m:.1f}%"})
+                    rationale.append(
+                        {
+                            "src": "Macro",
+                            "head": f"Weak Dollar Tailwind ({dxy_1m:.1f}% DXY)",
+                            "body": f"The US Dollar Index fell {abs(dxy_1m):.1f}% over the past month. A weaker dollar boosts overseas earnings when translated back to USD — tailwind for this sector.",
+                            "sentiment": "pos",
+                            "meta": f"DXY 1M = {dxy_1m:.1f}%",
+                        }
+                    )
 
         # ── NAAIM Exposure Index (from market context, key="aaii") ───────────
         aaii = (market_ctx or {}).get("aaii")
         if aaii and aaii.get("signal") != "neutral" and aaii.get("score"):
-            a_score  = aaii["score"]
+            a_score = aaii["score"]
             exposure = aaii.get("exposure", 50)
             pct_rank = aaii.get("pct_rank")
             rank_str = f" | 52w pct rank: {pct_rank:.0f}%" if pct_rank is not None else ""
-            score   += a_score
+            score += a_score
             sources.add("Market Sentiment")
             if a_score >= 8:
-                rationale.append({"src": "Market Sentiment",
-                    "head": f"NAAIM: Managers Extremely Defensive ({exposure:.0f}% Exposed)",
-                    "body": (f"Active managers have only {exposure:.0f}% equity exposure — well below average. "
-                             "When professionals are this defensive, mean-reversion rallies tend to be sharp as they scramble to cover underexposure."),
-                    "sentiment": "pos", "meta": f"NAAIM = {exposure:.1f}%{rank_str}"})
+                rationale.append(
+                    {
+                        "src": "Market Sentiment",
+                        "head": f"NAAIM: Managers Extremely Defensive ({exposure:.0f}% Exposed)",
+                        "body": (
+                            f"Active managers have only {exposure:.0f}% equity exposure — well below average. "
+                            "When professionals are this defensive, mean-reversion rallies tend to be sharp as they scramble to cover underexposure."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"NAAIM = {exposure:.1f}%{rank_str}",
+                    }
+                )
             elif a_score >= 4:
-                rationale.append({"src": "Market Sentiment",
-                    "head": f"NAAIM: Below-Average Equity Exposure ({exposure:.0f}%)",
-                    "body": f"Active managers are {exposure:.0f}% exposed to equities — below the historical average (~65%). Defensive positioning leaves room for a buy-in rally.",
-                    "sentiment": "pos", "meta": f"NAAIM = {exposure:.1f}%{rank_str}"})
+                rationale.append(
+                    {
+                        "src": "Market Sentiment",
+                        "head": f"NAAIM: Below-Average Equity Exposure ({exposure:.0f}%)",
+                        "body": f"Active managers are {exposure:.0f}% exposed to equities — below the historical average (~65%). Defensive positioning leaves room for a buy-in rally.",
+                        "sentiment": "pos",
+                        "meta": f"NAAIM = {exposure:.1f}%{rank_str}",
+                    }
+                )
             elif a_score <= -8:
-                rationale.append({"src": "Market Sentiment",
-                    "head": f"NAAIM: Managers Fully Invested ({exposure:.0f}% Exposed)",
-                    "body": (f"Active managers are {exposure:.0f}% exposed to equities — near maximum. "
-                             "When professionals are this fully invested, there is limited incremental buying power left to drive prices higher."),
-                    "sentiment": "neg", "meta": f"NAAIM = {exposure:.1f}%{rank_str}"})
+                rationale.append(
+                    {
+                        "src": "Market Sentiment",
+                        "head": f"NAAIM: Managers Fully Invested ({exposure:.0f}% Exposed)",
+                        "body": (
+                            f"Active managers are {exposure:.0f}% exposed to equities — near maximum. "
+                            "When professionals are this fully invested, there is limited incremental buying power left to drive prices higher."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"NAAIM = {exposure:.1f}%{rank_str}",
+                    }
+                )
             elif a_score <= -4:
-                rationale.append({"src": "Market Sentiment",
-                    "head": f"NAAIM: Elevated Equity Positioning ({exposure:.0f}%)",
-                    "body": f"Active managers are {exposure:.0f}% exposed — above-average positioning. Crowded long positioning reduces the marginal buyer pool.",
-                    "sentiment": "neg", "meta": f"NAAIM = {exposure:.1f}%{rank_str}"})
+                rationale.append(
+                    {
+                        "src": "Market Sentiment",
+                        "head": f"NAAIM: Elevated Equity Positioning ({exposure:.0f}%)",
+                        "body": f"Active managers are {exposure:.0f}% exposed — above-average positioning. Crowded long positioning reduces the marginal buyer pool.",
+                        "sentiment": "neg",
+                        "meta": f"NAAIM = {exposure:.1f}%{rank_str}",
+                    }
+                )
 
         # ── COT (Commitment of Traders) ──────────────────────────────────────
         cot = (market_ctx or {}).get("cot")
         if cot and cot.get("signal") != "neutral" and cot.get("score"):
-            c_score  = cot["score"]
-            net_pct  = cot["net_pct"]
-            score   += c_score
+            c_score = cot["score"]
+            net_pct = cot["net_pct"]
+            score += c_score
             sources.add("Market Sentiment")
             if c_score >= 8:
-                rationale.append({"src": "Market Sentiment", "head": f"COT: Leveraged Funds Extremely Short S&P ({net_pct:+.0f}%)",
-                    "body": f"CFTC COT report shows leveraged funds are {abs(net_pct):.0f}% net short S&P 500 futures. Historically, when fast money is this short, the market bounces sharply — a classic short-squeeze setup.",
-                    "sentiment": "pos", "meta": f"COT net: {net_pct:+.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Market Sentiment",
+                        "head": f"COT: Leveraged Funds Extremely Short S&P ({net_pct:+.0f}%)",
+                        "body": f"CFTC COT report shows leveraged funds are {abs(net_pct):.0f}% net short S&P 500 futures. Historically, when fast money is this short, the market bounces sharply — a classic short-squeeze setup.",
+                        "sentiment": "pos",
+                        "meta": f"COT net: {net_pct:+.0f}%",
+                    }
+                )
             elif c_score >= 4:
-                rationale.append({"src": "Market Sentiment", "head": f"COT: Leveraged Funds Net Short S&P ({net_pct:+.0f}%)",
-                    "body": f"CFTC COT shows leveraged funds leaning short on S&P 500 futures. Mild contrarian tailwind.",
-                    "sentiment": "pos", "meta": f"COT net: {net_pct:+.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Market Sentiment",
+                        "head": f"COT: Leveraged Funds Net Short S&P ({net_pct:+.0f}%)",
+                        "body": "CFTC COT shows leveraged funds leaning short on S&P 500 futures. Mild contrarian tailwind.",
+                        "sentiment": "pos",
+                        "meta": f"COT net: {net_pct:+.0f}%",
+                    }
+                )
             elif c_score <= -8:
-                rationale.append({"src": "Market Sentiment", "head": f"COT: Leveraged Funds Extremely Long S&P ({net_pct:+.0f}%)",
-                    "body": f"CFTC COT shows leveraged funds {net_pct:.0f}% net long S&P 500 futures. Crowded long positioning often precedes reversals.",
-                    "sentiment": "neg", "meta": f"COT net: {net_pct:+.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Market Sentiment",
+                        "head": f"COT: Leveraged Funds Extremely Long S&P ({net_pct:+.0f}%)",
+                        "body": f"CFTC COT shows leveraged funds {net_pct:.0f}% net long S&P 500 futures. Crowded long positioning often precedes reversals.",
+                        "sentiment": "neg",
+                        "meta": f"COT net: {net_pct:+.0f}%",
+                    }
+                )
             elif c_score <= -4:
-                rationale.append({"src": "Market Sentiment", "head": f"COT: Leveraged Funds Net Long S&P ({net_pct:+.0f}%)",
-                    "body": f"Leveraged funds are net long S&P futures — mild contrarian warning signal.",
-                    "sentiment": "neg", "meta": f"COT net: {net_pct:+.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Market Sentiment",
+                        "head": f"COT: Leveraged Funds Net Long S&P ({net_pct:+.0f}%)",
+                        "body": "Leveraged funds are net long S&P futures — mild contrarian warning signal.",
+                        "sentiment": "neg",
+                        "meta": f"COT net: {net_pct:+.0f}%",
+                    }
+                )
 
         # ── Piotroski F-Score ───────────────────────────────────────────────
         f_score = fundamentals.get("piotroski_f")
@@ -4485,16 +6089,28 @@ async def generate_signal(
             sources.add("Fundamentals")
             if f_score >= 7:
                 score += 12
-                rationale.append({"src": "Fundamentals", "head": f"Piotroski F-Score {f_score}/9 — Financially Strong",
-                    "body": f"Piotroski F-Score of {f_score}/9: company scores strongly across profitability, leverage, and efficiency tests. High-F-score stocks outperform low-F-score stocks by 7–9% annually in academic studies.",
-                    "sentiment": "pos", "meta": f"F-Score: {f_score}/9"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Piotroski F-Score {f_score}/9 — Financially Strong",
+                        "body": f"Piotroski F-Score of {f_score}/9: company scores strongly across profitability, leverage, and efficiency tests. High-F-score stocks outperform low-F-score stocks by 7–9% annually in academic studies.",
+                        "sentiment": "pos",
+                        "meta": f"F-Score: {f_score}/9",
+                    }
+                )
             elif f_score >= 5:
                 score += 5
             elif f_score <= 2:
                 score -= 10
-                rationale.append({"src": "Fundamentals", "head": f"Piotroski F-Score {f_score}/9 — Financially Weak",
-                    "body": f"Piotroski F-Score of only {f_score}/9: poor profitability, increasing leverage, and deteriorating efficiency. Low-F-score stocks are academic short candidates.",
-                    "sentiment": "neg", "meta": f"F-Score: {f_score}/9"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Piotroski F-Score {f_score}/9 — Financially Weak",
+                        "body": f"Piotroski F-Score of only {f_score}/9: poor profitability, increasing leverage, and deteriorating efficiency. Low-F-score stocks are academic short candidates.",
+                        "sentiment": "neg",
+                        "meta": f"F-Score: {f_score}/9",
+                    }
+                )
             elif f_score <= 4:
                 score -= 4
 
@@ -4504,166 +6120,264 @@ async def generate_signal(
             sources.add("Fundamentals")
             if fcf_yield > 8:
                 score += 8
-                rationale.append({"src": "Fundamentals", "head": f"Strong FCF Yield {fcf_yield:.1f}%",
-                    "body": f"Free cash flow yield of {fcf_yield:.1f}% — substantially above current Treasury rates. The company generates enough cash to fund growth, buybacks, or dividends without new debt.",
-                    "sentiment": "pos", "meta": f"FCF Yield: {fcf_yield:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Strong FCF Yield {fcf_yield:.1f}%",
+                        "body": f"Free cash flow yield of {fcf_yield:.1f}% — substantially above current Treasury rates. The company generates enough cash to fund growth, buybacks, or dividends without new debt.",
+                        "sentiment": "pos",
+                        "meta": f"FCF Yield: {fcf_yield:.1f}%",
+                    }
+                )
             elif fcf_yield > 4:
                 score += 4
             elif fcf_yield < 0:
                 score -= 6
-                rationale.append({"src": "Fundamentals", "head": "Negative Free Cash Flow",
-                    "body": "Company is burning more cash than it generates from operations. Requires external financing (debt or equity) to fund operations. Higher risk.",
-                    "sentiment": "neg", "meta": f"FCF Yield: {fcf_yield:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": "Negative Free Cash Flow",
+                        "body": "Company is burning more cash than it generates from operations. Requires external financing (debt or equity) to fund operations. Higher risk.",
+                        "sentiment": "neg",
+                        "meta": f"FCF Yield: {fcf_yield:.1f}%",
+                    }
+                )
 
         # ── Revenue Growth Acceleration ──────────────────────────────────────
         rev_acc = fundamentals.get("rev_accelerating")
-        g1      = fundamentals.get("rev_growth_q1")
-        g2      = fundamentals.get("rev_growth_q2")
+        g1 = fundamentals.get("rev_growth_q1")
+        g2 = fundamentals.get("rev_growth_q2")
         if rev_acc is not None and g1 is not None and g2 is not None:
             sources.add("Fundamentals")
             if rev_acc and g1 > 5:
                 score += 6
-                rationale.append({"src": "Fundamentals", "head": f"Revenue Growth Accelerating (+{g1:.1f}% QoQ)",
-                    "body": f"Quarterly revenue growth accelerated from +{g2:.1f}% to +{g1:.1f}% QoQ. Acceleration is the CAN SLIM key metric — expanding revenues at an increasing rate signal a business in breakout mode.",
-                    "sentiment": "pos", "meta": f"Rev growth: {g2:.1f}% → {g1:.1f}% QoQ"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Revenue Growth Accelerating (+{g1:.1f}% QoQ)",
+                        "body": f"Quarterly revenue growth accelerated from +{g2:.1f}% to +{g1:.1f}% QoQ. Acceleration is the CAN SLIM key metric — expanding revenues at an increasing rate signal a business in breakout mode.",
+                        "sentiment": "pos",
+                        "meta": f"Rev growth: {g2:.1f}% → {g1:.1f}% QoQ",
+                    }
+                )
             elif not rev_acc and g1 < -2:
                 score -= 5
-                rationale.append({"src": "Fundamentals", "head": f"Revenue Growth Decelerating ({g1:.1f}% QoQ)",
-                    "body": f"Revenue growth slowed from {g2:.1f}% to {g1:.1f}% QoQ. Decelerating growth often leads to multiple compression as analysts lower estimates.",
-                    "sentiment": "neg", "meta": f"Rev growth: {g2:.1f}% → {g1:.1f}% QoQ"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Revenue Growth Decelerating ({g1:.1f}% QoQ)",
+                        "body": f"Revenue growth slowed from {g2:.1f}% to {g1:.1f}% QoQ. Decelerating growth often leads to multiple compression as analysts lower estimates.",
+                        "sentiment": "neg",
+                        "meta": f"Rev growth: {g2:.1f}% → {g1:.1f}% QoQ",
+                    }
+                )
 
         # ── Earnings Torpedo — 3-Year Annual Revenue Acceleration ──────────────
         # Driehaus/O'Neil: 3 consecutive years of positive AND accelerating YoY growth
         # precedes institutional accumulation in 68% of cases. Uses annual Polygon data.
         try:
             from services.massive_ratios import get_annual_revenue_acceleration
+
             _annual = await get_annual_revenue_acceleration(ticker)
             if _annual.get("revenue_torpedo"):
                 _growths = _annual.get("annual_rev_growth", [])
                 sources.add("Fundamentals")
                 score += 8
                 _g_str = " → ".join(f"+{g:.1f}%" for g in reversed(_growths))
-                rationale.append({"src": "Fundamentals",
-                    "head": f"Earnings Torpedo — 3-Year Revenue Acceleration",
-                    "body": (f"Annual revenue growth has accelerated for 3 consecutive years: {_g_str}. "
-                             "This 'Earnings Torpedo' pattern (Driehaus/O'Neil) precedes institutional "
-                             "accumulation in 68% of cases. Expanding revenues at an increasing rate "
-                             "signal a business entering a breakout phase."),
-                    "sentiment": "pos",
-                    "meta": f"annual_rev_torpedo=True growth={_g_str}"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": "Earnings Torpedo — 3-Year Revenue Acceleration",
+                        "body": (
+                            f"Annual revenue growth has accelerated for 3 consecutive years: {_g_str}. "
+                            "This 'Earnings Torpedo' pattern (Driehaus/O'Neil) precedes institutional "
+                            "accumulation in 68% of cases. Expanding revenues at an increasing rate "
+                            "signal a business entering a breakout phase."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"annual_rev_torpedo=True growth={_g_str}",
+                    }
+                )
         except Exception:
             pass
 
         # ── ROE Trend ────────────────────────────────────────────────────────
         roe_improving = fundamentals.get("roe_improving")
-        roe_now       = fundamentals.get("roe_now")
-        roe_prev      = fundamentals.get("roe_prev")
+        roe_now = fundamentals.get("roe_now")
+        roe_prev = fundamentals.get("roe_prev")
         if roe_improving is not None and roe_now is not None:
             sources.add("Fundamentals")
             if roe_improving and roe_now > 15:
                 score += 5
-                rationale.append({"src": "Fundamentals", "head": f"ROE Improving — {roe_now:.1f}%",
-                    "body": f"Return on equity rose from {roe_prev:.1f}% to {roe_now:.1f}%. Improving ROE above 15% signals a company compounding capital at a healthy rate.",
-                    "sentiment": "pos", "meta": f"ROE: {roe_prev:.1f}% → {roe_now:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"ROE Improving — {roe_now:.1f}%",
+                        "body": f"Return on equity rose from {roe_prev:.1f}% to {roe_now:.1f}%. Improving ROE above 15% signals a company compounding capital at a healthy rate.",
+                        "sentiment": "pos",
+                        "meta": f"ROE: {roe_prev:.1f}% → {roe_now:.1f}%",
+                    }
+                )
             elif not roe_improving and roe_now < roe_prev:
                 delta = roe_prev - roe_now
                 if delta > 5:
                     score -= 4
-                    rationale.append({"src": "Fundamentals", "head": f"ROE Declining — {roe_now:.1f}%",
-                        "body": f"Return on equity fell {delta:.1f}pp from {roe_prev:.1f}% to {roe_now:.1f}%. Declining ROE often precedes earnings disappointments.",
-                        "sentiment": "neg", "meta": f"ROE: {roe_prev:.1f}% → {roe_now:.1f}%"})
+                    rationale.append(
+                        {
+                            "src": "Fundamentals",
+                            "head": f"ROE Declining — {roe_now:.1f}%",
+                            "body": f"Return on equity fell {delta:.1f}pp from {roe_prev:.1f}% to {roe_now:.1f}%. Declining ROE often precedes earnings disappointments.",
+                            "sentiment": "neg",
+                            "meta": f"ROE: {roe_prev:.1f}% → {roe_now:.1f}%",
+                        }
+                    )
 
         # ── ROE + Revenue/Earnings Growth (yfinance free fields) ─────────────
         # Supplement the Piotroski F-Score with real-time quality/growth metrics.
         # info["roe_yf"] = returnOnEquity (e.g. 1.41 = 141%); already fetched.
-        roe_yf    = info.get("roe_yf")
-        rev_grow  = info.get("revenue_growth")   # YoY e.g. 0.166 = 16.6%
+        roe_yf = info.get("roe_yf")
+        rev_grow = info.get("revenue_growth")  # YoY e.g. 0.166 = 16.6%
         earn_grow = info.get("earnings_growth")  # YoY
         if roe_yf is not None and not _is_lev_etf:
             _roe_pct = roe_yf * 100
             if _roe_pct >= 40:
                 score += 5
                 sources.add("Fundamentals")
-                rationale.append({"src": "Fundamentals",
-                    "head": f"Exceptional ROE — {_roe_pct:.0f}%",
-                    "body": (f"Return on equity of {_roe_pct:.0f}% — exceptional compounding machine. "
-                             "Companies sustaining ROE >40% typically have durable moats (pricing power, "
-                             "network effects, or capital-light models). Buffett threshold: >20%."),
-                    "sentiment": "pos", "meta": f"ROE={_roe_pct:.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Exceptional ROE — {_roe_pct:.0f}%",
+                        "body": (
+                            f"Return on equity of {_roe_pct:.0f}% — exceptional compounding machine. "
+                            "Companies sustaining ROE >40% typically have durable moats (pricing power, "
+                            "network effects, or capital-light models). Buffett threshold: >20%."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"ROE={_roe_pct:.0f}%",
+                    }
+                )
             elif _roe_pct >= 20:
                 score += 3
                 sources.add("Fundamentals")
-                rationale.append({"src": "Fundamentals",
-                    "head": f"High ROE — {_roe_pct:.0f}%",
-                    "body": f"Return on equity of {_roe_pct:.0f}% — above the 20% quality threshold. Efficient capital allocation.",
-                    "sentiment": "pos", "meta": f"ROE={_roe_pct:.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"High ROE — {_roe_pct:.0f}%",
+                        "body": f"Return on equity of {_roe_pct:.0f}% — above the 20% quality threshold. Efficient capital allocation.",
+                        "sentiment": "pos",
+                        "meta": f"ROE={_roe_pct:.0f}%",
+                    }
+                )
             elif _roe_pct < 0:
                 score -= 3
                 sources.add("Fundamentals")
-                rationale.append({"src": "Fundamentals",
-                    "head": f"Negative ROE — {_roe_pct:.0f}%",
-                    "body": f"Return on equity is negative ({_roe_pct:.0f}%) — the company is destroying shareholder value.",
-                    "sentiment": "neg", "meta": f"ROE={_roe_pct:.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Negative ROE — {_roe_pct:.0f}%",
+                        "body": f"Return on equity is negative ({_roe_pct:.0f}%) — the company is destroying shareholder value.",
+                        "sentiment": "neg",
+                        "meta": f"ROE={_roe_pct:.0f}%",
+                    }
+                )
 
         if rev_grow is not None and earn_grow is not None and not _is_lev_etf:
-            _rev_pct  = rev_grow  * 100
+            _rev_pct = rev_grow * 100
             _earn_pct = earn_grow * 100
             if _rev_pct >= 20 and _earn_pct >= 20:
                 score += 4
                 sources.add("Fundamentals")
-                rationale.append({"src": "Fundamentals",
-                    "head": f"Dual Growth Acceleration — Rev +{_rev_pct:.0f}% / EPS +{_earn_pct:.0f}% YoY",
-                    "body": (f"Revenue growing {_rev_pct:.0f}% and earnings growing {_earn_pct:.0f}% year-over-year. "
-                             "Dual acceleration is a hallmark of companies in rapid scaling phases — "
-                             "these are the setups institutional growth funds actively accumulate."),
-                    "sentiment": "pos", "meta": f"rev_yoy={_rev_pct:.0f}% | earn_yoy={_earn_pct:.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Dual Growth Acceleration — Rev +{_rev_pct:.0f}% / EPS +{_earn_pct:.0f}% YoY",
+                        "body": (
+                            f"Revenue growing {_rev_pct:.0f}% and earnings growing {_earn_pct:.0f}% year-over-year. "
+                            "Dual acceleration is a hallmark of companies in rapid scaling phases — "
+                            "these are the setups institutional growth funds actively accumulate."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"rev_yoy={_rev_pct:.0f}% | earn_yoy={_earn_pct:.0f}%",
+                    }
+                )
             elif _rev_pct < 0 or _earn_pct < 0:
                 _worst = min(_rev_pct, _earn_pct)
                 score -= 3
                 sources.add("Fundamentals")
-                rationale.append({"src": "Fundamentals",
-                    "head": f"Revenue/Earnings Contraction (Rev {_rev_pct:+.0f}% / EPS {_earn_pct:+.0f}%)",
-                    "body": (f"At least one growth line is negative YoY — revenue {_rev_pct:+.0f}%, "
-                             f"earnings {_earn_pct:+.0f}%. Contracting businesses face multiple compression "
-                             "as growth investors exit."),
-                    "sentiment": "neg", "meta": f"rev_yoy={_rev_pct:.0f}% | earn_yoy={_earn_pct:.0f}%"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Revenue/Earnings Contraction (Rev {_rev_pct:+.0f}% / EPS {_earn_pct:+.0f}%)",
+                        "body": (
+                            f"At least one growth line is negative YoY — revenue {_rev_pct:+.0f}%, "
+                            f"earnings {_earn_pct:+.0f}%. Contracting businesses face multiple compression "
+                            "as growth investors exit."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"rev_yoy={_rev_pct:.0f}% | earn_yoy={_earn_pct:.0f}%",
+                    }
+                )
 
         # ── 12-1 Month Momentum Factor ────────────────────────────────────────
         # Cross-sectional momentum: 6-month return minus 3-month return (from
         # Finnhub basic_financials, appended to analyst_recs dict in news.py).
         # Approximates the academic 12-1 month factor without extra API cost.
         _mom_factor = (analyst_recs or {}).get("momentum_factor")
-        _r26w       = (analyst_recs or {}).get("return_26w")
+        _r26w = (analyst_recs or {}).get("return_26w")
         if _mom_factor is not None and not _is_lev_etf:
             sources.add("Technicals")
             if _mom_factor >= 20:
                 score += 5
-                rationale.append({"src": "Technicals",
-                    "head": f"Strong Price Momentum Factor (+{_mom_factor:.1f}%)",
-                    "body": (f"6-month return of {_r26w:.1f}% with positive intermediate-term momentum. "
-                             "The 12-1 month cross-sectional momentum factor is one of the most replicated "
-                             "alpha sources in academic finance — high-momentum stocks persistently outperform."),
-                    "sentiment": "pos", "meta": f"momentum_factor={_mom_factor:.1f}% | r26w={_r26w:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technicals",
+                        "head": f"Strong Price Momentum Factor (+{_mom_factor:.1f}%)",
+                        "body": (
+                            f"6-month return of {_r26w:.1f}% with positive intermediate-term momentum. "
+                            "The 12-1 month cross-sectional momentum factor is one of the most replicated "
+                            "alpha sources in academic finance — high-momentum stocks persistently outperform."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"momentum_factor={_mom_factor:.1f}% | r26w={_r26w:.1f}%",
+                    }
+                )
             elif _mom_factor >= 8:
                 score += 2
-                rationale.append({"src": "Technicals",
-                    "head": f"Positive Price Momentum (+{_mom_factor:.1f}%)",
-                    "body": f"Intermediate-term momentum positive at {_mom_factor:.1f}%. Mild continuation signal.",
-                    "sentiment": "pos", "meta": f"momentum_factor={_mom_factor:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technicals",
+                        "head": f"Positive Price Momentum (+{_mom_factor:.1f}%)",
+                        "body": f"Intermediate-term momentum positive at {_mom_factor:.1f}%. Mild continuation signal.",
+                        "sentiment": "pos",
+                        "meta": f"momentum_factor={_mom_factor:.1f}%",
+                    }
+                )
             elif _mom_factor <= -20:
                 score -= 5
-                rationale.append({"src": "Technicals",
-                    "head": f"Strong Negative Momentum ({_mom_factor:.1f}%)",
-                    "body": (f"6-month return of {_r26w:.1f}% with large negative momentum factor. "
-                             "Low-momentum stocks systematically underperform — mean reversion is slow "
-                             "and frequently interrupted by further deterioration."),
-                    "sentiment": "neg", "meta": f"momentum_factor={_mom_factor:.1f}% | r26w={_r26w:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technicals",
+                        "head": f"Strong Negative Momentum ({_mom_factor:.1f}%)",
+                        "body": (
+                            f"6-month return of {_r26w:.1f}% with large negative momentum factor. "
+                            "Low-momentum stocks systematically underperform — mean reversion is slow "
+                            "and frequently interrupted by further deterioration."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"momentum_factor={_mom_factor:.1f}% | r26w={_r26w:.1f}%",
+                    }
+                )
             elif _mom_factor <= -8:
                 score -= 2
-                rationale.append({"src": "Technicals",
-                    "head": f"Negative Price Momentum ({_mom_factor:.1f}%)",
-                    "body": f"Intermediate-term momentum negative. Mild downtrend confirmation.",
-                    "sentiment": "neg", "meta": f"momentum_factor={_mom_factor:.1f}%"})
+                rationale.append(
+                    {
+                        "src": "Technicals",
+                        "head": f"Negative Price Momentum ({_mom_factor:.1f}%)",
+                        "body": "Intermediate-term momentum negative. Mild downtrend confirmation.",
+                        "sentiment": "neg",
+                        "meta": f"momentum_factor={_mom_factor:.1f}%",
+                    }
+                )
 
         # ── Dividend Yield vs 10Y Rate (Polygon accurate TTM yield) ────────────
         # yfinance dividendYield is None for ~40% of tickers; Polygon gives exact amounts.
@@ -4672,6 +6386,7 @@ async def generate_signal(
         t10y_rate = ((market_ctx or {}).get("macro") or {}).get("t10y")
         try:
             from services.massive_ratios import get_polygon_dividend_data
+
             _div_data = await get_polygon_dividend_data(ticker)
             _ttm_amount = _div_data.get("div_ttm_amount")
             if _ttm_amount and _ttm_amount > 0 and price and price > 0:
@@ -4683,13 +6398,19 @@ async def generate_signal(
                 sources.add("Fundamentals")
                 _pts = {"King": 5, "Aristocrat": 4, "Achiever": 2}.get(_aristo_level, 0)
                 score += _pts
-                rationale.append({"src": "Fundamentals",
-                    "head": f"Dividend {_aristo_level} — {_aristo_years} Years of Increases",
-                    "body": (f"{ticker} has increased its annual dividend for {_aristo_years} consecutive years. "
-                             f"Dividend {_aristo_level}s have structural shareholder return commitments that "
-                             "reduce drawdown risk and attract income-focused institutional buyers."),
-                    "sentiment": "pos",
-                    "meta": f"div_{_aristo_level.lower()}={_aristo_years}yr +{_pts}pts"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Dividend {_aristo_level} — {_aristo_years} Years of Increases",
+                        "body": (
+                            f"{ticker} has increased its annual dividend for {_aristo_years} consecutive years. "
+                            f"Dividend {_aristo_level}s have structural shareholder return commitments that "
+                            "reduce drawdown risk and attract income-focused institutional buyers."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"div_{_aristo_level.lower()}={_aristo_years}yr +{_pts}pts",
+                    }
+                )
         except Exception:
             pass
         if div_yield and div_yield > 0 and t10y_rate:
@@ -4697,14 +6418,26 @@ async def generate_signal(
             yield_gap = div_yield - t10y_rate
             if yield_gap > 1.0:
                 score += 6
-                rationale.append({"src": "Fundamentals", "head": f"Dividend Yield {div_yield:.1f}% > 10Y Treasury {t10y_rate:.1f}%",
-                    "body": f"Stock yields {div_yield:.1f}% — {yield_gap:.1f}pp above the 10-year Treasury. When a blue chip yields more than risk-free bonds, yield-seeking demand increases.",
-                    "sentiment": "pos", "meta": f"Yield gap: +{yield_gap:.1f}pp"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Dividend Yield {div_yield:.1f}% > 10Y Treasury {t10y_rate:.1f}%",
+                        "body": f"Stock yields {div_yield:.1f}% — {yield_gap:.1f}pp above the 10-year Treasury. When a blue chip yields more than risk-free bonds, yield-seeking demand increases.",
+                        "sentiment": "pos",
+                        "meta": f"Yield gap: +{yield_gap:.1f}pp",
+                    }
+                )
             elif yield_gap < -2.0:
                 score -= 3
-                rationale.append({"src": "Fundamentals", "head": f"Bond Alternative More Attractive",
-                    "body": f"10Y Treasury ({t10y_rate:.1f}%) significantly exceeds the stock's {div_yield:.1f}% dividend yield by {abs(yield_gap):.1f}pp. Risk-free alternative is compelling.",
-                    "sentiment": "neg", "meta": f"Yield gap: {yield_gap:.1f}pp"})
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": "Bond Alternative More Attractive",
+                        "body": f"10Y Treasury ({t10y_rate:.1f}%) significantly exceeds the stock's {div_yield:.1f}% dividend yield by {abs(yield_gap):.1f}pp. Risk-free alternative is compelling.",
+                        "sentiment": "neg",
+                        "meta": f"Yield gap: {yield_gap:.1f}pp",
+                    }
+                )
 
         # ── Buyback Yield / Share Dilution ───────────────────────────────────
         bb_yield = fundamentals.get("buyback_yield")
@@ -4713,9 +6446,15 @@ async def generate_signal(
             # Bonus reduced from +4 → +2: buybacks were an unconditional positive with
             # no negative counterpart, contributing to structural BUY bias.
             score += 2
-            rationale.append({"src": "Fundamentals", "head": f"Active Share Buyback — {bb_yield:.1f}% Yield",
-                "body": f"Company returned {bb_yield:.1f}% of market cap to shareholders through buybacks. Active repurchases signal management confidence and reduce the float — mechanically bullish.",
-                "sentiment": "pos", "meta": f"Buyback yield: {bb_yield:.1f}%"})
+            rationale.append(
+                {
+                    "src": "Fundamentals",
+                    "head": f"Active Share Buyback — {bb_yield:.1f}% Yield",
+                    "body": f"Company returned {bb_yield:.1f}% of market cap to shareholders through buybacks. Active repurchases signal management confidence and reduce the float — mechanically bullish.",
+                    "sentiment": "pos",
+                    "meta": f"Buyback yield: {bb_yield:.1f}%",
+                }
+            )
         # Share dilution — counterpart to buyback yield.
         # Yfinance provides impliedSharesOutstanding / floatShares via the info dict.
         # A YoY share count increase >5% means the company is actively diluting holders.
@@ -4723,12 +6462,19 @@ async def generate_signal(
         if shares_growth is not None and shares_growth > 5:
             sources.add("Fundamentals")
             score -= 4
-            rationale.append({"src": "Fundamentals",
-                "head": f"Share Dilution — Shares Outstanding +{shares_growth:.1f}% YoY",
-                "body": (f"Shares outstanding grew {shares_growth:.1f}% YoY. Active share issuance "
-                         "dilutes existing holders: per-share earnings, book value, and dividends all "
-                         "shrink even if absolute profits are flat. Counter-signal to buyback yield."),
-                "sentiment": "neg", "meta": f"Shares outstanding growth: +{shares_growth:.1f}% YoY"})
+            rationale.append(
+                {
+                    "src": "Fundamentals",
+                    "head": f"Share Dilution — Shares Outstanding +{shares_growth:.1f}% YoY",
+                    "body": (
+                        f"Shares outstanding grew {shares_growth:.1f}% YoY. Active share issuance "
+                        "dilutes existing holders: per-share earnings, book value, and dividends all "
+                        "shrink even if absolute profits are flat. Counter-signal to buyback yield."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"Shares outstanding growth: +{shares_growth:.1f}% YoY",
+                }
+            )
 
         # ── 10-K / 10-Q MD&A Delta Analysis ──────────────────────────────────
         # Compares current vs prior SEC filing MD&A language. New risk terms
@@ -4736,28 +6482,38 @@ async def generate_signal(
         # weakness before it appears in financials. Cached 24h per ticker.
         try:
             from services.edgar import get_mda_delta
+
             _mda = await get_mda_delta(ticker)
             _mda_score = _mda.get("score", 0)
             if abs(_mda_score) >= 2.0:
                 sources.add("SEC EDGAR")
                 score += _mda_score
-                _mda_form   = _mda.get("form_type", "10-Q")
+                _mda_form = _mda.get("form_type", "10-Q")
                 _mda_reason = _mda.get("reason", "")
-                rationale.append({"src": "SEC EDGAR",
-                    "head": (f"{_mda_form} Language {'Improvement' if _mda_score > 0 else 'Deterioration'} "
-                             f"({_mda_score:+.1f}pts)"),
-                    "body": (f"Quarter-over-quarter MD&A text analysis: {_mda_reason}. "
-                             f"Management language in SEC filings is a leading indicator — "
-                             f"silently added risk terms or removed bullish guidance language "
-                             f"precede reported fundamental deterioration by 1–2 quarters."),
-                    "sentiment": "pos" if _mda_score > 0 else "neg",
-                    "meta": f"mda_delta={_mda_score:+.1f} form={_mda_form}"})
+                rationale.append(
+                    {
+                        "src": "SEC EDGAR",
+                        "head": (
+                            f"{_mda_form} Language {'Improvement' if _mda_score > 0 else 'Deterioration'} "
+                            f"({_mda_score:+.1f}pts)"
+                        ),
+                        "body": (
+                            f"Quarter-over-quarter MD&A text analysis: {_mda_reason}. "
+                            f"Management language in SEC filings is a leading indicator — "
+                            f"silently added risk terms or removed bullish guidance language "
+                            f"precede reported fundamental deterioration by 1–2 quarters."
+                        ),
+                        "sentiment": "pos" if _mda_score > 0 else "neg",
+                        "meta": f"mda_delta={_mda_score:+.1f} form={_mda_form}",
+                    }
+                )
         except Exception:
             pass
 
         # ── Supply Chain Alternative Data ────────────────────────────────────
         try:
             from services.supply_chain import get_supply_chain_score
+
             sc_score = get_supply_chain_score(ticker, (market_ctx or {}).get("supply_chain"))
             if abs(sc_score) >= 2.0:
                 sources.add("Fundamentals")
@@ -4765,34 +6521,50 @@ async def generate_signal(
                 sc_dir = "positive" if sc_score > 0 else "negative"
                 sc_data = (market_ctx or {}).get("supply_chain", {})
                 bdi_val = sc_data.get("bdi", {})
-                bdi_str = f"BDI {bdi_val.get('value', 'N/A')} ({bdi_val.get('chg_20d', 0):+.0f}% 20d)" if bdi_val else "BDI N/A"
-                rationale.append({"src": "Fundamentals",
-                    "head": f"Supply Chain Signal {sc_score:+.0f}pts — {sc_dir.capitalize()} for {ticker}",
-                    "body": (f"Alternative supply chain data ({bdi_str}) indicates {sc_dir} conditions "
-                             f"for this sector. Shipping/freight trends are leading indicators of revenue "
-                             f"surprises for logistics, commodities, and retail tickers."),
-                    "sentiment": "pos" if sc_score > 0 else "neg",
-                    "meta": f"supply_chain_score={sc_score:+.1f}"})
+                bdi_str = (
+                    f"BDI {bdi_val.get('value', 'N/A')} ({bdi_val.get('chg_20d', 0):+.0f}% 20d)"
+                    if bdi_val
+                    else "BDI N/A"
+                )
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Supply Chain Signal {sc_score:+.0f}pts — {sc_dir.capitalize()} for {ticker}",
+                        "body": (
+                            f"Alternative supply chain data ({bdi_str}) indicates {sc_dir} conditions "
+                            f"for this sector. Shipping/freight trends are leading indicators of revenue "
+                            f"surprises for logistics, commodities, and retail tickers."
+                        ),
+                        "sentiment": "pos" if sc_score > 0 else "neg",
+                        "meta": f"supply_chain_score={sc_score:+.1f}",
+                    }
+                )
         except Exception:
             pass
 
         # ── Corporate Events (Wall Street Horizon) ───────────────────────────
         try:
             from services.corporate_events import get_event_score, get_exdiv_blackout
+
             # Ex-dividend date hard blackout — price mechanically drops by dividend amount
             # on ex-date; Supertrend/MA signals are invalidated by this predictable drop.
-            _is_exdiv, _exdiv_label = get_exdiv_blackout(ticker,
-                                                          (market_ctx or {}).get("corporate_events"))
+            _is_exdiv, _exdiv_label = get_exdiv_blackout(ticker, (market_ctx or {}).get("corporate_events"))
             if _is_exdiv:
                 _force_hold = True
                 sources.add("Risk Gate")
-                rationale.append({"src": "Risk Gate",
-                    "head": f"Ex-Dividend Date Blackout — {_exdiv_label}",
-                    "body": ("Today is the ex-dividend date. The stock price will mechanically drop "
-                             "by the dividend amount at open. Supertrend, moving averages, and breakout "
-                             "signals are invalidated by this guaranteed drop. Signal blocked for today."),
-                    "sentiment": "neg",
-                    "meta": f"ex_div_blackout=True label={_exdiv_label}"})
+                rationale.append(
+                    {
+                        "src": "Risk Gate",
+                        "head": f"Ex-Dividend Date Blackout — {_exdiv_label}",
+                        "body": (
+                            "Today is the ex-dividend date. The stock price will mechanically drop "
+                            "by the dividend amount at open. Supertrend, moving averages, and breakout "
+                            "signals are invalidated by this guaranteed drop. Signal blocked for today."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"ex_div_blackout=True label={_exdiv_label}",
+                    }
+                )
             # Ex-div lookahead: block BUY when ex-div falls within the MR hold window (≤7 days).
             # A trade entered today holding 5-10 days would hit the mechanical ex-div gap-down.
             # Replaces the per-ticker Polygon 14-day check that ran in get_massive_advanced_signals.
@@ -4802,88 +6574,133 @@ async def generate_signal(
                 for _ev in _ce_events.get(ticker, []):
                     if _ev.get("type") == "ExDividendDate" and 0 < _ev.get("days_away", 99) <= 7:
                         _exdiv_ahead = _ev.get("date", "soon")
-                        _exdiv_days  = _ev["days_away"]
+                        _exdiv_days = _ev["days_away"]
                         _force_hold = True
                         sources.add("Risk Gate")
-                        rationale.append({"src": "Risk Gate",
-                            "head": f"Ex-Dividend Gate — BUY Blocked ({_exdiv_ahead}, {_exdiv_days}d away)",
-                            "body": (
-                                f"Ex-dividend date is {_exdiv_ahead} ({_exdiv_days} day{'s' if _exdiv_days != 1 else ''} away). "
-                                f"A hold through ex-date incurs a mechanical price drop equal to the dividend, "
-                                f"creating an artificial loss that is not a recoverable MR setup."
-                            ),
-                            "sentiment": "neg",
-                            "meta": f"ex_div_ahead={_exdiv_ahead} days_away={_exdiv_days}"})
+                        rationale.append(
+                            {
+                                "src": "Risk Gate",
+                                "head": f"Ex-Dividend Gate — BUY Blocked ({_exdiv_ahead}, {_exdiv_days}d away)",
+                                "body": (
+                                    f"Ex-dividend date is {_exdiv_ahead} ({_exdiv_days} day{'s' if _exdiv_days != 1 else ''} away). "
+                                    f"A hold through ex-date incurs a mechanical price drop equal to the dividend, "
+                                    f"creating an artificial loss that is not a recoverable MR setup."
+                                ),
+                                "sentiment": "neg",
+                                "meta": f"ex_div_ahead={_exdiv_ahead} days_away={_exdiv_days}",
+                            }
+                        )
                         break
             ev_score, ev_reasons = get_event_score(ticker, (market_ctx or {}).get("corporate_events"))
             if abs(ev_score) >= 2.0:
                 sources.add("Fundamentals")
                 score += ev_score
                 for r in ev_reasons:
-                    rationale.append({"src": "Fundamentals",
-                        "head": f"Corporate Event: {r}",
-                        "body": ("Upcoming corporate events carry a systematic price impact. "
-                                 "Investor conferences / analyst days historically produce +1.5–2.5% "
-                                 "median returns in the 3 days before the event as management "
-                                 "presents to institutional buy-side."),
-                        "sentiment": "pos" if ev_score > 0 else "neg",
-                        "meta": f"event_score={ev_score:+.1f}"})
+                    rationale.append(
+                        {
+                            "src": "Fundamentals",
+                            "head": f"Corporate Event: {r}",
+                            "body": (
+                                "Upcoming corporate events carry a systematic price impact. "
+                                "Investor conferences / analyst days historically produce +1.5–2.5% "
+                                "median returns in the 3 days before the event as management "
+                                "presents to institutional buy-side."
+                            ),
+                            "sentiment": "pos" if ev_score > 0 else "neg",
+                            "meta": f"event_score={ev_score:+.1f}",
+                        }
+                    )
         except Exception:
             pass
 
         # ── ETF Fund Flows ────────────────────────────────────────────────────
         try:
             from services.etf_flows import get_flow_score_for_ticker
-            etf_flow_score, etf_flow_reason = get_flow_score_for_ticker(
-                ticker, (market_ctx or {}).get("etf_flows")
-            )
+
+            etf_flow_score, etf_flow_reason = get_flow_score_for_ticker(ticker, (market_ctx or {}).get("etf_flows"))
             if abs(etf_flow_score) >= 2.0:
                 sources.add("Institutional")
                 score += etf_flow_score
-                rationale.append({"src": "Institutional",
-                    "head": f"ETF Fund Flow {etf_flow_score:+.1f}pts — {etf_flow_reason}",
-                    "body": ("Institutional money flows at the sector ETF level lead individual stock "
-                             "prices by 1–3 trading days. Strong inflows into the sector ETF signal "
-                             "buy-side rotation into this area of the market."),
-                    "sentiment": "pos" if etf_flow_score > 0 else "neg",
-                    "meta": f"etf_flow_score={etf_flow_score:+.1f}"})
+                rationale.append(
+                    {
+                        "src": "Institutional",
+                        "head": f"ETF Fund Flow {etf_flow_score:+.1f}pts — {etf_flow_reason}",
+                        "body": (
+                            "Institutional money flows at the sector ETF level lead individual stock "
+                            "prices by 1–3 trading days. Strong inflows into the sector ETF signal "
+                            "buy-side rotation into this area of the market."
+                        ),
+                        "sentiment": "pos" if etf_flow_score > 0 else "neg",
+                        "meta": f"etf_flow_score={etf_flow_score:+.1f}",
+                    }
+                )
         except Exception:
             pass
 
         # ── Social Sentiment (StockTwits + Reddit WSB) ───────────────────────
         st_bull_pct = social.get("st_bull_pct")
-        wsb_7d      = social.get("wsb_mentions_7d", 0)
-        wsb_1d      = social.get("wsb_mentions_1d", 0)
+        wsb_7d = social.get("wsb_mentions_7d", 0)
+        wsb_1d = social.get("wsb_mentions_1d", 0)
         if st_bull_pct is not None and social.get("st_total", 0) >= 5:
             sources.add("Social")
             if st_bull_pct >= 90:
                 # Extreme retail bullishness = contrarian SELL (euphoria top)
                 soc_bucket -= 5
-                rationale.append({"src": "Social", "head": f"StockTwits Extreme Bullishness ({st_bull_pct:.0f}%) — Contrarian Bearish",
-                    "body": f"{st_bull_pct:.0f}% of StockTwits messages are bullish — near-euphoric retail sentiment. Historically extreme retail bullishness precedes short-term reversals.",
-                    "sentiment": "neg", "meta": f"ST Bull: {st_bull_pct:.0f}% | {social.get('st_total',0)} messages"})
+                rationale.append(
+                    {
+                        "src": "Social",
+                        "head": f"StockTwits Extreme Bullishness ({st_bull_pct:.0f}%) — Contrarian Bearish",
+                        "body": f"{st_bull_pct:.0f}% of StockTwits messages are bullish — near-euphoric retail sentiment. Historically extreme retail bullishness precedes short-term reversals.",
+                        "sentiment": "neg",
+                        "meta": f"ST Bull: {st_bull_pct:.0f}% | {social.get('st_total', 0)} messages",
+                    }
+                )
             elif st_bull_pct >= 75:
                 soc_bucket += 4
-                rationale.append({"src": "Social", "head": f"StockTwits Strongly Bullish ({st_bull_pct:.0f}%)",
-                    "body": f"{st_bull_pct:.0f}% of StockTwits messages on ${ticker} are bullish. Elevated retail optimism can create near-term upside momentum.",
-                    "sentiment": "pos", "meta": f"ST Bull: {st_bull_pct:.0f}% | {social.get('st_total',0)} messages"})
+                rationale.append(
+                    {
+                        "src": "Social",
+                        "head": f"StockTwits Strongly Bullish ({st_bull_pct:.0f}%)",
+                        "body": f"{st_bull_pct:.0f}% of StockTwits messages on ${ticker} are bullish. Elevated retail optimism can create near-term upside momentum.",
+                        "sentiment": "pos",
+                        "meta": f"ST Bull: {st_bull_pct:.0f}% | {social.get('st_total', 0)} messages",
+                    }
+                )
             elif st_bull_pct <= 10:
                 # Extreme retail pessimism = contrarian BUY (capitulation)
                 soc_bucket += 5
-                rationale.append({"src": "Social", "head": f"StockTwits Extreme Bearishness ({st_bull_pct:.0f}% bull) — Contrarian Bullish",
-                    "body": f"Only {st_bull_pct:.0f}% of StockTwits messages are bullish — near-capitulation retail sentiment. Extreme pessimism often marks near-term bottoms.",
-                    "sentiment": "pos", "meta": f"ST Bull: {st_bull_pct:.0f}% | {social.get('st_total',0)} messages"})
+                rationale.append(
+                    {
+                        "src": "Social",
+                        "head": f"StockTwits Extreme Bearishness ({st_bull_pct:.0f}% bull) — Contrarian Bullish",
+                        "body": f"Only {st_bull_pct:.0f}% of StockTwits messages are bullish — near-capitulation retail sentiment. Extreme pessimism often marks near-term bottoms.",
+                        "sentiment": "pos",
+                        "meta": f"ST Bull: {st_bull_pct:.0f}% | {social.get('st_total', 0)} messages",
+                    }
+                )
             elif st_bull_pct <= 30:
                 soc_bucket += 3
-                rationale.append({"src": "Social", "head": f"StockTwits Bearish ({st_bull_pct:.0f}% bull) — Contrarian",
-                    "body": f"Only {st_bull_pct:.0f}% of StockTwits messages are bullish. Retail pessimism is a mild contrarian buy indicator.",
-                    "sentiment": "pos", "meta": f"ST Bull: {st_bull_pct:.0f}% | {social.get('st_total',0)} messages"})
+                rationale.append(
+                    {
+                        "src": "Social",
+                        "head": f"StockTwits Bearish ({st_bull_pct:.0f}% bull) — Contrarian",
+                        "body": f"Only {st_bull_pct:.0f}% of StockTwits messages are bullish. Retail pessimism is a mild contrarian buy indicator.",
+                        "sentiment": "pos",
+                        "meta": f"ST Bull: {st_bull_pct:.0f}% | {social.get('st_total', 0)} messages",
+                    }
+                )
         if wsb_1d >= 10:
             sources.add("Social")
             soc_bucket += 4
-            rationale.append({"src": "Social", "head": f"Reddit WSB Mention Surge — {wsb_1d} Posts Today",
-                "body": f"${ticker} mentioned in {wsb_1d} Reddit WSB posts in the past 24h ({wsb_7d} this week). Rising retail attention can drive short-term volume and volatility.",
-                "sentiment": "pos", "meta": f"WSB: {wsb_1d} today | {wsb_7d} this week"})
+            rationale.append(
+                {
+                    "src": "Social",
+                    "head": f"Reddit WSB Mention Surge — {wsb_1d} Posts Today",
+                    "body": f"${ticker} mentioned in {wsb_1d} Reddit WSB posts in the past 24h ({wsb_7d} this week). Rising retail attention can drive short-term volume and volatility.",
+                    "sentiment": "pos",
+                    "meta": f"WSB: {wsb_1d} today | {wsb_7d} this week",
+                }
+            )
 
         # ── Tier 6: Signal Clustering Boost ─────────────────────────────────
         # When ≥6 independent source CATEGORIES all agree with the dominant direction,
@@ -4892,40 +6709,54 @@ async def generate_signal(
         # base score rather than cascading on top of the orthogonality inflation.
         agree_dir = "pos" if score > 0 else "neg"
         source_cats = {
-            "TA":      any(r.get("src") == "Technical"        for r in rationale if r.get("sentiment") == agree_dir),
-            "OPT":     any(r.get("src") == "Options"          for r in rationale if r.get("sentiment") == agree_dir),
-            "INST":    any(r.get("src") in ("13F", "Dark Pool") for r in rationale if r.get("sentiment") == agree_dir),
-            "INSIDE":  any(r.get("src") in ("Insider","SEC EDGAR","Congress") for r in rationale if r.get("sentiment") == agree_dir),
-            "AN":      any(r.get("src") == "Analyst"          for r in rationale if r.get("sentiment") == agree_dir),
-            "MACRO":   any(r.get("src") == "Macro"            for r in rationale if r.get("sentiment") == agree_dir),
-            "SENT":    any(r.get("src") in ("Market Sentiment","Fear&Greed","Market Breadth") for r in rationale if r.get("sentiment") == agree_dir),
-            "FUND":    any(r.get("src") == "Fundamentals"     for r in rationale if r.get("sentiment") == agree_dir),
-            "SOCIAL":  any(r.get("src") == "Social"           for r in rationale if r.get("sentiment") == agree_dir),
-            "EARN":    any(r.get("src") == "Earnings"         for r in rationale if r.get("sentiment") == agree_dir),
+            "TA": any(r.get("src") == "Technical" for r in rationale if r.get("sentiment") == agree_dir),
+            "OPT": any(r.get("src") == "Options" for r in rationale if r.get("sentiment") == agree_dir),
+            "INST": any(r.get("src") in ("13F", "Dark Pool") for r in rationale if r.get("sentiment") == agree_dir),
+            "INSIDE": any(
+                r.get("src") in ("Insider", "SEC EDGAR", "Congress")
+                for r in rationale
+                if r.get("sentiment") == agree_dir
+            ),
+            "AN": any(r.get("src") == "Analyst" for r in rationale if r.get("sentiment") == agree_dir),
+            "MACRO": any(r.get("src") == "Macro" for r in rationale if r.get("sentiment") == agree_dir),
+            "SENT": any(
+                r.get("src") in ("Market Sentiment", "Fear&Greed", "Market Breadth")
+                for r in rationale
+                if r.get("sentiment") == agree_dir
+            ),
+            "FUND": any(r.get("src") == "Fundamentals" for r in rationale if r.get("sentiment") == agree_dir),
+            "SOCIAL": any(r.get("src") == "Social" for r in rationale if r.get("sentiment") == agree_dir),
+            "EARN": any(r.get("src") == "Earnings" for r in rationale if r.get("sentiment") == agree_dir),
         }
         agreeing_cats = sum(source_cats.values())
         if agreeing_cats >= 6:
             # weight_overrides.cluster_boost_pct caps the multiplier (default 0.12 = 12%).
             # When the ticker's historical win rate is below 50%, the boost is halved —
             # source agreement does not compensate for a poor empirical track record.
-            _wo         = (market_ctx or {}).get("weight_overrides", {})
+            _wo = (market_ctx or {}).get("weight_overrides", {})
             _ticker_wrs = ((market_ctx or {}).get("adaptive_weights") or {}).get("ticker_win_rates", {})
-            _ticker_wr  = _ticker_wrs.get(ticker)
+            _ticker_wr = _ticker_wrs.get(ticker)
             _cluster_pct = float(_wo.get("cluster_boost_pct", 0.12))
-            _wr_penalty  = ""
+            _wr_penalty = ""
             if _ticker_wr is not None and _ticker_wr < 0.50:
                 _cluster_pct = min(_cluster_pct, 0.06)
-                _wr_penalty  = f" (capped: {ticker} win rate {_ticker_wr*100:.0f}%)"
+                _wr_penalty = f" (capped: {ticker} win rate {_ticker_wr * 100:.0f}%)"
             cluster_boost = round(score * _cluster_pct, 1)
             score += cluster_boost
             sources.add("Signal Cluster")
-            rationale.append({"src": "Signal Cluster",
-                "head": f"High-Conviction Signal — {agreeing_cats} Independent Categories Agree",
-                "body": (f"{agreeing_cats} independent signal categories all point {'bullish' if agree_dir=='pos' else 'bearish'}: "
-                         f"{', '.join(k for k,v in source_cats.items() if v)}. "
-                         f"Cluster boost: {_cluster_pct*100:.0f}%.{_wr_penalty}"),
-                "sentiment": agree_dir,
-                "meta": f"{agreeing_cats} categories · boost {_cluster_pct*100:.0f}%{_wr_penalty}"})
+            rationale.append(
+                {
+                    "src": "Signal Cluster",
+                    "head": f"High-Conviction Signal — {agreeing_cats} Independent Categories Agree",
+                    "body": (
+                        f"{agreeing_cats} independent signal categories all point {'bullish' if agree_dir == 'pos' else 'bearish'}: "
+                        f"{', '.join(k for k, v in source_cats.items() if v)}. "
+                        f"Cluster boost: {_cluster_pct * 100:.0f}%.{_wr_penalty}"
+                    ),
+                    "sentiment": agree_dir,
+                    "meta": f"{agreeing_cats} categories · boost {_cluster_pct * 100:.0f}%{_wr_penalty}",
+                }
+            )
 
         # ── Orthogonality Bonus — independent information sets converging ────────
         # Signals from fundamentally uncorrelated sources (different data pipelines,
@@ -4935,23 +6766,23 @@ async def generate_signal(
         # Computed AFTER cluster so both rewards don't cascade multiplicatively.
         _agree = "pos" if score > 0 else "neg"
         _indep = {
-            "13F":       any(r.get("src") == "13F"       and r.get("sentiment") == _agree for r in rationale),
-            "Insider":   any(r.get("src") == "SEC EDGAR" and r.get("sentiment") == _agree for r in rationale),
-            "Congress":  any(r.get("src") == "Congress"  and r.get("sentiment") == _agree for r in rationale),
-            "Piotroski": any("Piotroski" in r.get("head","") and r.get("sentiment") == _agree for r in rationale),
-            "Social":    any(r.get("src") == "Social"    and r.get("sentiment") == _agree for r in rationale),
-            "Macro":     any(r.get("src") == "Macro"     and r.get("sentiment") == _agree for r in rationale),
+            "13F": any(r.get("src") == "13F" and r.get("sentiment") == _agree for r in rationale),
+            "Insider": any(r.get("src") == "SEC EDGAR" and r.get("sentiment") == _agree for r in rationale),
+            "Congress": any(r.get("src") == "Congress" and r.get("sentiment") == _agree for r in rationale),
+            "Piotroski": any("Piotroski" in r.get("head", "") and r.get("sentiment") == _agree for r in rationale),
+            "Social": any(r.get("src") == "Social" and r.get("sentiment") == _agree for r in rationale),
+            "Macro": any(r.get("src") == "Macro" and r.get("sentiment") == _agree for r in rationale),
             "Dark Pool": any(r.get("src") == "Dark Pool" and r.get("sentiment") == _agree for r in rationale),
         }
         _n_indep = sum(_indep.values())
         if _n_indep >= 2:
             # weight_overrides lets the owner cap these boosts without touching code.
             # Defaults: 3 pts/source, max +18. Both are reduced when ticker win rate < 50%.
-            _wo              = (market_ctx or {}).get("weight_overrides", {})
-            _ticker_wrs      = ((market_ctx or {}).get("adaptive_weights") or {}).get("ticker_win_rates", {})
-            _ticker_wr       = _ticker_wrs.get(ticker)
-            _orth_pts        = float(_wo.get("orthogonality_pts", 3))
-            _orth_max        = float(_wo.get("orthogonality_max", 18))
+            _wo = (market_ctx or {}).get("weight_overrides", {})
+            _ticker_wrs = ((market_ctx or {}).get("adaptive_weights") or {}).get("ticker_win_rates", {})
+            _ticker_wr = _ticker_wrs.get(ticker)
+            _orth_pts = float(_wo.get("orthogonality_pts", 3))
+            _orth_max = float(_wo.get("orthogonality_max", 18))
             if _ticker_wr is not None and _ticker_wr < 0.50:
                 # Ticker has a poor historical record — halve the orthogonality reward
                 _orth_pts = min(_orth_pts, 1.5)
@@ -4960,14 +6791,24 @@ async def generate_signal(
             score += _orth_bonus if score > 0 else (-_orth_bonus if score < 0 else 0)
             sources.add("Orthogonalization")
             _indep_names = ", ".join(k for k, v in _indep.items() if v)
-            _wr_note = f" (ticker win rate {_ticker_wr*100:.0f}% — reduced bonus)" if (_ticker_wr is not None and _ticker_wr < 0.50) else ""
-            rationale.append({"src": "Orthogonalization",
-                "head": f"{_n_indep} Independent Sources Agree — Orthogonal Alpha",
-                "body": (f"{_indep_names} all confirm the {'bullish' if _agree == 'pos' else 'bearish'} thesis "
-                         "from uncorrelated data pipelines (filings, fundamentals, positioning, macro). "
-                         f"Each source uses different information — convergence raises statistical confidence.{_wr_note}"),
-                "sentiment": _agree,
-                "meta": f"{_n_indep} independent sources: {_indep_names}{_wr_note}"})
+            _wr_note = (
+                f" (ticker win rate {_ticker_wr * 100:.0f}% — reduced bonus)"
+                if (_ticker_wr is not None and _ticker_wr < 0.50)
+                else ""
+            )
+            rationale.append(
+                {
+                    "src": "Orthogonalization",
+                    "head": f"{_n_indep} Independent Sources Agree — Orthogonal Alpha",
+                    "body": (
+                        f"{_indep_names} all confirm the {'bullish' if _agree == 'pos' else 'bearish'} thesis "
+                        "from uncorrelated data pipelines (filings, fundamentals, positioning, macro). "
+                        f"Each source uses different information — convergence raises statistical confidence.{_wr_note}"
+                    ),
+                    "sentiment": _agree,
+                    "meta": f"{_n_indep} independent sources: {_indep_names}{_wr_note}",
+                }
+            )
 
         # ── Factor Mining Calibration ─────────────────────────────────────────
         # Apply small boosts/penalties from the weekly-mined OOS-Sharpe rankings.
@@ -4976,126 +6817,165 @@ async def generate_signal(
         fw = (market_ctx or {}).get("factor_weights", {})
         if fw and fw.get("top_factors") and abs(score) > 5:
             active_sources = set(sources)
-            fm_adj  = 0.0
+            fm_adj = 0.0
             fm_note = ""
             for fac in (fw.get("top_factors") or [])[:10]:
-                fac_label    = fac.get("label", "")
-                fac_sources  = set(fac_label.split("+"))
-                oos_sharpe   = fac.get("oos_sharpe") or 0
-                oos_wr       = fac.get("oos_win_rate") or 0.5
+                fac_label = fac.get("label", "")
+                fac_sources = set(fac_label.split("+"))
+                oos_sharpe = fac.get("oos_sharpe") or 0
+                oos_wr = fac.get("oos_win_rate") or 0.5
                 if not fac_sources.issubset(active_sources):
                     continue
                 if oos_sharpe > 1.0 and oos_wr > 0.60:
                     # Strong historically proven combo — small boost
                     adj = min(3.0, oos_sharpe * 1.0)
-                    fm_adj  += adj
-                    fm_note  = f"+{adj:.1f} ({fac_label} OOS Sharpe {oos_sharpe:.2f})"
+                    fm_adj += adj
+                    fm_note = f"+{adj:.1f} ({fac_label} OOS Sharpe {oos_sharpe:.2f})"
                     break  # one match is enough
                 elif oos_sharpe < 0.0 or oos_wr < 0.35:
                     # Historically poor combo — small penalty
                     adj = max(-3.0, oos_sharpe * 0.8)
-                    fm_adj  += adj
-                    fm_note  = f"{adj:.1f} ({fac_label} OOS Sharpe {oos_sharpe:.2f})"
+                    fm_adj += adj
+                    fm_note = f"{adj:.1f} ({fac_label} OOS Sharpe {oos_sharpe:.2f})"
                     break
             if abs(fm_adj) >= 1.0:
                 fm_adj = max(-5.0, min(5.0, fm_adj))
                 score += fm_adj if score > 0 else (-fm_adj if score < 0 else 0)
                 sources.add("Backtest")
-                rationale.append({"src": "Backtest",
-                    "head": f"Factor Mining Calibration {'+' if fm_adj > 0 else ''}{fm_adj:.1f}",
-                    "body": (f"Weekly factor mining found this source combination has a "
-                             f"{'strong' if fm_adj > 0 else 'weak'} out-of-sample Sharpe ratio. "
-                             f"Score adjusted {'+' if fm_adj > 0 else ''}{fm_adj:.1f}. {fm_note}"),
-                    "sentiment": "pos" if fm_adj > 0 else "neg",
-                    "meta": fm_note})
+                rationale.append(
+                    {
+                        "src": "Backtest",
+                        "head": f"Factor Mining Calibration {'+' if fm_adj > 0 else ''}{fm_adj:.1f}",
+                        "body": (
+                            f"Weekly factor mining found this source combination has a "
+                            f"{'strong' if fm_adj > 0 else 'weak'} out-of-sample Sharpe ratio. "
+                            f"Score adjusted {'+' if fm_adj > 0 else ''}{fm_adj:.1f}. {fm_note}"
+                        ),
+                        "sentiment": "pos" if fm_adj > 0 else "neg",
+                        "meta": fm_note,
+                    }
+                )
 
         # ── Tier 6: Regime-Conditional Weighting ─────────────────────────────
         # Symmetric: penalise counter-trend signals, boost with-trend signals.
         # Bear market: BUY haircut AND SELL boost. Bull market: SELL haircut AND BUY boost.
         sp500_trend = ((market_ctx or {}).get("macro") or {}).get("sp500_trend")
         if sp500_trend == "down":
-            if score > 0:   # BUY against the bear trend — less reliable
+            if score > 0:  # BUY against the bear trend — less reliable
                 score *= 0.82
-                rationale.append({"src": "Macro", "head": "Bear Market Regime — Long Signal Discounted",
-                    "body": "S&P 500 is below its 50-day average. Counter-trend long signals carry lower win rates. Confidence reduced.",
-                    "sentiment": "neg", "meta": "SPX < 50-DMA regime"})
+                rationale.append(
+                    {
+                        "src": "Macro",
+                        "head": "Bear Market Regime — Long Signal Discounted",
+                        "body": "S&P 500 is below its 50-day average. Counter-trend long signals carry lower win rates. Confidence reduced.",
+                        "sentiment": "neg",
+                        "meta": "SPX < 50-DMA regime",
+                    }
+                )
             elif score < 0:  # SELL with the bear trend — more reliable
                 score *= 1.10
         elif sp500_trend == "up":
-            if score < 0:   # SELL against the bull trend — less reliable
+            if score < 0:  # SELL against the bull trend — less reliable
                 score *= 0.90
             elif score > 0:  # BUY with the bull trend — more reliable
                 score *= 1.05
 
         # ── Earnings Estimate Revision Momentum ─────────────────────────────
-        target_mean   = info.get("target_mean")
+        target_mean = info.get("target_mean")
         analyst_count = info.get("analyst_count") or 0
         if target_mean and analyst_count >= 3 and price > 0:
             import time as _time_mod
+
             now_ts = _time_mod.time()
             prev = _analyst_cache.get(ticker, {})
-            prev_mean  = prev.get("mean")
-            prev_ts    = prev.get("ts", 0)
+            prev_mean = prev.get("mean")
+            prev_ts = prev.get("ts", 0)
             prev_count = prev.get("count", analyst_count)
-            
+
             # Invalidate stale cache entries (>1 hour old)
             if prev_ts and (now_ts - prev_ts) > _ANALYST_CACHE_TTL:
                 prev_mean = None  # Force refresh
-            
+
             _analyst_cache[ticker] = {"mean": target_mean, "count": analyst_count, "ts": now_ts}
             if prev_mean and prev_mean > 0:
                 revision_pct = (target_mean - prev_mean) / prev_mean * 100
-                count_grew   = analyst_count > prev_count
+                count_grew = analyst_count > prev_count
                 if revision_pct > 5 and count_grew:
                     score += 8
                     sources.add("Analyst")
-                    rationale.append({"src": "Analyst",
-                        "head": f"Analyst Target Revised Up +{revision_pct:.1f}% — Positive Momentum",
-                        "body": (f"Consensus price target upgraded from ${prev_mean:.2f} to ${target_mean:.2f} "
-                                 f"(+{revision_pct:.1f}%) as analyst coverage expanded to {analyst_count}. "
-                                 "Rising estimates with growing coverage is a strong leading indicator."),
-                        "sentiment": "pos",
-                        "meta": f"Target: ${prev_mean:.2f} → ${target_mean:.2f} | Analysts: {analyst_count}"})
+                    rationale.append(
+                        {
+                            "src": "Analyst",
+                            "head": f"Analyst Target Revised Up +{revision_pct:.1f}% — Positive Momentum",
+                            "body": (
+                                f"Consensus price target upgraded from ${prev_mean:.2f} to ${target_mean:.2f} "
+                                f"(+{revision_pct:.1f}%) as analyst coverage expanded to {analyst_count}. "
+                                "Rising estimates with growing coverage is a strong leading indicator."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"Target: ${prev_mean:.2f} → ${target_mean:.2f} | Analysts: {analyst_count}",
+                        }
+                    )
                 elif revision_pct > 5:
                     score += 5
                     sources.add("Analyst")
-                    rationale.append({"src": "Analyst",
-                        "head": f"Analyst Target Revised Up +{revision_pct:.1f}%",
-                        "body": f"Consensus price target raised from ${prev_mean:.2f} to ${target_mean:.2f}. Positive estimate revision momentum tends to persist.",
-                        "sentiment": "pos",
-                        "meta": f"Target: ${prev_mean:.2f} → ${target_mean:.2f}"})
+                    rationale.append(
+                        {
+                            "src": "Analyst",
+                            "head": f"Analyst Target Revised Up +{revision_pct:.1f}%",
+                            "body": f"Consensus price target raised from ${prev_mean:.2f} to ${target_mean:.2f}. Positive estimate revision momentum tends to persist.",
+                            "sentiment": "pos",
+                            "meta": f"Target: ${prev_mean:.2f} → ${target_mean:.2f}",
+                        }
+                    )
                 elif revision_pct < -5:
                     score -= 6
                     sources.add("Analyst")
-                    rationale.append({"src": "Analyst",
-                        "head": f"Analyst Target Revised Down {revision_pct:.1f}%",
-                        "body": (f"Consensus price target cut from ${prev_mean:.2f} to ${target_mean:.2f} "
-                                 f"({revision_pct:.1f}%). Negative estimate revisions tend to cluster — where there's one cut, more often follow."),
-                        "sentiment": "neg",
-                        "meta": f"Target: ${prev_mean:.2f} → ${target_mean:.2f} | Analysts: {analyst_count}"})
+                    rationale.append(
+                        {
+                            "src": "Analyst",
+                            "head": f"Analyst Target Revised Down {revision_pct:.1f}%",
+                            "body": (
+                                f"Consensus price target cut from ${prev_mean:.2f} to ${target_mean:.2f} "
+                                f"({revision_pct:.1f}%). Negative estimate revisions tend to cluster — where there's one cut, more often follow."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"Target: ${prev_mean:.2f} → ${target_mean:.2f} | Analysts: {analyst_count}",
+                        }
+                    )
 
         # ── Google Trends ────────────────────────────────────────────────────
         trends = trends or {}
-        gt_score  = trends.get("score", 0)
-        gt_chg    = trends.get("change_pct")
+        gt_score = trends.get("score", 0)
+        gt_chg = trends.get("change_pct")
         gt_recent = trends.get("recent")
         if gt_score != 0 and gt_chg is not None:
             soc_bucket += gt_score
             sources.add("Social")
             if gt_score > 0:
-                rationale.append({"src": "Social",
-                    "head": f"Google Search Surge +{gt_chg:.0f}% — Retail FOMO Building",
-                    "body": (f"Search volume for '{ticker} stock' jumped {gt_chg:.0f}% vs prior 4-week average "
-                             f"(index: {gt_recent:.0f}/100). Rising retail attention typically precedes "
-                             "near-term price momentum as new buyers enter the market."),
-                    "sentiment": "pos",
-                    "meta": f"Trends: +{gt_chg:.0f}% vs 4w avg | Score: {gt_recent:.0f}/100"})
+                rationale.append(
+                    {
+                        "src": "Social",
+                        "head": f"Google Search Surge +{gt_chg:.0f}% — Retail FOMO Building",
+                        "body": (
+                            f"Search volume for '{ticker} stock' jumped {gt_chg:.0f}% vs prior 4-week average "
+                            f"(index: {gt_recent:.0f}/100). Rising retail attention typically precedes "
+                            "near-term price momentum as new buyers enter the market."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Trends: +{gt_chg:.0f}% vs 4w avg | Score: {gt_recent:.0f}/100",
+                    }
+                )
             elif gt_score < 0:
-                rationale.append({"src": "Social",
-                    "head": f"Google Search Collapse {gt_chg:.0f}% — Retail Interest Fading",
-                    "body": f"Search interest for '{ticker} stock' dropped {abs(gt_chg):.0f}% vs prior 4 weeks. Fading retail attention reduces the marginal buyer pool.",
-                    "sentiment": "neg",
-                    "meta": f"Trends: {gt_chg:.0f}% vs 4w avg"})
+                rationale.append(
+                    {
+                        "src": "Social",
+                        "head": f"Google Search Collapse {gt_chg:.0f}% — Retail Interest Fading",
+                        "body": f"Search interest for '{ticker} stock' dropped {abs(gt_chg):.0f}% vs prior 4 weeks. Fading retail attention reduces the marginal buyer pool.",
+                        "sentiment": "neg",
+                        "meta": f"Trends: {gt_chg:.0f}% vs 4w avg",
+                    }
+                )
 
         # Apply social/retail sentiment bucket cap: StockTwits + WSB + Google Trends
         # all measure retail crowd direction — cap so the bucket contributes once.
@@ -5105,56 +6985,78 @@ async def generate_signal(
         # ── Congressional Trading (Quiverquant) ──────────────────────────────
         congress = congress or {}
         cg_score = congress.get("score", 0)
-        cg_buys  = congress.get("buys", 0)
+        cg_buys = congress.get("buys", 0)
         cg_sells = congress.get("sells", 0)
-        cg_net   = congress.get("net", 0)
+        cg_net = congress.get("net", 0)
         if cg_score != 0:
             score += cg_score
             sources.add("Congress")
             if cg_score > 0:
                 recent_reps = ", ".join(b["rep"] for b in congress.get("recent_buys", [])[:2])
-                rationale.append({"src": "Congress",
-                    "head": f"Congressional Buying — {cg_buys} Purchase{'s' if cg_buys>1 else ''} (90d)",
-                    "body": (f"{cg_buys} congressional purchase{'s' if cg_buys>1 else ''} vs {cg_sells} sale{'s' if cg_sells!=1 else ''} in the past 90 days. "
-                             + (f"Buyers include: {recent_reps}. " if recent_reps else "")
-                             + "Senators and representatives historically outperform the market by 6–12% annually."),
-                    "sentiment": "pos",
-                    "meta": f"Congress: {cg_buys} buys, {cg_sells} sells (90d)"})
+                rationale.append(
+                    {
+                        "src": "Congress",
+                        "head": f"Congressional Buying — {cg_buys} Purchase{'s' if cg_buys > 1 else ''} (90d)",
+                        "body": (
+                            f"{cg_buys} congressional purchase{'s' if cg_buys > 1 else ''} vs {cg_sells} sale{'s' if cg_sells != 1 else ''} in the past 90 days. "
+                            + (f"Buyers include: {recent_reps}. " if recent_reps else "")
+                            + "Senators and representatives historically outperform the market by 6–12% annually."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"Congress: {cg_buys} buys, {cg_sells} sells (90d)",
+                    }
+                )
             elif cg_score < 0:
-                rationale.append({"src": "Congress",
-                    "head": f"Congressional Selling — {cg_sells} Sale{'s' if cg_sells>1 else ''} (90d)",
-                    "body": f"{cg_sells} congressional sale{'s' if cg_sells!=1 else ''} vs {cg_buys} purchase{'s' if cg_buys!=1 else ''} in the past 90 days. Net selling by politicians — who often have policy insight — is a caution flag.",
-                    "sentiment": "neg",
-                    "meta": f"Congress: {cg_buys} buys, {cg_sells} sells (90d)"})
+                rationale.append(
+                    {
+                        "src": "Congress",
+                        "head": f"Congressional Selling — {cg_sells} Sale{'s' if cg_sells > 1 else ''} (90d)",
+                        "body": f"{cg_sells} congressional sale{'s' if cg_sells != 1 else ''} vs {cg_buys} purchase{'s' if cg_buys != 1 else ''} in the past 90 days. Net selling by politicians — who often have policy insight — is a caution flag.",
+                        "sentiment": "neg",
+                        "meta": f"Congress: {cg_buys} buys, {cg_sells} sells (90d)",
+                    }
+                )
 
         # ── Sector Rotation Bias ──────────────────────────────────────────────
         rotation = ((market_ctx or {}).get("macro") or {}).get("sector_rotation")
         if rotation and rotation.get("stage") and sector_rs:
             sector_etf = sector_rs.get("sector_etf", "")
-            stage      = rotation["stage"]
-            favoured   = rotation.get("favoured", [])
-            avoid      = rotation.get("avoid", [])
-            conf       = rotation.get("confidence", 0)
+            stage = rotation["stage"]
+            favoured = rotation.get("favoured", [])
+            avoid = rotation.get("avoid", [])
+            conf = rotation.get("confidence", 0)
             if sector_etf and conf >= 50:
                 sources.add("Macro")
                 if sector_etf in favoured:
                     score += 6
-                    rationale.append({"src": "Macro",
-                        "head": f"Sector Rotation Tailwind — {sector_etf} Favoured in {stage.title()} Cycle",
-                        "body": (f"Current macro indicators (yield curve, VIX, credit spreads, S&P trend) suggest a "
-                                 f"'{stage}' economic cycle stage. {sector_etf} historically outperforms in this environment. "
-                                 f"Sector rotation model confidence: {conf}%."),
-                        "sentiment": "pos",
-                        "meta": f"Cycle: {stage} | Favoured: {', '.join(favoured[:3])}"})
+                    rationale.append(
+                        {
+                            "src": "Macro",
+                            "head": f"Sector Rotation Tailwind — {sector_etf} Favoured in {stage.title()} Cycle",
+                            "body": (
+                                f"Current macro indicators (yield curve, VIX, credit spreads, S&P trend) suggest a "
+                                f"'{stage}' economic cycle stage. {sector_etf} historically outperforms in this environment. "
+                                f"Sector rotation model confidence: {conf}%."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"Cycle: {stage} | Favoured: {', '.join(favoured[:3])}",
+                        }
+                    )
                 elif sector_etf in avoid:
                     score -= 5
-                    rationale.append({"src": "Macro",
-                        "head": f"Sector Rotation Headwind — {sector_etf} Underperforms in {stage.title()} Cycle",
-                        "body": (f"The '{stage}' cycle stage typically sees {sector_etf} underperform. "
-                                 f"Capital tends to rotate toward: {', '.join(favoured[:3])}. "
-                                 f"Model confidence: {conf}%."),
-                        "sentiment": "neg",
-                        "meta": f"Cycle: {stage} | Avoid: {', '.join(avoid[:3])}"})
+                    rationale.append(
+                        {
+                            "src": "Macro",
+                            "head": f"Sector Rotation Headwind — {sector_etf} Underperforms in {stage.title()} Cycle",
+                            "body": (
+                                f"The '{stage}' cycle stage typically sees {sector_etf} underperform. "
+                                f"Capital tends to rotate toward: {', '.join(favoured[:3])}. "
+                                f"Model confidence: {conf}%."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"Cycle: {stage} | Avoid: {', '.join(avoid[:3])}",
+                        }
+                    )
 
         # ── Multi-timeframe confirmation (weekly + 1H) ───────────────────────
         # Weekly trend
@@ -5162,9 +7064,15 @@ async def generate_signal(
             score *= 1.10  # daily BUY confirmed by weekly uptrend
         elif weekly_trend == -1 and score > 0:
             score *= 0.70  # daily BUY against weekly downtrend
-            rationale.append({"src": "Technical", "head": "Weekly Downtrend Conflict",
-                "body": "Daily BUY signal contradicts the weekly downtrend. Price is below its 20-week average — counter-trend trades have lower win rates.",
-                "sentiment": "neg", "meta": "Weekly SMA20 bearish"})
+            rationale.append(
+                {
+                    "src": "Technical",
+                    "head": "Weekly Downtrend Conflict",
+                    "body": "Daily BUY signal contradicts the weekly downtrend. Price is below its 20-week average — counter-trend trades have lower win rates.",
+                    "sentiment": "neg",
+                    "meta": "Weekly SMA20 bearish",
+                }
+            )
         elif weekly_trend == -1 and score < 0:
             score *= 1.10  # daily SELL confirmed by weekly downtrend
         elif weekly_trend == 1 and score < 0:
@@ -5175,23 +7083,33 @@ async def generate_signal(
             score += _weekly_ohlcv_score
             sources.add("Technical")
             if _weekly_ohlcv_score > 0:
-                rationale.append({"src": "Technical",
-                    "head": "Weekly OHLCV: Sustained Medium-Term Uptrend",
-                    "body": "Price has been above its 13-week average in 8 or more of the last 10 weeks. Persistent weekly trend momentum reduces false signal rate in choppy markets.",
-                    "sentiment": "pos", "meta": "Polygon 26-week bars: ≥8/10 weeks above SMA13"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Weekly OHLCV: Sustained Medium-Term Uptrend",
+                        "body": "Price has been above its 13-week average in 8 or more of the last 10 weeks. Persistent weekly trend momentum reduces false signal rate in choppy markets.",
+                        "sentiment": "pos",
+                        "meta": "Polygon 26-week bars: ≥8/10 weeks above SMA13",
+                    }
+                )
             else:
-                rationale.append({"src": "Technical",
-                    "head": "Weekly OHLCV: Sustained Medium-Term Downtrend",
-                    "body": "Price has been below its 13-week average in 8 or more of the last 10 weeks. Persistent weekly bearish structure.",
-                    "sentiment": "neg", "meta": "Polygon 26-week bars: ≥8/10 weeks below SMA13"})
+                rationale.append(
+                    {
+                        "src": "Technical",
+                        "head": "Weekly OHLCV: Sustained Medium-Term Downtrend",
+                        "body": "Price has been below its 13-week average in 8 or more of the last 10 weeks. Persistent weekly bearish structure.",
+                        "sentiment": "neg",
+                        "meta": "Polygon 26-week bars: ≥8/10 weeks below SMA13",
+                    }
+                )
 
         # 1H intraday timeframe confirmation — completes the 1D/1W/1H trifecta.
         # Requires RSI, MACD, and EMA all aligned on the 1H chart.
         try:
             if df_1h is not None and len(df_1h) >= 20:
                 _1h_result = await asyncio.to_thread(_compute_1h_techs, df_1h)
-                rsi_1h       = _1h_result["rsi_1h"]
-                _macd_1h     = _1h_result["macd_1h"]
+                rsi_1h = _1h_result["rsi_1h"]
+                _macd_1h = _1h_result["macd_1h"]
                 _above_ema_1h = _1h_result["above_ema_1h"]
 
                 h1_bullish = rsi_1h > 55 and _macd_1h > 0 and _above_ema_1h
@@ -5200,35 +7118,63 @@ async def generate_signal(
                 if score > 0 and h1_bullish:
                     score *= 1.08
                     sources.add("Technical")
-                    rationale.append({"src": "Technical",
-                        "head": f"1H Timeframe Confirms BUY (RSI {rsi_1h:.0f})",
-                        "body": (f"1-hour chart is bullish: RSI {rsi_1h:.0f}, MACD positive, price above EMA20. "
-                                 "All three timeframes (1D, 1W, 1H) align — highest conviction setup."),
-                        "sentiment": "pos", "meta": f"1H RSI {rsi_1h:.0f} | MACD {'pos' if _macd_1h > 0 else 'neg'}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"1H Timeframe Confirms BUY (RSI {rsi_1h:.0f})",
+                            "body": (
+                                f"1-hour chart is bullish: RSI {rsi_1h:.0f}, MACD positive, price above EMA20. "
+                                "All three timeframes (1D, 1W, 1H) align — highest conviction setup."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"1H RSI {rsi_1h:.0f} | MACD {'pos' if _macd_1h > 0 else 'neg'}",
+                        }
+                    )
                 elif score > 0 and h1_bearish:
                     score *= 0.82
                     sources.add("Technical")
-                    rationale.append({"src": "Technical",
-                        "head": f"1H Timeframe Contradicts BUY (RSI {rsi_1h:.0f})",
-                        "body": (f"1-hour chart is bearish: RSI {rsi_1h:.0f}, MACD negative, price below EMA20. "
-                                 "Short-term momentum conflicts with daily BUY — wait for 1H alignment."),
-                        "sentiment": "neg", "meta": f"1H RSI {rsi_1h:.0f} | MACD {'pos' if _macd_1h > 0 else 'neg'}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"1H Timeframe Contradicts BUY (RSI {rsi_1h:.0f})",
+                            "body": (
+                                f"1-hour chart is bearish: RSI {rsi_1h:.0f}, MACD negative, price below EMA20. "
+                                "Short-term momentum conflicts with daily BUY — wait for 1H alignment."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"1H RSI {rsi_1h:.0f} | MACD {'pos' if _macd_1h > 0 else 'neg'}",
+                        }
+                    )
                 elif score < 0 and h1_bearish:
                     score *= 1.08  # more negative (confirmed bear)
                     sources.add("Technical")
-                    rationale.append({"src": "Technical",
-                        "head": f"1H Timeframe Confirms SELL (RSI {rsi_1h:.0f})",
-                        "body": (f"1-hour chart is bearish: RSI {rsi_1h:.0f}, MACD negative, price below EMA20. "
-                                 "All three timeframes align bearishly — high-conviction SELL setup."),
-                        "sentiment": "neg", "meta": f"1H RSI {rsi_1h:.0f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"1H Timeframe Confirms SELL (RSI {rsi_1h:.0f})",
+                            "body": (
+                                f"1-hour chart is bearish: RSI {rsi_1h:.0f}, MACD negative, price below EMA20. "
+                                "All three timeframes align bearishly — high-conviction SELL setup."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"1H RSI {rsi_1h:.0f}",
+                        }
+                    )
                 elif score < 0 and h1_bullish:
                     score *= 0.82  # less negative (contradicted)
                     sources.add("Technical")
-                    rationale.append({"src": "Technical",
-                        "head": f"1H Timeframe Contradicts SELL (RSI {rsi_1h:.0f})",
-                        "body": (f"1-hour chart is bullish while the daily is bearish. "
-                                 "Intraday momentum conflicts with the daily SELL — reduce position or wait."),
-                        "sentiment": "pos", "meta": f"1H RSI {rsi_1h:.0f}"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": f"1H Timeframe Contradicts SELL (RSI {rsi_1h:.0f})",
+                            "body": (
+                                "1-hour chart is bullish while the daily is bearish. "
+                                "Intraday momentum conflicts with the daily SELL — reduce position or wait."
+                            ),
+                            "sentiment": "pos",
+                            "meta": f"1H RSI {rsi_1h:.0f}",
+                        }
+                    )
         except Exception:
             pass  # 1H data unavailable or insufficient — degrade gracefully
 
@@ -5241,18 +7187,34 @@ async def generate_signal(
             if score > 0 and price < sma200:
                 if below_200_pct < -3:  # deeply below — strong penalty
                     score *= 0.75
-                    rationale.append({"src": "Technical", "head": "Counter-Trend BUY Warning",
-                        "body": (f"BUY signal in a long-term downtrend. Price (${price:.2f}) is "
-                                 f"{abs(below_200_pct):.1f}% below the 200-day MA (${sma200:.2f}). "
-                                 "Only the highest-conviction reversals succeed here — reduce size."),
-                        "sentiment": "neg", "meta": f"Price vs 200-DMA: {below_200_pct:.1f}%"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": "Counter-Trend BUY Warning",
+                            "body": (
+                                f"BUY signal in a long-term downtrend. Price (${price:.2f}) is "
+                                f"{abs(below_200_pct):.1f}% below the 200-day MA (${sma200:.2f}). "
+                                "Only the highest-conviction reversals succeed here — reduce size."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"Price vs 200-DMA: {below_200_pct:.1f}%",
+                        }
+                    )
                 else:  # within 0–3% below — moderate penalty
                     score *= 0.87
-                    rationale.append({"src": "Technical", "head": "200-DMA Trend Gate — Confidence Reduced",
-                        "body": (f"BUY signal with price (${price:.2f}) just below the 200-day MA "
-                                 f"(${sma200:.2f}). Trend-following BUY signals have lower win rates "
-                                 "below this key long-term level. Conviction reduced."),
-                        "sentiment": "neg", "meta": f"Price vs 200-DMA: {below_200_pct:.1f}%"})
+                    rationale.append(
+                        {
+                            "src": "Technical",
+                            "head": "200-DMA Trend Gate — Confidence Reduced",
+                            "body": (
+                                f"BUY signal with price (${price:.2f}) just below the 200-day MA "
+                                f"(${sma200:.2f}). Trend-following BUY signals have lower win rates "
+                                "below this key long-term level. Conviction reduced."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"Price vs 200-DMA: {below_200_pct:.1f}%",
+                        }
+                    )
             elif score < 0 and price > sma200 * 1.05:
                 score *= 0.80  # SELL into strong uptrend — harder to play
 
@@ -5261,20 +7223,30 @@ async def generate_signal(
         # even if the overall direction is still BUY/SELL. This prevents contradictory
         # signals like "Stochastic Overbought" + "BUY" with high confidence.
         warning_signals = {
-            "RSI Overbought", "RSI Elevated", "Stochastic Overbought",
-            "Stochastic Bearish Cross (Overbought)", "Williams %R Overbought",
-            "CCI Extreme Overbought", "MFI Overbought",
-            "Broad Market Complacency", "Extreme Greed",
+            "RSI Overbought",
+            "RSI Elevated",
+            "Stochastic Overbought",
+            "Stochastic Bearish Cross (Overbought)",
+            "Williams %R Overbought",
+            "CCI Extreme Overbought",
+            "MFI Overbought",
+            "Broad Market Complacency",
+            "Extreme Greed",
             "NAAIM: Managers Fully Invested",
         }
         warning_sell_signals = {
-            "RSI Oversold", "RSI Weakening", "Stochastic Oversold",
-            "Stochastic Bullish Cross (Oversold)", "Williams %R Oversold",
-            "CCI Extreme Oversold", "MFI Oversold",
-            "Extreme Fear", "Market Breadth Deteriorating",
+            "RSI Oversold",
+            "RSI Weakening",
+            "Stochastic Oversold",
+            "Stochastic Bullish Cross (Oversold)",
+            "Williams %R Oversold",
+            "CCI Extreme Oversold",
+            "MFI Oversold",
+            "Extreme Fear",
+            "Market Breadth Deteriorating",
             "NAAIM: Managers Extremely Defensive",
         }
-        
+
         warning_penalty = 0.0
         warning_rationale = []
         for r in rationale:
@@ -5286,30 +7258,35 @@ async def generate_signal(
             if score > 0 and head in warning_signals:
                 penalty = 0.08  # 8% confidence reduction (down from 15%)
                 warning_penalty += penalty
-                warning_rationale.append({
-                    "src": "Risk Gate",
-                    "head": f"Warning: {head}",
-                    "body": f"This overbought condition reduces conviction in the BUY signal. Consider reducing position size.",
-                    "sentiment": "neg",
-                    "meta": f"Confidence penalty: -{penalty*100:.0f}%"
-                })
+                warning_rationale.append(
+                    {
+                        "src": "Risk Gate",
+                        "head": f"Warning: {head}",
+                        "body": "This overbought condition reduces conviction in the BUY signal. Consider reducing position size.",
+                        "sentiment": "neg",
+                        "meta": f"Confidence penalty: -{penalty * 100:.0f}%",
+                    }
+                )
             # For SELL signals, penalize oversold warnings
             elif score < 0 and head in warning_sell_signals:
                 penalty = 0.08
                 warning_penalty += penalty
-                warning_rationale.append({
-                    "src": "Risk Gate",
-                    "head": f"Warning: {head}",
-                    "body": f"This oversold condition reduces conviction in the SELL signal. Consider reducing position size.",
-                    "sentiment": "neg",
-                    "meta": f"Confidence penalty: -{penalty*100:.0f}%"
-                })
+                warning_rationale.append(
+                    {
+                        "src": "Risk Gate",
+                        "head": f"Warning: {head}",
+                        "body": "This oversold condition reduces conviction in the SELL signal. Consider reducing position size.",
+                        "sentiment": "neg",
+                        "meta": f"Confidence penalty: -{penalty * 100:.0f}%",
+                    }
+                )
 
         # Cap warning penalty at 20% (down from 30%); combine with other penalties
         warning_penalty = min(warning_penalty, 0.20)
         rationale.extend(warning_rationale)
-        total_confidence_penalty = min(0.40, warning_penalty + vol_confidence_penalty
-                                       + rs_confidence_penalty + insider_confidence_penalty)
+        total_confidence_penalty = min(
+            0.40, warning_penalty + vol_confidence_penalty + rs_confidence_penalty + insider_confidence_penalty
+        )
 
         # ── Correlation-Based Portfolio Limits ──────────────────────────────
         # Suppress BUY signals when the paper portfolio already has too much
@@ -5322,19 +7299,25 @@ async def generate_signal(
             if _pca_haircut > 0:
                 total_confidence_penalty = min(0.50, total_confidence_penalty + _pca_haircut)
                 _dom_factor = pca_risk.get("dominant_factor", "Unknown")
-                _dom_exp    = pca_risk.get("dominant_exposure", 0)
+                _dom_exp = pca_risk.get("dominant_exposure", 0)
                 sources.add("Risk Gate")
-                rationale.append({"src": "Risk Gate",
-                    "head": f"PCA Factor Concentration — {_dom_factor} ({_dom_exp:.0%} exposure)",
-                    "body": (f"Your portfolio's statistical risk is concentrated ({_dom_exp:.0%}) on "
-                             f"the '{_dom_factor}' latent factor — detected via 2-factor PCA on "
-                             f"60-day return correlations. GICS sector limits missed this overlap. "
-                             f"Confidence reduced by {_pca_haircut*100:.0f}pp to limit factor crowding."),
-                    "sentiment": "neg",
-                    "meta": f"pca_factor={_dom_factor} exposure={_dom_exp:.0%} haircut={_pca_haircut*100:.0f}pp"})
+                rationale.append(
+                    {
+                        "src": "Risk Gate",
+                        "head": f"PCA Factor Concentration — {_dom_factor} ({_dom_exp:.0%} exposure)",
+                        "body": (
+                            f"Your portfolio's statistical risk is concentrated ({_dom_exp:.0%}) on "
+                            f"the '{_dom_factor}' latent factor — detected via 2-factor PCA on "
+                            f"60-day return correlations. GICS sector limits missed this overlap. "
+                            f"Confidence reduced by {_pca_haircut * 100:.0f}pp to limit factor crowding."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"pca_factor={_dom_factor} exposure={_dom_exp:.0%} haircut={_pca_haircut * 100:.0f}pp",
+                    }
+                )
         if portfolio_ctx and score > 0:
             sector_exposure = portfolio_ctx.get("sector_exposure", {})
-            ticker_sector   = (sector_rs or {}).get("sector_etf") if sector_rs else None
+            ticker_sector = (sector_rs or {}).get("sector_etf") if sector_rs else None
             if ticker_sector and ticker_sector in sector_exposure:
                 exposure_pct = sector_exposure[ticker_sector]
                 # Configurable threshold — default 30%; hard suppress above 50%
@@ -5342,37 +7325,41 @@ async def generate_signal(
                 HARD_LIMIT = 50.0
                 if exposure_pct >= HARD_LIMIT:
                     score = 0
-                    _force_hold = True   # portfolio hard limit — subsequent signals must not re-open
+                    _force_hold = True  # portfolio hard limit — subsequent signals must not re-open
                     sources.add("Risk Gate")
-                    rationale.append({
-                        "src": "Risk Gate",
-                        "head": f"Sector Exposure Limit Hit — {ticker_sector} {exposure_pct:.0f}% of Portfolio",
-                        "body": (
-                            f"Your paper portfolio already has {exposure_pct:.0f}% of its value in {ticker_sector} "
-                            f"sector positions (hard limit: {HARD_LIMIT:.0f}%). "
-                            "This BUY signal is suppressed to prevent concentration risk. "
-                            "Close an existing position in this sector before adding more."
-                        ),
-                        "sentiment": "neg",
-                        "meta": f"{ticker_sector} exposure: {exposure_pct:.0f}% > {HARD_LIMIT:.0f}% limit",
-                    })
+                    rationale.append(
+                        {
+                            "src": "Risk Gate",
+                            "head": f"Sector Exposure Limit Hit — {ticker_sector} {exposure_pct:.0f}% of Portfolio",
+                            "body": (
+                                f"Your paper portfolio already has {exposure_pct:.0f}% of its value in {ticker_sector} "
+                                f"sector positions (hard limit: {HARD_LIMIT:.0f}%). "
+                                "This BUY signal is suppressed to prevent concentration risk. "
+                                "Close an existing position in this sector before adding more."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"{ticker_sector} exposure: {exposure_pct:.0f}% > {HARD_LIMIT:.0f}% limit",
+                        }
+                    )
                 elif exposure_pct >= SOFT_LIMIT:
                     # Soft limit: confidence haircut, not full suppression
                     haircut = min(0.25, (exposure_pct - SOFT_LIMIT) / (HARD_LIMIT - SOFT_LIMIT) * 0.25)
                     total_confidence_penalty = min(0.50, total_confidence_penalty + haircut)
                     sources.add("Risk Gate")
-                    rationale.append({
-                        "src": "Risk Gate",
-                        "head": f"Sector Concentration Warning — {ticker_sector} {exposure_pct:.0f}% of Portfolio",
-                        "body": (
-                            f"Your paper portfolio has {exposure_pct:.0f}% of its value in {ticker_sector} "
-                            f"(soft limit: {SOFT_LIMIT:.0f}%). "
-                            "Adding here increases concentration risk. Confidence reduced by "
-                            f"{haircut*100:.0f}%. Consider diversifying."
-                        ),
-                        "sentiment": "neg",
-                        "meta": f"{ticker_sector} exposure: {exposure_pct:.0f}% (soft limit {SOFT_LIMIT:.0f}%)",
-                    })
+                    rationale.append(
+                        {
+                            "src": "Risk Gate",
+                            "head": f"Sector Concentration Warning — {ticker_sector} {exposure_pct:.0f}% of Portfolio",
+                            "body": (
+                                f"Your paper portfolio has {exposure_pct:.0f}% of its value in {ticker_sector} "
+                                f"(soft limit: {SOFT_LIMIT:.0f}%). "
+                                "Adding here increases concentration risk. Confidence reduced by "
+                                f"{haircut * 100:.0f}%. Consider diversifying."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"{ticker_sector} exposure: {exposure_pct:.0f}% (soft limit {SOFT_LIMIT:.0f}%)",
+                        }
+                    )
 
         # ── Merge worker results (concurrent scoring) ──────────────────────
         # Workers launched before TA scoring; we await them here. By this point
@@ -5388,8 +7375,8 @@ async def generate_signal(
                         continue
                     if hasattr(_wr, "ok") and _wr.ok:
                         if not _force_hold:
-                            score    += _wr.score
-                        sources  |= _wr.sources
+                            score += _wr.score
+                        sources |= _wr.sources
                         rationale += _wr.rationale
             except (asyncio.TimeoutError, Exception):
                 # Workers already cancelled or timed out — proceed without them.
@@ -5397,13 +7384,23 @@ async def generate_signal(
                 pass
 
         return _assemble_signal(
-            ticker=ticker, info=info, tech=tech,
-            score=score, rationale=rationale, sources=sources,
-            _force_hold=_force_hold, _is_low_atr=_is_low_atr,
-            _atr_pct_pre=_atr_pct_pre, total_confidence_penalty=total_confidence_penalty,
-            avg_sent=avg_sent, price=price, atr=atr,
-            market_ctx=market_ctx, earnings_cal=earnings_cal,
-            sector_rs=sector_rs, days_to_earnings=days_to_earnings,
+            ticker=ticker,
+            info=info,
+            tech=tech,
+            score=score,
+            rationale=rationale,
+            sources=sources,
+            _force_hold=_force_hold,
+            _is_low_atr=_is_low_atr,
+            _atr_pct_pre=_atr_pct_pre,
+            total_confidence_penalty=total_confidence_penalty,
+            avg_sent=avg_sent,
+            price=price,
+            atr=atr,
+            market_ctx=market_ctx,
+            earnings_cal=earnings_cal,
+            sector_rs=sector_rs,
+            days_to_earnings=days_to_earnings,
             opt_flow=opt_flow,
             _is_lev_etf=_is_lev_etf,
             data_warnings=data_warnings,
@@ -5421,7 +7418,7 @@ async def scan_all(
     infos: Optional[dict] = None,
 ) -> list[dict]:
     histories = histories or {}
-    infos     = infos     or {}
+    infos = infos or {}
 
     # Semaphore(15): 15 concurrent signal generations on unlimited Polygon Starter plan.
     # Expected: 154 tickers × 2.5s each → 385s sequential → ~26s with 15× parallelism.
@@ -5460,8 +7457,8 @@ async def scan_all(
             continue  # not enough sector peers in watchlist to form a view
 
         bullish_peers = [p for p in peers if p.get("action") == "BUY"]
-        n_peers       = min(len(peers), 3)   # judge against top-3
-        n_bull        = len(bullish_peers)
+        n_peers = min(len(peers), 3)  # judge against top-3
+        n_bull = len(bullish_peers)
 
         if n_bull < 2:
             peer_names = ", ".join(p["ticker"] for p in peers[:3])
@@ -5469,40 +7466,43 @@ async def scan_all(
             # Penalty scales with how isolated the signal is
             haircut = 12 if n_bull == 0 else 6
             sig["confidence"] = round(max(35.0, sig["confidence"] - haircut), 1)
-            sig["rationale"] = list(sig.get("rationale", [])) + [{
-                "src":  "Sector",
-                "head": f"Sector Peers Not Confirming BUY — {n_bull}/{n_peers} Bullish ({etf})",
-                "body": (
-                    f"Of the {len(peers[:3])} {etf}-sector peers on the watchlist "
-                    f"({peer_names}), only {n_bull} {'are' if n_bull != 1 else 'is'} bullish "
-                    f"({bull_names}). "
-                    "Stocks within a sector mean-revert to their cross-sectional correlation: "
-                    "a lone-outlier BUY has a materially lower true-positive rate than a "
-                    "sector-confirmed move. Confidence reduced."
-                ),
-                "sentiment": "neg",
-                "meta": f"{etf}: {n_bull}/{n_peers} peers bullish | −{haircut}pp confidence",
-            }]
+            sig["rationale"] = list(sig.get("rationale", [])) + [
+                {
+                    "src": "Sector",
+                    "head": f"Sector Peers Not Confirming BUY — {n_bull}/{n_peers} Bullish ({etf})",
+                    "body": (
+                        f"Of the {len(peers[:3])} {etf}-sector peers on the watchlist "
+                        f"({peer_names}), only {n_bull} {'are' if n_bull != 1 else 'is'} bullish "
+                        f"({bull_names}). "
+                        "Stocks within a sector mean-revert to their cross-sectional correlation: "
+                        "a lone-outlier BUY has a materially lower true-positive rate than a "
+                        "sector-confirmed move. Confidence reduced."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"{etf}: {n_bull}/{n_peers} peers bullish | −{haircut}pp confidence",
+                }
+            ]
             sig["sources"] = sorted(set(sig.get("sources", [])) | {"Sector"})
 
     # ── Layer 2: Polygon Related Companies peer check ─────────────────────────
     try:
         from services.polygon_related import check_related_peer_confirmation
+
         high_conf_buys = [s for s in signals if s.get("action") == "BUY"]
         for sig in high_conf_buys:
-            adj, reason = await check_related_peer_confirmation(
-                sig["ticker"], sig["action"], signals_by_ticker
-            )
+            adj, reason = await check_related_peer_confirmation(sig["ticker"], sig["action"], signals_by_ticker)
             if adj != 0.0:
                 sig["confidence"] = round(max(35.0, min(72.0, sig["confidence"] + adj)), 1)
                 sentiment = "pos" if adj > 0 else "neg"
-                sig["rationale"] = list(sig.get("rationale", [])) + [{
-                    "src":       "Sector",
-                    "head":      f"Polygon Related Companies {'Confirm' if adj > 0 else 'Diverge'} ({adj:+.0f}pp)",
-                    "body":      reason,
-                    "sentiment": sentiment,
-                    "meta":      f"related_adj={adj:+.1f}pp",
-                }]
+                sig["rationale"] = list(sig.get("rationale", [])) + [
+                    {
+                        "src": "Sector",
+                        "head": f"Polygon Related Companies {'Confirm' if adj > 0 else 'Diverge'} ({adj:+.0f}pp)",
+                        "body": reason,
+                        "sentiment": sentiment,
+                        "meta": f"related_adj={adj:+.1f}pp",
+                    }
+                ]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Sector"})
     except Exception:
         pass
@@ -5512,27 +7512,28 @@ async def scan_all(
     # TSM BUY → NVDA/AMD/QCOM get a small lead-lag boost; XOM SELL → airlines penalty.
     try:
         from services.supply_chain import get_supply_chain_propagation_score
+
         _sig_map = {s["ticker"]: s for s in signals}
         for sig in signals:
-            sc_delta, sc_reason = get_supply_chain_propagation_score(
-                sig["ticker"], _sig_map
-            )
+            sc_delta, sc_reason = get_supply_chain_propagation_score(sig["ticker"], _sig_map)
             if abs(sc_delta) >= 1.0:
                 # Convert score delta to confidence adjustment (capped ±4pp)
                 _conf_adj = max(-4.0, min(4.0, sc_delta * 0.5))
-                sig["confidence"] = round(
-                    max(35.0, min(72.0, sig["confidence"] + _conf_adj)), 1
-                )
-                sig["rationale"] = list(sig.get("rationale", [])) + [{
-                    "src":       "Fundamentals",
-                    "head":      f"Supply Chain Propagation ({sc_delta:+.1f}pts)",
-                    "body":      (f"Key supplier signal propagated to {sig['ticker']}: "
-                                  f"{sc_reason}. Supplier performance leads customer "
-                                  f"revenue by 1–4 weeks in the semiconductor and "
-                                  f"commodity cycles."),
-                    "sentiment": "pos" if sc_delta > 0 else "neg",
-                    "meta":      f"supply_chain_propagation={sc_delta:+.1f}",
-                }]
+                sig["confidence"] = round(max(35.0, min(72.0, sig["confidence"] + _conf_adj)), 1)
+                sig["rationale"] = list(sig.get("rationale", [])) + [
+                    {
+                        "src": "Fundamentals",
+                        "head": f"Supply Chain Propagation ({sc_delta:+.1f}pts)",
+                        "body": (
+                            f"Key supplier signal propagated to {sig['ticker']}: "
+                            f"{sc_reason}. Supplier performance leads customer "
+                            f"revenue by 1–4 weeks in the semiconductor and "
+                            f"commodity cycles."
+                        ),
+                        "sentiment": "pos" if sc_delta > 0 else "neg",
+                        "meta": f"supply_chain_propagation={sc_delta:+.1f}",
+                    }
+                ]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Fundamentals"})
     except Exception:
         pass
@@ -5545,16 +7546,16 @@ async def scan_all(
     # Requires ≥10 directional signals to be meaningful; smaller batches skip.
     try:
         _dir = [s for s in signals if s.get("action") in ("BUY", "SELL")]
-        _n   = len(_dir)
+        _n = len(_dir)
         if _n >= 10:
             _sorted_idx = sorted(range(_n), key=lambda i: _dir[i]["confidence"])
             for _rank_pos, _idx in enumerate(_sorted_idx):
-                sig  = _dir[_idx]
-                _pct = _rank_pos / (_n - 1)          # 0.0 = weakest, 1.0 = strongest
+                sig = _dir[_idx]
+                _pct = _rank_pos / (_n - 1)  # 0.0 = weakest, 1.0 = strongest
                 if _pct >= 0.90:
-                    _adj, _label = 3.0,  "Top decile"
+                    _adj, _label = 3.0, "Top decile"
                 elif _pct >= 0.75:
-                    _adj, _label = 1.5,  "Top quartile"
+                    _adj, _label = 1.5, "Top quartile"
                 elif _pct <= 0.10:
                     _adj, _label = -3.0, "Bottom decile"
                 elif _pct <= 0.25:
@@ -5563,16 +7564,20 @@ async def scan_all(
                     continue
                 sig["confidence"] = round(max(35.0, min(72.0, sig["confidence"] + _adj)), 1)
                 _pctile_int = round(_pct * 100)
-                sig["rationale"] = list(sig.get("rationale", [])) + [{
-                    "src":       "Cross-Sectional",
-                    "head":      f"{_label} — {_pctile_int}th Percentile of {_n}-Signal Universe ({_adj:+.0f}pp)",
-                    "body":      (f"Ranked against today's full {_n}-ticker scan universe: {_pctile_int}th "
-                                  f"percentile. {_label} signals receive a {_adj:+.0f}pp confidence "
-                                  "adjustment — the same relative-strength principle used in cross-sectional "
-                                  "quant models to separate strongest from weakest setups each cycle."),
-                    "sentiment": "pos" if _adj > 0 else "neg",
-                    "meta":      f"universe_rank={_pctile_int}th | n={_n} | adj={_adj:+.0f}pp",
-                }]
+                sig["rationale"] = list(sig.get("rationale", [])) + [
+                    {
+                        "src": "Cross-Sectional",
+                        "head": f"{_label} — {_pctile_int}th Percentile of {_n}-Signal Universe ({_adj:+.0f}pp)",
+                        "body": (
+                            f"Ranked against today's full {_n}-ticker scan universe: {_pctile_int}th "
+                            f"percentile. {_label} signals receive a {_adj:+.0f}pp confidence "
+                            "adjustment — the same relative-strength principle used in cross-sectional "
+                            "quant models to separate strongest from weakest setups each cycle."
+                        ),
+                        "sentiment": "pos" if _adj > 0 else "neg",
+                        "meta": f"universe_rank={_pctile_int}th | n={_n} | adj={_adj:+.0f}pp",
+                    }
+                ]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Cross-Sectional"})
     except Exception:
         pass

@@ -8,27 +8,26 @@ Functions under test:
   - score_obv_adx(tech, running_score)
   - score_moving_averages(price, sma50, sma200, poly_ind)
 """
-import sys
+
 import os
-import pytest
+import sys
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from services.signal_scoring import (
-    score_oscillators,
-    score_macd,
     score_ema_cross,
-    score_obv_adx,
+    score_macd,
     score_moving_averages,
+    score_obv_adx,
+    score_oscillators,
 )
-
 
 # ── score_oscillators ─────────────────────────────────────────────────────────
 
-class TestScoreOscillators:
 
+class TestScoreOscillators:
     def test_rsi_oversold_below_30(self):
         delta, rationale, dominant = score_oscillators({}, rsi=25.0)
         assert delta == 20
@@ -118,8 +117,8 @@ class TestScoreOscillators:
 
 # ── score_macd ─────────────────────────────────────────────────────────────────
 
-class TestScoreMacd:
 
+class TestScoreMacd:
     def test_bullish_crossover(self):
         """Histogram crosses above zero: strong bull signal."""
         sd, td, rationale, dominant = score_macd(hist=0.01, hist_p=-0.01)
@@ -161,8 +160,8 @@ class TestScoreMacd:
 
 # ── score_ema_cross ────────────────────────────────────────────────────────────
 
-class TestScoreEmaCross:
 
+class TestScoreEmaCross:
     def test_bullish_cross(self):
         tech = {"ema8": 105.0, "ema21": 100.0, "ema8_prev": 99.0, "ema21_prev": 101.0}
         sd, td, rationale = score_ema_cross(tech)
@@ -199,18 +198,18 @@ class TestScoreEmaCross:
 
 # ── score_obv_adx ──────────────────────────────────────────────────────────────
 
-class TestScoreObvAdx:
 
+class TestScoreObvAdx:
     def test_obv_bullish_aligns_with_positive_score(self):
         tech = {"obv_above": True, "obv_slope": 100000}
         vd, td, rationale = score_obv_adx(tech, running_score=10.0)
-        assert vd == 10   # bonus=10 when running_score > 0
+        assert vd == 10  # bonus=10 when running_score > 0
         assert any("Bullish" in r["head"] for r in rationale)
 
     def test_obv_bullish_with_negative_score_lower_bonus(self):
         tech = {"obv_above": True, "obv_slope": 100000}
         vd, td, rationale = score_obv_adx(tech, running_score=-5.0)
-        assert vd == 4    # bonus=4 when running_score <= 0
+        assert vd == 4  # bonus=4 when running_score <= 0
 
     def test_obv_bearish_aligns_with_negative_score(self):
         tech = {"obv_above": False, "obv_slope": -100000}
@@ -243,8 +242,8 @@ class TestScoreObvAdx:
 
 # ── score_moving_averages ──────────────────────────────────────────────────────
 
-class TestScoreMovingAverages:
 
+class TestScoreMovingAverages:
     def test_above_sma200_bullish(self):
         # price must be > sma200 * 1.01 to trigger the bullish branch
         ma_delta, rationale = score_moving_averages(205.0, sma50=None, sma200=200.0, poly_ind={})
@@ -257,32 +256,24 @@ class TestScoreMovingAverages:
 
     def test_golden_cross_bonus(self):
         """SMA50 > SMA200 → Golden Cross bonus."""
-        ma_delta, rationale = score_moving_averages(
-            200.0, sma50=210.0, sma200=200.0, poly_ind={}
-        )
+        ma_delta, rationale = score_moving_averages(200.0, sma50=210.0, sma200=200.0, poly_ind={})
         assert any("Golden Cross" in r["head"] for r in rationale)
 
     def test_death_cross_penalty(self):
         """SMA50 < SMA200 → Death Cross penalty."""
-        ma_delta, rationale = score_moving_averages(
-            200.0, sma50=190.0, sma200=200.0, poly_ind={}
-        )
+        ma_delta, rationale = score_moving_averages(200.0, sma50=190.0, sma200=200.0, poly_ind={})
         assert any("Death Cross" in r["head"] for r in rationale)
 
     def test_ema200_double_bullish(self):
         """Price above both EMA200 and SMA200 → double confirmation."""
         poly_ind = {"ema200": 195.0}
-        ma_delta, rationale = score_moving_averages(
-            200.0, sma50=None, sma200=195.0, poly_ind=poly_ind
-        )
+        ma_delta, rationale = score_moving_averages(200.0, sma50=None, sma200=195.0, poly_ind=poly_ind)
         # both confirmations should add +3
         assert any("Double Bullish" in r["head"] for r in rationale)
 
     def test_ema200_double_bearish(self):
         poly_ind = {"ema200": 210.0}
-        ma_delta, rationale = score_moving_averages(
-            200.0, sma50=None, sma200=210.0, poly_ind=poly_ind
-        )
+        ma_delta, rationale = score_moving_averages(200.0, sma50=None, sma200=210.0, poly_ind=poly_ind)
         assert any("Double Bearish" in r["head"] for r in rationale)
 
     def test_no_sma_data_zero_delta(self):

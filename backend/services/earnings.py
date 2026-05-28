@@ -1,6 +1,7 @@
 """
 Earnings calendar and EPS surprise history via yfinance (free, no API key).
 """
+
 import asyncio
 import time as _time
 from concurrent.futures import ThreadPoolExecutor
@@ -9,8 +10,8 @@ import yfinance as yf
 
 from services.market_data import _retry, _session
 
-_executor   = ThreadPoolExecutor(max_workers=2)
-_cal_cache:  dict[str, tuple[dict, float]] = {}
+_executor = ThreadPoolExecutor(max_workers=2)
+_cal_cache: dict[str, tuple[dict, float]] = {}
 _surp_cache: dict[str, tuple[dict, float]] = {}
 CACHE_TTL = 3600 * 4  # 4 hours — earnings dates don't change intraday
 
@@ -21,6 +22,7 @@ def _fetch_earnings_calendar(ticker: str) -> dict:
         return cached[0]
     try:
         from datetime import datetime
+
         t = yf.Ticker(ticker, session=_session)
         cal = _retry(lambda: t.calendar)
         if cal is None:
@@ -28,7 +30,7 @@ def _fetch_earnings_calendar(ticker: str) -> dict:
 
         result: dict = {}
         # yfinance returns a dict; key may be "Earnings Date" or list
-        raw_date = (cal.get("Earnings Date") or cal.get("earningsDate"))
+        raw_date = cal.get("Earnings Date") or cal.get("earningsDate")
         if raw_date is None and isinstance(cal, dict):
             # Some versions return a flat dict with a single key
             for k, v in cal.items():
@@ -45,16 +47,17 @@ def _fetch_earnings_calendar(ticker: str) -> dict:
             try:
                 days_to = (raw_date - today).days
                 result["next_earnings_date"] = str(raw_date)
-                result["days_to_earnings"]   = days_to
+                result["days_to_earnings"] = days_to
             except Exception:
                 pass
 
         # ── Days SINCE last earnings (post-earnings cooldown) ────────────
         try:
             t2 = yf.Ticker(ticker, session=_session)
-            eh  = _retry(lambda: t2.earnings_history)
+            eh = _retry(lambda: t2.earnings_history)
             if eh is not None and not (hasattr(eh, "empty") and eh.empty):
                 import pandas as _pd
+
                 dates = []
                 for col in eh.columns:
                     if "date" in col.lower():
@@ -67,7 +70,7 @@ def _fetch_earnings_calendar(ticker: str) -> dict:
                     if past:
                         last_dt = max(past)
                         days_since = (datetime.now().date() - last_dt.date()).days
-                        result["last_earnings_date"]  = str(last_dt.date())
+                        result["last_earnings_date"] = str(last_dt.date())
                         result["days_since_earnings"] = days_since
         except Exception:
             pass
@@ -139,10 +142,10 @@ def _fetch_earnings_surprise(ticker: str) -> dict:
         last_surprise = round(surprise_pcts[-1], 1) if surprise_pcts else None
 
         result = {
-            "beats_last_4q":   beats,
-            "misses_last_4q":  misses,
-            "consec_beats":    consec,
-            "avg_surprise_pct":  avg_surprise,
+            "beats_last_4q": beats,
+            "misses_last_4q": misses,
+            "consec_beats": consec,
+            "avg_surprise_pct": avg_surprise,
             "last_surprise_pct": last_surprise,
         }
 
@@ -153,20 +156,18 @@ def _fetch_earnings_surprise(ticker: str) -> dict:
         try:
             import finnhub
             from config import get_settings
+
             _key = get_settings().finnhub_api_key
             if _key:
                 _client = finnhub.Client(api_key=_key)
                 _fh_eps = _client.company_earnings(ticker, limit=4) or []
                 if len(_fh_eps) >= 2:
-                    _surp_list = [
-                        q.get("surprisePercent", 0) for q in _fh_eps
-                        if q.get("surprisePercent") is not None
-                    ]
+                    _surp_list = [q.get("surprisePercent", 0) for q in _fh_eps if q.get("surprisePercent") is not None]
                     if len(_surp_list) >= 2:
                         # Index 0 = most recent, last index = oldest
                         acceleration = round(_surp_list[0] - _surp_list[-1], 2)
                         result["surprise_acceleration"] = acceleration
-                        result["quarterly_surprises"]   = [round(s, 2) for s in _surp_list]
+                        result["quarterly_surprises"] = [round(s, 2) for s in _surp_list]
         except Exception:
             pass  # Finnhub unavailable — yfinance data still valid
 
