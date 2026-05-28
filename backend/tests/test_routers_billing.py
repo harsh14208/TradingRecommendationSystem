@@ -47,7 +47,18 @@ def test_get_plans():
     assert prices["pro"] == 7900
 
 
-def test_checkout_session():
+@pytest.fixture
+def mock_settings():
+    s = MagicMock()
+    s.stripe_secret_key = "sk_test_fake"
+    s.stripe_price_basic = "price_basic_test"
+    s.stripe_price_pro = "price_pro_test"
+    s.stripe_webhook_secret = "whsec_test"
+    with patch("routers.billing.get_settings", return_value=s):
+        yield s
+
+
+def test_checkout_session(mock_settings):
     with patch("routers.billing.stripe.checkout.Session.create") as mock_create:
         mock_create.return_value = MagicMock(url="https://checkout.stripe.com/pay/cs_test_123")
         response = client.post("/api/billing/checkout/pro")
@@ -55,7 +66,7 @@ def test_checkout_session():
         assert response.json()["checkout_url"] == "https://checkout.stripe.com/pay/cs_test_123"
 
 
-def test_billing_portal():
+def test_billing_portal(mock_settings):
     with patch("routers.billing.stripe.billing_portal.Session.create") as mock_create:
         mock_create.return_value = MagicMock(url="https://billing.stripe.com/p/session/test")
         response = client.post("/api/billing/portal")
