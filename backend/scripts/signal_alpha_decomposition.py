@@ -310,10 +310,8 @@ FAM_COLS = [
 ]
 
 BASE_WEIGHTS: dict[str, float] = {f: 1.0 for f in SIGNAL_FAMILIES}
-BASE_WEIGHTS["osc"] = (
-    0.10  # v12 ablation: OSC at 1.0 is redundant (corr=0.74 with DONCHIAN); 0.1 acts as quality selector
-)
-BASE_WEIGHTS["mr"] = 0.50  # v2-proven: MR×0.5 — without MR, oversold stocks can't clear BUY_THRESH=40
+BASE_WEIGHTS["osc"] = 0.30  # v12 sweep: OSC×0.3 optimal (Sharpe 0.33, N=26) — quality selector not generator
+BASE_WEIGHTS["mr"] = 0.70  # v12 sweep: MR×0.7 optimal with OSC×0.3 (Sharpe 0.30, N=17)
 
 # v11: dual-gate tested but disabled — momentum trades (RSI 50-68) at 10-day hold
 # have near-zero edge (short-term reversal effect, Jegadeesh 1990) and dragged

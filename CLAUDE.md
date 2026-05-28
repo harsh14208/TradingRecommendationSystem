@@ -52,7 +52,7 @@ backend/
 
 | Constant | Value | File |
 |---|---|---|
-| `BUY_THRESH` | 40 | `backtest_technicals.py:189` |
+| `BUY_THRESH` | 50 | `backtest_technicals.py` |
 | `HOLD_DAYS` | 10 | `backtest_technicals.py` |
 | `FRICTION` | 0.5% round-trip | `backtest_technicals.py` |
 | MR gate | RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75% | `signal_engine.py` |

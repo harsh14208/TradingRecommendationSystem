@@ -220,9 +220,10 @@ FRICTION_PCT = 0.50  # 0.25% entry + 0.25% exit — matches calc_tbd_metrics.py 
 # Audit finding: was 0.20% (mismatch), overstating per-trade EV by ~32%.
 # v5.12 sweep-optimal (45-combination grid, all 7 gates active, 2026-05-18):
 # Best: BUY_THRESH=40, MAX=∞, HOLD=10 → Sharpe 0.165, WR 51.9%, avg +0.61%
-# Ceiling removed: consecutive RSI + deep-bear + SMA20 gates now do the
-# job the ceiling did; score 60+ signals no longer fail with these gates.
-BUY_THRESH = 40
+# v7.1 score-band analysis (2026-05-28): band 40-50 → WR 56.2%, avg +0.26%, Sharpe 0.07
+#                                         band 50-60 → WR 64.7%, avg +0.87%, Sharpe 0.21
+# Raised to 50: halves trade count, ~doubles avg return. 40-50 band not worth the risk.
+BUY_THRESH = 50
 BUY_THRESH_MAX = 999  # effectively no ceiling
 SELL_THRESH = -100  # SELLs disabled. §32 validation (2026-05-26): −45 threshold produced
 # N=1354 SELLs at WR=33.1%, Avg=−0.43%, Sharpe=−0.08, MaxDD=−28%.
@@ -488,14 +489,14 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     ms.loc[df["Close"] > roll_high] = "bos_bull"
     below_50 = df["Close"].shift(5) < df["sma50"].shift(5)
     ms.loc[(df["Close"] > roll_high) & below_50] = "mss_bull"
-    df["market_struct"] = ms
-    df["ms_level"] = np.where(ms == "bos_bull", roll_high, np.where(ms == "bos_bear", roll_low, np.nan))
+    df.loc[:, "market_struct"] = ms
+    df.loc[:, "ms_level"] = np.where(ms == "bos_bull", roll_high, np.where(ms == "bos_bear", roll_low, np.nan))
 
     # ── Gap percentage (overnight gap vs prior close) ─────────────────────────
     # Audit fix: gap_pct was referenced in simulate_ticker MR gate (MR_GAP_FLOOR=-1.5%)
     # but never computed — the trigger was silently dead. Gap-down MR setups (panic
     # overshoot fills) are a valid orthogonal entry class; now properly computed.
-    df["gap_pct"] = (df["Open"] - c.shift(1)) / c.shift(1).replace(0, np.nan) * 100
+    df.loc[:, "gap_pct"] = (df["Open"] - c.shift(1)) / c.shift(1).replace(0, np.nan) * 100
 
     # ── Consecutive closes below SMA20 (streak counter, negative = below) ────
     # Audit fix: close_streak was referenced in simulate_ticker MR gate (MR_STREAK_CEIL=-6)
@@ -504,7 +505,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     _below_sma20 = c < df["sma20"]
     _grp = (~_below_sma20).cumsum()
     _run = _below_sma20.groupby(_grp).cumcount() + 1
-    df["close_streak"] = -_run.where(_below_sma20, other=0).astype(float)
+    df.loc[:, "close_streak"] = -_run.where(_below_sma20, other=0).astype(float)
 
     return df
 
@@ -1312,21 +1313,18 @@ def atr_levels(
     atr_pct = atr / price
 
     # Targets calibrated so they're achievable within HOLD_DAYS bars.
-    # §33c (2026-05-26): stop sweep on 9-ticker universe confirms 2.0s/2.5t is the
-    # sweet spot — MaxDD drops, avg +0.04pp vs 1.5s/2.0t; wider (2.5+) shows no gain.
-    # Aligned with live engine signal_engine.py swing defaults (widened in §31).
-    #   Strong trend (ADX>35): 1.5s / 3.0t  — trend carries further
-    #   High vol (ATR>2.5%):   2.0s / 2.5t  — gaps require wider stop
-    #   Low vol  (ATR<1.0%):   2.5s / 3.0t  — widest stop; modest target
-    #   Normal:                2.0s / 2.5t  — R:R 1.25; matches live engine
+    # §11c decomp (103-ticker 23yr): 1.0s/2.0t → Sharpe 0.50 vs 0.24 at 2.0s/2.5t.
+    # Tighter stop cuts losses faster while keeping the same target (R:R 2.0 vs 1.25).
+    #   Strong trend (ADX>35): 1.0s / 3.0t  — trend carries further, tight stop
+    #   High vol (ATR>2.5%):   1.5s / 2.0t  — gaps require slightly wider stop
+    #   Low vol  (ATR<1.0%):   1.5s / 2.0t  — same, modest target
+    #   Normal:                1.0s / 2.0t  — R:R 2.0 (§11c optimal)
     if adx > 35:
-        s, t = 1.5, 3.0
-    elif atr_pct > 0.025:
-        s, t = 2.0, 2.5
-    elif atr_pct < 0.010:
-        s, t = 2.5, 3.0
+        s, t = 1.0, 3.0
+    elif atr_pct > 0.025 or atr_pct < 0.010:
+        s, t = 1.5, 2.0
     else:
-        s, t = 2.0, 2.5
+        s, t = 1.0, 2.0
 
     if stop_mult_override is not None:
         s = stop_mult_override
@@ -1377,20 +1375,22 @@ def simulate_ticker(
     Generate signals and simulate trades for one ticker.
 
     Gates applied (in order):
-      1.  VIX tiers        — hard block >30; marginal BUY (score<45) blocked 25-30
-      2.  STLFSI4 stress   — hard block >1.5+VIX>30; marginal >1.0+VIX>25
-      3.  SPY macro trend  — BUY requires bull/RSI<30/score≥55; bear blocks score<60
-      4.  RVOL gate        — BUY blocked if RVOL < 1.2 (waived RSI<30)
-      5.  SELL SMA200 gate — technical-only SELL needs score ≤ -50
-      6–8. ADX / RSI / ATR gates
-      9.  MR/Dual gate     — MR: RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<-0.75
-                             MOM (dual_gate): RSI 50-68 + MACD accel + OBV+ + >SMA50 + RS+
-      10. Earnings blackout — block within EARNINGS_BLACKOUT_DAYS of report
-      11. Consecutive RSI  — RSI must still be declining into the entry bar
-      12. Deep-bear RSI    — VIX>28 + SPY<SMA200×0.95 requires RSI<35
-      13. Price-SMA20      — price must be ≥2% below SMA20 (genuinely extended)
-      14. Dollar volume    — avg daily $ volume must exceed MIN_AVG_DOLLAR_VOL
-      15. Day-of-week      — no Friday entries (weekend gap risk)
+      1.   VIX tiers        — hard block >30; marginal BUY (score<45) blocked 25-30
+      2.   STLFSI4 stress   — hard block >1.5+VIX>30; marginal >1.0+VIX>25+score<50
+      3.   SPY macro trend  — BUY requires bull/RSI<30/score≥55; bear blocks score<60
+      4.   RVOL gate        — BUY blocked if RVOL < 1.2 (waived RSI<30)
+      5.   SELL SMA200 gate — technical-only SELL needs score ≤ -50
+      5b.  BUY SMA200 gate  — BUY blocked below SMA200×0.99 unless RSI<25 or score≥60
+      6–8. ADX (< 18 + score<45) / RSI / ATR gates
+      9.   MR/Dual gate     — MR: RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<-0.75
+                              MOM (dual_gate): RSI 50-68 + MACD accel + OBV+ + >SMA50 + RS+
+      9b.  Global VIX min   — MR BUY blocked when VIX < 20 (§12b engine gate)
+      10.  Earnings blackout — block within EARNINGS_BLACKOUT_DAYS of report
+      11.  Consecutive RSI  — RSI must still be declining into the entry bar
+      12.  Deep-bear RSI    — VIX>28 + SPY<SMA200×0.95 requires RSI<35
+      13.  Price-SMA20      — price must be ≥2% below SMA20 (waived score≥65)
+      14.  Dollar volume    — avg daily $ volume must exceed MIN_AVG_DOLLAR_VOL
+      15.  Day-of-week      — no Friday entries (waived score≥65)
     """
     trades = []
     in_trade_until = pd.Timestamp("2000-01-01")
@@ -1466,7 +1466,7 @@ def simulate_ticker(
         if is_buy_signal and stress_today is not None and vix_today is not None:
             if stress_today > 1.5 and vix_today > 30:
                 continue
-            if stress_today > 1.0 and vix_today > 25 and score < 45:
+            if stress_today > 1.0 and vix_today > 25 and score < 50:
                 continue
 
         # ── Gate 3: SPY macro trend ───────────────────────────────────────────
@@ -1491,13 +1491,21 @@ def simulate_ticker(
 
         # ── Gate 6: ADX minimum — no entries in completely directionless markets ──
         # Deep oversold (RSI<30) is excepted: oversold bounces work even in chop.
+        # score<45 waiver matches signal engine (high-conviction signals pass).
         adx_entry = float(row["adx"]) if pd.notna(row.get("adx")) else 0.0
-        if is_buy_signal and adx_entry < 20 and not is_oversold:
+        if is_buy_signal and adx_entry < 18 and not is_oversold and score < 45:
             continue
 
         # ── Gate 5: per-stock SMA200 SELL gate ───────────────────────────────
         # Only allow SELLs above SMA200 when signal is extremely strong (score ≤ -50)
         if is_sell_signal and sma200_v is not None and price > sma200_v * 1.01 and score > -50:
+            continue
+
+        # ── Gate 5b: SMA200 downtrend BUY gate (matches signal engine) ──────────
+        # Signal engine: price < SMA200*0.99 in downtrend → HOLD unless RSI<25 or score≥60.
+        # RSI waiver tightened from 30→25 (engine finding: RSI 25-30 entries in downtrends
+        # are dead-cat bounces). High-conviction entries (score≥60) bypass.
+        if is_buy_signal and sma200_v is not None and price < sma200_v * 0.99 and rsi_v >= 25 and score < 60:
             continue
 
         # ── Gate 7: RSI overbought in weak-trend bull market ─────────────────
@@ -1529,16 +1537,10 @@ def simulate_ticker(
             bb_e = float(row.get("bb_pct_b", 0.5)) if pd.notna(row.get("bb_pct_b")) else 0.5
             ibs_e = float(row.get("ibs", 0.5)) if pd.notna(row.get("ibs")) else 0.5
             vwap_e = float(row.get("vwap_pct", 0)) if pd.notna(row.get("vwap_pct")) else 0.0
-            gap_e = float(row.get("gap_pct", 0)) if pd.notna(row.get("gap_pct")) else 0.0
-            streak_e = float(row.get("close_streak", 0)) if pd.notna(row.get("close_streak")) else 0.0
-            _is_mr_setup = (
-                rsi_e < _mr_rsi_ceil
-                or bb_e < MR_BB_CEIL
-                or ibs_e < MR_IBS_CEIL
-                or vwap_e < MR_VWAP_FLOOR
-                or gap_e < MR_GAP_FLOOR
-                or streak_e <= MR_STREAK_CEIL
-            )
+            # gap_pct and close_streak are no longer MR-gate triggers — matches
+            # signal engine's _has_mr (RSI/BB/IBS/VWAP only). They still
+            # contribute to the signal score via compute_scores().
+            _is_mr_setup = rsi_e < _mr_rsi_ceil or bb_e < MR_BB_CEIL or ibs_e < MR_IBS_CEIL or vwap_e < MR_VWAP_FLOOR
             if dual_gate and not _is_mr_setup:
                 _mh = float(row.get("macd_hist", 0)) if pd.notna(row.get("macd_hist")) else 0.0
                 _mhp = float(row.get("macd_hist_p", 0)) if pd.notna(row.get("macd_hist_p")) else 0.0
@@ -1574,12 +1576,17 @@ def simulate_ticker(
                         bb_e < MR_BB_CEIL,
                         ibs_e < MR_IBS_CEIL,
                         vwap_e < MR_VWAP_FLOOR,
-                        gap_e < MR_GAP_FLOOR,
-                        streak_e <= MR_STREAK_CEIL,
                     ]
                 )
                 if _mr_count < _require_mr_count:
                     continue
+
+            # ── Gate 9b: Global VIX minimum for MR entries ────────────────────
+            # Signal engine: vix < 20 → HOLD for MR setups (§12b: 103-ticker 23yr).
+            # Low-VIX = shallow panic = weak MR bounces. MR edge requires fear premium.
+            # §12b: VIX≥20 → Sharpe 0.23 vs 0.13 baseline, WR 64.1%, MaxDD -0.87%.
+            if _is_mr_setup and vix_today is not None and vix_today < 20:
+                continue
 
         # ── Gate 10: Earnings blackout ─────────────────────────────────────────
         # Binary earnings events destroy MR setups — an oversold stock that beats
@@ -1625,15 +1632,12 @@ def simulate_ticker(
                 continue
 
         # ── Gate 13: Price-SMA20 distance (MR setups only) ────────────────────
-        # Require price is ≥3% below its 20-day SMA. Confirms genuine oversold
-        # extension, not just a slow drift down to SMA20.
-        # Audit finding: 2% was too permissive — 26% of trades exited as time_loss
-        # at -2.39% avg, indicating entries too close to the SMA (not yet extended).
-        # Tightened from 2%→3% to reduce these marginal early entries.
+        # Require price ≥2% below 20-day SMA — matches signal engine (0.98 threshold).
+        # Waived when score≥65 (strong independent confirmation), also matching engine.
         # Skipped for momentum setups — those entries require price ABOVE SMA20.
         if is_buy_signal and _is_mr_setup and not _is_mom_setup:
             sma20_e = float(row.get("sma20", 0)) if pd.notna(row.get("sma20")) else 0.0
-            if sma20_e > 0 and price >= sma20_e * 0.97:
+            if sma20_e > 0 and price >= sma20_e * 0.98 and score < 65:
                 continue
 
         # ── Gate 14: Dollar-volume minimum ────────────────────────────────────
@@ -1650,7 +1654,8 @@ def simulate_ticker(
         # Friday BUY entries carry 2-day weekend gap risk with no intraday
         # management possible. MR setups that fire Friday tend to resolve
         # Monday morning on the gap open, often adversely.
-        if is_buy_signal and date.dayofweek == 4:  # Friday = 4
+        # Waived at score≥65 (strong conviction) — matches signal engine.
+        if is_buy_signal and date.dayofweek == 4 and score < 65:  # Friday = 4
             continue
 
         # ── Gate 16: VIX minimum — skip low-volatility regime entries ─────────

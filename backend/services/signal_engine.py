@@ -197,17 +197,17 @@ def _levels(price: float, atr: float, action: str, style: str = "swing"):
         else:  # normal vol
             stop_mult, tgt_mult = 3.0, 4.5
     elif style == "intraday":
-        stop_mult, tgt_mult = 1.5, 2.0  # tight — short hold time
+        stop_mult, tgt_mult = 1.0, 2.0  # tight — short hold time
     else:  # swing
-        # Widened from 1.5×/2.0× (§31 validate_predictions: 44.9% stop-hit rate at
-        # old 1.5× — too tight; avg MFE/MAE=1.74× confirms direction is right but
-        # stops were clipped by intraday noise). New 2.0×/2.5× R:R ≈ 1.25.
+        # §11c decomp (N=11, 23yr): 1.0s/2.0t → Sharpe 0.50 vs 0.24 at 2.0s/2.5t.
+        # NOTE: §31 live data (543 signals) showed 1.5× too tight (44.9% stop-hit rate).
+        # Decomp uses EOD prices; live system faces intraday wicks. Monitor stop-hit rate.
         if atr_pct > 0.025:
-            stop_mult, tgt_mult = 2.0, 2.5  # high vol: wider stop, proportional target
+            stop_mult, tgt_mult = 1.5, 2.0  # high vol: slightly wider stop
         elif atr_pct < 0.010:
-            stop_mult, tgt_mult = 2.5, 3.0  # low vol: most room needed, modest target
+            stop_mult, tgt_mult = 1.5, 2.0  # low vol: same
         else:
-            stop_mult, tgt_mult = 2.0, 2.5  # normal: 2.0s/2.5t → R:R 1.25
+            stop_mult, tgt_mult = 1.0, 2.0  # normal: 1.0s/2.0t → R:R 2.0 (§11c optimal)
 
     stop = round(entry - stop_mult * atr, 2) if action == "BUY" else round(entry + stop_mult * atr, 2)
     target = round(entry + tgt_mult * atr, 2) if action == "BUY" else round(entry - tgt_mult * atr, 2)
@@ -3668,12 +3668,11 @@ async def generate_signal(
         # Mean-reversion (Bollinger) lost predictive ability post-2002.
         # Separate caps: osc ±18, mean_rev ±8 (was unified ±30).
         # Regime adjustment: in bull trend, suppress bearish mean-rev (dip-buy valid).
-        # OSC weight=0.1 (§12 alpha decomp, v2 runs): OSC is redundant with DONCHIAN (corr=0.74).
-        # Ablation: removing OSC entirely adds +15.4pp WR, +0.15 Sharpe. Weight 0.1 retains
-        # OSC as a minimal quality signal without letting it generate false BUY entries.
+        # OSC weight=0.3 (§12 alpha decomp): OSC×0.3 optimal — Sharpe 0.33 vs 0.24 at 0.1, N=26.
+        # Non-monotonic: 0.1 and 0.3 are peaks, 0.2 is a trough. 0.3 confirmed across two runs.
         if _is_trending_bull and mean_rev_score < 0:
             mean_rev_score *= 0.20
-        score += (max(-18.0, min(18.0, osc_score)) * 0.1 + max(-8.0, min(8.0, mean_rev_score))) * 0.85
+        score += (max(-18.0, min(18.0, osc_score)) * 0.3 + max(-8.0, min(8.0, mean_rev_score))) * 0.85
 
         # ── Keltner Channels(20, 2×ATR) ──────────────────────────────────────
         # Backtest-validated (alpha decomp v3): below kc_lower on oversold RSI
