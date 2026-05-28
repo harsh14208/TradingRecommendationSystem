@@ -76,9 +76,9 @@ Steps: install deps → syntax check → import smoke → pytest → accuracy ga
 
 `ruff.toml` sets `target-version = "py311"` — run `ruff check` locally to catch these before push.
 
-## Research baseline (§43 rerun — v7.1 + adversarial fixes, BUY_THRESH=50)
+## Research baseline (§45 rerun — post Donchian reduction + confidence sizing, BUY_THRESH=50)
 
-Backtest IS metrics unchanged from §42 (fixes targeted live engine only):
+Backtest IS metrics unchanged from §42/§43/§44 (Donchian/sizing changes are live-path only):
 
 | Universe | WR | Avg Ret | Sharpe |
 |---|---|---|---|
