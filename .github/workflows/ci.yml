@@ -29,7 +29,8 @@ jobs:
           pip install pytest pytest-asyncio pytest-cov pytest-timeout pip-audit
 
       - name: Syntax check (all .py files)
-        run: python3 -c "
+        run: |
+          python3 - <<'PYEOF'
           import ast, glob, sys
           errors = []
           for f in glob.glob('**/*.py', recursive=True):
@@ -40,8 +41,8 @@ jobs:
                   errors.append(f'{f}: {e}')
           if errors:
               [print('FAIL:', e) for e in errors]; sys.exit(1)
-          print(f'Syntax OK ({len(glob.glob(\"**/*.py\", recursive=True))} files)')
-          "
+          print(f'Syntax OK ({len(glob.glob("**/*.py", recursive=True))} files)')
+          PYEOF
 
       - name: Import smoke tests
         run: python3 tests/test_imports_smoke.py
