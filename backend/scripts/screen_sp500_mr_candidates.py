@@ -401,7 +401,8 @@ def main(fast: bool = False) -> None:
         print(f"  # All {len(all_pass_tickers)} PASS tickers (sorted):")
         chunks = [all_pass_tickers[i:i+10] for i in range(0, len(all_pass_tickers), 10)]
         for chunk in chunks:
-            print(f"  {', '.join(f'\"{t}\"' for t in chunk)},")
+            quoted = ', '.join(f'"{t}"' for t in chunk)
+            print(f"  {quoted},")
 
     if not fail_df.empty:
         print(f"\n### FAIL — Do NOT add (tested, below quality bar):\n")
