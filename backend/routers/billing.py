@@ -194,6 +194,14 @@ async def billing_status(user: User = Depends(get_current_user)):
 @router.post("/webhook", include_in_schema=False)
 async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     s = get_settings()
+
+    # Hard-block when no webhook secret is configured: stripe.Webhook.construct_event
+    # with an empty secret would raise ValueError, but making this explicit prevents
+    # subtle SDK version differences from accidentally accepting unsigned payloads.
+    if not s.stripe_webhook_secret:
+        log.error("[billing] webhook rejected — STRIPE_WEBHOOK_SECRET not configured")
+        raise HTTPException(500, "Webhook not configured")
+
     payload = await request.body()
     sig = request.headers.get("stripe-signature", "")
 

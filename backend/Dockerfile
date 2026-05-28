@@ -1,3 +1,20 @@
+# ── Stage 1: Frontend build ───────────────────────────────────────────────────
+# Uses Node.js (not present in final image) to compile JSX → dist/app-bundle.js.
+# Eliminates Babel standalone (~900 KB) and allows removing 'unsafe-eval' from CSP.
+FROM node:20-slim AS frontend-builder
+WORKDIR /frontend
+
+COPY package.json ./
+RUN npm install --prefer-offline
+
+# Only copy files needed for the build (avoids cache-busting on backend changes)
+COPY build.mjs ./
+COPY app.auth.jsx app.constants.jsx app.ui.jsx app.signal.jsx \
+     app.views.jsx app.modals.jsx app.analysis.jsx app.jsx ./
+
+RUN node build.mjs
+
+# ── Stage 2: Python runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -10,6 +27,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# Inject pre-compiled frontend bundle from build stage.
+# dist/ is in .gitignore — it comes from the build stage, not git.
+COPY --from=frontend-builder /frontend/dist ./dist
 
 # Non-root user for security; /app/data gets 0755 so the mounted
 # volume (owned by any UID) remains accessible.

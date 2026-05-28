@@ -1095,6 +1095,15 @@ async def run_scan(broadcast_fn=None):
             _scan_status["state"] = "skipped_distributed_overlap"
             return None
     except Exception:
+        # Redis unavailable — fall through to the local asyncio.Lock only.
+        # In a multi-worker deployment this means each worker process scans independently,
+        # which will produce duplicate DB writes and may trigger Polygon/Finnhub rate limits.
+        # Per-ticker Telegram cooldown is still DB-enforced (not in-memory) so duplicate
+        # notifications are prevented, but concurrent API bursts should be monitored.
+        log.warning(
+            "[scanner] Redis distributed lock unavailable — proceeding with local lock only. "
+            "In multi-worker deployments this can cause duplicate scans and API rate-limit bursts."
+        )
         lock_token = None
 
     async with _scan_lock:

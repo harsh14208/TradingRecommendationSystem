@@ -94,6 +94,34 @@ elif not _USING_POSTGRES:
 else:
     log.info("[db] PostgreSQL — production-ready concurrency.")
 
+# ── Security startup checks ────────────────────────────────────────────────────
+import hashlib as _hashlib
+
+_DEV_JWT = _hashlib.sha256(b"signal-trade-dev-secret-v1").hexdigest()
+_is_prod = settings.app_url.startswith("https")
+
+if _is_prod and not settings.jwt_secret:
+    log.critical(
+        "🔴 CRITICAL: JWT_SECRET not set — using deterministic dev secret in production. "
+        "Any attacker who reads the source can forge valid JWTs for any user. "
+        "Set JWT_SECRET=<64+ random chars> in .env immediately."
+    )
+elif settings.jwt_secret == _DEV_JWT:
+    log.warning("[auth] JWT_SECRET matches the hardcoded dev fallback — set a unique value in .env.")
+
+if _is_prod and not settings.stripe_webhook_secret:
+    log.critical(
+        "🔴 CRITICAL: STRIPE_WEBHOOK_SECRET not configured in production. "
+        "Stripe webhook endpoint will reject all events (500). "
+        "Register the webhook in the Stripe Dashboard and add whsec_... to .env."
+    )
+
+if _is_prod and not settings.owner_password:
+    log.critical(
+        "🔴 CRITICAL: OWNER_PASSWORD not set — owner account uses empty password. "
+        "Set OWNER_PASSWORD=<16+ chars> in .env before first paid signup."
+    )
+
 _scan_task: asyncio.Task | None = None
 # Supervised background tasks: name → (task, coroutine_factory, started_at)
 _bg_tasks: dict[str, dict] = {}
@@ -1157,6 +1185,31 @@ def _supervise(name: str, coro_fn, restart: bool = True):
 
 
 async def lifespan(app: FastAPI):
+    # ── Security boot checks ──────────────────────────────────────────────────
+    _s = get_settings()
+    _is_local = _s.app_url.startswith("http://localhost") or _s.app_url.startswith("http://127.")
+    if not _s.jwt_secret and not _is_local:
+        log.critical(
+            "[startup] SECURITY: JWT_SECRET is not set. Tokens are signed with a static "
+            "dev key — all users share the same signing secret. Set JWT_SECRET in .env "
+            'to a 64-char random string (python -c "import secrets; print(secrets.token_hex(32))"). '
+            "Every container restart with an empty JWT_SECRET is a production security incident."
+        )
+    if _s.owner_password and len(_s.owner_password) < 16 and not _is_local:
+        log.critical(
+            f"[startup] SECURITY: OWNER_PASSWORD is short ({len(_s.owner_password)} chars) — "
+            "change it to a strong password before exposing /api/admin/ endpoints. "
+            "An unauthorized login grants access to all user emails and Stripe IDs."
+        )
+    if not _s.stripe_webhook_secret and not _is_local:
+        log.critical(
+            "[startup] SECURITY: STRIPE_WEBHOOK_SECRET is not set. "
+            "The billing webhook (/api/billing/webhook) will reject all Stripe events because "
+            "stripe.Webhook.construct_event() requires a non-empty secret to validate signatures. "
+            "An attacker can also probe which events fail — set STRIPE_WEBHOOK_SECRET=whsec_... "
+            "from the Stripe dashboard → Developers → Webhooks → your endpoint → Signing secret."
+        )
+    # ─────────────────────────────────────────────────────────────────────────
     await init_db()
     await _ensure_owner_account()
     await _ensure_default_watchlist()
@@ -1291,6 +1344,52 @@ class DataComplianceMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(DataComplianceMiddleware)
+
+
+# ── Security Headers Middleware ───────────────────────────────────────────────
+# Adds CSP, HSTS, X-Frame-Options, and related headers to all responses.
+# CSP keeps React CDN trusted while blocking inline eval (Babel standalone XSS surface).
+# NOTE: update script-src hashes when upgrading React/Babel CDN versions.
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    # 'unsafe-eval' is required by Babel standalone (new Function() during JSX transform).
+    # REMOVE when dist/app-bundle.js (esbuild pre-compiled) replaces Babel CDN in HTML.
+    _SCRIPT_SRC = "'self' 'unsafe-eval' https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com"
+    _STYLE_SRC = "'self' 'unsafe-inline' https://fonts.googleapis.com"
+    _FONT_SRC = "'self' https://fonts.gstatic.com data:"
+    _IMG_SRC = "'self' data: blob:"
+    _CONNECT_SRC = "'self' wss: ws: https://api.stripe.com"
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response = await call_next(request)
+        path = request.url.path
+
+        # Only add security headers to HTML page routes and API — not binary assets
+        if not path.endswith((".woff", ".woff2", ".png", ".jpg", ".ico", ".svg")):
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+
+        # HSTS only on HTTPS deployments (avoid breaking local dev HTTP)
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # CSP on HTML pages (not on API JSON or static assets — they don't exec scripts)
+        if not path.startswith("/api/") and not path.startswith("/ws"):
+            response.headers["Content-Security-Policy"] = (
+                f"default-src 'self'; "
+                f"script-src {self._SCRIPT_SRC}; "
+                f"style-src {self._STYLE_SRC}; "
+                f"font-src {self._FONT_SRC}; "
+                f"img-src {self._IMG_SRC}; "
+                f"connect-src {self._CONNECT_SRC}; "
+                f"frame-ancestors 'none';"
+            )
+
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ── API routers (registered BEFORE the static-file catch-all) ────────────────
 app.include_router(accuracy_router)

@@ -234,7 +234,10 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
 
         # ── Volume ──────────────────────────────────────────────────────
         out["volume"] = int(vol.iloc[-1])
-        out["avg_volume"] = int(vol.rolling(20).mean().iloc[-1])
+        # EWM (span=20) discounts post-earnings and holiday volume spikes that
+        # inflate a simple 20-day SMA, which would otherwise cause false RVOL
+        # negatives on good setups and false positives after spike-depressed days.
+        out["avg_volume"] = int(vol.ewm(span=20, adjust=False).mean().iloc[-1])
 
         # ── MACD zero-line cross ─────────────────────────────────────────
         if len(macd) > 1:

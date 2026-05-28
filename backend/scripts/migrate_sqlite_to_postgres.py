@@ -5,12 +5,14 @@ One-shot migration: SQLite → PostgreSQL.
 Run from the backend/ directory after starting Postgres:
     docker compose up -d postgres
     source venv/bin/activate
-    python scripts/migrate_sqlite_to_postgres.py
+    python scripts/migrate_sqlite_to_postgres.py --confirm
 
 The script reads DATABASE_URL from .env (or the environment).
-It is safe to re-run — all destination tables are truncated before copy.
+WARNING: All destination tables are TRUNCATED before copy.
+Requires --confirm flag to prevent accidental CI/CD execution.
 """
 
+import argparse
 import asyncio
 import json
 import os
@@ -185,4 +187,31 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Migrate SQLite → PostgreSQL")
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Required: explicitly confirm TRUNCATE + overwrite of the target database.",
+    )
+    args = parser.parse_args()
+
+    if not args.confirm:
+        print(
+            "ERROR: This script TRUNCATES all tables in the target PostgreSQL database.\n"
+            "       Pass --confirm to acknowledge and proceed.\n"
+            "       Example: python scripts/migrate_sqlite_to_postgres.py --confirm"
+        )
+        sys.exit(1)
+
+    # Extra guard: refuse to truncate a non-local DB without an env-level override.
+    _db_url = os.environ.get("DATABASE_URL", "")
+    _is_local = any(h in _db_url for h in ("localhost", "127.0.0.1", "::1", "@postgres:", "@db:"))
+    if not _is_local and not os.environ.get("ALLOW_PRODUCTION_MIGRATE"):
+        print(
+            "ERROR: DATABASE_URL appears to point to a remote/production database.\n"
+            "       Truncating production data is irreversible.\n"
+            "       Set ALLOW_PRODUCTION_MIGRATE=1 to override (use with extreme caution)."
+        )
+        sys.exit(1)
+
     asyncio.run(main())

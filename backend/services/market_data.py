@@ -45,13 +45,41 @@ def _yf_trip_breaker():
 # restart or second worker doesn't re-download the same Polygon bars within
 # the same 15-min scan cycle.  Falls back to an in-process dict if Redis is
 # not reachable — behaviour is identical from the caller's perspective.
+#
+# STAMPEDE PROTECTION: _fetch_locks ensures only one concurrent coroutine
+# fetches a given (ticker, period, interval) key from the upstream API.
+# Others wait on the lock and hit the cache when they acquire it, avoiding
+# the N-worker × M-ticker Polygon rate-limit burst that occurs when Redis
+# goes dark and every worker independently triggers a full re-fetch.
 _OHLCV_TTL = 900  # 15 minutes
 _OHLCV_MAX_ENTRIES = 500  # in-memory fallback cap
 
 import logging as _log_mod
 import os as _os
+import threading as _threading
 
 _cache_log = _log_mod.getLogger("signal.trade.cache")
+
+# Per-key fetch locks (asyncio-friendly via threading.Lock in executor context).
+# Capped at _FETCH_LOCKS_MAX to prevent unbounded growth from arbitrary API callers.
+# Eviction drops the oldest half when the cap is hit (LRU-approximation without
+# a full OrderedDict to keep the hot-path overhead minimal).
+_fetch_locks: dict[tuple, _threading.Lock] = {}
+_fetch_locks_mu = _threading.Lock()
+_FETCH_LOCKS_MAX = 2_000
+
+
+def _get_fetch_lock(key: tuple) -> _threading.Lock:
+    with _fetch_locks_mu:
+        if key not in _fetch_locks:
+            if len(_fetch_locks) >= _FETCH_LOCKS_MAX:
+                # Evict oldest half — keys() is insertion-ordered in Python 3.7+
+                to_remove = list(_fetch_locks.keys())[: _FETCH_LOCKS_MAX // 2]
+                for k in to_remove:
+                    del _fetch_locks[k]
+            _fetch_locks[key] = _threading.Lock()
+        return _fetch_locks[key]
+
 
 # ── Attempt Redis connection at import time ───────────────────────────────────
 _redis_client = None
@@ -81,10 +109,13 @@ def _ohlcv_cache_get(key: tuple) -> "Optional[pd.DataFrame]":
             raw = _redis_client.get(f"ohlcv:{':'.join(str(k) for k in key)}")
             if raw:
                 return _pickle.loads(raw)
+            # Redis is up and confirmed a miss — don't fall through to stale in-memory.
+            return None
         except Exception:
+            # Redis went down mid-session; fall through to in-memory fallback so the
+            # circuit breaker trip doesn't also blank the local cache.
             pass
-        return None
-    # In-memory fallback
+    # In-memory fallback (also used when Redis is down mid-session)
     entry = _ohlcv_cache.get(key)
     if entry and _time.time() - entry["ts"] < _OHLCV_TTL:
         return entry["df"]
@@ -502,27 +533,41 @@ async def get_history(ticker: str, period: str = "3mo", interval: str = "1d") ->
     if _cached is not None:
         return _cached
 
-    # Prefer Polygon.io when key is configured — more reliable than yfinance
+    # Stampede guard: only one coroutine fetches upstream per (ticker, period, interval).
+    # When Redis goes dark all N workers see a miss simultaneously; without this lock they
+    # all hit Polygon concurrently, burning rate-limit quota and triggering the 15-min
+    # yfinance circuit breaker.  The loser waits, then returns the winner's cached result.
+    _lock = _get_fetch_lock(_cache_key)
+    acquired = await asyncio.get_event_loop().run_in_executor(_executor, _lock.acquire)
     try:
-        from config import get_settings
+        # Re-check cache — the lock winner may have populated it while we waited
+        _cached = _ohlcv_cache_get(_cache_key)
+        if _cached is not None:
+            return _cached
 
-        s = get_settings()
-        if s.polygon_api_key or s.massive_api_key:
-            from services.polygon_client import get_polygon_history
+        # Prefer Polygon.io when key is configured — more reliable than yfinance
+        try:
+            from config import get_settings
 
-            df = await get_polygon_history(ticker, period=period, interval=interval)
-            if df is not None and not df.empty and len(df) >= 2:
-                _ohlcv_cache_set(_cache_key, df, _now)
-                return df
-    except Exception:
-        pass
+            s = get_settings()
+            if s.polygon_api_key or s.massive_api_key:
+                from services.polygon_client import get_polygon_history
 
-    if _yf_is_blocked():
-        return None
-    df = await _rate_limited(_fetch_history, ticker, period, interval)
-    if df is not None and not df.empty:
-        _ohlcv_cache_set(_cache_key, df, _now)
-    return df
+                df = await get_polygon_history(ticker, period=period, interval=interval)
+                if df is not None and not df.empty and len(df) >= 2:
+                    _ohlcv_cache_set(_cache_key, df, _time.time())
+                    return df
+        except Exception:
+            pass
+
+        if _yf_is_blocked():
+            return None
+        df = await _rate_limited(_fetch_history, ticker, period, interval)
+        if df is not None and not df.empty:
+            _ohlcv_cache_set(_cache_key, df, _time.time())
+        return df
+    finally:
+        _lock.release()
 
 
 def _fetch_extended_hours(ticker: str) -> Optional[dict]:

@@ -1,0 +1,13 @@
+{
+  "name": "signal-trade",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Signal.Trade frontend build — JSX → JS via esbuild (no Babel at runtime)",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:watch": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

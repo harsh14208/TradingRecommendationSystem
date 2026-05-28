@@ -1,7 +1,8 @@
 # Signal.Trade — Scoring Weights & Signal Gates Reference
 
-> **Version: v6.1** · Updated: 2026-05-25
+> **Version: v6.9+** · Updated: 2026-05-27 (§40 risk gate refinements applied)
 > Source of truth: `backend/services/signal_scoring.py` + `backend/services/signal_engine.py`
+> **Notable changes in §40:** OSC weight 1.0→0.3, RSI removed from MR gate, VIX<20 global gate added, ATR stops tightened 2.0s/2.5t→1.0s/2.0t
 
 ---
 
@@ -173,7 +174,9 @@
 |:---|:---|:---|:---|
 | > 40 (strong) | ×1.20 | ×0.10 | ×0.30 if \|osc\| < 16 |
 | 25–40 (moderate) | unchanged | ×0.40 | unchanged |
-| < 25 (ranging) | ×0.30 | ×1.20 (+×1.30 if BB%B<0.10) | unchanged |
+| < 25 (ranging) | ×0.30 | ×1.20 (+×1.30 if BB%B<0.10) | **×0.30** (§40: global weight, was variable) |
+
+> **§40 note:** Oscillator total weight reduced from 1.0 to 0.3 globally. §12 alpha decomp found OSC redundant with DONCHIAN (corr=0.74); 0.3 weight acts as quality selector not signal generator (per-trade Sharpe 0.33, N=26 in §12 sweep).
 
 ### Layer 2 — Price vs SMA200
 
@@ -217,7 +220,8 @@ If BUY signal AND volume dry-up (<50% avg) AND RSI ≥ 30: `score ×0.70`.
 | Broad Market Breadth | >70% S&P above 200DMA AND score<42 | BUY → HOLD |
 | VIX Hard Floor | VIX>30 AND confidence<75% | BUY/SELL → HOLD |
 | Mega-Cap Haircut | Mkt cap ≥$500B | −2pp confidence |
-| **MR Entry Condition (v5.12)** | score<65 AND no (RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75) | BUY → HOLD |
+| **MR Entry Condition (v5.12 → v6.9+§40)** | score<65 AND no (BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75) | BUY → HOLD | RSI removed in §40; non-binding constraint |
+| **VIX<20 Global Gate (§40)** | VIX < 20 AND _has_mr | BUY → HOLD | Mean-reversion fails when market is too calm; blocks all MR entries in low-volatility regimes |
 | **Deep-Bear RSI (v5.12)** | VIX>28 AND SPY<SMA200×0.95 AND RSI≥35 | BUY → HOLD |
 | **Price-SMA20 Distance (v5.12)** | score<65 AND price ≥ SMA20×0.98 (less than 2% below 20-DMA) | BUY → HOLD |
 | **Day-of-Week (v5.12)** | Friday AND score<65 | BUY → HOLD |
@@ -231,17 +235,18 @@ If BUY signal AND volume dry-up (<50% avg) AND RSI ≥ 30: `score ×0.70`.
 
 ---
 
-## Stop / Target Levels (`_levels` function)
+## Stop / Target Levels (`atr_levels()` function)
 
-### Swing style (5-day hold — v5.10 calibrated)
+### Swing style (5-day hold — v5.10 calibrated → §40 refined)
 
-| Condition | Stop mult | Target mult | R:R |
-|:---|--:|--:|--:|
-| High vol (ATR > 2.5% of price) | 1.5× | 2.0× | 1.3 |
-| Normal vol (ATR 1–2.5%) | 1.5× | 2.0× | 1.3 |
-| Low vol (ATR < 1.0%) | 2.0× | 2.5× | 1.3 |
+| Condition | Stop mult | Target mult | R:R | Notes |
+|:---|--:|--:|--:|---|
+| Strong trend (ADX > 35) | 1.0× | 3.0× | 3.0 | Trend carries further, tight stop |
+| High vol (ATR > 2.5% of price) | 1.5× | 2.0× | 1.3 | Wider stop for gap risk |
+| Normal vol (ATR 1–2.5%) | 1.0× | 2.0× | 2.0 | **§40: tightened from 1.5×/2.0×** |
+| Low vol (ATR < 1.0%) | 1.5× | 2.0× | 1.3 | **§40: tightened from 2.0×/2.5×** |
 
-> **v5.10 change:** Default target 3.0× → 2.0×. 20-year backtest: 3× target hit rate was 11% in 5-day holds; 2× achieved 18.5%.
+> **§40 change (2026-05-27):** Swing normal vol reduced 1.5s/2.0t → 1.0s/2.0t. §11c decomp (103 tickers, 23yr): tighter stop cuts losing trades faster while maintaining R:R 2.0 (Sharpe 0.50 vs 0.24 at 1.5×/2.0×). High-vol and ADX>35 also tuned accordingly.
 
 ### Position style (multi-day hold)
 

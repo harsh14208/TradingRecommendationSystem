@@ -536,6 +536,7 @@ def _assemble_signal(
     _is_low_atr: bool,
     _atr_pct_pre: float,
     total_confidence_penalty: float,
+    portfolio_size_scale: float = 1.0,
     avg_sent: float,
     price: float,
     atr: float,
@@ -702,7 +703,7 @@ def _assemble_signal(
             }
         )
 
-    # ── RVOL >= 1.2 BUY Prerequisite ────────────────────────────────────
+    # ── RVOL BUY Prerequisite (regime-adaptive threshold) ───────────────────
     volume = tech.get("volume") or 0
     avg_vol = tech.get("avg_volume") or 0
     # Skip the gate entirely when volume data is unavailable (avg_vol=0 means no data).
@@ -710,20 +711,34 @@ def _assemble_signal(
     # Oversold waiver: RSI < 30 — mean-reversion bounces don't need volume confirmation.
     # RSI 30-35 still requires volume (backtest showed RSI 30-35 without RVOL has poor edge).
     is_oversold_play = tech.get("rsi") is not None and tech.get("rsi") < 30
-    if action == "BUY" and vol_ratio is not None and vol_ratio < 1.2 and not is_oversold_play:
+    # Regime-adaptive threshold: during high-vol / expanded-range regimes, the 20-day
+    # average volume is already inflated by the spike that triggered the oversold signal.
+    # Requiring 1.2× of an already-elevated baseline makes the gate impossible to clear
+    # at precisely the moments when genuine capitulation RVOL is highest in absolute
+    # terms but lower relative to the inflated 20-day mean. Use ADR compression flag:
+    #   - Normal / low-vol regime (ADR compressed vs 6-month high): threshold = 1.2
+    #   - Expanded vol regime (ADR not compressed = vol already elevated): threshold = 1.0
+    _adr_compressed = tech.get("adr_compression", True)  # default True = conservative
+    _rvol_threshold = 1.2 if _adr_compressed else 1.0
+    if action == "BUY" and vol_ratio is not None and vol_ratio < _rvol_threshold and not is_oversold_play:
         action = "HOLD"
         sources.add("Risk Gate")
         rationale.append(
             {
                 "src": "Risk Gate",
-                "head": f"RVOL Gate — Insufficient Volume ({vol_ratio:.1f}×)",
+                "head": f"RVOL Gate — Insufficient Volume ({vol_ratio:.1f}× < {_rvol_threshold:.1f}×)",
                 "body": (
-                    "BUY signals require Relative Volume (RVOL) ≥ 1.2 to confirm "
+                    f"BUY signals require Relative Volume (RVOL) ≥ {_rvol_threshold:.1f}× to confirm "
                     "institutional participation. Low-volume breakouts fail at high rates "
-                    "regardless of score. Oversold bounce (RSI < 30) is the only waiver."
+                    "regardless of score. Oversold bounce (RSI < 30) is the only waiver. "
+                    + (
+                        "Vol regime: expanded (ADR not compressed) — threshold relaxed to 1.0×."
+                        if not _adr_compressed
+                        else "Vol regime: normal — standard 1.2× threshold applied."
+                    )
                 ),
                 "sentiment": "neg",
-                "meta": f"RVOL {vol_ratio:.1f}× < 1.2",
+                "meta": f"RVOL {vol_ratio:.1f}× < {_rvol_threshold:.1f}× | adr_compressed={_adr_compressed}",
             }
         )
 
@@ -920,7 +935,14 @@ def _assemble_signal(
     # the stock is oversold for a real reason (declining revenues, cash burn).
     # Gate: skip when BOTH revenue declining >20% YoY AND FCF is deeply negative.
     # Waived for leveraged ETFs (no fundamentals) and when data is unavailable.
-    # Free data: revenue_growth from yfinance info; FCF yield computed inline.
+    #
+    # DATA WARNING — LIVE ONLY, NOT POINT-IN-TIME:
+    # revenue_growth and freeCashflow come from yfinance .info, which reflects
+    # current-day reported values — NOT the value that was available at any past
+    # date. Applying this gate inside a historical backtest constitutes look-ahead
+    # bias: a 2003 signal would be filtered using 2026 financials. This gate is
+    # intentionally excluded from backtest_technicals.py for this reason.
+    # The gate is correct and appropriate for the live signal engine only.
     if action == "BUY" and not _is_lev_etf:
         _rev_grow = info.get("revenue_growth")  # YoY ratio: -0.25 = -25% YoY
         _fcf_abs = info.get("freeCashflow")  # absolute free cash flow ($)
@@ -1313,7 +1335,8 @@ def _assemble_signal(
     if action == "BUY" and _has_mr and _mr_ar1 is not None and float(_mr_ar1) > 0.05:
         _ar1_val = float(_mr_ar1)
         _ar1_full = round(min(10.0, (_ar1_val - 0.05) * 200), 1)
-        # Fundamental context: revenue_growth from yfinance info dict (YoY ratio)
+        # Fundamental context: revenue_growth from yfinance info dict (YoY ratio).
+        # LIVE ONLY — not point-in-time; never use in backtest (look-ahead bias).
         _ar1_rev = info.get("revenue_growth")  # e.g. 0.12 = +12% | -0.25 = -25%
         _ar1_growing = _ar1_rev is not None and float(_ar1_rev) > -0.10
         _ar1_pen = round(_ar1_full * 0.5, 1) if _ar1_growing else _ar1_full
@@ -2468,6 +2491,16 @@ def _assemble_signal(
         "plain_english": plain_english,
         "beta": info.get("beta"),
         "dataWarnings": data_warnings,
+        "positionSizeScale": round(
+            # §12a: confidence-weighted sizing — scales recommended position by signal quality.
+            # Baseline 62% is the natural center of live BUY signal distribution
+            # (min_confidence=57% floor, typical spread to ~70%). Cap [0.5×, 1.5×] to
+            # avoid under-sizing on borderline passes or over-sizing on outlier confidence.
+            # Multiplied with portfolio_size_scale (concentration/PCA risk) so both
+            # alpha quality and beta risk reduce sizing independently.
+            portfolio_size_scale * (max(0.5, min(1.5, confidence / 62.0)) if action == "BUY" else 1.0),
+            2,
+        ),
         "recommendedHoldDays": (
             _SECTOR_MR_CONFIG.get((sector_rs or {}).get("sector_etf", ""), {}).get("hold_days", 10) if _has_mr else 10
         ),
@@ -3779,8 +3812,8 @@ async def generate_signal(
             # MR path: only activate when approaching oversold (RSI < 45)
             # avoids double-counting with the existing Donchian momentum block (line ~3460)
             if _dc_lowp and price <= _dc_lowp * 1.002 and _dc_rsi is not None and _dc_rsi < 45:
-                # New 20-day low on oversold RSI (direct score — mean_rev_score already assembled)
-                score += 8
+                # New 20-day low on oversold RSI — weight 0.5× (§42: OSC↔DONCHIAN corr=0.70 double-counts MR)
+                score += 4
                 rationale.append(
                     {
                         "src": "Technical",
@@ -3795,8 +3828,8 @@ async def generate_signal(
                     }
                 )
             elif _dc_pos <= 0.10 and _dc_rsi is not None and _dc_rsi < 50:
-                # In bottom 10% of 20-day range with weakening RSI (direct score)
-                score += 5
+                # In bottom 10% of 20-day range — weight 0.5× (§42: double-count with OSC reduced)
+                score += 2
                 rationale.append(
                     {
                         "src": "Technical",
@@ -6728,7 +6761,20 @@ async def generate_signal(
             "EARN": any(r.get("src") == "Earnings" for r in rationale if r.get("sentiment") == agree_dir),
         }
         agreeing_cats = sum(source_cats.values())
-        if agreeing_cats >= 6:
+        # Suppress convergence bonuses in stress regimes: when VIX ≥ 20 OR in a
+        # sustained-bear grind (SPY >3% below SMA200 AND -7% over 1mo), inter-factor
+        # correlations approach 1.0 — HYG/VIX/breadth/F&G all respond to the same
+        # liquidity shock. Counting them as independent confirmation double-counts the
+        # same underlying factor and inflates scores precisely when tails are fattest.
+        # Threshold lowered 25→20: cross-asset correlations begin rising well before
+        # VIX hits 25 (Aug-2024 vol spike was VIX 20–23 with near-1.0 correlations).
+        # Conditions re-derived here from market_ctx (not _assemble_signal scope).
+        _macro_sr = (market_ctx or {}).get("macro") or {}
+        _sma200_ratio_sr = float(_macro_sr.get("sp500_sma200_ratio") or 1.0)
+        _spy1m_sr = float(_macro_sr.get("spy_1m_ret") or 0.0)
+        _sustained_bear_sr = _sma200_ratio_sr < 0.97 and _spy1m_sr < -7.0
+        _stress_regime = (vix is not None and float(vix) >= 20) or _sustained_bear_sr
+        if agreeing_cats >= 6 and not _stress_regime:
             # weight_overrides.cluster_boost_pct caps the multiplier (default 0.12 = 12%).
             # When the ticker's historical win rate is below 50%, the boost is halved —
             # source agreement does not compensate for a poor empirical track record.
@@ -6774,7 +6820,25 @@ async def generate_signal(
             "Dark Pool": any(r.get("src") == "Dark Pool" and r.get("sentiment") == _agree for r in rationale),
         }
         _n_indep = sum(_indep.values())
-        if _n_indep >= 2:
+        if _n_indep >= 2 and _stress_regime:
+            # VIX ≥ 25: convergence bonuses suppressed — surface it as a rationale card.
+            _indep_names_sr = ", ".join(k for k, v in _indep.items() if v)
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Stress Regime — Orthogonality Bonus Suppressed (VIX {vix:.0f})",
+                    "body": (
+                        f"VIX at {vix:.0f} signals a liquidity-stress regime (threshold ≥ 20). Under stress, "
+                        f"factors like {_indep_names_sr} are correlated (not orthogonal) — all "
+                        "respond to the same liquidity shock. Counting them as independent "
+                        "confirmation would double-count risk and inflate the score when tails "
+                        "are fattest. Orthogonality and cluster bonuses are suppressed."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"vix={vix:.0f} ≥ 20 | orthogonality_bonus=0 | cluster_boost=0",
+                }
+            )
+        elif _n_indep >= 2:
             # weight_overrides lets the owner cap these boosts without touching code.
             # Defaults: 3 pts/source, max +18. Both are reduced when ticker win rate < 50%.
             _wo = (market_ctx or {}).get("weight_overrides", {})
@@ -7291,37 +7355,53 @@ async def generate_signal(
         # Suppress BUY signals when the paper portfolio already has too much
         # exposure in this ticker's sector (default threshold: 30% of portfolio).
         portfolio_ctx = (market_ctx or {}).get("portfolio_ctx", {})
-        # ── PCA-based factor concentration haircut ──────────────────────────
+
+        # Portfolio concentration risk is INVENTORY RISK (Beta), not alpha uncertainty.
+        # It must NOT corrupt total_confidence_penalty / confidence, which represents
+        # the calibrated predictive probability of the signal (Alpha). Mixing them
+        # destroys the XGBoost calibration loop — an 80% signal is 80% regardless of
+        # how much XLK you already hold. The correct fix: keep confidence pure and
+        # communicate concentration risk via a separate position_size_scale that the
+        # execution/routing layer uses to scale down the recommended size to $0 (or
+        # some fraction) without touching the Alpha score.
+        # _portfolio_size_scale starts at 1.0 (full size) and is reduced here.
+        _portfolio_size_scale: float = 1.0
+
+        # ── PCA-based factor concentration ──────────────────────────────────
         pca_risk = portfolio_ctx.get("pca_risk", {}) if portfolio_ctx else {}
-        if pca_risk.get("concentration_warning") and score > 0:
-            _pca_haircut = pca_risk.get("haircut_pct", 0) / 100.0
-            if _pca_haircut > 0:
-                total_confidence_penalty = min(0.50, total_confidence_penalty + _pca_haircut)
-                _dom_factor = pca_risk.get("dominant_factor", "Unknown")
-                _dom_exp = pca_risk.get("dominant_exposure", 0)
-                sources.add("Risk Gate")
-                rationale.append(
-                    {
-                        "src": "Risk Gate",
-                        "head": f"PCA Factor Concentration — {_dom_factor} ({_dom_exp:.0%} exposure)",
-                        "body": (
-                            f"Your portfolio's statistical risk is concentrated ({_dom_exp:.0%}) on "
-                            f"the '{_dom_factor}' latent factor — detected via 2-factor PCA on "
-                            f"60-day return correlations. GICS sector limits missed this overlap. "
-                            f"Confidence reduced by {_pca_haircut * 100:.0f}pp to limit factor crowding."
-                        ),
-                        "sentiment": "neg",
-                        "meta": f"pca_factor={_dom_factor} exposure={_dom_exp:.0%} haircut={_pca_haircut * 100:.0f}pp",
-                    }
-                )
+        _pca_haircut_raw = pca_risk.get("haircut_pct", 0) or 0
+        _dom_exp_raw = pca_risk.get("dominant_exposure", 0) or 0
+        if score > 0 and _pca_haircut_raw > 0 and _dom_exp_raw >= 0.35:
+            _pca_scale_cut = _pca_haircut_raw / 100.0
+            _portfolio_size_scale = max(0.0, _portfolio_size_scale - _pca_scale_cut)
+            _dom_factor = pca_risk.get("dominant_factor", "Unknown")
+            sources.add("Risk Gate")
+            rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"PCA Factor Concentration — {_dom_factor} ({_dom_exp_raw:.0%} exposure)",
+                    "body": (
+                        f"Your portfolio's statistical risk is concentrated ({_dom_exp_raw:.0%}) on "
+                        f"the '{_dom_factor}' latent factor — detected via 2-factor PCA on "
+                        f"60-day return correlations. GICS sector limits may miss cross-sector overlap "
+                        f"(e.g. XLK + XLC both loading on the growth factor). "
+                        f"Signal confidence is unchanged (alpha is alpha). "
+                        f"Recommended position size scaled to {(_portfolio_size_scale) * 100:.0f}% of normal."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"pca_factor={_dom_factor} exposure={_dom_exp_raw:.0%} size_scale={_portfolio_size_scale:.2f}",
+                }
+            )
         if portfolio_ctx and score > 0:
             sector_exposure = portfolio_ctx.get("sector_exposure", {})
             ticker_sector = (sector_rs or {}).get("sector_etf") if sector_rs else None
             if ticker_sector and ticker_sector in sector_exposure:
                 exposure_pct = sector_exposure[ticker_sector]
-                # Configurable threshold — default 30%; hard suppress above 50%
-                SOFT_LIMIT = 30.0
-                HARD_LIMIT = 50.0
+                # Tighter limits vs prior 30%/50%: a 4% overnight Nasdaq gap at 50%
+                # tech exposure inflicts a ~2% portfolio loss before the stop fires.
+                # At 30% hard limit the same gap causes ≤1.2% — within single-trade budget.
+                SOFT_LIMIT = 20.0
+                HARD_LIMIT = 30.0
                 if exposure_pct >= HARD_LIMIT:
                     score = 0
                     _force_hold = True  # portfolio hard limit — subsequent signals must not re-open
@@ -7341,9 +7421,9 @@ async def generate_signal(
                         }
                     )
                 elif exposure_pct >= SOFT_LIMIT:
-                    # Soft limit: confidence haircut, not full suppression
-                    haircut = min(0.25, (exposure_pct - SOFT_LIMIT) / (HARD_LIMIT - SOFT_LIMIT) * 0.25)
-                    total_confidence_penalty = min(0.50, total_confidence_penalty + haircut)
+                    # Soft limit: reduce recommended position size, NOT the alpha confidence.
+                    size_cut = min(0.5, (exposure_pct - SOFT_LIMIT) / (HARD_LIMIT - SOFT_LIMIT) * 0.5)
+                    _portfolio_size_scale = max(0.0, _portfolio_size_scale - size_cut)
                     sources.add("Risk Gate")
                     rationale.append(
                         {
@@ -7352,11 +7432,12 @@ async def generate_signal(
                             "body": (
                                 f"Your paper portfolio has {exposure_pct:.0f}% of its value in {ticker_sector} "
                                 f"(soft limit: {SOFT_LIMIT:.0f}%). "
-                                "Adding here increases concentration risk. Confidence reduced by "
-                                f"{haircut * 100:.0f}%. Consider diversifying."
+                                "Adding here increases concentration risk. Signal confidence is unchanged. "
+                                f"Recommended position size scaled to {_portfolio_size_scale * 100:.0f}% of normal. "
+                                "Consider diversifying."
                             ),
                             "sentiment": "neg",
-                            "meta": f"{ticker_sector} exposure: {exposure_pct:.0f}% (soft limit {SOFT_LIMIT:.0f}%)",
+                            "meta": f"{ticker_sector} exposure: {exposure_pct:.0f}% (soft limit {SOFT_LIMIT:.0f}%) size_scale={_portfolio_size_scale:.2f}",
                         }
                     )
 
@@ -7393,6 +7474,7 @@ async def generate_signal(
             _is_low_atr=_is_low_atr,
             _atr_pct_pre=_atr_pct_pre,
             total_confidence_penalty=total_confidence_penalty,
+            portfolio_size_scale=_portfolio_size_scale,
             avg_sent=avg_sent,
             price=price,
             atr=atr,
@@ -7419,9 +7501,12 @@ async def scan_all(
     histories = histories or {}
     infos = infos or {}
 
-    # Semaphore(15): 15 concurrent signal generations on unlimited Polygon Starter plan.
-    # Expected: 154 tickers × 2.5s each → 385s sequential → ~26s with 15× parallelism.
-    _sem = asyncio.Semaphore(15)
+    # Semaphore(8): reduced from 15 to cap concurrent DB writers per worker.
+    # With 3 Uvicorn workers × 15 = 45 concurrent DB writes, which under burst
+    # retry (3× SQLAlchemy retries) can hit 90 concurrent — exceeding pool_size=10
+    # + max_overflow=20. At 8 per worker: 3 × 8 = 24 steady-state, 72 peak-retry,
+    # both within pool budget. Scan wall-clock: 154 tickers × 2.5s / 8 ≈ 48s (was 26s).
+    _sem = asyncio.Semaphore(8)
 
     async def _guarded(t: str):
         async with _sem:

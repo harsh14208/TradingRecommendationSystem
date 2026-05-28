@@ -58,7 +58,9 @@ if _IS_POSTGRES:
         echo=False,
         pool_size=10,
         max_overflow=20,
-        pool_pre_ping=True,  # detect stale connections
+        pool_pre_ping=True,  # test connection health before checkout
+        pool_recycle=3600,  # recycle connections after 1 hr to avoid server-side timeout drops
+        pool_timeout=5,  # fail fast (5s) vs default 30s; prevents cascade hangs at market-open spikes
     )
     logger.info(f"[db] Using PostgreSQL: {DATABASE_URL.split('@')[-1]}")
 else:

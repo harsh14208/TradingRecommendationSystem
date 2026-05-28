@@ -55,7 +55,15 @@ backend/
 | `BUY_THRESH` | 50 | `backtest_technicals.py` |
 | `HOLD_DAYS` | 10 | `backtest_technicals.py` |
 | `FRICTION` | 0.5% round-trip | `backtest_technicals.py` |
-| MR gate | RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75% | `signal_engine.py` |
+| MR gate | BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75% | `signal_engine.py` (RSI removed §40) |
+| Stop normal (ATR) | 1.0s/2.0t | `backtest_technicals.py:atr_levels()` |
+| Stop high-vol (ATR) | 1.5s/2.0t | `backtest_technicals.py:atr_levels()` |
+| Stop ADX>35 (ATR) | 1.0s/3.0t | `backtest_technicals.py:atr_levels()` |
+| OSC weight | 0.3 | `signal_engine.py:3675` (was 1.0, then 0.1, §40) |
+| MR weight | 0.7 | `signal_alpha_decomposition.py:314` (was 0.5, §40) |
+| Sector HARD_LIMIT | 30% | `signal_engine.py` (was 50%, tightened §43) |
+| Sector SOFT_LIMIT | 20% | `signal_engine.py` (was 30%, tightened §43) |
+| Scanner semaphore | 8 per worker | `signal_engine.py:scan_all()` (was 15, §43 DB pool fix) |
 
 ## CI
 
@@ -68,15 +76,17 @@ Steps: install deps → syntax check → import smoke → pytest → accuracy ga
 
 `ruff.toml` sets `target-version = "py311"` — run `ruff check` locally to catch these before push.
 
-## Research baseline (§42 — v7.1, BUY_THRESH=50)
+## Research baseline (§43 rerun — v7.1 + adversarial fixes, BUY_THRESH=50)
+
+Backtest IS metrics unchanged from §42 (fixes targeted live engine only):
 
 | Universe | WR | Avg Ret | Sharpe |
 |---|---|---|---|
 | Main (48 tickers, MR-only) | 60.3% | +0.63% | 0.17 |
 | Sector-filtered (live-equivalent) | 59.0% | +0.64% | 0.17 |
-| OOS v3 (same-sector held-out, thresh=50) | 50.0% | +0.00% | 0.00 |
+| OOS (held-out tickers, thresh=50) | 50.0% | +0.00% | 0.00 |
 
-See `docs/Stats.md` §42 for full analysis. Prior §41 (thresh=40): IS 60.5%/+0.57%/0.14, OOS −0.30.
+See `docs/Stats.md` §43 for full adversarial audit + fix log. Prior §42: same IS, OOS was 50.0%/+0.00%/0.00.
 
 ## MCP servers (when Node.js is available)
 

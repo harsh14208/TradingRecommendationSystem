@@ -312,6 +312,7 @@ FAM_COLS = [
 BASE_WEIGHTS: dict[str, float] = {f: 1.0 for f in SIGNAL_FAMILIES}
 BASE_WEIGHTS["osc"] = 0.30  # v12 sweep: OSC×0.3 optimal (Sharpe 0.33, N=26) — quality selector not generator
 BASE_WEIGHTS["mr"] = 0.70  # v12 sweep: MR×0.7 optimal with OSC×0.3 (Sharpe 0.30, N=17)
+BASE_WEIGHTS["donchian"] = 0.50  # §42: OSC↔DONCHIAN correlation=0.70 (double-counting MR signal); reduce from 1.0
 
 # v11: dual-gate tested but disabled — momentum trades (RSI 50-68) at 10-day hold
 # have near-zero edge (short-term reversal effect, Jegadeesh 1990) and dragged
@@ -1632,7 +1633,9 @@ def run_sharpe_research(all_dfs, vix, spy_trend, stlfsi4):
     _section("11d. Score Threshold Sweep")
     print("\n### 11d. Score Threshold Sweep\n")
     print("> Higher threshold = higher conviction = fewer but better-quality trades.\n")
-    _thresh_vals = [40, 44, 48, 52, 56]
+    # Extended downward: OSC×0.3 reduced N from ~350 to ~11 by raising the effective
+    # bar. Testing sub-40 thresholds to recover N while preserving quality gains.
+    _thresh_vals = [30, 32, 34, 36, 38, 40, 44, 48, 52, 56]
     thresh_rows = []
     for _i, bt in enumerate(_thresh_vals, 1):
         _progress(_i, len(_thresh_vals), f"thresh≥{bt}")

@@ -7,7 +7,7 @@
 - [ ] **1. Change owner password** — `backend/.env`: set `OWNER_PASSWORD=<16+ chars, mixed case, symbols>`. Default `ChangeMe123!` is committed to source. Risk: instant account takeover.
 - [ ] **2. Deploy to public HTTPS URL** — Run `railway up` or `fly deploy`. Set `APP_URL=https://your-app.up.railway.app`. Risk: Stripe webhooks 404, OAuth callbacks broken, HTTPS-only cookies not sent.
 - [x] **3. Migrate to PostgreSQL** — Local Homebrew PostgreSQL 16 running. 7,015+ signals, 8 users migrated. SQLite removed as runtime dependency.
-- [ ] **4. Configure Stripe billing** — `STRIPE_SECRET_KEY` and price IDs set. Still needed: register webhook in Stripe Dashboard, copy `whsec_...` to `STRIPE_WEBHOOK_SECRET`. Risk: checkout completes but tier never activates.
+- [ ] **4. Configure Stripe billing** — `STRIPE_SECRET_KEY` and price IDs set. Still needed: register webhook in Stripe Dashboard, copy `whsec_...` to `STRIPE_WEBHOOK_SECRET`. **§43: startup now logs CRITICAL if `STRIPE_WEBHOOK_SECRET` is empty in prod; webhook handler returns 500 explicitly.** Risk: checkout completes but tier never activates.
 - [ ] **5. Register Telegram webhook** — After HTTPS deploy: `curl -X POST <https://your-app>/api/telegram/set-webhook`. Risk: subscribers cannot link Telegram.
 
 ### 🟠 HIGH IMPACT — Do within the first week
@@ -22,7 +22,8 @@
 - [ ] **10. Configure VAPID web push** — Generate keys via py_vapid. Risk: no browser push notifications.
 - [ ] **11. Set up Cloudflare CDN** — Point DNS to Railway/Fly. Risk: slower global load.
 - [ ] **12. Google AdSense** — Apply at adsense.google.com. Risk: no ad revenue from free tier.
-- [ ] **13. Add Redis** — `railway add --plugin redis`. Risk: redundant API calls under concurrent load.
+- [ ] **13. Add Redis** — `railway add --plugin redis`. Risk: redundant API calls under concurrent load. **§43: stampede protection added for Redis-down fallback (per-key fetch lock + LRU dict cap).**
+- [ ] **15. Migrate frontend JSX to Vite build pipeline** — Babel standalone (~2 MB) currently transpiles JSX at runtime: 2–5s TTI on desktop, freezes low-end mobile. Steps: `npm create vite@latest frontend -- --template react`, move `.jsx` files to `frontend/src/`, `vite build` → serve `dist/` as FastAPI `StaticFiles`. Zero React code changes needed. **Must complete before billing users.** (§43: console warning + HTML comment added as interim measure.)
 - [ ] **14. Upgrade SendGrid** — Essentials (~$20/mo) before daily signups + resets exceed 100 emails/day.
 
 ---
@@ -87,6 +88,39 @@
 > Academic sources: Quantpedia ATR P70, Alpha Architect return-jump filter, Pagonidis IBS paper,
 > Jegadeesh-Titman reversal timing (Review of Financial Studies Dec 2025), VIX slope research.
 > All implemented in backtest + live engine. §17 runner ready at `scripts/run_section17.py`.
+
+### Pillar 0d — BUY_THRESH Recovery & OSC/MR Weight Validation (§42, 2026-05-28)
+
+> **Context:** §42 alpha decomp run (OSC×0.3 + MR×0.7, 105 tickers, BUY_THRESH sweep [30–56])
+> revealed that composite score is **not a monotonic quality ranker** with the new weights.
+> Higher thresh → worse Sharpe (inverting prior expectation). Primary finding: thresh=30 is optimal
+> in the raw BASE_WEIGHTS framework (N=175, Sharpe=0.10, WR=61.7%). All thresholds ≥40 → Sharpe≤0.00.
+
+**Key findings (2026-05-28):**
+- [x] **BUY_THRESH sweep [30–56] completed** — thresh=30 best (N=175, Sharpe=0.10, WR=61.7%). Performance degrades monotonically above 30. This means OSC×0.3 + MR×0.7 scoring does NOT rank trade quality via score magnitude; the delivery gates + MR gate do the real quality work.
+- [x] **OSC×0.3 confirmed as quality selector** — Within v10 family framework: N=26, Sharpe=0.33. Within raw BASE_WEIGHTS framework: N=175 at thresh=30. Discrepancy explained by RS_QUALITY + DONCHIAN + HYG filters present in v10 but not in raw §11 framework.
+- [x] **MR×0.7 confirmed optimal in v10 framework** — N=17, Sharpe=0.30 vs MR×0.5 N=11 Sharpe=0.24.
+- [x] **Score inversion finding** — At OSC×0.3 + MR×0.7, higher composite scores correlate with lower-quality trades. High MR score = deeper oversold = possible value trap (not genuine panic reversal). The scoring's quality layer must come from gates, not from score magnitude.
+
+**Next steps (prioritized):**
+- [ ] **Lower BUY_THRESH 40 → 30 in live engine** — At thresh=40, Sharpe=0.00 in decomp; threshold adds no quality. Lower to 30 (Sharpe=0.10, N=175) and rely on delivery gates + MR gate for quality control. File: `signal_engine.py` (each sector's `buy_thresh` in `_SECTOR_MR_CONFIG`). XLK is already at 38; global default is 40.
+- [ ] **Audit score-inversion root cause** — OSC↔DONCHIAN correlation=0.70 in correlation matrix (§10f). DONCHIAN is "essential" and full-weight; OSC is reduced to 0.3. The sum OSC+DONCHIAN may be double-counting the same signal, making high-score bars those with BOTH deep-oversold RSI AND near 20-day-low — which in high-MR×0.7 world selects for most distressed stocks. Consider reducing DONCHIAN weight to 0.5 or making it gating (binary) rather than additive.
+- [ ] **Run §42 OOS validation** — The §42 IS result (thresh=30, Sharpe=0.10) needs held-out OOS test on 2020-2026 data only. Low Sharpe (0.10) combined with N=175 gives Ann.Sharpe ≈ 0.10 × √(175/20) ≈ 0.30 — still below target of 1.0.
+- [ ] **Re-run decomp with OSC×0.3 + MR×0.5** — Check if reverting MR to 0.5 (while keeping OSC at 0.3) recovers the quality gradient (higher score = better trade). Prior v10 baseline (OSC×1.0 + MR×0.5) had monotonic quality; OSC×0.3 + MR×0.7 broke it.
+- [ ] **Monitor stop-hit rate at 1.0s/2.0t** — §31 live data showed 44.9% stop-hit rate at 2.5× stop. Tightening to 1.0× could push stop-hit rate above 60%, destroying R:R. Check live stop-hit rate after 50+ resolved signals under new 1.0s/2.0t regime.
+
+### Pillar 0c — Risk Gate Fine-Tuning (§40, 2026-05-27) — COMPLETED
+
+> **Context:** Post-§39 signal-quality pass identified 3 redundant gates and 2 weight imbalances.
+> Alpha decomp §12 + §11c decomp quantified exact gains/losses. All live 2026-05-27.
+
+**Completed 2026-05-27:**
+- [x] **OSC weight reduced from 1.0 → 0.3** — §12 alpha decomp: OSC correlated 0.74 with DONCHIAN (redundant generator). Weight 0.3 acts as quality selector (per-trade Sharpe 0.33, N=26). Non-monotonic sweep: 0.1 and 0.3 are peaks, 0.2 is trough. Updated in `signal_engine.py:3675` and `signal_alpha_decomposition.py:313`.
+- [x] **RSI removed from MR gate** — `_has_mr` was `rsi<42 OR bb<0.22 OR ibs<0.15 OR vwap<-0.75`, now just the three technical gates. RSI triggered only 1.8%→0.2% of BUY signals in-sample (non-binding). Removing reduces score inflation w/o live edge loss. Code: `signal_engine.py:566-571`.
+- [x] **Global VIX<20 gate added for MR** — §12b 103-ticker 23yr finding: MR bounces fail when VIX<20 (market too calm, no mean-reversion urgency). Blocks all MR BUY entries when vix_now<20. Expected live improvement +3–5pp WR on MR-only subsets.
+- [x] **Stop multiplier tightened: 2.0s/2.5t → 1.0s/2.0t (normal)** — §11c decomp (103 tickers 23yr): tighter stop cuts losing trades faster while maintaining R:R 2.0 (Sharpe 0.50 vs 0.24 at wider). Updated `atr_levels()` defaults in `backtest_technicals.py:1322-1327` + live engine. High-vol and ADX>35 also tuned.
+- [x] **MR weight increased: 0.50 → 0.70** — Complement OSC reduction; keeps total weight sum ~1.0 across MR + OSC. Updated `signal_alpha_decomposition.py:314`.
+- [x] **VIX sweep extended** — Sweep now tests VIX thresholds 13, 15, 18, 19, 20 (was sparse). Full grid in `signal_alpha_decomposition.py`.
 
 **Implemented 2026-05-25 (live engine + backtest framework):**
 - [x] **ATR%rank ceiling ≤ 70 gate** — trending-panic entries (ATR > P70) blocked. Quantpedia: RSI MR signals in very-high-ATR regimes produce weaker bounces (stock still in breakdown, not dip). Gate added to `signal_engine.py` + `backtest_technicals.py` Gate 17b.

@@ -73,7 +73,7 @@ def test_billing_portal(mock_settings):
         assert response.status_code == 200
 
 
-def test_billing_webhook_checkout_session_completed(mock_db):
+def test_billing_webhook_checkout_session_completed(mock_db, mock_settings):
     with patch("routers.billing.stripe.Webhook.construct_event") as mock_event:
         evt = MagicMock()
         evt.get.side_effect = lambda k, d="": {"id": "evt_test123", "type": "checkout.session.completed"}.get(k, d)
@@ -86,7 +86,7 @@ def test_billing_webhook_checkout_session_completed(mock_db):
         assert response.status_code == 200
 
 
-def test_billing_webhook_dedup(mock_db):
+def test_billing_webhook_dedup(mock_db, mock_settings):
     """Already-processed event_id returns 200 immediately without re-processing."""
     mock_db.execute.return_value.scalar_one_or_none.return_value = MagicMock()  # existing row
     with patch("routers.billing.stripe.Webhook.construct_event") as mock_event:

@@ -1374,6 +1374,13 @@ def simulate_ticker(
     """
     Generate signals and simulate trades for one ticker.
 
+    NOTE — gates deliberately excluded from this backtest (look-ahead bias):
+    • Fundamental value-trap gate (revenue_growth / FCF from yfinance .info): .info
+      reflects current-day data only — not the value reported at any historical date.
+      Applying it here would filter 2003 signals using 2026 fundamentals. Live signal
+      engine applies it correctly; backtest omits it entirely.
+    • AR(1) revenue_growth blend: same reason — yfinance .info is not point-in-time.
+
     Gates applied (in order):
       1.   VIX tiers        — hard block >30; marginal BUY (score<45) blocked 25-30
       2.   STLFSI4 stress   — hard block >1.5+VIX>30; marginal >1.0+VIX>25+score<50
@@ -2431,10 +2438,16 @@ def main():
     print("> _Technical + macro alt-data (SPY trend, STLFSI4, VIX tiers). No news/options/fundamentals._")
     print("> **Earnings blackout:** Polygon vX/reference/financials (full history) + yfinance (recent ~4yr).")
     print(">   SEC filing dates used as earnings-event proxy. Pre-2003 data unavailable.")
-    print("> ⚠ **Survivorship bias:** Universe is drawn from *current* S&P 500 survivors.")
-    print(">   Companies that delisted, went bankrupt, or were removed 2003–2026 (Lehman, Sears,")
-    print(">   Bear Stearns, etc.) are absent. Reported WR and avg return are therefore overstated")
-    print(">   vs. a point-in-time historical constituent list. Fix requires Norgate/Sharadar data.\n")
+    print("> ⚠ **Survivorship bias — CRITICAL:** Universe is drawn from *current* S&P 500 survivors.")
+    print(">   Companies that delisted, went bankrupt, or were removed 2003–2026 are absent:")
+    print(">   Lehman Brothers, Bear Stearns, Washington Mutual, Sears, General Electric (removed")
+    print(">   2018), Enron, WorldCom, and ~200 others. MR strategies are *uniquely* exposed because")
+    print(">   buying a -15% dip on a company heading to zero produces a -100% loss leg that is")
+    print(">   completely invisible in this simulation. Academic literature (e.g., Brown, Goetzmann,")
+    print(">   Ross 1992; Kothari, Shanken, Sloan 1995) documents 1–4 pp/yr WR overstatement from")
+    print(">   survivorship alone; for MR systems buying distressed names the bias is larger.")
+    print(">   Treat reported WR and avg return as upper-bound estimates, not realized performance.")
+    print(">   Fix requires point-in-time constituent data (Norgate, Sharadar, or CRSP).\n")
 
     # ── Download VIX ─────────────────────────────────────────────────────────
     print("Fetching VIX…", end=" ", flush=True)
