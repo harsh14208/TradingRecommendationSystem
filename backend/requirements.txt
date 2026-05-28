@@ -23,6 +23,7 @@ passlib[bcrypt]>=1.7.4
 stripe>=7.0.0
 python-multipart>=0.0.9
 aiosmtplib>=3.0.0
+slowapi>=0.1.9              # rate limiting for FastAPI (Limiter, _rate_limit_exceeded_handler)
 playwright>=1.44.0          # optional: Finviz JS fallback; run: playwright install chromium
 pywebpush>=2.0.0            # web push notifications (VAPID)
 
