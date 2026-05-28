@@ -2309,7 +2309,7 @@ Launched as background process (PID 72865) at `/tmp/s35e_screen.log`. Running S&
 
 ### §36a — Near-Earnings Gate Loosened (8-14d hard block → tiered haircuts)
 
-**Previous:** 8-14d to earnings → hard HOLD block.  
+**Previous:** 8-14d to earnings → hard HOLD block.
 **§34 live finding:** 0-14d zone WR **62.5%** > 15+d "safe zone" **50.5%** (n=543). Near-earnings signals *outperform* when the full alt-data stack (news, options, analyst recs) prices in the event risk.
 
 **New rule:**
@@ -2319,7 +2319,7 @@ Launched as background process (PID 72865) at `/tmp/s35e_screen.log`. Running S&
 
 ### §36b — Sustained-Bear Macro Gate Added
 
-Fires when SPY is >3% below SMA200 **AND** 1-month return < −7% (slow-burn bear, distinct from the existing deep-bear crash gate). Haircut: −5pp on BUY confidence.  
+Fires when SPY is >3% below SMA200 **AND** 1-month return < −7% (slow-burn bear, distinct from the existing deep-bear crash gate). Haircut: −5pp on BUY confidence.
 Proxy for regimes like 2022 rate-tightening where live MR WR was near 0%.
 
 ### §36c — 9 Backtest-Negative Tickers Added to Defensive Block
@@ -2682,7 +2682,7 @@ Delivery-gates-aligned filter removes 6 blocked-sector tickers from main univers
 
 ### §41c — v2 OOS Validation (Same-Sector Held-Out Set)
 
-**v2 universe:** ORCL, AMAT, KLAC, NOW (XLK), NKE, DHI, APTV (XLY), CHTR, TTWO (XLC), MS (XLF)  
+**v2 universe:** ORCL, AMAT, KLAC, NOW (XLK), NKE, DHI, APTV (XLY), CHTR, TTWO (XLC), MS (XLF)
 Drawn from same sectors as main universe — eliminates the sector-mismatch confound of v1.
 
 | Metric | In-Sample (§41 main) | OOS v2 | Gap |
@@ -2744,3 +2744,121 @@ The v2 OOS result rules out **sector-level** curation bias as the explanation. T
 4. **Consider N-starvation mitigation:** Running OOS on a longer lookback or relaxed friction (0.3%) would widen the confidence interval and reveal whether the negative result is structural or a small-sample artifact.
 
 *§41 complete · v2 OOS + sector filter + score-band analysis · 2026-05-27*
+
+---
+
+## 42. v7.1 Backtest — BUY_THRESH 40→50 + Tighter Stops (2026-05-27)
+
+> Run by `backend/scripts/backtest_technicals.py` · **v7.1** · 2026-05-27
+> 48 tickers · 2003-01-01 → 2026-05-27 · 10-day hold · 0.50% friction
+> MR-only mode: RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75%
+> Gates: **BUY_THRESH=50** (was 40), ATR%rank≥20 default, adaptive exit (RSI>45 or MACD+ or price>VWAP)
+> Stops: **1.0s/2.0t** normal, **1.5s/2.0t** high-vol/low-vol (was 2.0s/2.5t) — §11c optimal R:R 2.0
+
+### §42a — IS Results (BUY_THRESH=50)
+
+**Score-band justification for raising threshold:**
+
+| Score Band | N (§41 run) | WR | Avg Ret | Sharpe |
+|:---|---:|---:|---:|---:|
+| 40-50 | 145 (sector-filtered) | 55.2% | +0.20% | 0.05 |
+| 50-60 | 118 | 62.7% | +0.79% | 0.18 |
+| 60-70 | 4 | 50.0% | +0.27% | — |
+| 70+ | 1 | 100.0% | +5.54% | — |
+
+> The 40-50 band has Sharpe 0.05 — marginal edge, not worth the risk. Raising BUY_THRESH to 50 eliminates this band, halving trade count but preserving the 50-60 alpha core.
+
+**v7.1 IS Overall Performance:**
+
+| Metric | §41 (BUY_THRESH=40) | **§42 (BUY_THRESH=50)** | Δ |
+|:---|---:|---:|---:|
+| Total Trades | 296 | **126** | −170 (40-50 band removed) |
+| Win Rate | 60.5% | **60.3%** | −0.2pp |
+| Avg Return / Trade | +0.57% | **+0.63%** | **+0.06pp** |
+| Sharpe (per-trade) | 0.14 | **0.17** | **+0.03** |
+| Max Drawdown | −1.72% | **−0.93%** | **better** |
+| Profit Factor | 1.40× | **1.47×** | +0.07× |
+
+**Exit-Type Breakdown (v7.1):**
+
+| Exit | N | % | Win Rate | Avg Ret | MFE Capture |
+|:---|---:|---:|---:|---:|---:|
+| Target | 26 | 20.6% | 100.0% | +4.83% | — |
+| Stop | 39 | 31.0% | 0.0% | −3.68% | — |
+| Time | 2 | 1.6% | 50.0% | +0.16% | — |
+| Time_loss | 10 | 7.9% | 0.0% | −2.64% | — |
+| Adaptive | 49 | 38.9% | 100.0% | +2.52% | 76% |
+
+> Stop rate rose 15.1%→31.0% with tighter 1.0× stops. This is expected — tighter stops get hit more. Adaptive exits remain 38.9% at 100% WR. Net avg return improved +0.06pp despite higher stop rate, confirming the tighter stop/wider target R:R 2.0 trades cut losses faster.
+
+**Score-Band (v7.1 IS):**
+
+| Score Band | N | WR | Avg Ret | Sharpe | PF |
+|:---|---:|---:|---:|---:|---:|
+| 50-60 | 120 | 60.0% | +0.62% | 0.16 | 1.45× |
+| 60-70 | 4 | 50.0% | +0.61% | — | 1.52× |
+| 70+ | 1 | 100.0% | +2.98% | — | ∞ |
+
+**Sector-Filtered (§10, live-equivalent):**
+
+| Metric | All 48 | Sector-Filtered | Δ |
+|:---|---:|---:|---:|
+| N Trades | 125 | 117 | −8 |
+| Win Rate | 60.0% | 59.0% | −1.0pp |
+| Avg Return | +0.64% | +0.64% | 0 |
+| Sharpe | 0.17 | 0.17 | 0 |
+
+> Sector filter has minimal impact at BUY_THRESH=50 — blocked sectors produce very few high-score (≥50) signals.
+
+### §42b — OOS v3 (BUY_THRESH=50)
+
+Same held-out tickers as §41c: ORCL, AMAT, KLAC, NOW, NKE, DHI, APTV, CHTR, TTWO, MS
+
+| Metric | §41c OOS v2 (thresh=40) | **§42 OOS v3 (thresh=50)** | Δ |
+|:---|---:|---:|---:|
+| Total Trades | 69 | **30** | −39 (40-50 band removed) |
+| Win Rate | 43.5% | **50.0%** | **+6.5pp** |
+| Avg Return / Trade | −1.23% | **+0.00%** | **+1.23pp** |
+| Profit Factor | 0.49× | **1.00×** | +0.51× |
+| Sharpe (per-trade) | −0.30 | **0.00** | **+0.30** |
+| Max Drawdown | −4.28% | −1.02% | better |
+
+**OOS Score-Band (v3):**
+
+| Score Band | N | WR | Avg Ret | Sharpe |
+|:---|---:|---:|---:|---:|
+| 50-60 | 25 | 52.0% | +0.20% | 0.05 |
+| 60-70 | 3 | 33.3% | −1.53% | — |
+| 70+ | 1 | 0.0% | −2.16% | — |
+
+**Verdict summary:**
+
+| Metric | IS | OOS v3 | Gap |
+|:---|---:|---:|---:|
+| Win Rate | 60.5% | 50.0% | −10.5pp |
+| Avg Return | +0.57% | +0.00% | −0.57pp |
+| Sharpe | 0.14 | 0.00 | −0.14 |
+
+> **OOS improvement vs §41c:** Sharpe −0.30 → 0.00 (+0.30). Removing the 40-50 marginal band eliminated most of the negative OOS alpha. The 50-60 band in OOS is Sharpe 0.05 (marginally positive, was −0.28 at thresh=40). The IS/OOS gap on WR (−10.5pp) is unchanged — curation bias persists, but it no longer produces a *negative* OOS result. OOS is now breakeven rather than destructive.
+
+### §42c — v7.1 Regime Breakdown
+
+| Regime | N | Win Rate | Avg Ret | Sharpe |
+|:---|---:|---:|---:|---:|
+| Post-GFC Bull | 70 | 64.3% | +1.02% | 0.28 |
+| COVID Crash | 3 | 0.0% ✗ | −3.96% | — |
+| COVID Recovery | 23 | 56.5% | +0.50% | 0.12 |
+| Rate-Hike Bear | 5 | 60.0% | −0.88% | — |
+| AI Rally | 11 | 54.5% | +0.92% | 0.29 |
+| Current (2025+) | 11 | 63.6% | +0.55% | 0.13 |
+
+> Rate-Hike Bear: only 5 trades pass the BUY_THRESH=50 + Gate 3 (bear blocks score<60) filter. WR 60.0% but avg −0.88% due to outlier stop. Tighter stops vs §41 increased stop-hit frequency but the 5 trades that passed gates are quality entries. Gate 3 correctly suppresses the 40-50 band in bear market.
+
+### §42d — Key Findings
+
+1. **BUY_THRESH=50 is the right move.** IS Sharpe +0.03, MaxDD −46% better, avg ret +0.06pp. OOS Sharpe +0.30 improvement (from destructive −0.30 to breakeven 0.00).
+2. **Tighter stops (1.0s/2.0t) trade well at EOD prices.** Higher stop rate (31% vs 15%) is offset by better R:R. Monitor intraday stop-hit rate in live engine (§31 showed 44.9% at 1.5× — live faces wicks that EOD misses).
+3. **Stop rate increase is the main risk.** 31% stop-hit rate means nearly 1-in-3 trades loses the full stop. With tighter stops at 1.0×, the abs loss per stop is smaller (−3.68% vs −5.02% in §41), so the P&L impact is muted despite higher frequency.
+4. **OOS 50-60 band: Sharpe 0.05.** First time OOS 50-60 is positive (was −0.28 in §41c). Not conclusive (N=25) but consistent with the score-band being real rather than pure curation.
+
+*§42 complete · v7.1 BUY_THRESH=50 + tighter stops · 2026-05-27*

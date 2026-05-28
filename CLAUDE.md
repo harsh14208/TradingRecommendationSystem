@@ -68,15 +68,15 @@ Steps: install deps → syntax check → import smoke → pytest → accuracy ga
 
 `ruff.toml` sets `target-version = "py311"` — run `ruff check` locally to catch these before push.
 
-## Research baseline (§41)
+## Research baseline (§42 — v7.1, BUY_THRESH=50)
 
 | Universe | WR | Avg Ret | Sharpe |
 |---|---|---|---|
-| Main (48 tickers, MR-only) | 60.5% | +0.57% | 0.14 |
-| Sector-filtered (live-equivalent) | 58.6% | +0.48% | 0.11 |
-| OOS v2 (same-sector held-out) | 43.5% | −1.23% | −0.30 |
+| Main (48 tickers, MR-only) | 60.3% | +0.63% | 0.17 |
+| Sector-filtered (live-equivalent) | 59.0% | +0.64% | 0.17 |
+| OOS v3 (same-sector held-out, thresh=50) | 50.0% | +0.00% | 0.00 |
 
-See `docs/Stats.md` §41 for full analysis.
+See `docs/Stats.md` §42 for full analysis. Prior §41 (thresh=40): IS 60.5%/+0.57%/0.14, OOS −0.30.
 
 ## MCP servers (when Node.js is available)
 
