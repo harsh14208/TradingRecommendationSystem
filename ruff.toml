@@ -1,5 +1,6 @@
 target-version = "py311"   # matches CI — catches py3.12+ syntax used on py3.11
 line-length = 120
+src = ["backend"]          # tells isort: models/database/config/services/routers are first-party
 
 [lint]
 select = [
