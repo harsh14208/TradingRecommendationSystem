@@ -183,13 +183,13 @@ class TestMarketHoursOk:
         assert result is True
 
     def test_at_close_boundary_returns_true(self, _mock_scanner_imports):
-        """15:55 ET is still in range (<=15:55)."""
-        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(15, 55))
+        """16:05 ET is still in range (extended window covers post-close scan)."""
+        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(16, 5))
         assert result is True
 
     def test_after_close_boundary_returns_false(self, _mock_scanner_imports):
-        """15:56 ET → past clean market window."""
-        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(15, 56))
+        """16:06 ET → past the 16:05 extended close window."""
+        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(16, 6))
         assert result is False
 
     def test_after_hours_returns_false(self, _mock_scanner_imports):

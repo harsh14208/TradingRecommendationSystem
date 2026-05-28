@@ -23,21 +23,28 @@ def _utcnow_naive() -> datetime:
 
 # ── Gate configuration ────────────────────────────────────────────────────────
 
-# Empirical profit factors from 529 resolved live signals (Apr-May 2026):
-#   Position: 61.6% WR, +2.88% avg, Sharpe 6.45  → keep flowing
-#   Swing:    45.5% WR, +0.81% avg, Sharpe 1.93   → restrict to near-ceiling only
-#   Intraday: 34.8% WR, -0.65% avg, Sharpe -1.88  → disabled
-# Note: confidence ceiling lowered to 65% in v5.12; intraday floor of 68
-# would already block all intraday, but set to 999 to be explicit.
+# Empirical live data (543 resolved, Apr-May 2026) — alpha/beta decomposition:
+#   Position: alpha +0.890%/trade, WR 56.6%  → keep flowing
+#   Swing:    alpha −1.028%/trade, WR 41.2%  → only very-high-confidence setups
+#   Intraday: alpha −0.321%/trade, WR 30.4%  → disabled
+# Swing floor raised 62→65 (2026-05-26): live alpha −1.028% confirms only
+# near-ceiling (65%+) swing setups carry positive expected value.
 STYLE_CONF_FLOORS: dict[str, float] = {
-    "intraday": 999.0,   # DISABLED — 34.8% WR, Sharpe -1.88 (May 2026 live data)
-    "swing":    62.0,    # adjusted for new 65% ceiling; only near-ceiling swing setups pass
-    "position": 0.0,     # no additional floor — driven by global min_confidence (55%)
+    "intraday": 999.0,   # DISABLED — alpha −0.321%/trade, WR 30.4% (May 2026 live data)
+    "swing":    65.0,    # raised 62→65 — alpha −1.028%/trade; only ≥65% setups pass
+    "position": 0.0,     # no additional floor — driven by global min_confidence (57%)
 }
 
 # Sectors with empirical PF < 0.40x blocked until per-sector models retrained.
 # XLF 0.32x, XLP 0.35x, XLU insufficient data.
 BLOCKED_SECTORS: frozenset[str] = frozenset({"XLF", "XLP", "XLU"})
+
+# Same-underlying aliases: if GOOGL signal fires, it counts as a GOOG position
+# (and vice versa) — both are Alphabet equity, different share classes only.
+TICKER_ALIASES: dict[str, str] = {
+    "GOOGL": "GOOG",
+    "GOOG":  "GOOGL",
+}
 
 
 async def check_delivery_gates(
@@ -63,10 +70,33 @@ async def check_delivery_gates(
     if action not in ("BUY", "SELL"):
         return f"action={action} not BUY/SELL", sig_dict
 
-    # ── Global confidence floor ───────────────────────────────────────────────
-    if conf < settings.min_confidence:
+    # ── Ticker-adaptive confidence floor (checked before global floor) ─────────
+    # High-win tickers (≥75% historical WR) get a relaxed 52% floor instead of
+    # the global min_confidence, so quality tickers aren't killed by a high global
+    # setting. Low-win tickers (<45% WR) must clear a stricter 68% bar.
+    _effective_conf_floor = settings.min_confidence
+    try:
+        from database import AsyncSessionLocal
+        from models import AppSettings
+        async with AsyncSessionLocal() as _adb:
+            _srow = (await _adb.execute(
+                select(AppSettings).where(AppSettings.id == 1)
+            )).scalar_one_or_none()
+        app_data   = (_srow.data or {}) if _srow else {}
+        ticker_wrs = app_data.get("adaptive_weights", {}).get("ticker_win_rates", {})
+        twr = ticker_wrs.get(ticker)
+        if twr is not None:
+            if twr < 0.45:
+                _effective_conf_floor = max(_effective_conf_floor, 68.0)
+            elif twr >= 0.75:
+                _effective_conf_floor = min(_effective_conf_floor, 52.0)
+    except Exception:
+        pass
+
+    # ── Global confidence floor (with ticker-adaptive override) ──────────────
+    if conf < _effective_conf_floor:
         return (
-            f"conf {conf:.0f}% < global floor {settings.min_confidence:.0f}%",
+            f"conf {conf:.0f}% < global floor {_effective_conf_floor:.0f}%",
             sig_dict,
         )
 
@@ -81,9 +111,13 @@ async def check_delivery_gates(
 
     # ── Sector gate ───────────────────────────────────────────────────────────
     sector = sig_dict.get("sectorEtf") or sig_dict.get("sector_etf")
-    if sector and sector in BLOCKED_SECTORS:
+    # Also check ticker itself: sector ETFs (XLF, XLP, XLU) have sector_etf=None
+    # because they ARE the sector — the column isn't self-referential.
+    ticker_as_sector = sig_dict.get("ticker", "")
+    if (sector and sector in BLOCKED_SECTORS) or (ticker_as_sector in BLOCKED_SECTORS):
+        _blocked_key = sector if (sector and sector in BLOCKED_SECTORS) else ticker_as_sector
         return (
-            f"sector {sector} blocked (low PF) — awaiting retraining",
+            f"sector {_blocked_key} blocked (low PF) — awaiting retraining",
             sig_dict,
         )
 
@@ -106,30 +140,26 @@ async def check_delivery_gates(
         if count >= 2:
             return f"sector {sector} already has {count} BUY sends in 24h (max 2)", sig_dict
 
-    # ── Ticker-adaptive confidence floor ──────────────────────────────────────
-    try:
-        from database import AsyncSessionLocal
-        from models import AppSettings
-        async with AsyncSessionLocal() as _adb:
-            _srow = (await _adb.execute(
-                select(AppSettings).where(AppSettings.id == 1)
-            )).scalar_one_or_none()
-        app_data  = (_srow.data or {}) if _srow else {}
-        ticker_wrs = app_data.get("adaptive_weights", {}).get("ticker_win_rates", {})
-        twr = ticker_wrs.get(ticker)
-        if twr is not None:
-            if twr < 0.45 and conf < 68.0:
-                return (
-                    f"hist win rate {twr*100:.0f}% requires ≥68% conf (got {conf:.0f}%)",
-                    sig_dict,
-                )
-            if twr >= 0.75 and conf < 52.0:
-                return (
-                    f"high-win ticker {twr*100:.0f}% WR but conf {conf:.0f}% < 52% floor",
-                    sig_dict,
-                )
-    except Exception:
-        pass
+    # ── Same-underlying deduplication (GOOG/GOOGL alias gate) ────────────────
+    # Both share classes map to the same Alphabet equity position. If either
+    # alias was sent as BUY in the last 24h, block the other to prevent
+    # unintended double-sizing on a single underlying.
+    alias = TICKER_ALIASES.get(ticker)
+    if alias and action == "BUY":
+        from models import Signal
+        cutoff = _utcnow_naive() - timedelta(hours=24)
+        alias_count = (await db.execute(
+            select(func.count()).select_from(Signal)
+            .where(Signal.ticker  == alias)
+            .where(Signal.action  == "BUY")
+            .where(Signal.is_sent == True)
+            .where(Signal.sent_at >= cutoff)
+        )).scalar_one()
+        if alias_count > 0:
+            return (
+                f"{ticker} blocked — alias {alias} already sent as BUY within 24h (same underlying)",
+                sig_dict,
+            )
 
     # ── Source independence gate ──────────────────────────────────────────────
     sources_set = set(sig_dict.get("sources") or [])
@@ -137,7 +167,10 @@ async def check_delivery_gates(
         "Technical", "Technicals", "Risk Gate", "Backtest",
         "Cross-Sectional", "Orthogonalization", "Signal Cluster",
     }
-    min_non_ta = 2 if style == "position" else 1
+    # Swing requires same independent corroboration as position (§33 live alpha:
+    # swing −1.028%/trade at 65% floor; single non-TA source insufficient to
+    # distinguish genuine MR setups from momentum-continuation pullbacks).
+    min_non_ta = 2 if style in ("position", "swing") else 1
     if len(non_ta) < min_non_ta:
         return (
             f"only {len(non_ta)} non-TA sources for {style} (need {min_non_ta})",

@@ -47,6 +47,7 @@ const SRC_ABBR = {
   "Finnhub": "FH", "Backtest": "BT", "Relative Strength": "RS",
   "Sector RS": "SRS", "Short Interest": "SI", "Signal Cluster": "SC",
   "Stat Arb": "SA", "Orthogonalization": "OG", "13F": "13F", "Dark Pool": "DP",
+  "Risk Gate": "RG", "Cross-Sectional": "XS", "Technicals": "TA",
 };
 const srcAbbr = s => SRC_ABBR[s] || (s || "?").slice(0, 4).toUpperCase();
 

@@ -243,3 +243,60 @@ async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame 
     except Exception as e:
         log.warning(f"[polygon] weekly bars {ticker}: {e}")
         return None
+
+
+async def get_polygon_extended_hours(ticker: str) -> "Optional[dict]":
+    """
+    Return extended-hours (pre-market / after-hours) stats using the Polygon v2
+    snapshot endpoint.  Returns the same dict shape as market_data._fetch_extended_hours()
+    so the two sources are interchangeable.
+
+    Polygon snapshot returns lastTrade.p (most recent trade price, including pre/post-market)
+    and prevDay.c (previous regular-session close) — reliable even when yfinance is
+    rate-limited or impersonation headers expire.
+    """
+    from typing import Optional as _Opt
+    api_key = _get_api_key()
+    if not api_key:
+        return None
+
+    url = f"{_BASE}/v2/snapshot/locale/us/markets/stocks/tickers/{ticker.upper()}"
+    params = {"apiKey": api_key}
+
+    try:
+        import ssl as _ssl, certifi as _certifi
+        ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+                if resp.status != 200:
+                    log.debug(f"[polygon] snapshot {ticker}: HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+
+        t_data     = (data.get("ticker") or {})
+        last_trade = t_data.get("lastTrade") or {}
+        prev_day   = t_data.get("prevDay")   or {}
+        min_data   = t_data.get("min")       or {}
+
+        ext_price  = last_trade.get("p")
+        prev_close = prev_day.get("c")
+        if not ext_price or not prev_close:
+            return None
+
+        ext_price  = float(ext_price)
+        prev_close = float(prev_close)
+        gap_pct    = round((ext_price - prev_close) / prev_close * 100, 3)
+        direction  = "up" if gap_pct > 0.1 else "down" if gap_pct < -0.1 else "flat"
+        ext_volume = int(min_data.get("v") or 0)
+
+        return {
+            "price":      ext_price,
+            "prev_close": prev_close,
+            "gap_pct":    gap_pct,
+            "vol_ratio":  1.0,   # snapshot doesn't provide avg ext-hours vol
+            "direction":  direction,
+            "ext_volume": ext_volume,
+        }
+    except Exception as e:
+        log.debug(f"[polygon] extended_hours {ticker}: {e}")
+        return None

@@ -55,9 +55,9 @@ def _sig(action="BUY", ticker="AAPL", confidence=75.0, price=150.0,
         stop=stop,
         headline="Test headline",
         rr="2.5",
-        # Include a non-technical source so the source-independence gate passes
-        # (position signals need ≥2, swing signals need ≥1 non-TA source)
-        sources=["Technical", "Macro"],
+        # Both swing and position now require ≥2 non-TA sources (§33 live data:
+        # swing alpha −1.028%/trade; single non-TA source insufficient).
+        sources=["Technical", "Macro", "Options"],
         rationale=[],
     )
     base.update(extra)

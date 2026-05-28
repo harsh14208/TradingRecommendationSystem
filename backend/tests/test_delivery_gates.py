@@ -82,20 +82,20 @@ async def test_gate_blocks_intraday_above_old_floor():
 
 
 @pytest.mark.asyncio
-async def test_gate_blocks_swing_below_62():
-    """Swing floor lowered to 62% (adjusted for new 65% confidence ceiling)."""
+async def test_gate_blocks_swing_below_65():
+    """Swing floor raised to 65% (§33 live data: swing alpha −1.028%/trade)."""
     from services.delivery_gates import check_delivery_gates
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=61.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=64.0), db, _Settings())
     assert reason is not None
 
 
 @pytest.mark.asyncio
-async def test_gate_allows_swing_at_62():
-    """Swing signals at ≥62% pass the style floor."""
+async def test_gate_allows_swing_at_65():
+    """Swing signals at ≥65% pass the style floor."""
     from services.delivery_gates import check_delivery_gates
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=63.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=65.0), db, _Settings())
     assert reason is None
 
 
@@ -193,3 +193,154 @@ async def test_gate_allows_position_with_two_non_ta():
         _sig(style="position", sources=["Options", "13F", "Macro"]), db, _Settings()
     )
     assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_gate_blocks_swing_with_one_non_ta():
+    """Swing now requires 2 non-TA sources (same as position) — §33 live alpha −1.028%."""
+    from services.delivery_gates import check_delivery_gates
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(
+        _sig(style="swing", confidence=65.0, sources=["Technical", "Macro"]), db, _Settings()
+    )
+    assert reason is not None
+    assert "non-TA" in reason
+
+
+@pytest.mark.asyncio
+async def test_gate_allows_swing_with_two_non_ta():
+    """Swing with 2 independent non-TA sources passes the source independence gate."""
+    from services.delivery_gates import check_delivery_gates
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(
+        _sig(style="swing", confidence=65.0, sources=["Technical", "Macro", "Options"]),
+        db, _Settings(),
+    )
+    assert reason is None
+
+
+# ── §37 audit fix tests: GOOG/GOOGL same-underlying deduplication ─────────────
+
+def _db_with_counts(*counts):
+    """DB mock that returns sequential scalar values across multiple execute() calls."""
+    db = AsyncMock()
+    results = []
+    for count in counts:
+        r = AsyncMock()
+        r.scalar_one = MagicMock(return_value=count)
+        results.append(r)
+    db.execute = AsyncMock(side_effect=results)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_googl_blocked_when_goog_sent():
+    """GOOGL BUY should be blocked if GOOG BUY was sent within 24h."""
+    from services.delivery_gates import check_delivery_gates
+    # sector_concentration returns 0, alias gate returns 1 (GOOG already sent)
+    db = _db_with_counts(0, 1)
+
+    mock_session = AsyncMock()
+    mock_result  = AsyncMock()
+    mock_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session.execute    = AsyncMock(return_value=mock_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(ticker="GOOGL", sectorEtf="XLC", sources=["Options", "13F"]),
+            db, _Settings(),
+        )
+    assert reason is not None, "GOOGL should be blocked when GOOG was recently sent"
+    assert "alias" in reason.lower() or "same underlying" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_goog_blocked_when_googl_sent():
+    """GOOG BUY should be blocked if GOOGL BUY was sent within 24h."""
+    from services.delivery_gates import check_delivery_gates
+    db = _db_with_counts(0, 1)
+
+    mock_session = AsyncMock()
+    mock_result  = AsyncMock()
+    mock_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session.execute    = AsyncMock(return_value=mock_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(ticker="GOOG", sectorEtf="XLC", sources=["Options", "13F"]),
+            db, _Settings(),
+        )
+    assert reason is not None, "GOOG should be blocked when GOOGL was recently sent"
+    assert "alias" in reason.lower() or "same underlying" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_alias_gate_passes_when_no_recent_alias_send():
+    """GOOGL BUY passes when GOOG has NOT been sent in the last 24h."""
+    from services.delivery_gates import check_delivery_gates
+    # sector_concentration=0, alias count=0 → passes both
+    db = _db_with_counts(0, 0)
+
+    mock_session = AsyncMock()
+    mock_result  = AsyncMock()
+    mock_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session.execute    = AsyncMock(return_value=mock_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(ticker="GOOGL", sectorEtf="XLC", sources=["Options", "13F"]),
+            db, _Settings(),
+        )
+    assert reason is None, "GOOGL should pass when no GOOG alias send in 24h"
+
+
+@pytest.mark.asyncio
+async def test_alias_gate_does_not_affect_non_aliased_ticker():
+    """Tickers with no alias (e.g. AAPL) are unaffected by the alias gate."""
+    from services.delivery_gates import check_delivery_gates
+    # sector_concentration=0 only — alias gate should not query at all for AAPL
+    db = _db_with_counts(0)
+
+    mock_session = AsyncMock()
+    mock_result  = AsyncMock()
+    mock_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session.execute    = AsyncMock(return_value=mock_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(ticker="AAPL", sectorEtf="XLK", sources=["Options", "13F"]),
+            db, _Settings(),
+        )
+    assert reason is None, "AAPL should be unaffected by alias gate"
+
+
+@pytest.mark.asyncio
+async def test_alias_gate_only_fires_on_buy_not_sell():
+    """Alias gate is BUY-only — SELL signals for GOOGL should not be blocked by it."""
+    from services.delivery_gates import check_delivery_gates
+    # Only sector_concentration query executes (alias gate is BUY-only)
+    db = _db_with_counts(0)
+
+    mock_session = AsyncMock()
+    mock_result  = AsyncMock()
+    mock_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session.execute    = AsyncMock(return_value=mock_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(ticker="GOOGL", action="SELL", sectorEtf="XLC", sources=["Options", "13F"]),
+            db, _Settings(),
+        )
+    # SELL may fail for other reasons (non-TA source, etc.) but not alias gate
+    if reason:
+        assert "alias" not in reason.lower() and "same underlying" not in reason.lower()

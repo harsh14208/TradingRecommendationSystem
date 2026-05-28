@@ -3,20 +3,17 @@ from datetime import datetime, timedelta, timezone
 import math
 import time as _time
 
-import aiohttp
-import ssl
-import certifi
 import pytz
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, or_, select
+from sqlalchemy import case, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from database import get_db
 from models import SendLog, Signal, SignalDelivery, User
 from services.auth_svc import get_current_user
-from services.telegram_svc import format_signal, send_telegram
+from services.telegram_svc import format_signal
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 
@@ -94,11 +91,16 @@ def _to_dict(s: Signal) -> dict:
 
 @router.get("")
 async def list_signals(db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
+    action_priority = case(
+        (Signal.action == "BUY",  0),
+        (Signal.action == "SELL", 1),
+        else_=2,
+    )
     rows = (await db.execute(
         select(Signal)
         .where(Signal.is_active == True)
-        .order_by(desc(Signal.confidence), desc(Signal.created_at))
-        .limit(50)
+        .order_by(action_priority, desc(Signal.confidence), desc(Signal.created_at))
+        .limit(300)
     )).scalars().all()
     return [_to_dict(r) for r in rows]
 
@@ -800,13 +802,14 @@ async def backtest_simulate(
 
     def agg(returns):
         if not returns: return {}
-        wins = [r for r in returns if r > 0]
+        wins   = [r for r in returns if r > 0]
+        losses = [r for r in returns if r <= 0]
         return {
             "count":      len(returns),
             "win_rate":   round(len(wins) / len(returns) * 100, 1),
             "avg_return": round(sum(returns) / len(returns), 2),
-            "avg_win":    round(sum(wins) / len(wins), 2) if wins else None,
-            "avg_loss":   round(sum(r for r in returns if r <= 0) / max(len(returns) - len(wins), 1), 2),
+            "avg_win":    round(sum(wins)   / len(wins),   2) if wins   else None,
+            "avg_loss":   round(sum(losses) / len(losses), 2) if losses else None,
         }
 
     return {

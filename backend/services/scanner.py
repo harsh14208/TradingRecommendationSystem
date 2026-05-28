@@ -38,7 +38,7 @@ def _check_data_quality(histories: dict, settings) -> list[str]:
     """
     degraded = []
     for ticker, df in histories.items():
-        if df is None or len(df) < 5 or df["Close"].iloc[-1] == 0:
+        if df is None or len(df) < 5 or float(df["Close"].squeeze().iloc[-1]) == 0:
             _data_quality[ticker] = _data_quality.get(ticker, 0) + 1
             if _data_quality[ticker] == 5:  # only alert on the transition to 5
                 degraded.append(ticker)
@@ -199,11 +199,12 @@ def _market_session() -> str:
     return "closed"
 
 def _market_hours_ok() -> bool:
-    """Return True during NYSE trading hours (9:30–15:55 ET, Mon–Fri only)."""
+    """Return True during NYSE trading hours (9:30–16:05 ET, Mon–Fri only).
+    Covers the post-close scan at 16:02 so near-close signals can be sent."""
     now_et = datetime.now(_ET)
     if now_et.weekday() >= 5:  # 5=Saturday, 6=Sunday
         return False
-    return dtime(9, 30) <= now_et.time() <= dtime(15, 55)
+    return dtime(9, 30) <= now_et.time() <= dtime(16, 5)
 
 
 async def _get_scan_tickers(settings) -> list[str]:
@@ -267,11 +268,13 @@ def _today_start_utc() -> datetime:
 
 
 async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
-                      force_resend: bool = False, scan_started_at: datetime | None = None):
+                      force_resend: bool = False, scan_started_at: datetime | None = None,
+                      bypass_market_hours: bool = False):
     """Send a Telegram notification for a signal if it qualifies. Mutates db_row on success.
 
     force_resend=True bypasses the 24h cooldown (used when the signal direction flipped)
     but still enforces a 30-minute anti-spam guard.
+    bypass_market_hours=True skips the time-of-day gate (used by EOD batch send).
     scan_started_at is used for SLA tracking — latency is measured from cycle start,
     not from signal created_at (which can be hours old for refreshed-but-unsent signals).
     """
@@ -282,7 +285,7 @@ async def _maybe_send(sig_dict: dict, db_row: Signal, settings, db, label: str,
         return
 
     # ── Time-of-day filter ──────────────────────────────────────────────────
-    if not _market_hours_ok():
+    if not bypass_market_hours and not _market_hours_ok():
         log.info(f" {sig_dict['ticker']} notification suppressed — outside clean market window")
         return
 
@@ -508,7 +511,6 @@ async def _compute_adaptive_weights() -> dict:
     and ≥3 resolved signals per ticker (per-ticker).
     """
     try:
-        from datetime import timezone as _tz
         import math as _math
 
         async with AsyncSessionLocal() as db:
@@ -1077,6 +1079,245 @@ async def _precompute_analytics() -> None:
         log.debug(f"[analytics] pre-compute failed (non-critical): {e}")
 
 
+async def _persist_scan_signals(
+    signals: list[dict],
+    today_start: datetime,
+) -> tuple[list[tuple], list[tuple]]:
+    """
+    Deduplicate and persist generated signals for one scan cycle.
+
+    Rules (per trading day, midnight ET boundary):
+      • Same ticker + direction, conf delta < 15pp → silent in-place refresh
+        (no new row, no re-send unless signal was never sent).
+      • Same ticker, direction flipped → deactivate old, create new,
+        force_resend=True (bypass 24h Telegram cooldown).
+      • Same ticker + direction, conf delta ≥ 15pp → deactivate old, create new,
+        normal 24h cooldown applies.
+      • No active signal from today → deactivate any stale signal, create new.
+
+    Returns:
+        new_signals      — list of (sig_dict, Signal row, force_resend) for new rows
+        refreshed_unsent — list of (sig_dict, Signal row, force_resend) for
+                           in-place refreshes where the signal was never sent
+    """
+    new_signals:      list[tuple[dict, Signal, bool]] = []
+    refreshed_unsent: list[tuple[dict, Signal, bool]] = []
+
+    async with AsyncSessionLocal() as db:
+        for sig in signals:
+            result = await db.execute(
+                select(Signal)
+                .where(Signal.ticker == sig["ticker"])
+                .where(Signal.is_active == True)
+                .order_by(desc(Signal.created_at))
+                .limit(1)
+            )
+            existing = result.scalar_one_or_none()
+            force_resend = False
+
+            if existing and existing.created_at and existing.created_at >= today_start:
+                conf_delta        = abs(sig["confidence"] - (existing.confidence or 0))
+                direction_changed = existing.action != sig["action"]
+
+                if not direction_changed and conf_delta < _CONF_CHANGE_THRESHOLD:
+                    existing.price              = sig["price"]
+                    existing.change             = sig["change"]
+                    existing.change_pct         = sig["changePct"]
+                    existing.confidence         = sig["confidence"]
+                    existing.confidence_warning = bool(sig.get("confidence_warning", False))
+                    existing.rationale          = sig["rationale"]
+                    existing.sources            = sig["sources"]
+                    existing.headline           = sig["headline"]
+                    existing.plain_english      = sig.get("plain_english")
+                    existing.session            = sig.get("session")
+                    existing.days_to_earnings   = sig.get("daysToEarnings")
+                    existing.next_earnings_date = sig.get("nextEarningsDate")
+                    existing.sector_etf         = sig.get("sectorEtf")
+                    existing.rs_vs_sector       = sig.get("rsVsSector")
+                    existing.style              = sig.get("style", existing.style)
+                    if not existing.is_sent:
+                        refreshed_unsent.append((sig, existing, False))
+                    continue
+
+                if direction_changed:
+                    force_resend = True
+                    log.info(f" {sig['ticker']} direction flip "
+                             f"{existing.action}→{sig['action']} "
+                             f"(conf {existing.confidence:.0f}%→{sig['confidence']:.0f}%)")
+                else:
+                    log.info(f" {sig['ticker']} confidence surge "
+                             f"{existing.confidence:.0f}%→{sig['confidence']:.0f}% "
+                             f"(Δ{conf_delta:.0f}pp)")
+
+            await db.execute(
+                update(Signal)
+                .where(Signal.ticker == sig["ticker"])
+                .where(Signal.is_active == True)
+                .values(is_active=False)
+            )
+
+            _now_et = datetime.now(_ET)
+            _style  = sig.get("style", "swing")
+            if _style == "intraday":
+                _close_et = _now_et.replace(hour=16, minute=5, second=0, microsecond=0)
+                if _now_et >= _close_et:
+                    _close_et += timedelta(days=1)
+                _expires = _close_et.astimezone(pytz.utc).replace(tzinfo=None)
+            elif _style == "position":
+                _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
+            else:
+                # §34d: use sector-calibrated hold_days (from _SECTOR_MR_CONFIG via
+                # signal_engine.recommendedHoldDays) instead of flat 10. Sectors with
+                # hold=5 (XLK, XLE, XLB) expire in 5 days; uncalibrated default = 10.
+                _swing_hold = sig.get("recommendedHoldDays", 10) or 10
+                _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=_swing_hold)
+
+            row = Signal(
+                ticker     = sig["ticker"],
+                company    = sig.get("company"),
+                action     = sig["action"],
+                confidence = sig["confidence"],
+                confidence_warning = bool(sig.get("confidence_warning", False)),
+                price      = sig["price"],
+                change     = sig["change"],
+                change_pct = sig["changePct"],
+                entry      = sig.get("entry"),
+                stop       = sig.get("stop"),
+                target     = sig.get("target"),
+                rr         = sig.get("rr"),
+                headline   = sig["headline"],
+                sentiment  = sig.get("sentiment", 0),
+                style      = sig.get("style", "swing"),
+                sources    = sig.get("sources", []),
+                rationale  = sig.get("rationale", []),
+                plain_english      = sig.get("plain_english"),
+                session            = sig.get("session"),
+                days_to_earnings   = sig.get("daysToEarnings"),
+                next_earnings_date = sig.get("nextEarningsDate"),
+                sector_etf         = sig.get("sectorEtf"),
+                rs_vs_sector       = sig.get("rsVsSector"),
+                expires_at         = _expires,
+            )
+            db.add(row)
+            new_signals.append((sig, row, force_resend))
+
+        await db.commit()
+
+    return new_signals, refreshed_unsent
+
+
+async def _deliver_scan_signals(
+    new_signals: list[tuple],
+    refreshed_unsent: list[tuple],
+    settings,
+    db_settings: dict,
+    positions_map: dict,
+    scan_cycle_started_at: datetime,
+) -> None:
+    """
+    Send qualifying signals via Telegram/Discord and paper-trade them.
+
+    Deduplicates by (ticker, action) so the same signal is never sent twice
+    per cycle even if it appears in both new_signals and refreshed_unsent.
+    """
+    if settings.auto_send_notifications:
+        async with AsyncSessionLocal() as db:
+            seen: set = set()
+            candidates = []
+            new_set = {id(row) for _, row, _ in new_signals}
+            for sig, row, force in (new_signals + refreshed_unsent):
+                key = (sig["ticker"], sig["action"])
+                if key not in seen:
+                    seen.add(key)
+                    label = "new" if id(row) in new_set else "unsent"
+                    candidates.append((sig, row, label, force))
+
+            for sig, row, label, force in candidates:
+                merged = await db.merge(row)
+                await _maybe_send(sig, merged, settings, db, label, force_resend=force,
+                                  scan_started_at=scan_cycle_started_at)
+                await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+
+            await db.commit()
+    elif db_settings.get("auto_paper_trade"):
+        seen: set = set()
+        for sig, row, _force in (new_signals + refreshed_unsent):
+            key = (sig["ticker"], sig["action"])
+            if key not in seen:
+                seen.add(key)
+                await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+
+
+async def eod_batch_send() -> None:
+    """
+    EOD batch delivery — sends all BUY/SELL signals from today that were never
+    delivered in real-time (is_sent=False). Bypasses the market-hours gate so
+    after-close scans get delivered. All other delivery gates still apply.
+
+    Called by the scanner loop at 16:10 ET after the post-close scan.
+    """
+    settings = get_settings()
+    if not settings.auto_send_notifications:
+        return
+
+    today_start = datetime.now(_ET).replace(
+        tzinfo=None, hour=0, minute=0, second=0, microsecond=0
+    )
+
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(Signal)
+            .where(
+                Signal.is_active == True,
+                Signal.is_sent   == False,
+                Signal.action.in_(["BUY", "SELL"]),
+                Signal.created_at >= today_start,
+            )
+            .order_by(Signal.confidence.desc())
+        )).scalars().all()
+
+    if not rows:
+        log.info("[eod_batch] no unsent BUY/SELL signals today — nothing to send")
+        return
+
+    log.info("[eod_batch] %d unsent signal(s) to process", len(rows))
+    sent_count = 0
+    batch_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    async with AsyncSessionLocal() as db:
+        for row in rows:
+            sig_dict = {
+                "ticker":         row.ticker,
+                "company":        row.company or row.ticker,
+                "action":         row.action,
+                "confidence":     row.confidence,
+                "price":          row.price,
+                "entry":          row.entry,
+                "stop":           row.stop,
+                "target":         row.target,
+                "rr":             row.rr or "—",
+                "headline":       row.headline or "",
+                "style":          row.style or "swing",
+                "sources":        row.sources or [],
+                "rationale":      row.rationale or [],
+                "sectorEtf":      row.sector_etf,
+                "daysToEarnings": row.days_to_earnings,
+            }
+            merged = await db.merge(row)
+            await _maybe_send(
+                sig_dict, merged, settings, db,
+                label="eod_batch",
+                bypass_market_hours=True,
+                scan_started_at=batch_started_at,
+            )
+            if merged.is_sent:
+                sent_count += 1
+
+        await db.commit()
+
+    log.info("[eod_batch] done — %d/%d signals delivered", sent_count, len(rows))
+
+
 async def _run_scan_impl(broadcast_fn=None):
     """
     Full scan cycle:
@@ -1085,11 +1326,12 @@ async def _run_scan_impl(broadcast_fn=None):
       3. Pre-filter: skip .info re-fetch for stable tickers (< 1% move, recent signal).
       4. Fetch ticker .info sequentially (rate-limited).
       5. Generate signals (news + EDGAR fetched concurrently per ticker).
-
-      6. Persist to SQLite.
-      7. Auto-send qualifying signals (time-of-day + cooldown checks).
+      6. Persist signals (smart daily deduplication) via _persist_scan_signals().
+      7. Auto-send + auto paper trade via _deliver_scan_signals().
       8. Update outcomes for old sent signals.
-      9. Broadcast via WebSocket.
+      9. Price alert evaluation.
+     10. Broadcast via WebSocket.
+     11. Pre-compute analytics cache.
     """
     scan_cycle_started_at = datetime.now(timezone.utc).replace(tzinfo=None)  # used for SLA measurement
     settings = get_settings()
@@ -1204,7 +1446,6 @@ async def _run_scan_impl(broadcast_fn=None):
         h = histories.get(t)
         if h is not None and len(h) >= 5:
             try:
-                import pandas as _pd
                 today_vol = float(h["Volume"].iloc[-1])
                 avg_vol   = float(h["Volume"].iloc[-21:-1].mean())
                 if avg_vol > 0:
@@ -1254,131 +1495,16 @@ async def _run_scan_impl(broadcast_fn=None):
         log.info(f" scan_all failed: {e}")
         raise RuntimeError(f"scan_all failed: {e}") from e
 
-    # new_signals entries are 3-tuples: (sig_dict, db_row, force_resend)
-    new_signals:      list[tuple[dict, Signal, bool]] = []
-    refreshed_unsent: list[tuple[dict, Signal, bool]] = []
-
     # ── Step 6: persist (smart daily deduplication) ──────────────────────
     _mark_scan_stage("persistence")
-    # Rules (per trading day, midnight ET boundary):
-    #   • Same ticker, same direction, conf delta < 15pp → silent refresh
-    #     (update price/confidence in place, no new row, no Telegram re-send)
-    #   • Same ticker, direction flipped → deactivate old, create new,
-    #     bypass 24h Telegram cooldown (force_resend=True)
-    #   • Same ticker, same direction, conf delta ≥ 15pp → deactivate old,
-    #     create new, normal 24h Telegram cooldown applies
-    #   • No active signal from today → deactivate any stale signal, create new
-    today_start = _today_start_utc()
-
-    async with AsyncSessionLocal() as db:
-        for sig in signals:
-            # Find most recent active signal for this ticker (any direction)
-            result = await db.execute(
-                select(Signal)
-                .where(Signal.ticker == sig["ticker"])
-                .where(Signal.is_active == True)
-                .order_by(desc(Signal.created_at))
-                .limit(1)
-            )
-            existing = result.scalar_one_or_none()
-
-            force_resend = False
-
-            if existing and existing.created_at and existing.created_at >= today_start:
-                # ── Same trading day ──────────────────────────────────────
-                conf_delta        = abs(sig["confidence"] - (existing.confidence or 0))
-                direction_changed = existing.action != sig["action"]
-
-                if not direction_changed and conf_delta < _CONF_CHANGE_THRESHOLD:
-                    # Prediction essentially unchanged — silent in-place refresh
-                    existing.price              = sig["price"]
-                    existing.change             = sig["change"]
-                    existing.change_pct         = sig["changePct"]
-                    existing.confidence         = sig["confidence"]
-                    existing.confidence_warning = bool(sig.get("confidence_warning", False))
-                    existing.rationale          = sig["rationale"]
-                    existing.sources            = sig["sources"]
-                    existing.headline           = sig["headline"]
-                    existing.plain_english      = sig.get("plain_english")
-                    existing.session            = sig.get("session")
-                    existing.days_to_earnings   = sig.get("daysToEarnings")
-                    existing.next_earnings_date = sig.get("nextEarningsDate")
-                    existing.sector_etf         = sig.get("sectorEtf")
-                    existing.rs_vs_sector       = sig.get("rsVsSector")
-                    existing.style              = sig.get("style", existing.style)
-                    # Still queue for send if never sent (first send of the day)
-                    if not existing.is_sent:
-                        refreshed_unsent.append((sig, existing, False))
-                    continue  # no new row for minor updates
-
-                # Significant change — log it and create a fresh signal
-                if direction_changed:
-                    force_resend = True
-                    log.info(f" {sig['ticker']} direction flip "
-                             f"{existing.action}→{sig['action']} "
-                             f"(conf {existing.confidence:.0f}%→{sig['confidence']:.0f}%)")
-                else:
-                    log.info(f" {sig['ticker']} confidence surge "
-                             f"{existing.confidence:.0f}%→{sig['confidence']:.0f}% "
-                             f"(Δ{conf_delta:.0f}pp)")
-
-            # Deactivate all active signals for this ticker before inserting new
-            await db.execute(
-                update(Signal)
-                .where(Signal.ticker == sig["ticker"])
-                .where(Signal.is_active == True)
-                .values(is_active=False)
-            )
-
-            # Expiry: intraday → today 4pm ET; swing → +10 calendar days; position → +30 days
-            _now_et  = datetime.now(_ET)
-            _style   = sig.get("style", "swing")
-            if _style == "intraday":
-                _close_et = _now_et.replace(hour=16, minute=5, second=0, microsecond=0)
-                if _now_et >= _close_et:
-                    _close_et += timedelta(days=1)
-                _expires = _close_et.astimezone(pytz.utc).replace(tzinfo=None)
-            elif _style == "position":
-                _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
-            else:  # swing
-                _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=10)
-
-            row = Signal(
-                ticker     = sig["ticker"],
-                company    = sig.get("company"),
-                action     = sig["action"],
-                confidence = sig["confidence"],
-                confidence_warning = bool(sig.get("confidence_warning", False)),
-                price      = sig["price"],
-                change     = sig["change"],
-                change_pct = sig["changePct"],
-                entry      = sig.get("entry"),
-                stop       = sig.get("stop"),
-                target     = sig.get("target"),
-                rr         = sig.get("rr"),
-                headline   = sig["headline"],
-                sentiment  = sig.get("sentiment", 0),
-                style      = sig.get("style", "swing"),
-                sources    = sig.get("sources", []),
-                rationale  = sig.get("rationale", []),
-                plain_english      = sig.get("plain_english"),
-                session            = sig.get("session"),
-                days_to_earnings   = sig.get("daysToEarnings"),
-                next_earnings_date = sig.get("nextEarningsDate"),
-                sector_etf         = sig.get("sectorEtf"),
-                rs_vs_sector       = sig.get("rsVsSector"),
-                expires_at         = _expires,
-            )
-            db.add(row)
-            new_signals.append((sig, row, force_resend))
-
-        await db.commit()
+    new_signals, refreshed_unsent = await _persist_scan_signals(
+        signals, _today_start_utc()
+    )
 
     # ── Step 7: auto-send + auto paper trade ────────────────────────────
     _mark_scan_stage("delivery")
     db_settings = await _load_db_settings()
 
-    # Pre-load open positions once so _maybe_paper_trade can deduplicate cheaply
     positions_map: dict = {}
     if db_settings.get("auto_paper_trade") and settings.alpaca_api_key:
         try:
@@ -1390,33 +1516,10 @@ async def _run_scan_impl(broadcast_fn=None):
         except Exception as e:
             log.info(f" positions fetch failed: {e}")
 
-    if settings.auto_send_notifications:
-        async with AsyncSessionLocal() as db:
-            seen = set()
-            candidates = []
-            new_set = {id(row) for _, row, _ in new_signals}
-            for sig, row, force in (new_signals + refreshed_unsent):
-                key = (sig["ticker"], sig["action"])
-                if key not in seen:
-                    seen.add(key)
-                    label = "new" if id(row) in new_set else "unsent"
-                    candidates.append((sig, row, label, force))
-
-            for sig, row, label, force in candidates:
-                merged = await db.merge(row)
-                await _maybe_send(sig, merged, settings, db, label, force_resend=force,
-                                  scan_started_at=scan_cycle_started_at)
-                await _maybe_paper_trade(sig, positions_map, settings, db_settings)
-
-            await db.commit()
-    elif db_settings.get("auto_paper_trade"):
-        # Paper trading on but Telegram off — still run paper trades
-        seen = set()
-        for sig, row, _force in (new_signals + refreshed_unsent):
-            key = (sig["ticker"], sig["action"])
-            if key not in seen:
-                seen.add(key)
-                await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+    await _deliver_scan_signals(
+        new_signals, refreshed_unsent, settings, db_settings,
+        positions_map, scan_cycle_started_at
+    )
 
     # ── Step 8: update outcomes ──────────────────────────────────────────
     _mark_scan_stage("outcomes")

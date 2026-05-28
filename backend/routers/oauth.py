@@ -147,12 +147,10 @@ def _utcnow_naive() -> datetime:
 
 @router.get("/oauth-exchange")
 async def oauth_exchange(
-    code:     str = Query(...),
-    response: "Response" = None,
-    db:       AsyncSession = Depends(get_db),
+    code: str = Query(...),
+    db:   AsyncSession = Depends(get_db),
 ):
     from fastapi.responses import JSONResponse
-    from fastapi import Response as FastAPIResponse
     import hashlib
 
     now = time.monotonic()

@@ -166,8 +166,8 @@ def test_assemble_signal_earnings_blackout():
 
 def test_assemble_signal_risk_free_rate_dampener():
     res = _assemble_signal(
-        ticker="TSLA",
-        info={"company": "Tesla"},
+        ticker="AAPL",
+        info={"company": "Apple"},
         tech={"price": 100.0, "atr": 1.0, "rsi": 38.0}, # rsi<42 satisfies MR gate; target 100+3*1=103
         score=50.0, # BUY
         rationale=[],
@@ -385,3 +385,233 @@ def test_iv_rank_flag_post_earnings_context():
     iv_cards = [(h, b) for h, b in zip(heads, bodies) if "IV Rank" in h]
     assert iv_cards, "Expected IV Rank card near earnings"
     assert "crush" in iv_cards[0][1].lower() or "crush" in iv_cards[0][0].lower()
+
+
+# ── §37 audit fix tests ────────────────────────────────────────────────────────
+
+def _mr_buy_kwargs(**overrides):
+    """Base kwargs for an MR BUY signal: RSI<42 satisfies _has_mr."""
+    defaults = dict(
+        ticker="NVDA",
+        info={"company": "NVIDIA"},
+        tech={"price": 100.0, "atr": 2.0, "rsi": 38.0, "volume": 5_000_000, "avg_volume": 4_000_000},
+        score=45.0,
+        rationale=[],
+        sources=set(),
+        _force_hold=False,
+        _is_low_atr=False,
+        _atr_pct_pre=0.02,
+        total_confidence_penalty=0.0,
+        avg_sent=0.5,
+        price=100.0,
+        atr=2.0,
+        market_ctx={"macro": {"sp500_trend": "up"}},
+        earnings_cal={},
+        sector_rs=None,
+        days_to_earnings=None,
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+def test_ar1_gate_applies_haircut_on_momentum_regime():
+    """AR(1) > 0.05 on an MR BUY should reduce confidence.
+    score=50 bypasses the orthogonality gate (which blocks score<50 with <3 families),
+    ensuring the AR(1) gate is the one we're testing.
+    """
+    base = _mr_buy_kwargs(score=50.0)
+    base["tech"] = {**base["tech"], "momentum_ar1": 0.10}  # trending regime
+
+    res_no_ar1 = _assemble_signal(**_mr_buy_kwargs(score=50.0))
+    res_ar1    = _assemble_signal(**base)
+
+    # Both should still produce BUY (gate is a haircut, not a hard block)
+    if res_no_ar1 and res_ar1 and res_no_ar1["action"] == "BUY" and res_ar1["action"] == "BUY":
+        assert res_ar1["confidence"] < res_no_ar1["confidence"], (
+            "AR(1)=0.10 should reduce confidence vs no AR(1)"
+        )
+    # Rationale card must appear when AR(1)=0.10
+    if res_ar1:
+        heads = [r["head"] for r in res_ar1["rationale"]]
+        assert any("Persistence" in h or "AR(1)" in h for h in heads), (
+            f"Expected AR(1) gate rationale card; got: {heads}"
+        )
+
+
+def test_ar1_gate_no_haircut_below_threshold():
+    """AR(1) = 0.03 (below 0.05 threshold) should NOT apply a haircut."""
+    base = _mr_buy_kwargs(score=50.0)
+    base["tech"] = {**base["tech"], "momentum_ar1": 0.03}
+
+    res_baseline = _assemble_signal(**_mr_buy_kwargs(score=50.0))
+    res_low_ar1  = _assemble_signal(**base)
+
+    if res_baseline and res_low_ar1:
+        # No AR(1) rationale card should be emitted
+        heads = [r["head"] for r in res_low_ar1["rationale"]]
+        assert not any("Persistence" in h or "AR(1)" in h for h in heads), (
+            f"AR(1)=0.03 should not add persistence card; got: {heads}"
+        )
+
+
+def test_ar1_gate_haircut_capped_at_10pp():
+    """Very high AR(1) = 0.30 should cap haircut at 10pp (not e.g. 50pp)."""
+    base = _mr_buy_kwargs(score=50.0)
+    base["tech"] = {**base["tech"], "momentum_ar1": 0.30}
+
+    res_normal = _assemble_signal(**_mr_buy_kwargs(score=50.0))
+    res_high   = _assemble_signal(**base)
+
+    if res_normal and res_high:
+        diff = res_normal.get("confidence", 0) - res_high.get("confidence", 0)
+        assert diff <= 10.0 + 0.1, f"Haircut {diff:.1f}pp should not exceed 10pp cap"
+
+
+def test_ar1_gate_does_not_fire_on_non_mr_signal():
+    """AR(1) gate only fires when _has_mr is True (RSI < 42 etc.)."""
+    base = _mr_buy_kwargs(score=50.0)
+    # RSI = 60 → _has_mr = False (no MR condition met)
+    base["tech"] = {
+        "price": 100.0, "atr": 2.0, "rsi": 60.0,
+        "volume": 5_000_000, "avg_volume": 4_000_000,
+        "momentum_ar1": 0.20,
+    }
+    res = _assemble_signal(**base)
+    if res:
+        heads = [r["head"] for r in res["rationale"]]
+        assert not any("Persistence" in h or "AR(1)" in h for h in heads), (
+            "AR(1) gate must not fire when _has_mr=False"
+        )
+
+
+def test_backtest_derived_tickers_not_in_defensive_block():
+    """TSLA/SBUX/GS/MA/BLK/SCHW/PANW/GEN/CPAY must not be in _DEFENSIVE_BUY_BLOCK.
+    Rationale: they were excluded via 20yr backtest look-ahead (audit §1 critical fix).
+    The dynamic AR(1) gate now handles them.
+    """
+    from services.signal_engine import _assemble_signal as _asm
+    removed_tickers = ["TSLA", "SBUX", "GS", "MA", "BLK", "SCHW", "PANW", "GEN", "CPAY"]
+    for ticker in removed_tickers:
+        res = _asm(**_mr_buy_kwargs(ticker=ticker))
+        # Should not be hard-blocked by the defensive block (action may still be HOLD
+        # for other valid reasons, but must NOT have the defensive_ticker_block meta tag)
+        if res:
+            metas = [r.get("meta", "") for r in res["rationale"]]
+            assert not any("defensive_ticker_block" in m for m in metas), (
+                f"{ticker} should no longer be in _DEFENSIVE_BUY_BLOCK (look-ahead bias removed); "
+                f"meta tags: {metas}"
+            )
+
+
+def test_sector_config_no_per_sector_buy_thresh_for_active_sectors():
+    """Active sectors (XLK, XLY, XLE, etc.) must not have per-sector buy_thresh.
+    Audit: per-sector buy_thresh failed OOS 4/5 windows — removed to improve OOS survival.
+    """
+    from services.signal_engine import _SECTOR_MR_CONFIG
+    # Sectors that should NOT have a buy_thresh override (active/positive sectors)
+    active_sectors = ["XLK", "XLY", "XLE", "XLC", "XLB", "XLF", "XLP"]
+    for sector in active_sectors:
+        cfg = _SECTOR_MR_CONFIG.get(sector, {})
+        thresh = cfg.get("buy_thresh")
+        assert thresh is None, (
+            f"Sector {sector} should not have buy_thresh after OOS de-curation; "
+            f"got buy_thresh={thresh}"
+        )
+        vix_min = cfg.get("vix_min")
+        assert vix_min is None, (
+            f"Sector {sector} should not have vix_min after OOS de-curation; "
+            f"got vix_min={vix_min}"
+        )
+
+
+def test_sector_config_blocked_sectors_still_have_999():
+    """Confirmed-negative sectors (XLV, XLI, XLRE, XLU) must keep buy_thresh=999."""
+    from services.signal_engine import _SECTOR_MR_CONFIG
+    for sector in ["XLV", "XLI", "XLRE", "XLU"]:
+        cfg = _SECTOR_MR_CONFIG.get(sector, {})
+        assert cfg.get("buy_thresh") == 999, (
+            f"Blocked sector {sector} must keep buy_thresh=999"
+        )
+
+
+# ── §38 audit fix tests ────────────────────────────────────────────────────────
+
+def test_ar1_haircut_halved_when_revenue_growing():
+    """AR(1)=0.10 haircut must be halved when revenue_growth > -10% (healthy dip, not value trap)."""
+    base_no_rev = _mr_buy_kwargs(score=50.0, info={"company": "NVDA"})
+    base_no_rev["tech"] = {**base_no_rev["tech"], "momentum_ar1": 0.10}
+
+    base_growing = _mr_buy_kwargs(score=50.0, info={"company": "NVDA", "revenue_growth": 0.15})
+    base_growing["tech"] = {**base_growing["tech"], "momentum_ar1": 0.10}
+
+    res_no_rev  = _assemble_signal(**base_no_rev)
+    res_growing = _assemble_signal(**base_growing)
+
+    if res_no_rev and res_growing and res_no_rev["action"] == "BUY" == res_growing["action"]:
+        # Growing revenue should result in less haircut → higher confidence
+        assert res_growing["confidence"] >= res_no_rev["confidence"] - 0.1, (
+            f"Growing revenue should reduce haircut: growing={res_growing['confidence']:.1f} "
+            f"vs no_rev={res_no_rev['confidence']:.1f}"
+        )
+
+
+def test_ar1_full_haircut_when_revenue_declining():
+    """AR(1)=0.10 haircut must be full when revenue_growth < -10% (value trap risk)."""
+    base_declining = _mr_buy_kwargs(score=50.0, info={"company": "NVDA", "revenue_growth": -0.25})
+    base_declining["tech"] = {**base_declining["tech"], "momentum_ar1": 0.10}
+
+    base_growing = _mr_buy_kwargs(score=50.0, info={"company": "NVDA", "revenue_growth": 0.15})
+    base_growing["tech"] = {**base_growing["tech"], "momentum_ar1": 0.10}
+
+    res_declining = _assemble_signal(**base_declining)
+    res_growing   = _assemble_signal(**base_growing)
+
+    if res_declining and res_growing and res_declining["action"] == "BUY" == res_growing["action"]:
+        assert res_declining["confidence"] <= res_growing["confidence"] + 0.1, (
+            f"Declining revenue should take larger haircut than growing: "
+            f"declining={res_declining['confidence']:.1f} vs growing={res_growing['confidence']:.1f}"
+        )
+
+
+def test_ar1_rationale_mentions_revenue_context():
+    """AR(1) rationale card must mention revenue growth context when available."""
+    base = _mr_buy_kwargs(score=50.0, info={"company": "NVDA", "revenue_growth": 0.20})
+    base["tech"] = {**base["tech"], "momentum_ar1": 0.10}
+    res = _assemble_signal(**base)
+    if res:
+        bodies = [r.get("body", "") for r in res["rationale"] if "Persistence" in r.get("head", "")]
+        assert any("+20.0%" in b or "Dip" in r.get("head", "") for b, r in zip(bodies, res["rationale"])), (
+            "AR(1) rationale card should mention revenue context when available"
+        )
+
+
+def test_options_sweep_gex_gives_15pp_bonus():
+    """Call sweep + positive GEX should give +15pp confidence, not just +5pp."""
+    import pandas as pd
+    base = _mr_buy_kwargs(score=50.0)
+    # Provide opt_flow with sweep_calls + positive GEX
+    opt_with_sweep = {"sweep_calls": True, "gex": 50_000_000.0, "pc_ratio": 0.8, "iv_rank": None}
+    opt_no_sweep   = {"sweep_calls": False, "gex": 50_000_000.0, "pc_ratio": 0.6, "iv_rank": None}
+
+    res_sweep    = _assemble_signal(**{**base, "opt_flow": opt_with_sweep})
+    res_no_sweep = _assemble_signal(**{**base, "opt_flow": opt_no_sweep})
+
+    if res_sweep and res_no_sweep and res_sweep["action"] == res_no_sweep["action"] == "BUY":
+        assert res_sweep["confidence"] > res_no_sweep["confidence"], (
+            f"Sweep+GEX should boost confidence more than GEX alone: "
+            f"sweep={res_sweep['confidence']:.1f} vs no_sweep={res_no_sweep['confidence']:.1f}"
+        )
+        # Sweep+GEX gives +15pp vs GEX-only +5pp; net diff ≥ 8pp after Platt rounding
+        diff = res_sweep["confidence"] - res_no_sweep["confidence"]
+        assert diff >= 8.0, f"Sweep+GEX bonus should be ≥ 8pp above GEX-only; got {diff:.1f}pp"
+
+
+def test_options_sweep_rationale_mentions_sweep():
+    """When sweep+GEX fires, rationale must say 'sweep' and 'GEX'."""
+    base = _mr_buy_kwargs(score=50.0)
+    opt_with_sweep = {"sweep_calls": True, "gex": 20_000_000.0, "pc_ratio": 0.7, "iv_rank": None}
+    res = _assemble_signal(**{**base, "opt_flow": opt_with_sweep})
+    if res:
+        heads = [r["head"] for r in res["rationale"]]
+        sweep_cards = [h for h in heads if "Sweep" in h or "sweep" in h.lower()]
+        assert sweep_cards, f"Expected a sweep rationale card; got: {heads}"

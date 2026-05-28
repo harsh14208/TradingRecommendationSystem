@@ -31,6 +31,10 @@ xgboost>=2.0.0
 scikit-learn>=1.4.0
 scipy>=1.11.0       # exact t-distribution p-values in calc_tbd_metrics
 
+# ── Migrations ──
+alembic>=1.13.0
+psycopg2-binary>=2.9.0   # sync driver for Alembic (asyncpg used at runtime)
+
 # ── Dev / CI ──
 pip-audit>=2.7.0
 email-validator

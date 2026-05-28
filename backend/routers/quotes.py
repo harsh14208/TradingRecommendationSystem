@@ -44,8 +44,8 @@ async def ticker_tape():
 @router.get("/chart/{ticker}")
 async def chart_data(
     ticker: str,
+    response: Response,
     period: str = "3mo",
-    response: Response = None,
     user: User = Depends(get_current_user),
 ):
     _require_basic(user)
@@ -76,9 +76,9 @@ async def chart_data(
 @router.get("/chart/{ticker}/relative")
 async def relative_chart(
     ticker: str,
+    response: Response,
     period: str = "3mo",
     versus: str = "SPY",
-    response: Response = None,
     user: User = Depends(get_current_user),
 ):
     """Return ticker and benchmark normalised to 100 at start — for relative performance overlay."""

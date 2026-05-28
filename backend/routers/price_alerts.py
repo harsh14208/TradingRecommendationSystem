@@ -74,7 +74,10 @@ async def delete_alert(
 ):
     """Delete a price alert."""
     alert = await db.get(PriceAlert, alert_id)
-    if alert and alert.user_id == user.id:
-        await db.delete(alert)
-        await db.commit()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    if alert.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    await db.delete(alert)
+    await db.commit()
     return {"ok": True}

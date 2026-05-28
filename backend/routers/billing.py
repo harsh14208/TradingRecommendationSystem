@@ -11,10 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import TIER_LABELS, TIER_PLAN_FEATURES, TIER_PRICES_CENTS, TIERS, get_settings
+from config import TIER_LABELS, TIER_PLAN_FEATURES, TIER_PRICES_CENTS, get_settings
 from database import get_db
 from models import StripeEvent, User
-from services.auth_svc import get_current_user, user_to_dict
+from services.auth_svc import get_current_user
 from services.email_svc import (
     send_payment_failed,
     send_subscription_canceled,

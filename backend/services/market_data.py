@@ -37,10 +37,75 @@ def _yf_trip_breaker():
     _yf_backoff_until = _time.time() + _YF_BACKOFF_SECS
 
 # ── Polygon OHLCV Shared Cache ───────────────────────────────────────────────
-# Keyed by (ticker, period, interval) → DataFrame + timestamp.
-# 15-minute TTL: avoids redundant Polygon downloads within a scan cycle.
-_ohlcv_cache: dict[tuple, dict] = {}
+# Redis-backed with in-memory fallback.
+# Redis (when available) enables cache sharing across Uvicorn workers so a
+# restart or second worker doesn't re-download the same Polygon bars within
+# the same 15-min scan cycle.  Falls back to an in-process dict if Redis is
+# not reachable — behaviour is identical from the caller's perspective.
 _OHLCV_TTL = 900   # 15 minutes
+_OHLCV_MAX_ENTRIES = 500  # in-memory fallback cap
+
+import os as _os, logging as _log_mod
+_cache_log = _log_mod.getLogger("signal.trade.cache")
+
+# ── Attempt Redis connection at import time ───────────────────────────────────
+_redis_client = None
+try:
+    import redis as _redis_lib
+    _redis_url = _os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    _redis_client = _redis_lib.Redis.from_url(_redis_url, socket_connect_timeout=1,
+                                               socket_timeout=1, decode_responses=False)
+    _redis_client.ping()
+    _cache_log.info(f"[cache] Redis connected — OHLCV cache shared across workers ({_redis_url})")
+except Exception as _redis_err:
+    _redis_client = None
+    _cache_log.debug(f"[cache] Redis unavailable ({_redis_err!r}) — using in-process fallback")
+
+# In-memory fallback (used when Redis is not reachable)
+_ohlcv_cache: dict[tuple, dict] = {}
+
+
+def _ohlcv_cache_get(key: tuple) -> "Optional[pd.DataFrame]":
+    """Return a cached DataFrame if present and not expired, else None."""
+    import pickle as _pickle
+    if _redis_client is not None:
+        try:
+            raw = _redis_client.get(f"ohlcv:{':'.join(str(k) for k in key)}")
+            if raw:
+                return _pickle.loads(raw)
+        except Exception:
+            pass
+        return None
+    # In-memory fallback
+    entry = _ohlcv_cache.get(key)
+    if entry and _time.time() - entry["ts"] < _OHLCV_TTL:
+        return entry["df"]
+    return None
+
+
+def _ohlcv_cache_set(key: tuple, df, ts: float) -> None:
+    """Write to the OHLCV cache (Redis SETEX or evicting in-memory dict)."""
+    import pickle as _pickle
+    if _redis_client is not None:
+        try:
+            _redis_client.setex(
+                f"ohlcv:{':'.join(str(k) for k in key)}",
+                _OHLCV_TTL,
+                _pickle.dumps(df),
+            )
+        except Exception:
+            pass
+        return
+    # In-memory fallback with eviction
+    if len(_ohlcv_cache) >= _OHLCV_MAX_ENTRIES:
+        expired = [k for k, v in _ohlcv_cache.items() if ts - v["ts"] >= _OHLCV_TTL]
+        for k in expired:
+            del _ohlcv_cache[k]
+        if len(_ohlcv_cache) >= _OHLCV_MAX_ENTRIES:
+            to_drop = sorted(_ohlcv_cache, key=lambda k: _ohlcv_cache[k]["ts"])
+            for k in to_drop[: len(to_drop) // 2]:
+                del _ohlcv_cache[k]
+    _ohlcv_cache[key] = {"df": df, "ts": ts}
 
 COMPANY_NAMES = {
     # ── Mega-cap core ────────────────────────────────────────────────────────
@@ -213,7 +278,14 @@ def _fetch_histories_batch(
         if len(tickers) == 1:
             t = tickers[0]
             if not raw.empty:
-                out[t] = raw
+                try:
+                    # yfinance 1.x always returns MultiIndex (metric, ticker) even
+                    # for single tickers — extract flat columns the same way.
+                    df = raw.xs(t, level=1, axis=1).dropna(how="all")
+                    if not df.empty and len(df) >= 2:
+                        out[t] = df
+                except (KeyError, TypeError):
+                    out[t] = raw  # fallback: store as-is if xs fails
         else:
             for t in tickers:
                 try:
@@ -410,8 +482,9 @@ async def get_history(
     # Check shared OHLCV cache first — avoids redundant Polygon calls within a scan cycle
     _cache_key = (ticker.upper(), period, interval)
     _now = _time.time()
-    if _cache_key in _ohlcv_cache and _now - _ohlcv_cache[_cache_key]["ts"] < _OHLCV_TTL:
-        return _ohlcv_cache[_cache_key]["df"]
+    _cached = _ohlcv_cache_get(_cache_key)
+    if _cached is not None:
+        return _cached
 
     # Prefer Polygon.io when key is configured — more reliable than yfinance
     try:
@@ -421,7 +494,7 @@ async def get_history(
             from services.polygon_client import get_polygon_history
             df = await get_polygon_history(ticker, period=period, interval=interval)
             if df is not None and not df.empty and len(df) >= 2:
-                _ohlcv_cache[_cache_key] = {"df": df, "ts": _now}
+                _ohlcv_cache_set(_cache_key, df, _now)
                 return df
     except Exception:
         pass
@@ -430,7 +503,7 @@ async def get_history(
         return None
     df = await _rate_limited(_fetch_history, ticker, period, interval)
     if df is not None and not df.empty:
-        _ohlcv_cache[_cache_key] = {"df": df, "ts": _now}
+        _ohlcv_cache_set(_cache_key, df, _now)
     return df
 
 
@@ -491,6 +564,18 @@ def _fetch_extended_hours(ticker: str) -> Optional[dict]:
 
 
 async def get_extended_hours_data(ticker: str) -> Optional[dict]:
+    # Attempt Polygon snapshot for reliable pre/post-market data first
+    try:
+        from config import get_settings
+        s = get_settings()
+        if s.polygon_api_key or s.massive_api_key:
+            from services.polygon_client import get_polygon_extended_hours
+            ext_data = await get_polygon_extended_hours(ticker)
+            if ext_data:
+                return ext_data
+    except Exception:
+        pass
+
     return await _rate_limited(_fetch_extended_hours, ticker)
 
 

@@ -272,7 +272,7 @@ async def rate_limit_dashboard(owner: User = Depends(_require_owner)):
 
     # yfinance circuit breaker state
     try:
-        from services.market_data import _yf_backoff_until, _YF_BACKOFF_SECS
+        from services.market_data import _yf_backoff_until
         now = _time.time()
         if _yf_backoff_until > now:
             result["yfinance_blocked"] = True

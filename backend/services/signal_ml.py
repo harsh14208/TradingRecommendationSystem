@@ -288,30 +288,64 @@ def train_model() -> Optional[dict]:
 
     top_features = [f["feature"] for f in fi[:5]]
 
-    # ── Persist model ──────────────────────────────────────────────────────────
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # ── Champion / Challenger gate ────────────────────────────────────────────
+    # Only deploy the new model if it beats the current champion's OOS AUC.
+    # Guards against retraining on a bad sample window replacing a good model.
+    _deployed = False
+    _champion_auc: Optional[float] = None
     try:
-        model.get_booster().save_model(str(_MODEL_FILE))
-        log.info(f"[signal_ml] Model saved to {_MODEL_FILE}")
-    except Exception as e:
-        log.error(f"[signal_ml] WRITE FAILED — {_MODEL_FILE}: {e}")
+        if _FEATURE_FILE.exists():
+            _champ_meta = json.loads(_FEATURE_FILE.read_text())
+            _champion_auc = _champ_meta.get("oos_auc")
+    except Exception:
+        pass
+
+    _should_deploy = (
+        oos_auc is None                          # can't compute AUC (too few samples) — deploy anyway
+        or _champion_auc is None                  # no existing champion — first run
+        or oos_auc > _champion_auc                # challenger beats champion
+    )
+
+    if _should_deploy:
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            model.get_booster().save_model(str(_MODEL_FILE))
+            _deployed = True
+            if _champion_auc is None:
+                log.info(f"[signal_ml] First model deployed — OOS AUC={oos_auc}")
+            else:
+                log.info(
+                    f"[signal_ml] Challenger deployed — OOS AUC {oos_auc:.4f} > "
+                    f"champion {_champion_auc:.4f} (+{oos_auc - _champion_auc:.4f})"
+                )
+        except Exception as e:
+            log.error(f"[signal_ml] WRITE FAILED — {_MODEL_FILE}: {e}")
+    else:
+        log.warning(
+            f"[signal_ml] Challenger rejected — OOS AUC {oos_auc:.4f} <= "
+            f"champion {_champion_auc:.4f}. Keeping existing model."
+        )
 
     # ── Persist feature importances + metadata ─────────────────────────────────
     from datetime import datetime as _dt
     metadata = {
-        "trained_at":    _dt.utcnow().isoformat(),
-        "n_train":       n_train,
-        "n_test":        n_test,
-        "oos_accuracy":  oos_acc,
-        "oos_auc":       oos_auc,
-        "oos_precision": oos_prec,
-        "oos_recall":    oos_rec,
-        "top_features":  top_features,
+        "trained_at":     _dt.utcnow().isoformat(),
+        "n_train":        n_train,
+        "n_test":         n_test,
+        "oos_accuracy":   oos_acc,
+        "oos_auc":        oos_auc,
+        "oos_precision":  oos_prec,
+        "oos_recall":     oos_rec,
+        "top_features":   top_features,
         "feature_importances": fi,
+        "deployed":       _deployed,
+        "champion_auc":   _champion_auc,
     }
+    # Always write metadata (so the router can show the last training run even if not deployed)
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
     try:
         _FEATURE_FILE.write_text(json.dumps(metadata, indent=2))
-        log.info(f"[signal_ml] Feature importances saved to {_FEATURE_FILE}")
+        log.info(f"[signal_ml] Metadata saved to {_FEATURE_FILE}")
     except Exception as e:
         log.error(f"[signal_ml] WRITE FAILED — {_FEATURE_FILE}: {e}")
 
@@ -323,6 +357,8 @@ def train_model() -> Optional[dict]:
         "n_train":       n_train,
         "n_test":        n_test,
         "top_features":  top_features,
+        "deployed":      _deployed,
+        "champion_auc":  _champion_auc,
     }
 
 

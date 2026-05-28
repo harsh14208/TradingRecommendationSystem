@@ -101,8 +101,16 @@
 **Pending (after §16 + §17 complete):**
 - [x] **Run §17 and read results** — Results in `/tmp/decomp_s17.log` and recorded in Stats.md §27. Key: §17d best combined (ATR≤70 + jump<−6%) → Ann.Sharpe 2.10, WR 96.3%, N=27. T+2 delay harmful (−0.29 Sharpe). IBS streak gate neutral (no N effect). Both live gates already deployed in signal_engine.py.
 - [ ] **Options flow confirmation gate** — Unusual Whales / FlowAlgo API (~$50-99/mo). Concurrent large call sweeps on oversold stocks = institutional accumulation confirmation. Estimated WR uplift to 85%+. See Pillar 0 for full spec.
-- [ ] **Energy sub-sector split** — §16a showed Energy Sharpe 0.52, WR 70%. EOG in bad-ticker list. Isolate EOG; re-test XOM/CVX/COP/SLB as 4-ticker energy subgroup after §16 completes.
-- [ ] **Update _SECTOR_MR_CONFIG for XLU** — XLB (hold=5d, thresh=38), XLC (hold=10d, no VIX floor), XLE (vix≥15, thresh=40) already applied in signal_engine.py from §16. XLU still pending — not in §16 universe. Run §16-style research on XLU tickers (NEE, DUK, SO, AEP) before enabling.
+- [x] **Energy sub-sector split** — §33a (2026-05-26): XOM+CVX+COP+SLB combined N=13, WR=61.5%, Ann.Sharpe=2.03. XLE config unchanged. EOG confirmed in bad_tickers (live data consistent). XOM is weak link (N=4, WR=25%) but sample too small. Watch XOM in live data.
+- [x] **Update _SECTOR_MR_CONFIG for XLU** — §33b (2026-05-26): 27-combo sweep (hold/vix/thresh) on NEE/DUK/SO/AEP. Best Ann.Sharpe=0.17 — no viable MR edge. `buy_thresh=999` set in signal_engine.py (blocks signal generation). Delivery gate also blocks. Revisit after sector sub-model retraining.
+- [x] **ATR stop widening (backtest vs live alignment)** — §33c (2026-05-26): 2.0/2.5× confirmed optimal. `atr_levels()` default updated to match live engine. 3.0× adds no gain.
+- [x] **§35 Five pending research experiments (2026-05-26):**
+  - §35a VIX-regime switching OOS: REJECTED — 2/5 pass (same as §20); VIX<18 in 2022-23 bear fires bad trades. Simple threshold switching cannot isolate productive MR windows.
+  - §35b Adaptive exit RSI 55→45: **ACCEPTED** — Adapt% 29%→47%, overall WR +7pp (51.3%→58.3%), Ann.Sh +0.02 (0.82→0.84), Adpt WR 100% maintained. Profit threshold (1.005→1.001) has zero effect; RSI is the binding constraint. Default updated in `backtest_technicals.py`.
+  - §35c Score-segmented hold (full 56t): REJECTED — Ann.Sh identical (0.73=0.73) at full scale. §34d finding was 24-ticker artifact. Sector-calibrated hold (scanner.py) retained.
+  - §35d Target widening (tgt=3.0/3.5×): REJECTED — target hits halved, Ann.Sh drops 0.82→0.77.
+  - §35e Universe re-screen: running (PID 72865, /tmp/s35e_screen.log). Add PASS tickers to TICKERS list, re-run §19 OOS.
+- [x] **§34 Time-loss reduction experiments** — §34 (2026-05-26): 5 experiments on 24-ticker universe (20yr). §34b fail-fast (MLD↓) REJECTED — raises TL count. §34c no-progress exit REJECTED — too aggressive, hurts recoveries. §34d score-segmented hold ACCEPTED: low-score (40-49) hold=5 vs hold=10 → WR +6.1pp (54.1% vs 48.0%), Ann.Sh +0.12 (0.56 vs 0.44), TL% −13.3pp (19.4% vs 32.7%). Live engine: swing signal expiry now uses `recommendedHoldDays` (sector-calibrated) instead of flat 10 days. `simulate_ticker()` gains `max_loss_days_override` + `no_progress_days` params for future research.
 
 ### Pillar 0 — Per-Trade Sharpe → 1.0 (Research Roadmap, 2026-05-24)
 
@@ -111,11 +119,17 @@
 > Free items (ATR%rank default, adaptive exit, fundamental gate, revision gate) implemented 2026-05-24.
 > Paid/structural items below push per-trade Sharpe from 0.38 toward 0.60-0.80.
 
-**Free items (implemented 2026-05-24):**
+**Free items (implemented 2026-05-24 / 2026-05-26):**
 - [x] **ATR%rank≥20 default in MR-only backtest** — matches live engine gate; ann. Sharpe 0.92→1.00
 - [x] **Adaptive exit in backtest** — exits when RSI>55 or MACD+ or price>VWAP while profitable; captures bounce peak, reduces σ
 - [x] **Fundamental value-trap gate (live engine)** — blocks BUY when revenue −20% YoY AND FCF yield <−5%; free yfinance data
 - [x] **Near-earnings revision soft-gate (live engine)** — −4pp confidence haircut for 8-14d pre-earnings signals without positive analyst revision
+- [x] **Widen swing ATR stops 1.5×→2.0× (live engine)** — §31 live data: 44.9% stop-hit rate at 1.5×, avg MFE/MAE=1.74×. Widened to 2.0×/2.5× (R:R≈1.25). Evidence: `signal_engine.py:157-167`. §33c confirms 2.0/2.5× is optimal — 3.0× adds no gain. Backtest `atr_levels()` updated to 2.0/2.5× to match live engine.
+- [x] **Raise global confidence floor 55%→57% (live delivery)** — §31: 50-55% adj-WR band was 52.2% (marginal). Floor raised in `config.py:26`; `delivery_gates.py` comment updated.
+- [x] **Raise swing conf floor 62%→65% (live delivery)** — Alpha/beta decomp (543 trades, Apr-May 2026): swing alpha=−1.028%/trade. Raised in `delivery_gates.py:34`. Floor now 65%; only near-ceiling swing setups pass. Bug also fixed: XLF/XLP/XLU ETF tickers with `sector_etf=None` now caught by `ticker_as_sector` check in sector gate.
+- [x] **Increase XLK exposure — buy_thresh 40→38** — Live alpha +1.989%/trade, WR 78.3% (N=23) confirms XLK is the best-performing sector. Threshold lowered in `signal_engine.py:69` to allow more marginal XLK MR setups through.
+- [x] **VIX-regime conditional thresholds §21 (live engine)** — LOW-VIX (<18): buy_thresh−3pp + skip ATR ceiling (base signal clean in calm market). HIGH-VIX (≥18): existing gates unchanged. Evidence: `signal_engine.py:1014-1022, 1072-1077, 1252-1255`.
+- [x] **SELL threshold validation §32 (backtest)** — SELL_THRESH −45 tested: N=1354 SELLs at WR=33.1%, Avg=−0.43%, Sharpe=−0.08. Adding SELLs collapses portfolio Sharpe 0.20→−0.03 and MaxDD −1.7%→−17.7%. Reverted to −100. Live SELL edge (60.8% WR) is entirely alt-data driven. Results in Stats.md §32.
 
 **Paid / structural items:**
 
@@ -158,16 +172,15 @@
 - [x] **Redis cache + lock layer** — `services/redis_cache.py`. Backed by Redis when `REDIS_URL` set.
 - [x] **Data quality monitoring** — Telegram alert on ≥5 consecutive null fetches per ticker.
 - [x] **Fear & Greed API fixed** — CNN HTTP 418 bot detection resolved with full browser headers. F&G live at 62.9 (Greed).
-- [ ] **Ditch Playwright/Finviz scraping** — Replace fallback with Benzinga Pro or Polygon news.
+- [x] **Ditch Playwright/Finviz scraping** — Yahoo Finance RSS added as primary free source (no API key, no scraping); Playwright remains optional dep and last-resort fallback only. Finviz still present but deprioritized. `news_scraper.py`: source order now Yahoo→SeekingAlpha→Reuters→Finviz.
 - [ ] **Commercial data feed evaluation** — Polygon Advanced ($199/mo) or Benzinga Pro ($49/mo).
 
 ### Pillar 3 — UI/UX
 
 - [x] **Custom screener builder** — 8 filter fields, 8 operators. `ScreenerView` in `app.modals.jsx`: rule builder, preview against live signals, save/load/delete named presets, run saved presets. Sidebar entry under Configure.
 - [x] **DOM feed pagination hardening** — suppressed rows paginated 20 at a time.
-- [x] **Chart drawing tools** — annotation layer above LightweightCharts: click to place horizontal price levels, right-click to remove nearest, localStorage persistence per ticker. Implemented in `app.ui.jsx`.
-- [x] **Alert customisation UI** — `AlertsView` in `app.modals.jsx`: add/edit/delete/pause per-ticker confidence + direction rules. Sidebar entry under Configure. Backend: `SignalAlert` model + CRUD router. Scanner fanout applies rules before delivery. 13 tests.
 - [x] **Chart drawing tools** — annotation layer above LightweightCharts: click to place horizontal price levels, right-click to remove nearest, localStorage persistence per ticker, draw-mode toggle + clear button toolbar. Implemented in `app.ui.jsx`.
+- [x] **Alert customisation UI** — `AlertsView` in `app.modals.jsx`: add/edit/delete/pause per-ticker confidence + direction rules. Sidebar entry under Configure. Backend: `SignalAlert` model + CRUD router. Scanner fanout applies rules before delivery. 13 tests.
 - [x] **Mobile-responsive main app** — 768px breakpoint with single-column layout, hidden sidebar, mobile-nav bottom bar (5 tabs), and tablet layout at 769–1024px already implemented in `styles.css:568-622` and `app.jsx:1477-1490`.
 
 ### Pillar 4 — Execution & Delivery Mechanics
@@ -176,7 +189,7 @@
 - [x] **Signal delivery SLA monitoring** — `scan_cycle_started_at` used for SLA (was using `created_at`, causing false 424-min alerts).
 - [ ] **Telegram broadcast channel** — enable `TELEGRAM_BROADCAST_CHANNEL_ID` before marketing push. Required at >50 subscribers.
 - [ ] **OAuth broker execution (live trading)** — OAuth flow for Alpaca Live or IBKR Web API. Auto-execute high-confidence signals.
-- [ ] **Autonomous execution mode** — per-user toggle to auto-trade signals above X% confidence.
+- [x] **Autonomous execution mode (toggle)** — `auto_execute`, `auto_execute_min_conf`, `auto_execute_broker` added to User model; Alembic migration 05fadc671532; PATCH /api/auth/me accepts all 3 fields; AccountModal "Autonomous Execution" section with on/off toggle, min-confidence input, broker selector. Actual broker execution (Alpaca/IBKR OAuth + order submission) remains pending — requires per-user credential storage infrastructure.
 - [x] **Webhook outbound improvements** — `POST /api/signals/execution-confirm` added. Broker/adapter POSTs `{signal_id, fill_price, filled_at?}` to update the signal's `entry` price so downstream P&L calculations use actual fill. Only platform owner or signal recipient may confirm.
 
 ### Pillar 5 — Codebase Maintainability & Scalability
@@ -195,13 +208,13 @@
 | Issue | Severity | Status / Next Action |
 |---|---|---|
 | **Phantom wins (42.2% vs 58.8% WR)** | ~~Critical~~ Resolved | ✅ 2026-05-26: confidence gap +1.2pp (well under <5pp target). BUY adj-WR 55.5% vs conf 56.1%. Stop hit rate 44.9% (⚠ > 40% threshold — consider ATR×3 stops). Continue monitoring weekly. |
-| **XLF/XLP/XLU blocked** | High | 🔄 Requires sector-specific retraining |
-| **Intraday WR 34.8%, PF 0.73x** | High | 🔄 At ≥68% conf floor; improve signal quality |
+| **XLF/XLP/XLU blocked** | High | 🔄 Requires sector-specific retraining. Bug fixed (2026-05-26): XLF/XLP/XLU ETF tickers with sector_etf=None now caught by ticker-level sector gate in delivery_gates.py. |
+| **Intraday WR 34.8%, PF 0.73x** | ~~High~~ Resolved | ✅ `STYLE_CONF_FLOORS["intraday"] = 999.0` — intraday delivery fully disabled (delivery_gates.py:33). |
 | **Confidence gap +11pp overconfident** | ~~High~~ Resolved | ✅ 2026-05-26: gap now +1.2pp. Calibration tightened + phantom win fix closed the gap from +11pp. |
 | **Default owner password in source** | Critical | ❌ Must change before first paid signup |
 | **Monolithic `run_scan`** | Medium | 🔄 Delivery gates done; full decomposition pending |
 | **Chart drawing tools missing** | High | ✅ Implemented: horizontal price levels, click/right-click, localStorage persistence |
-| **Autonomous execution** | Critical | ❌ Not started |
+| **Autonomous execution** | High | 🔄 Toggle + DB model done; broker OAuth + order submission pending |
 | **Dividend ex-date trap** | Medium | ✅ MR entries hard-blocked via `corp_actions.ex_div_soon` gate (dark_pool.py + signal_engine.py:3336) |
 | **Post-earnings IV crush** | Medium | ✅ IV Rank flagging added: when `iv_rank > 70`, informational rationale card emitted (warns on expensive premium + IV crush risk near earnings) |
 

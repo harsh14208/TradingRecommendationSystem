@@ -185,10 +185,10 @@ class TestDeleteSignalAlert:
         assert resp.status_code == 200
         assert mock_db.delete.called
 
-    def test_delete_not_owned_is_silent(self, client, mock_db):
+    def test_delete_not_owned_returns_403(self, client, mock_db):
         alert = _mock_alert()
         alert.user_id = 999  # different user
         mock_db.get = AsyncMock(return_value=alert)
         resp = client.delete("/api/alerts/signals/1")
-        assert resp.status_code == 200
+        assert resp.status_code == 403
         assert not mock_db.delete.called

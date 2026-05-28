@@ -114,22 +114,9 @@ async def get_macro_context() -> dict:
     rationale  = []
     result: dict = {}
 
-    # ── VIX — Polygon primary, yfinance fallback ─────────────────────────
-    # yfinance ^VIX is frequently rate-limited and returns empty DataFrames.
-    # Polygon's VIX feed (confirmed free-tier accessible) is more reliable.
+    # ── VIX — yfinance only (Polygon I:VIX / I:VXN require paid plan) ────
     try:
-        vix_df = None
-        _poly_key = os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY") or ""
-        if _poly_key:
-            try:
-                from services.polygon_client import get_polygon_history
-                vix_df = await get_polygon_history("I:VXN", period="5d", interval="1d")
-                if vix_df is None or vix_df.empty:
-                    vix_df = await get_polygon_history("^VIX", period="5d", interval="1d")
-            except Exception:
-                vix_df = None
-        if vix_df is None or vix_df.empty:
-            vix_df = await get_history("^VIX", period="5d", interval="1d")
+        vix_df = await get_history("^VIX", period="5d", interval="1d")
         if vix_df is not None and not vix_df.empty:
             vix = round(float(vix_df["Close"].iloc[-1]), 2)
             result["vix"] = vix

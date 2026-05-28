@@ -112,15 +112,20 @@ function App() {
     }
 
     const token = getToken();
-    if (!token) { setAuthReady(true); return; }
+    const fetchMe = () =>
+      authFetch("/api/auth/me")
+        .then(r => r.ok ? r.json() : null)
+        .then(u => { if (u) setCurrentUser(u); else clearToken(); })
+        .catch(() => {})
+        .finally(() => setAuthReady(true));
 
-    // Auth check runs in parallel; on success it sets currentUser so the
-    // auto-refresh timer and gated features activate.
-    authFetch("/api/auth/me")
-      .then(r => r.ok ? r.json() : null)
-      .then(u => { if (u) setCurrentUser(u); else clearToken(); })
-      .catch(() => {})
-      .finally(() => setAuthReady(true));
+    if (!token) {
+      // No in-memory token after page reload — try to restore session from the
+      // HTTP-only refresh cookie before giving up and sending to login.
+      _tryRefresh().then(ok => { if (ok) fetchMe(); else setAuthReady(true); });
+      return;
+    }
+    fetchMe();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── WebSocket Connection ── */

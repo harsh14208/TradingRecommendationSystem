@@ -272,7 +272,7 @@ function HistoryView({ open, onClose, online }) {
   };
 
   const exportCSV = () => {
-    const headers = ["Date","Ticker","Action","Confidence","Price","Exit","Return(best)","MAE","MFE","1d","3d"];
+    const headers = ["Date","Ticker","Action","Confidence","Price","1d","3d","7d","14d","MAE","MFE","Exit"];
     const csvRows = [
       headers.join(","),
       ...rows.map(r => [

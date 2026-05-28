@@ -302,7 +302,7 @@ FAM_COLS = [
 ]
 
 BASE_WEIGHTS: dict[str, float] = {f: 1.0 for f in SIGNAL_FAMILIES}
-BASE_WEIGHTS["osc"] = 1.00  # v2-proven: OSC×1.0 (was incorrectly 0.50; v2 used OSC×1.0 MR×0.5)
+BASE_WEIGHTS["osc"] = 0.10  # v12 ablation: OSC at 1.0 is redundant (corr=0.74 with DONCHIAN); 0.1 acts as quality selector
 BASE_WEIGHTS["mr"]  = 0.50  # v2-proven: MR×0.5 — without MR, oversold stocks can't clear BUY_THRESH=40
 
 # v11: dual-gate tested but disabled — momentum trades (RSI 50-68) at 10-day hold
@@ -1436,7 +1436,7 @@ def run_advanced_research(all_dfs, vix, spy_trend, stlfsi4):
     print("> Skip entries when VIX < threshold. Low-VIX = calm market = shallow panic = weak bounce.")
     print("> Academic: Lo & MacKinlay (1990) reversal profits highest in high-volatility regimes.\n")
 
-    vix_vals = [None, 13.0, 15.0, 18.0, 20.0]
+    vix_vals = [None, 13.0, 15.0, 18.0, 19.0, 20.0]
     vix_rows = [_fmt12("No VIX min (baseline)", base12, base_sh12)]
     best_vix = None; best_vix_sh = base_sh12
     for _i, vm in enumerate(vix_vals[1:], 1):

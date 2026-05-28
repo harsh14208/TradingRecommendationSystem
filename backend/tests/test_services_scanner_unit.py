@@ -31,6 +31,9 @@ def test_check_data_quality_counts_and_transition_alerts():
         def __init__(self, last):
             self._last = last
 
+        def squeeze(self):
+            return self
+
         @property
         def iloc(self):
             class _ILoc:

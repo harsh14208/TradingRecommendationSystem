@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 from pathlib import Path
@@ -89,11 +88,23 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Additive column migrations — applied to both Postgres and SQLite so
-        # production deployments pick up new columns without a full Alembic run.
-        # Each statement is safe to re-run: duplicate-column errors are swallowed.
-        # Postgres syntax: "ADD COLUMN IF NOT EXISTS" is preferred but the except
-        # block catches the duplicate-column error on older Postgres too.
+        # Additive column migrations — kept for environments that have never run
+        # Alembic (e.g. local dev clones, CI test DBs).  For production schema
+        # changes use Alembic instead:
+        #
+        #   # New deployment against empty DB — apply all migrations:
+        #   alembic upgrade head
+        #
+        #   # Existing production DB (schema already current) — stamp it so
+        #   # Alembic knows the starting revision without re-running DDL:
+        #   alembic stamp head
+        #
+        #   # After adding a new column / table to models.py:
+        #   alembic revision --autogenerate -m "add_foo_column"
+        #   alembic upgrade head
+        #
+        # WARNING: never remove columns via this init_db block — that requires a
+        # proper Alembic migration with a downgrade() to be safely reversible.
         _migrations: list[tuple[str, str]] = [
             # users table
             ("users", "ALTER TABLE users ADD COLUMN min_confidence_override REAL"),

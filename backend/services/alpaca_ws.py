@@ -63,7 +63,7 @@ async def _run(api_key: str, api_secret: str, tickers: list[str], broadcast_fn: 
                 msgs = json.loads(raw)
                 if not any(m.get("T") == "success" and m.get("msg") == "authenticated"
                            for m in msgs):
-                    log.error("Alpaca auth failed: %s", msgs)
+                    log.warning("Alpaca auth failed: %s", msgs)
                     return
                 log.info("Alpaca WS: authenticated — %d tickers", len(tickers))
 

@@ -505,7 +505,7 @@ async def update_signal_prefs(
 # ── Email Verification ────────────────────────────────────────────────────────
 
 @router.get("/verify-email")
-async def verify_email(token: str = Query(...), response: Response = None, db: AsyncSession = Depends(get_db)):
+async def verify_email(response: Response, token: str = Query(...), db: AsyncSession = Depends(get_db)):
     """Verify email address using the token from the verification email."""
     user = (await db.execute(select(User).where(User.email_verify_token == token))).scalar_one_or_none()
     if not user:

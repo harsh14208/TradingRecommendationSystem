@@ -3,7 +3,6 @@ import logging
 import os
 import resource
 import ssl
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -226,18 +225,34 @@ async def _periodic_scan():
                 await _alert_telegram(
                     f"⚠️ Scanner error (streak {_scan_fail_streak})\n{type(e).__name__}: {str(e)[:200]}")
 
-        # After close: one final scan at 16:02 then sleep overnight
+        # After close: one final scan at 16:02, then EOD batch at 16:10, then sleep
         now_after = datetime.now(ET)
         if now_after >= market_close:
             if now_after < post_close:
                 await asyncio.sleep((post_close - now_after).total_seconds())
                 try:
                     await run_scan(broadcast_fn=manager.broadcast)
-                except Exception:
-                    pass
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.warning("[scanner] post-close scan failed: %s: %s", type(e).__name__, e)
+
+            # EOD batch: deliver any BUY/SELL that weren't sent in real-time
+            eod_batch_time = now_after.replace(hour=16, minute=10, second=0, microsecond=0)
+            wait_eod = (eod_batch_time - datetime.now(ET)).total_seconds()
+            if wait_eod > 0:
+                await asyncio.sleep(wait_eod)
+            try:
+                from services.scanner import eod_batch_send
+                await eod_batch_send()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("[scanner] EOD batch send failed: %s: %s", type(e).__name__, e)
+
             next_open = _next_market_open()
             wait_s = (_next_market_open() - datetime.now(ET)).total_seconds()
-            log.info("[scanner] post-close scan done — sleeping until %s ET",
+            log.info("[scanner] EOD batch done — sleeping until %s ET",
                      next_open.strftime("%a %H:%M"))
             await asyncio.sleep(max(0, wait_s))
         else:

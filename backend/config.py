@@ -1,5 +1,4 @@
 import hashlib
-import secrets
 import time as _time
 from pydantic_settings import BaseSettings
 
@@ -23,7 +22,7 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_api_secret: str = ""
     auto_send_notifications: bool = True
-    min_confidence: float = 55.0
+    min_confidence: float = 57.0   # raised 55→57 (§31: 50-55% band adj-WR 52.2%, marginal)
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     # Scale prep: when set, signals are posted to ONE broadcast channel instead of

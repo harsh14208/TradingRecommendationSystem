@@ -37,7 +37,6 @@ class _TickerData(NamedTuple):
 
 from services.google_trends import get_google_trends
 from services.quiverquant import get_congress_signal
-from services.dark_pool import get_massive_advanced_signals
 from services.signal_scoring import (
     score_oscillators,
     score_macd,
@@ -66,20 +65,25 @@ _ANALYST_CACHE_TTL = 1800  # 30 minutes — fresher analyst targets
 # Validate via OOS walk-forward before tightening further.  The global ATR≥20
 # gate is the most robust signal; sector-specific overlays add marginal lift.
 _SECTOR_MR_CONFIG: dict[str, dict] = {
-    # ── §15+§16 fully-optimized sectors (Ann.Sharpe ≥ 0.44) ─────────────────────
-    "XLK":  {"vix_min": 13.0, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 40},  # Tech/FAANG — §15b/c/d: Ann=0.63
-    "XLF":  {"vix_min": 15.0, "hold_days": 7,  "atr_rank_min": 30, "buy_thresh": 42},  # Financials — §15b/c/d/e+§16: Ann=0.97 WR=88%
-    "XLY":  {"vix_min": 13.0, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 40},  # Consumer Disc — §16d: thresh 38→40; Ann=0.52
-    "XLP":  {"vix_min": 13.0, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 40},  # Consumer Staples — §16: thresh→40 (same Consumer config)
-    "XLE":  {"vix_min": 15.0, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 40},  # Energy — §16: vix≥15 + thresh=40; Ann=0.44 WR=75%
-    # ── §16 moderate sectors (Ann < 0.40) — admitted with default thresholds ─────
-    "XLC":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 38},  # Telecom/Comm — §16: VIX none (floor hurts), hold=10d; Ann=0.19
-    "XLB":  {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 38},  # Materials — §16: N=4, hold=5d; Ann=— (small sample, live cautiously)
-    "XLU":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Utilities — not in §16 universe; pending research
+    # ── Active sectors — global buy_thresh and vix_min (de-curated per audit) ────
+    # Per-sector buy_thresh and vix_min were tuned on N=4–24 tickers (§15-§16).
+    # Walk-forward OOS (§19/§20/§35a): strict per-sector params passed 1/5 windows;
+    # global/relaxed params passed 2/5. Over-curated params destroyed OOS survival.
+    # FIX: remove per-sector buy_thresh and vix_min. Keep only structurally-proven
+    # gates: atr_rank_min (ATR≥20 is robust across all regimes) and hold_days
+    # (already deployed in live recommendedHoldDays — low-harm to leave).
+    "XLK":  {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": None},  # Tech/FAANG
+    "XLF":  {"vix_min": None, "hold_days": 7,  "atr_rank_min": 30, "buy_thresh": None},  # Financials (blocked by delivery_gates XLF floor anyway)
+    "XLY":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Consumer Disc
+    "XLP":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Consumer Staples (blocked by delivery_gates)
+    "XLE":  {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": None},  # Energy
+    "XLC":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": None},  # Telecom/Comm
+    "XLB":  {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": None},  # Materials
+    "XLU":  {"vix_min": None, "hold_days": 10, "atr_rank_min": 20, "buy_thresh": 999},   # Utilities — no viable MR edge; blocked
     # ── §16 confirmed-negative sectors — buy_thresh=999 blocks all MR entries ────
-    "XLV":  {"vix_min": 15.0, "hold_days": 7,  "atr_rank_min": 30, "buy_thresh": 999},  # Healthcare — §16g: Ann=0.05 near-zero; blocked
-    "XLI":  {"vix_min": 15.0, "hold_days": 7,  "atr_rank_min": 20, "buy_thresh": 999},  # Industrials — §16g: Ann=0.06 near-zero; blocked
-    "XLRE": {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 999},  # Real Estate — §16g: Sharpe −15, WR=0%; hard block
+    "XLV":  {"vix_min": None, "hold_days": 7,  "atr_rank_min": 30, "buy_thresh": 999},  # Healthcare — §16a Sharpe −0.17; blocked
+    "XLI":  {"vix_min": None, "hold_days": 7,  "atr_rank_min": 20, "buy_thresh": 999},  # Industrials — §16a Sharpe −0.48; blocked
+    "XLRE": {"vix_min": None, "hold_days": 5,  "atr_rank_min": 20, "buy_thresh": 999},  # Real Estate — §16a Sharpe −15; blocked
 }
 
 def _current_session() -> str:
@@ -143,8 +147,9 @@ def _levels(price: float, atr: float, action: str, style: str = "swing"):
     atr_pct = atr / price if price > 0 else 0.02
 
     # Stop multipliers are style-specific.
-    # Empirical data: 45.7% stop-hit rate with previous 2×ATR stops — too tight.
-    # Position trades hold days-to-weeks and need room for intraday noise.
+    # §31 live data (543 resolved signals): swing stop-hit rate 44.9% at old 1.5×ATR stops.
+    # Avg MFE/MAE=1.74× — direction is right but intraday noise was clipping stops.
+    # Widened swing to 2.0×/2.5× (R:R≈1.25). Position trades unchanged (already 2.5-3.5×).
     if style == "position":
         if atr_pct > 0.025:   # high vol
             stop_mult, tgt_mult = 2.5, 3.5
@@ -155,16 +160,15 @@ def _levels(price: float, atr: float, action: str, style: str = "swing"):
     elif style == "intraday":
         stop_mult, tgt_mult = 1.5, 2.0   # tight — short hold time
     else:  # swing
-        # Targets calibrated from 20-year backtest: 2×ATR achieves ~18-25% target
-        # hit rate in 5-day holds vs only 11% for the old 3×ATR. R:R 1.33 at
-        # 50% WR is still positive expectancy and stops the "swing for fences"
-        # bias that kept exits as unprofitable time-exits.
+        # Widened from 1.5×/2.0× (§31 validate_predictions: 44.9% stop-hit rate at
+        # old 1.5× — too tight; avg MFE/MAE=1.74× confirms direction is right but
+        # stops were clipped by intraday noise). New 2.0×/2.5× R:R ≈ 1.25.
         if atr_pct > 0.025:
-            stop_mult, tgt_mult = 1.5, 2.0   # high vol: tighter stop, proportional target
+            stop_mult, tgt_mult = 2.0, 2.5   # high vol: wider stop, proportional target
         elif atr_pct < 0.010:
-            stop_mult, tgt_mult = 2.0, 2.5   # low vol: wider stop needed, modest target
+            stop_mult, tgt_mult = 2.5, 3.0   # low vol: most room needed, modest target
         else:
-            stop_mult, tgt_mult = 1.5, 2.0   # normal: 1.5s/2t → R:R 1.33
+            stop_mult, tgt_mult = 2.0, 2.5   # normal: 2.0s/2.5t → R:R 1.25
 
     stop   = round(entry - stop_mult * atr, 2) if action == "BUY" else round(entry + stop_mult * atr, 2)
     target = round(entry + tgt_mult  * atr, 2) if action == "BUY" else round(entry - tgt_mult  * atr, 2)
@@ -441,6 +445,19 @@ def _assemble_signal(
     vix          = macro.get("vix")
     sp500_trend  = macro.get("sp500_trend")
 
+    # ── MR entry condition flags — computed early so all downstream gates can use them ─
+    # These are referenced by the VIX gate (~line 829) and many later gates;
+    # defining them here once prevents UnboundLocalError from forward-references.
+    _mr_bb   = tech.get("bb_pct_b")
+    _mr_ibs  = tech.get("ibs")
+    _mr_vwap = tech.get("vwap_pct")
+    _has_mr  = (
+        float(tech.get("rsi") or 50) < 42
+        or (_mr_bb   is not None and float(_mr_bb)   < 0.22)
+        or (_mr_ibs  is not None and float(_mr_ibs)  < 0.15)
+        or (_mr_vwap is not None and float(_mr_vwap) < -0.75)
+    )
+
     # ── Assemble final signal ───────────────────────────────────────
     # Enforce any blackout/gate that set _force_hold=True mid-scoring.
     # score=0 alone is not sufficient because subsequent signal blocks
@@ -652,9 +669,12 @@ def _assemble_signal(
     # The ATR gate above catches KO/PEP/T; this gate covers higher-ATR names
     # (BAC, C, USB, PNC, TGT, etc.) that slip past the ATR threshold.
     _DEFENSIVE_BUY_BLOCK = {
-        # Live-engine 0% win rate (May 2026 validation)
-        # BAC removed: v5.12 backtest shows 71.4% WR, +2.26% avg with MR gates
-        # TGT removed: v5.12 backtest shows 55.6% WR, +0.72% avg with MR gates
+        # Live-validated 0% BUY win rate (May 2026, n=529 resolved signals).
+        # All entries here come from FORWARD performance data — NOT from
+        # the 20yr backtest. Backtest-derived exclusions were removed (audit
+        # finding: hardcoding tickers found via historical backtest is look-ahead
+        # selection bias). The dynamic AR(1) momentum-persistence gate below
+        # replaces those exclusions with a point-in-time quantitative rule.
         "KO", "PEP", "T", "NEE", "PG", "USB", "PNC", "C",
         "AIG", "WM", "MCO", "TT", "DE", "TJX",
         # Live validated 0% WR (May 2026, §11b ticker analysis)
@@ -667,25 +687,28 @@ def _assemble_signal(
         # Pharma (drug-approval dominated, not chart-driven)
         "ABBV", "MRK", "PFE", "LLY", "TMO",
         # Consumer staples / tobacco (low-ATR, mean-reverting)
-        "KO", "PM", "WMT",
+        "PM", "WMT",
         # Analog/commodity semiconductors (earnings-cycle driven)
         "TXN",
         # Consumer brand (fashion cycles, not technical)
         "NKE",
         # Payments (behaves like a financial in stress)
         "V",
+        # TSLA, SBUX, GS, MA, BLK, SCHW, PANW, GEN, CPAY — REMOVED.
+        # Were added based on 20yr backtest negative avg return (look-ahead bias).
+        # Now handled dynamically by the AR(1) momentum-persistence gate below.
     }
     if action == "BUY" and ticker in _DEFENSIVE_BUY_BLOCK:
         action = "HOLD"
         sources.add("Risk Gate")
         rationale.append({"src": "Risk Gate",
-            "head": f"Defensive-Ticker BUY Gate — {ticker} 0% BUY Win Rate (n≥3)",
-            "body": (f"{ticker} has shown a 0% BUY win rate across validated signals. "
-                     "Momentum and technical breakout signals structurally misfire on this "
-                     "ticker — the price action is mean-reverting or macro-driven rather than "
-                     "trend-following. BUY gated to HOLD until a re-validation shows positive edge."),
+            "head": f"Defensive-Ticker BUY Gate — {ticker} Blocked",
+            "body": (f"{ticker} is in the defensive block: either 0% live BUY win rate (n≥3) "
+                     "or negative avg return across 20yr technical backtest. "
+                     "Price action is event-driven, macro-driven, or non-MR-responsive. "
+                     "BUY gated to HOLD until re-validation shows positive expected value."),
             "sentiment": "neg",
-            "meta": f"Ticker: {ticker} | Validation: 0% BUY win rate | Gate: defensive_ticker_block"})
+            "meta": f"Ticker: {ticker} | Gate: defensive_ticker_block"})
 
     # ── Fundamental Value-Trap Gate ──────────────────────────────────────────
     # MR bounces on fundamentally deteriorating companies are value traps —
@@ -810,17 +833,36 @@ def _assemble_signal(
             "sentiment": "neg",
             "meta": f"STLFSI4={_stlfsi_gate:+.2f} | VIX={vix:.0f} | score={score:.1f} < 50"})
 
+    # ── Global VIX minimum gate (§12b: 103-ticker 23yr cross-universe) ──────────
+    # Lo & MacKinlay (1990): MR reversal profits are highest in high-volatility regimes.
+    # Low VIX = complacent market = shallow panic = weak MR bounces.
+    # §12b 23yr backtest: VIX≥20 optimal → Sharpe 0.13→0.23, WR 61.2→64.1%, MaxDD -2.23→-0.87.
+    if (action == "BUY"
+            and _has_mr
+            and vix is not None
+            and vix < 20):
+        action = "HOLD"
+        sources.add("Risk Gate")
+        rationale.append({"src": "Risk Gate",
+            "head": f"Global VIX Minimum Gate — Low Fear Regime (VIX {vix:.0f} < 20)",
+            "body": (f"VIX at {vix:.0f} is below the MR entry floor. "
+                     f"Mean-reversion bounces require a fear premium to close the gap — "
+                     f"low-VIX entries have insufficient panic depth for reliable reversal. "
+                     f"103-ticker 23yr backtest (§12b): VIX≥20 → Sharpe 0.23 vs 0.13 baseline, "
+                     f"WR 64.1%, MaxDD -0.87%. Waiting for VIX ≥ 20."),
+            "sentiment": "neg",
+            "meta": f"vix={vix:.0f} < 20 | mr_entry=True | global_vix_min_gate=True"})
+
     # ── SMA200 downtrend BUY gate ────────────────────────────────────────
     # 30-year backtest: BUY signals when price < SMA200 are net-negative in
     # every non-crisis regime across 2,314 trades. Gate waived only for:
     #   • deep oversold entries (RSI < 30) — mean-reversion bounce is valid
     #   • very high conviction (score ≥ 60) — alt-data strongly confirms
     _sma200_g = tech.get("sma200")
-    _rsi_g    = float(tech.get("rsi") or 50)
     if (action == "BUY"
             and _sma200_g is not None
             and price < _sma200_g * 0.99
-            and _rsi_g >= 25
+            and _rsi_gate >= 25
             and score < 60):
         # RSI exception tightened 30→25: backtest showed RSI 25-30 "oversold bounce"
         # entries in downtrends are dead-cat bounces — only extreme oversold (< 25)
@@ -834,19 +876,19 @@ def _assemble_signal(
                      "are net-negative. Gate waived only when RSI < 25 (extreme oversold) "
                      "or score ≥ 60 (strong alt-data confirmation)."),
             "sentiment": "neg",
-            "meta": f"price={price:.2f} sma200={_sma200_g:.2f} rsi={_rsi_g:.1f} | gate=sma200_downtrend"})
+            "meta": f"price={price:.2f} sma200={_sma200_g:.2f} rsi={_rsi_gate:.1f} | gate=sma200_downtrend"})
 
     # ── SELL uptrend alt-data gate ────────────────────────────────────────
     # 30-year backtest: technical-only SELL signals above SMA200 average
     # -0.71%/trade (Sharpe -1.62) in every bull market regime. The market's
     # long-term upward drift makes shorting without confirmation a losing
     # strategy 8 out of 10 years. Require at least one non-technical source.
-    _has_alt = bool({"Options", "News", "Macro", "13F", "SEC EDGAR",
-                     "Dark Pool", "Short Interest"} & sources)
+    _has_alt_uptrend = bool({"Options", "News", "Macro", "13F", "SEC EDGAR",
+                             "Dark Pool", "Short Interest"} & sources)
     if (action == "SELL"
             and _sma200_g is not None
             and price > _sma200_g * 1.01
-            and not _has_alt
+            and not _has_alt_uptrend
             and score > -45):   # tightened from -55 — Tier 3 backtest validated
         action = "HOLD"
         sources.add("Risk Gate")
@@ -946,15 +988,51 @@ def _assemble_signal(
     # mode) drops to +0.15% avg, Sharpe 0.04.  Require at least ONE genuine
     # oversold / undervalued condition at entry time.  High-conviction signals
     # (score≥65) are exempt — alt-data stack independently confirms the edge.
-    _mr_bb   = tech.get("bb_pct_b")
-    _mr_ibs  = tech.get("ibs")
-    _mr_vwap = tech.get("vwap_pct")
-    _has_mr  = (
-        _rsi_gate < 42
-        or (_mr_bb   is not None and float(_mr_bb)   < 0.22)
-        or (_mr_ibs  is not None and float(_mr_ibs)  < 0.15)
-        or (_mr_vwap is not None and float(_mr_vwap) < -0.75)
-    )
+    # NOTE: _mr_bb, _mr_ibs, _mr_vwap, _has_mr are pre-computed at function entry
+    # (above macro vars) so all gates can reference them without forward-reference errors.
+    # ── Momentum-persistence MR suitability gate (point-in-time Hurst proxy) ───
+    # AR(1) > 0.05 on 126-day daily returns = positive return autocorrelation =
+    # momentum/trending regime. A stock in momentum persistence is NOT a good
+    # MR candidate — it tends to continue rather than snap back, even if oversold
+    # by RSI/BB metrics. Replaces hardcoded backtest-derived look-ahead exclusions.
+    #
+    # Fundamental blend (§38 audit): haircut is halved when revenue is NOT declining
+    # materially (rev_growth > -10%).  Growing-revenue stocks in a momentum regime
+    # are taking a healthy dip, not entering a value trap — the AR(1) signal is less
+    # actionable.  Full haircut reserved for momentum + fundamental deterioration.
+    # Scale (full): AR1=0.05 → -6pp | AR1=0.08 → -10pp cap. Haircut, not hard block.
+    _mr_ar1 = tech.get("momentum_ar1")
+    if action == "BUY" and _has_mr and _mr_ar1 is not None and float(_mr_ar1) > 0.05:
+        _ar1_val  = float(_mr_ar1)
+        _ar1_full = round(min(10.0, (_ar1_val - 0.05) * 200), 1)
+        # Fundamental context: revenue_growth from yfinance info dict (YoY ratio)
+        _ar1_rev  = info.get("revenue_growth")   # e.g. 0.12 = +12% | -0.25 = -25%
+        _ar1_growing = _ar1_rev is not None and float(_ar1_rev) > -0.10
+        _ar1_pen  = round(_ar1_full * 0.5, 1) if _ar1_growing else _ar1_full
+        if _ar1_pen > 0:
+            confidence = round(max(35.0, confidence - _ar1_pen), 1)
+            sources.add("Risk Gate")
+            _ar1_rev_str = f"{float(_ar1_rev)*100:+.1f}%" if _ar1_rev is not None else "unknown"
+            _ar1_regime  = "Dip in Momentum Stock" if _ar1_growing else "Value Trap Risk"
+            rationale.append({"src": "Risk Gate",
+                "head": (f"MR Persistence Gate — AR(1) {_ar1_val:.3f} "
+                         f"({_ar1_regime}, −{_ar1_pen:.0f}pp)"),
+                "body": (
+                    f"126-day return AR(1) coefficient: {_ar1_val:.3f}. "
+                    f"Positive autocorrelation means this stock is trend-following, not mean-reverting. "
+                    + (
+                        f"Revenue growth {_ar1_rev_str} suggests this is a healthy pullback "
+                        f"in a growing business — haircut halved to {_ar1_pen:.0f}pp. "
+                        if _ar1_growing else
+                        f"Revenue growth {_ar1_rev_str} combined with momentum persistence "
+                        f"raises value-trap risk — oversold for a real reason. Full {_ar1_pen:.0f}pp haircut. "
+                    ) +
+                    f"(Dynamic rule; reverts automatically when AR(1) drops below 0.05.)"
+                ),
+                "sentiment": "neg",
+                "meta": (f"ar1_126d={_ar1_val:.3f} > 0.05 | rev_growth={_ar1_rev_str} "
+                         f"| haircut={_ar1_pen:.1f}pp | regime={'dip' if _ar1_growing else 'value_trap'}")})
+
     if action == "BUY" and not _has_mr and score < 65:
         action = "HOLD"
         sources.add("Risk Gate")
@@ -964,10 +1042,9 @@ def _assemble_signal(
         rationale.append({"src": "Risk Gate",
             "head": "MR Entry Condition Gate — No Oversold/Undervalued Setup",
             "body": (f"BUY score {score:.0f} fired without a mean-reversion entry condition. "
-                     f"20yr backtest (247 trades): entries without RSI<42, BB%%B<0.22, IBS<0.15, "
-                     f"or VWAP%%<−0.75 deliver −0.74%% avg vs +1.07%% for MR-condition entries "
-                     f"(Sharpe 0.04 vs 0.27). "
-                     f"Current: RSI {_rsi_gate:.1f} | BB%%B {_mr_bb_s} | IBS {_mr_ibs_s} | VWAP%% {_mr_vwap_s}. "
+                     f"20yr backtest: entries without BB%%B<0.22, IBS<0.15, or VWAP%%<−0.75 "
+                     f"deliver −0.74%% avg vs +1.07%% for MR-condition entries (Sharpe 0.04 vs 0.27). "
+                     f"Current: BB%%B {_mr_bb_s} | IBS {_mr_ibs_s} | VWAP%% {_mr_vwap_s}. "
                      "Require at least one MR condition. Exception: score≥65 (strong alt-data)."),
             "sentiment": "neg",
             "meta": (f"RSI={_rsi_gate:.1f} BB%B={_mr_bb_s} IBS={_mr_ibs_s} VWAP%={_mr_vwap_s} "
@@ -983,7 +1060,6 @@ def _assemble_signal(
         _close_streak_ibs = tech.get("close_streak")
         _ibs_sole = (
             _mr_ibs is not None and float(_mr_ibs) < 0.15
-            and _rsi_gate >= 42
             and (_mr_bb is None or float(_mr_bb) >= 0.22)
             and (_mr_vwap is None or float(_mr_vwap) >= -0.75)
         )
@@ -993,7 +1069,7 @@ def _assemble_signal(
             rationale.append({"src": "Risk Gate",
                 "head": (f"IBS Sole Trigger — SMA20 Streak Insufficient "
                          f"({abs(float(_close_streak_ibs)):.0f} days below, need ≥5)"),
-                "body": (f"IBS<0.15 is the only MR trigger (RSI {_rsi_gate:.0f}≥42, BB%B not oversold, VWAP not negative). "
+                "body": (f"IBS<0.15 is the only MR trigger (BB%B not oversold, VWAP not negative). "
                          f"The stock has been below SMA20 for only {abs(float(_close_streak_ibs)):.0f} consecutive day(s). "
                          f"Pagonidis (2013): IBS-triggered entries require ≥5 consecutive days below SMA20 to confirm "
                          f"sustained selling pressure. A single bad day closing near the low may be a one-off event, "
@@ -1010,6 +1086,15 @@ def _assemble_signal(
     _se_sector_cfg  = _SECTOR_MR_CONFIG.get(_se_sector_etf, {})
     _atr_rank_min   = _se_sector_cfg.get("atr_rank_min", 20)
     _atr_rank_gate  = tech.get("atr_pct_rank")
+
+    # ── §21 VIX-Regime Conditional Thresholds ─────────────────────────────────
+    # §20 OOS finding: strict §17f params fail in low-VIX windows (1/5 pass);
+    # regime analysis shows the gate DIRECTION should flip:
+    #   LOW-VIX  (< 18): base MR signal is clean — loosen buy_thresh −3pp,
+    #                     skip ATR ceiling (no trending-panic risk in calm market).
+    #   HIGH-VIX (≥ 18): fear is present — keep quality gates to avoid falling knives.
+    _VIX_REGIME_PIVOT = 18.0
+    _vix_regime_low  = (vix is not None and float(vix) < _VIX_REGIME_PIVOT)
     if (action == "BUY"
             and _has_mr
             and _atr_rank_gate is not None
@@ -1060,8 +1145,12 @@ def _assemble_signal(
     # structurally weaker bounces because the selling is not yet exhausted — it is
     # accelerating. ATR floor (≥20) removes dormant entries; ceiling (≤70) removes
     # trending-breakdown entries. Valid MR regime sits between 20th–70th pct.
+    # §21: in low-VIX calm markets there is no trending-panic risk — skip the
+    # ceiling so that high-ATR-rank setups (e.g. rapid V-recovery after a spike)
+    # are not filtered out when overall market fear is absent.
     if (action == "BUY"
             and _has_mr
+            and not _vix_regime_low
             and _atr_rank_gate is not None
             and float(_atr_rank_gate) > 70):
         action = "HOLD"
@@ -1073,10 +1162,11 @@ def _assemble_signal(
                      f"At this regime, forced selling is accelerating, not exhausted. "
                      f"MR bounces require panic-level volatility (ATR 20th–70th pct); "
                      f"above the 70th pct the stock is in a breakdown, not a dip. "
-                     "Quantpedia ATR regime research: P70 is the optimal MR ceiling."),
+                     "Quantpedia ATR regime research: P70 is the optimal MR ceiling. "
+                     f"(Gate active when VIX ≥ {_VIX_REGIME_PIVOT:.0f}; current VIX {vix:.0f}.)"),
             "sentiment": "neg",
             "meta": (f"atr_pct_rank={float(_atr_rank_gate):.0f} > 70 "
-                     f"| mr_entry=True | trending_panic=True")})
+                     f"| mr_entry=True | trending_panic=True | vix_regime=high")})
 
     # ── Single-day return jump filter (§17b research) ─────────────────────────
     # Large single-day drops (< −6%) often signal fundamental repricing — earnings
@@ -1149,6 +1239,8 @@ def _assemble_signal(
         _of_uv  = opt_flow.get("unusual_vol_ratio")
         _of_uv_s = f"{float(_of_uv):.2f}" if _of_uv is not None else "n/a"
 
+        _of_sweep = bool(opt_flow.get("sweep_calls"))
+
         if _of_pc is not None and float(_of_pc) > 2.0:
             action = "HOLD"
             sources.add("Risk Gate")
@@ -1161,6 +1253,27 @@ def _assemble_signal(
                          f"flow confirms the fear is still building."),
                 "sentiment": "neg",
                 "meta": f"pc_ratio={float(_of_pc):.2f} > 2.0 | mr_entry=True | options_flow_gate=True"})
+
+        elif _of_sweep and float(_of_gex) > 0:
+            # Strongest conviction: call sweep + positive dealer GEX at the same time.
+            # Call sweeps = large institutional orders filled across multiple exchanges
+            # in rapid succession (urgency / information asymmetry signal). Combined
+            # with positive GEX (dealer mechanical buy pressure as price dips), this
+            # is the highest-quality MR entry: smart money accumulating while dealers
+            # are structurally forced to buy. +15pp vs the standard +5pp for GEX alone.
+            confidence = round(min(95.0, confidence + 15), 1)
+            sources.add("Options")
+            _of_gex_str = f"${float(_of_gex)/1e6:.1f}M" if abs(float(_of_gex)) >= 1e6 else f"${float(_of_gex):.0f}"
+            rationale.append({"src": "Options",
+                "head": f"Call Sweep + Positive GEX — Highest-Conviction MR Setup (+15pp)",
+                "body": (f"Call sweep detected (large cross-exchange institutional order) with positive "
+                         f"dealer GEX ({_of_gex_str}). Call sweeps signal urgency — institutions are "
+                         f"accumulating aggressively, not passively. Positive GEX means dealers must "
+                         f"mechanically buy the dip to stay hedged, creating a structural support floor. "
+                         f"These two forces reinforce the MR bounce thesis."),
+                "sentiment": "pos",
+                "meta": (f"sweep_calls=True gex={float(_of_gex):.0f} "
+                         f"| mr_entry=True | sweep_gex_combo=True | bonus=+15pp")})
 
         elif (_of_pc is not None and float(_of_gex) > 0 and float(_of_pc) < 0.75):
             confidence = round(min(95.0, confidence + 5), 1)
@@ -1235,6 +1348,11 @@ def _assemble_signal(
     #   Financials (XLF): thresh=42 — extraordinary filter (WR 83.3%, Sh 0.89)
     #   Consumer (XLY/XLP/XLC): thresh=38 — modest quality lift vs global 35
     _se_buy_thresh = _se_sector_cfg.get("buy_thresh")
+    # §21: in low-VIX calm markets loosen the sector score floor by 3pp so
+    # the base MR signal is not over-filtered when fear is absent.  Never
+    # loosen blocked sectors (buy_thresh ≥ 999).
+    if _vix_regime_low and _se_buy_thresh is not None and _se_buy_thresh < 999:
+        _se_buy_thresh = max(35, _se_buy_thresh - 3)
     if (action == "BUY"
             and _has_mr
             and _se_buy_thresh is not None
@@ -1267,14 +1385,16 @@ def _assemble_signal(
                 "meta": (f"sector={_se_sector_etf} score={score:.0f} < buy_thresh={_se_buy_thresh} "
                          f"| mr_entry=True | sector_score_floor=True")})
 
-    # ── Near-Earnings Revision Gate (§11c live-engine finding) ───────────────
-    # Live data (§11c): MR signals 3-14d before earnings outperform the safe zone
-    # when backed by alt-data (options flow, news). Pure-technical backtest shows
-    # the opposite — near-earnings setups are noise without analyst confirmation.
-    # Gate: if days_to_earnings is 8-14 (early caution zone) and no positive
-    # analyst revision is present in rationale, apply a confidence haircut.
-    # 3-7d zone (pre-earnings): Finnhub revision_pts already in score — trust it.
-    # 8-14d zone: §11c backtest shows -1.10% avg, Sharpe -0.35 here, -0.85% 74T.
+    # ── Near-Earnings Caution Gate (§11c → §34 live revision) ────────────────
+    # §11c (pure-technical backtest): 8-14d pre-earnings without alt-data averaged
+    # −1.10% (Sharpe −0.35). Recommended a hard block.
+    # §34 live-engine reanalysis (543 resolved signals, Apr-May 2026):
+    #   0-14d zone: 62.5% WR | 15+d "safe zone": 50.5% WR.
+    # Near-earnings signals OUTPERFORM the safe zone in live data because the
+    # full alt-data stack (news, options, fundamentals) already prices in the risk.
+    # The backtest result used technical-only signals — live signals with scoring
+    # are a different distribution. Hard block replaced by tiered soft haircuts.
+    # Delivery gate still enforces hard blackout at ≤2d to earnings.
     if action == "BUY" and days_to_earnings is not None and 8 <= days_to_earnings <= 14:
         _has_pos_analyst = any(
             r.get("src") == "Analyst" and r.get("sentiment") == "pos"
@@ -1285,38 +1405,32 @@ def _assemble_signal(
             or bool(opt_flow and (opt_flow.get("unusual_vol_ratio") or 0.0) > 2.0)
         )
         if not _has_pos_analyst and not _has_unusual_calls:
-            # Hard block: neither revision nor unusual call activity confirms the setup.
-            # §11c backtest: MR signals 8-14d pre-earnings without alt-data backing
-            # average -1.10% (Sharpe -0.35). When options flow also fails to confirm,
-            # the risk is structural, not just statistical — block the entry entirely.
-            action = "HOLD"
+            # No alt-data at all: -3pp haircut. Live data still shows these pass the
+            # 50.5% WR safe-zone baseline, so a hard block discards genuine MR setups.
+            confidence = round(max(35.0, confidence - 3), 1)
             sources.add("Risk Gate")
             rationale.append({"src": "Risk Gate",
-                "head": f"Pre-Earnings Hard Gate — {days_to_earnings}d to Earnings, No Alt-Data Confirmation",
+                "head": f"Near-Earnings Caution — {days_to_earnings}d to Earnings, No Alt-Data",
                 "body": (f"Earnings in {days_to_earnings} days (caution zone: 8-14d). "
-                         f"Neither analyst revision momentum (no positive upgrades) nor unusual call "
-                         f"activity (no sweep_calls, unusual_vol_ratio normal) supports this setup. "
-                         f"§11c backtest: MR entries here without any alt-data confirmation average "
-                         f"−1.10% (Sharpe −0.35). Both legs of confirmation absent — blocking entry. "
-                         f"The gate is waived when either EPS revision or unusual call flow confirms "
-                         f"institutional accumulation ahead of the print."),
+                         f"Neither analyst revision nor unusual call activity confirms the setup. "
+                         f"§34 live data: near-earnings zone still outperforms the safe zone (62.5% vs 50.5% WR) "
+                         f"overall — hard block replaced by −3pp haircut. Proceed with reduced size."),
                 "sentiment": "neg",
                 "meta": (f"days_to_earnings={days_to_earnings} | no_pos_revision=True "
-                         f"| no_unusual_calls=True | pre_earnings_hard_gate=True")})
+                         f"| no_unusual_calls=True | penalty=-3pp")})
         elif not _has_pos_analyst:
-            # Soft haircut: unusual calls present (institutional buying) but no revision —
-            # partial confirmation only. §11c shows these still outperform no-confirmation.
-            confidence = round(max(35.0, confidence - 4), 1)
+            # Calls present but no revision: -2pp haircut (stronger than no-confirmation
+            # case because unusual flow suggests institutional awareness of the print).
+            confidence = round(max(35.0, confidence - 2), 1)
             sources.add("Risk Gate")
             rationale.append({"src": "Risk Gate",
-                "head": f"Near-Earnings Caution Zone — {days_to_earnings}d to Earnings, No Positive Revisions",
+                "head": f"Near-Earnings Caution — {days_to_earnings}d to Earnings, No Analyst Revision",
                 "body": (f"Earnings in {days_to_earnings} days (caution zone: 8-14d). "
                          f"Unusual call activity detected (partial confirmation) but no positive analyst "
-                         f"revision. §11c backtest: partial alt-data confirmation reduces but does not "
-                         f"eliminate the risk. Applying −4pp confidence haircut. Proceed with reduced size."),
+                         f"revision. Applying −2pp confidence haircut. Proceed with reduced size."),
                 "sentiment": "neg",
                 "meta": (f"days_to_earnings={days_to_earnings} | no_pos_revision=True "
-                         f"| has_unusual_calls={_has_unusual_calls} | penalty=-4pp")})
+                         f"| has_unusual_calls={_has_unusual_calls} | penalty=-2pp")})
 
     # ── Deep-Bear Stricter RSI Gate (v5.12 validated) ─────────────────────
     # In systemic downturns (VIX>28 AND SPY>5% below SMA200), RSI<42 oversold
@@ -1339,6 +1453,33 @@ def _assemble_signal(
             "sentiment": "neg",
             "meta": (f"VIX={vix:.0f}>28 SPY_vs_SMA200={(_sp500_sma200_ratio-1)*100:.1f}%<-5% "
                      f"RSI={_rsi_gate:.1f}≥35 | deep_bear_rsi_gate=True")})
+
+    # ── Sustained-Bear Macro Gate (§34 live data finding) ────────────────────
+    # Acute crises (VIX>28 + SPY<0.95×SMA200) are handled by _deep_bear above.
+    # Slow-burn bears (VIX not spiking but SPY grinding down) need a separate gate.
+    # §34 live data: crash/bear regimes (COVID 2020, Rate-Hike Bear 2022) → 0% WR.
+    # Proxy for sustained bear: SPY >3% below SMA200 AND down >7% over 1 month.
+    _spy_1m_ret = float(_gate_macro.get("spy_1m_ret") or 0.0)
+    _sustained_bear = (
+        not _deep_bear
+        and _sp500_sma200_ratio < 0.97
+        and _spy_1m_ret < -7.0
+    )
+    if action == "BUY" and _sustained_bear:
+        _sb_haircut = 5.0
+        confidence = round(max(35.0, confidence - _sb_haircut), 1)
+        sources.add("Risk Gate")
+        rationale.append({"src": "Risk Gate",
+            "head": (f"Sustained-Bear Gate — SPY {(_sp500_sma200_ratio-1)*100:.1f}% vs SMA200, "
+                     f"{_spy_1m_ret:.1f}% 1-Month"),
+            "body": (f"SPY is {(_sp500_sma200_ratio-1)*100:.1f}% below its 200-day SMA and has "
+                     f"returned {_spy_1m_ret:.1f}% over the past month — a confirmed sustained downtrend. "
+                     f"§34 live data: bear regimes (COVID 2020, Rate-Hike Bear 2022) produced 0% WR "
+                     f"for MR signals. Applying −{_sb_haircut:.0f}pp confidence haircut. "
+                     f"Only extreme-oversold setups with strong multi-source confirmation should proceed."),
+            "sentiment": "neg",
+            "meta": (f"sp500_sma200_ratio={_sp500_sma200_ratio:.4f} spy_1m_ret={_spy_1m_ret:.1f}% "
+                     f"| sustained_bear=True | haircut=-{_sb_haircut:.0f}pp")})
 
     # ── Price-SMA20 Distance Gate (v5.12 validated) ───────────────────────
     # Require price ≥2% below SMA20 for mid-conviction BUY entries (score<65).
@@ -1392,10 +1533,16 @@ def _assemble_signal(
     # buy, but the macro environment says sell everything. Cap confidence at
     # 65% to reflect the elevated failure rate of these cross-current setups.
     # Symmetric: a SELL at ≥70% confidence with a bullish macro is capped too.
+    #
+    # _conf_macro_cap tracks the strictest macro cap so the hard final ceiling
+    # can re-enforce it after adaptive win-rate / yield-dampener adjustments,
+    # which run later and could otherwise push confidence back above the cap.
+    _conf_macro_cap = 72.0  # default = hard ceiling (no active cap)
     if action in ("BUY", "SELL") and confidence >= 70:
         _m_score = macro.get("macro_score", 0) if macro else 0
         _m_contradiction = (_m_score < -3 and action == "BUY") or (_m_score > 3 and action == "SELL")
         if _m_contradiction:
+            _conf_macro_cap = min(_conf_macro_cap, 65.0)
             confidence = round(min(confidence, 65.0), 1)
             rationale.append({"src": "Macro",
                 "head": f"Macro Contradiction — Confidence Capped at 65%",
@@ -1413,6 +1560,7 @@ def _assemble_signal(
         _vix_now   = (macro or {}).get("vix") or 0
         if _news_sent is not None and _news_sent < -0.3 and _vix_now > 20:
             _new_cap = 65.0
+            _conf_macro_cap = min(_conf_macro_cap, _new_cap)
             if confidence > _new_cap:
                 confidence = round(min(confidence, _new_cap), 1)
                 rationale.append({"src": "Macro",
@@ -1633,44 +1781,48 @@ def _assemble_signal(
             confidence, _bin = apply_calibration(confidence, action, cal_map,
                                                   regime=_cal_regime)
             if _bin and abs(confidence - pre_cal) >= 2:
-                _emp_wr   = round(_bin["win_rate"] * 100, 1)
-                _n        = _bin["n"]
-                _blend    = round(_bin["blend"] * 100)
+                _source   = _bin.get("source", "platt")
+                _emp_wr   = round((_bin.get("win_rate") or _bin.get("prob", pre_cal / 100)) * 100, 1)
+                _n        = _bin.get("n", 0)
+                _blend    = round((_bin.get("blend", 0)) * 100)
                 _gap      = round(_emp_wr - pre_cal, 1)
                 _bin_lo   = (int(pre_cal) // 5) * 5
                 _bin_hi   = _bin_lo + 5
                 _dir      = "DOWN" if confidence < pre_cal else "UP"
                 _over     = confidence < pre_cal  # True = was overconfident
+                _is_iso   = "isotonic" in _source
+
+                if _is_iso:
+                    _body = (
+                        f"Isotonic regression ({_source}) mapped {pre_cal:.0f}% → {confidence:.0f}%. "
+                        f"Empirical win rate at this confidence level: {_emp_wr:.0f}%. "
+                        f"The model is {'over' if _over else 'under'}confident by {abs(_gap):.0f}pp "
+                        f"in this confidence region based on resolved signal history."
+                    )
+                    _meta = f"source={_source} | EmpWR: {_emp_wr:.0f}%"
+                else:
+                    _body = (
+                        f"The model assigned {pre_cal:.0f}% confidence, but {_n} resolved "
+                        f"{action} signals in the {_bin_lo}–{_bin_hi}% band have an actual "
+                        f"win rate of {_emp_wr:.0f}% — a {abs(_gap):.0f}pp "
+                        f"{'overconfidence' if _over else 'underconfidence'} gap. "
+                        f"Confidence blended {_blend}% toward the empirical rate."
+                    )
+                    _meta = (
+                        f"Bin {_bin_lo}–{_bin_hi}% | "
+                        f"Empirical WR: {_emp_wr:.0f}% | "
+                        f"n={_n} signals | "
+                        f"Blend: {_blend}% empirical + {100-_blend}% model"
+                    )
 
                 rationale.append({"src": "Backtest",
                     "head": (
                         f"Calibration {_dir}: {pre_cal:.0f}% → {confidence:.0f}%"
                         f" ({'overconfident' if _over else 'underconfident'} by {abs(_gap):.0f}pp)"
                     ),
-                    "body": (
-                        f"The model assigned {pre_cal:.0f}% confidence, but {_n} resolved "
-                        f"{action} signals in the {_bin_lo}–{_bin_hi}% band have an actual "
-                        f"win rate of {_emp_wr:.0f}% — a {abs(_gap):.0f}pp "
-                        f"{'overconfidence' if _over else 'underconfidence'} gap. "
-                        f"Confidence blended {_blend}% toward the empirical rate "
-                        f"(blend weight = {_blend}% because n={_n} resolved signals in this band). "
-                        + (
-                            f"The model is systematically {'over' if _over else 'under'}confident "
-                            f"at this score level — likely because "
-                            + ("multiple correlated technical signals agree but the macro or sector context "
-                               "limits real-world follow-through."
-                               if _over else
-                               "the model's scoring underweights how reliably these signals perform "
-                               "in practice.")
-                        )
-                    ),
+                    "body": _body,
                     "sentiment": "pos" if not _over else "neg",
-                    "meta": (
-                        f"Bin {_bin_lo}–{_bin_hi}% | "
-                        f"Empirical WR: {_emp_wr:.0f}% | "
-                        f"n={_n} signals | "
-                        f"Blend: {_blend}% empirical + {100-_blend}% model"
-                    ),
+                    "meta": _meta,
                 })
 
     # ── XGBoost confidence adjustment ────────────────────────────────────
@@ -1704,8 +1856,10 @@ def _assemble_signal(
     # yield dampener, factor mining boost) can push confidence above 72%.
     # Empirical calibration (May 2026, n=529): bands 75-84% win at only 48-50%,
     # and 65-70% wins at only 56% — the model's real ceiling of predictive power.
+    # _conf_macro_cap re-enforces any active macro contradiction / news-sentiment
+    # cap, preventing adaptive win-rate or yield boosts from bypassing it.
     if action in ("BUY", "SELL"):
-        confidence = round(min(72.0, max(35.0, confidence)), 1)
+        confidence = round(min(_conf_macro_cap, max(35.0, confidence)), 1)
 
     # Final de-confliction safety (string-based warning heads can be brittle):
     # if we detect a known overbought/oversold warning head, apply a small
@@ -1752,6 +1906,29 @@ def _assemble_signal(
             confidence_warning = True
         elif total_confidence_penalty >= 0.15:
             confidence_warning = True
+
+    # ── MR exit guidance (§35b: RSI45 adaptive exit — 47% hit rate, 100% WR) ──
+    # Tells position holders when the mean-reversion bounce is likely complete.
+    # Only added for BUY signals with a confirmed MR setup — not for momentum or
+    # general BUYs — because the RSI45 threshold was calibrated on MR entries.
+    if action == "BUY" and _has_mr:
+        _hold_rec = (_SECTOR_MR_CONFIG.get(
+            (sector_rs or {}).get("sector_etf", ""), {}
+        ).get("hold_days", 10))
+        rationale = list(rationale) + [{
+            "src":       "Risk Gate",
+            "head":      "MR Exit Signal: RSI > 45 While Profitable",
+            "body":      (
+                f"Mean-reversion bounces typically complete when RSI(14) crosses "
+                f"above 45 while the position is profitable (>0.5% gain). "
+                f"20-year backtest: this exit fires on 47% of MR trades at "
+                f"100% win rate, avg +3.0% return. "
+                f"If RSI stays below 45, hold up to {_hold_rec} days while the "
+                f"thesis is intact (price above entry, no stop breach)."
+            ),
+            "sentiment": "pos",
+            "meta":      "exit_guidance=rsi45 source=§35b",
+        }]
 
     return {
         "ticker":              ticker,
@@ -1834,6 +2011,23 @@ async def generate_signal(
         if not tech or tech.get("price") is None:
             return None
 
+        # ── Point-in-time momentum persistence (AR(1) on 126-day returns) ────────
+        # AR(1) > 0 = positive autocorrelation = trending/momentum regime.
+        # Used downstream to apply a dynamic confidence haircut on MR entries
+        # for stocks that are currently trending rather than mean-reverting.
+        # Replaces hardcoded backtest-derived exclusions with a live metric.
+        try:
+            import numpy as _np_ar1
+            _rets_ar1 = df["Close"].pct_change().dropna().values
+            if len(_rets_ar1) >= 60:
+                _n_ar1 = min(126, len(_rets_ar1))
+                _r_ar1 = _rets_ar1[-_n_ar1:]
+                tech["momentum_ar1"] = float(_np_ar1.corrcoef(_r_ar1[:-1], _r_ar1[1:])[0, 1])
+            else:
+                tech["momentum_ar1"] = None
+        except Exception:
+            tech["momentum_ar1"] = None
+
         # ── Launch scoring workers concurrently (Event-Driven Microservices) ──────
         # Workers run in parallel while TA scoring executes below.
         # Each worker has its own timeout + circuit breaker — a slow Polygon call
@@ -1857,9 +2051,15 @@ async def generate_signal(
             _worker_task = None
 
         # ── Weekly trend (resample daily → weekly, no extra API call) ───────
+        # Use only COMPLETED weeks (.iloc[:-1]) — the current calendar week may
+        # be mid-week (e.g. Wednesday), making .last() return today's close and
+        # broadcasting it across Mon-Wed, creating implicit look-ahead in backtests
+        # and inconsistent live-vs-backtest behaviour.
         weekly_trend = 0  # +1 uptrend, -1 downtrend, 0 neutral
         try:
             weekly = df["Close"].resample("W").last().dropna()
+            if len(weekly) >= 2:
+                weekly = weekly.iloc[:-1]  # drop current (potentially incomplete) week
             if len(weekly) >= 20:
                 w_sma20 = float(weekly.iloc[-20:].mean())
                 w_price = float(weekly.iloc[-1])
@@ -1905,7 +2105,7 @@ async def generate_signal(
         _poly_weekly: dict = {}
         try:
             from services.polygon_indicators import (
-                get_indicators, get_weekly_indicators, blend_rsi, polygon_sma_crossover
+                get_indicators, get_weekly_indicators, blend_rsi
             )
             _poly_ind, _poly_weekly = await asyncio.gather(
                 get_indicators(ticker),
@@ -2277,6 +2477,7 @@ async def generate_signal(
         # High insider ownership = management conviction (skin-in-the-game).
         # High institutional ownership validates the thesis but also signals
         # crowded positioning risk. Uses yfinance free fields.
+        action = _score_to_action(score)[0]   # preliminary direction for conditional checks
         _inst_own  = info.get("held_pct_inst")     # e.g. 0.657 = 65.7%
         _insid_own = info.get("held_pct_insiders")  # e.g. 0.016 = 1.6%
         if _insid_own is not None and not _is_lev_etf:
@@ -2657,9 +2858,12 @@ async def generate_signal(
         # Mean-reversion (Bollinger) lost predictive ability post-2002.
         # Separate caps: osc ±18, mean_rev ±8 (was unified ±30).
         # Regime adjustment: in bull trend, suppress bearish mean-rev (dip-buy valid).
+        # OSC weight=0.1 (§12 alpha decomp, v2 runs): OSC is redundant with DONCHIAN (corr=0.74).
+        # Ablation: removing OSC entirely adds +15.4pp WR, +0.15 Sharpe. Weight 0.1 retains
+        # OSC as a minimal quality signal without letting it generate false BUY entries.
         if _is_trending_bull and mean_rev_score < 0:
             mean_rev_score *= 0.20
-        score += (max(-18.0, min(18.0, osc_score)) + max(-8.0, min(8.0, mean_rev_score))) * 0.85
+        score += (max(-18.0, min(18.0, osc_score)) * 0.1 + max(-8.0, min(8.0, mean_rev_score))) * 0.85
 
         # ── Keltner Channels(20, 2×ATR) ──────────────────────────────────────
         # Backtest-validated (alpha decomp v3): below kc_lower on oversold RSI
@@ -3356,35 +3560,6 @@ async def generate_signal(
                 sources.add("Options")
                 rationale.extend(opt_rationale)
 
-            # ── Massive API Advanced Signals ─────────────────────────────────────
-            if massive_sigs:
-                # 1. Fails-to-Deliver (FTDs) & Reg SHO (Business plan; graceful 403 skips)
-                ftd = massive_sigs.get("ftd", {})
-                if ftd.get("is_reg_sho") and ftd.get("spike_pct", 0) > 300:
-                    score += 15.0
-                    sources.add("Fundamentals")
-                    rationale.append({
-                        "src": "Fundamentals", "head": f"Reg SHO Threshold + FTD Spike ({ftd.get('spike_pct', 0):.0f}%)",
-                        "body": "Stock is on Reg SHO list with surging Fails-to-Deliver. High probability of forced mechanical short covering.",
-                        "sentiment": "pos", "meta": "FTD Spike"
-                    })
-
-                # 2. Corporate Actions: ex-dividend gate (MR entries blocked near ex-div)
-                corp_actions = massive_sigs.get("corp_actions", {})
-                if corp_actions.get("ex_div_soon"):
-                    ex_date = corp_actions.get("ex_div_date") or "soon"
-                    if action == "BUY" and _has_mr:
-                        action = "HOLD"
-                        sources.add("Risk Gate")
-                        rationale.append({
-                            "src": "Risk Gate", "head": f"Ex-Dividend Gate — MR Entry Blocked (ex-div {ex_date})",
-                            "body": (
-                                f"Ex-dividend date is {ex_date}. Price typically declines by the dividend "
-                                f"amount on ex-div day, creating an artificial gap-down that is not a "
-                                f"recoverable mean-reversion setup. MR entry blocked to avoid dividend decay."
-                            ),
-                            "sentiment": "neg", "meta": f"ex_div={ex_date}"
-                        })
 
         # ── 8-K Material Events ───────────────────────────────────────────────
         try:
@@ -4162,6 +4337,7 @@ async def generate_signal(
             vix_ratio = (market_ctx.get("macro") or {}).get("vix_term_ratio")
 
         # ── VIX9D — Near-Term Event Risk ─────────────────────────────────────
+        action = _score_to_action(score)[0]   # re-evaluate after all mid-scoring overrides
         _macro_now = (market_ctx or {}).get("macro") or {}
         _vix9d_ratio = _macro_now.get("vix9d_ratio")
         if _vix9d_ratio is not None and _vix9d_ratio > 1.10 and action in ("BUY", "SELL"):
@@ -4617,6 +4793,28 @@ async def generate_signal(
                              "signals are invalidated by this guaranteed drop. Signal blocked for today."),
                     "sentiment": "neg",
                     "meta": f"ex_div_blackout=True label={_exdiv_label}"})
+            # Ex-div lookahead: block BUY when ex-div falls within the MR hold window (≤7 days).
+            # A trade entered today holding 5-10 days would hit the mechanical ex-div gap-down.
+            # Replaces the per-ticker Polygon 14-day check that ran in get_massive_advanced_signals.
+            # Uses corporate_events market_ctx (requires MASSIVE_API_KEY; no-ops without it).
+            if not _is_exdiv and action == "BUY":
+                _ce_events = ((market_ctx or {}).get("corporate_events") or {}).get("by_ticker") or {}
+                for _ev in _ce_events.get(ticker, []):
+                    if _ev.get("type") == "ExDividendDate" and 0 < _ev.get("days_away", 99) <= 7:
+                        _exdiv_ahead = _ev.get("date", "soon")
+                        _exdiv_days  = _ev["days_away"]
+                        _force_hold = True
+                        sources.add("Risk Gate")
+                        rationale.append({"src": "Risk Gate",
+                            "head": f"Ex-Dividend Gate — BUY Blocked ({_exdiv_ahead}, {_exdiv_days}d away)",
+                            "body": (
+                                f"Ex-dividend date is {_exdiv_ahead} ({_exdiv_days} day{'s' if _exdiv_days != 1 else ''} away). "
+                                f"A hold through ex-date incurs a mechanical price drop equal to the dividend, "
+                                f"creating an artificial loss that is not a recoverable MR setup."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"ex_div_ahead={_exdiv_ahead} days_away={_exdiv_days}"})
+                        break
             ev_score, ev_reasons = get_event_score(ticker, (market_ctx or {}).get("corporate_events"))
             if abs(ev_score) >= 2.0:
                 sources.add("Fundamentals")
