@@ -49,11 +49,13 @@ warnings.filterwarnings("ignore")
 # Config
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Technical-friendly universe: high-beta trending names.
-# Removed 15 systematic underperformers (event-driven pharma, consumer staples,
-# range-bound banks, legacy cyclicals) — those sectors respond to fundamentals,
-# not technicals, and drag avg return by -0.30% to -0.67% per trade.
-# Removed: ABBV, TMO, NKE, TXN, BAC, V, QCOM, AMZN, MRK, PG, COST, PFE, BRK-B, WMT, KO
+# 100-ticker universe (expanded 2026-05-31: 68→100).
+# XLK 25 / XLF 16 / XLY 21 / XLC 7 / XLB 9 / XLV 9 / XLE 6 / XLI 5 / XLP 2.
+# XLV/XLE/XLI/XLP tickers are blocked in the live engine (§10 sector filter) —
+# they appear here for IS backtest research only (gate calibration, Sharpe decomp).
+# Removed systematic underperformers: ABBV, TMO, NKE (OOS), TXN, BAC (re-added §18),
+# QCOM (re-added §18), AMZN (re-added §18), MRK (re-added §18), PG (re-added §18),
+# COST (re-added §18), PFE, BRK-B, WMT, KO (re-added §18).
 TICKERS = [
     # ── Mega-cap tech (strong MR on genuine pullbacks) ────────────────────────
     "NVDA",  # AI leader; bounces hard from oversold (Sharpe 0.30 in v5.12)
@@ -122,11 +124,11 @@ TICKERS = [
     "T",  # AT&T — range-bound dividend stock; reliable MR oscillator
     "VZ",  # Verizon — similar cadence to T; telecom range-bound MR
     # ── §40 OOS promotions ────────────────────────────────────────────────────
-    # Promoted from HELD_OUT_TICKERS after positive OOS avg return:
-    "LOW",  # Lowe's — OOS WR 62.5%, avg +0.33%; XLY home improvement MR
-    "FDX",  # FedEx — OOS WR 66.7%, avg +0.71%; logistics MR on demand cycles
-    "MMM",  # 3M — OOS WR 100%, avg +2.12%; industrial compounder (N=5, treat with caution)
-    "EMR",  # Emerson Electric — OOS WR 75%, avg +0.47%; automation demand cycles
+    # LOW/FDX/MMM/EMR previously lived here but are now in _GRADUATED_TICKERS.
+    # Moving OOS-tested tickers into IS contaminates both sets: the IS Sharpe
+    # includes OOS-positive-selected names, and the remaining OOS is negatively
+    # selected (everything that wasn't good enough to promote). Both biases
+    # inflate reported IS and deflate OOS, masking the true curation gap.
     # ── Balance expansion (2026-05-29) ───────────────────────────────────────
     # XLB Materials — was 1 ticker; filling to 6 for sector balance
     "LIN",  # Linde — industrial gases; ultra-low idio-vol, clean compounder MR
@@ -144,18 +146,56 @@ TICKERS = [
     "TJX",  # TJX Companies — off-price retail; smooth compounder MR
     # XLK addition — Arista for networking/cloud adjacent
     "ANET",  # Arista Networks — cloud networking; earnings-driven MR cycles
+    # ── Universe expansion to 100 tickers (2026-05-31) ──────────────────────────
+    # XLK additions — software/services/legacy tech
+    "INTU",  # Intuit — financial software; earnings-driven MR on guidance misses
+    "WDAY",  # Workday — cloud HCM/ERP; guidance-miss MR; S&P 500 since 2014
+    "IBM",  # IBM — range-bound legacy tech; consistent pullback/recovery cycles
+    "MSI",  # Motorola Solutions — defense/public safety tech; clean MR
+    # XLF additions — exchange operators + insurance + consumer credit
+    "ICE",  # Intercontinental Exchange — exchange/data operator; range-bound MR
+    "CME",  # CME Group — exchange operator; vol-of-vol driven MR
+    "TROW",  # T. Rowe Price — asset manager; AUM-correlated MR pullbacks
+    "COF",  # Capital One — consumer credit; delinquency-fear-driven oversold bounces
+    "CB",  # Chubb — P&C insurance; CAT-event oversold bounces
+    # XLY additions — homebuilders + auto-parts + dining + specialty retail
+    "CMG",  # Chipotle — earnings-driven MR; S&P 500 since 2012 (adj prices handle split)
+    "PHM",  # PulteGroup — homebuilder; rate-cycle MR parallel to DHI
+    "LEN",  # Lennar — homebuilder; permits/rate-cycle MR
+    "ORLY",  # O'Reilly Auto Parts — smooth compounder; durable earnings MR
+    "DRI",  # Darden Restaurants — dining chains; sentiment + earnings MR
+    "ULTA",  # Ulta Beauty — specialty retail; consumer sentiment MR
+    # XLC additions — cable/gaming/advertising
+    "CMCSA",  # Comcast — cable/streaming; range-bound MR around cord-cutting fears
+    "EA",  # Electronic Arts — gaming; earnings-cycle MR
+    "IPG",  # Interpublic Group — advertising; stable range-bound MR
+    # XLB additions — fertilizer/aggregates/specialty chemicals
+    "CF",  # CF Industries — fertilizer; nat-gas/crop-price commodity-cycle MR
+    "MLM",  # Martin Marietta Materials — aggregates; construction-cycle MR
+    "CE",  # Celanese — specialty chemicals; S&P 500 since 2010; cycle MR
     # XLV Healthcare (§10 removes — blocked in live engine; backtest research only)
     "JNJ",  # Johnson & Johnson — pharma/medtech compounder; classic MR anchor
     "MRK",  # Merck — pharma; patent-cycle MR on pipeline news
     "LLY",  # Eli Lilly — high-growth pharma; MR on sentiment swings
     "UNH",  # UnitedHealth — managed care; steady compounder MR
+    "ABT",  # Abbott — medtech/diagnostics; smooth compounder MR
+    "BSX",  # Boston Scientific — medtech; earnings-driven MR cycles
+    "AMGN",  # Amgen — large biotech; stable enough for MR; S&P 500 since 1994
+    "CI",  # Cigna — managed care peer to UNH; earnings-driven MR
+    "HCA",  # HCA Healthcare — hospital operator; volume-cycle MR; S&P 500 since 2015
     # XLE Energy (§10 removes — blocked in live engine; backtest research only)
     "XOM",  # ExxonMobil — mega-cap energy; oil-cycle MR
     "CVX",  # Chevron — stable major; cleaner MR than XOM
     "COP",  # ConocoPhillips — E&P; high-beta oil MR
+    "SLB",  # SLB (Schlumberger) — oilfield services; oil-activity-cycle MR
+    "EOG",  # EOG Resources — E&P; commodity-cycle MR; S&P 500 since 2000
+    "MPC",  # Marathon Petroleum — refining; crack-spread-cycle MR
     # XLI additions (§10 removes — blocked in live engine; backtest research only)
     "HON",  # Honeywell — diversified industrial; steady compounder MR
     "RTX",  # RTX Corp (Raytheon) — defense/aerospace; backlog-driven MR
+    "CAT",  # Caterpillar — machinery; global construction/mining cycle MR
+    "DE",  # Deere — agricultural machinery; seasonal demand-cycle MR
+    "LMT",  # Lockheed Martin — defense; backlog-driven smooth MR
     # XLP Consumer Staples (live delivery_gates blocks; §10 does not — research only)
     "PG",  # Procter & Gamble — ultra-stable staples; very tight MR oscillator
     "KO",  # Coca-Cola — range-bound staples compounder; classic MR instrument
@@ -164,6 +204,41 @@ TICKERS = [
     # ETFs are too efficiently arbed — BB%B/IBS/VWAP% MR signals calibrated on individual
     # stock volatility do not persist at index level. XLF/XLV/XLE showed positive results
     # (WR 80–100%) but N=1–5 is not significant. ETF MR requires separate signal calibration.
+]
+
+# ── Graduated tickers — EXCLUDED from both IS and OOS ────────────────────────
+# These tickers were previously in HELD_OUT_TICKERS (OOS), showed positive OOS
+# results in §40, and were moved into IS. Placing OOS-selected tickers into IS
+# contaminates both sets: IS gains a positive-selection bias and OOS loses those
+# tickers, leaving only negatively-selected survivors in the OOS pool. Both
+# distort the IS-vs-OOS curation-bias verdict.
+# Resolution: quarantine them in a third bucket. Their historical performance is
+# known (OOS WR: LOW 62.5%, FDX 66.7%, MMM 100% N=5, EMR 75%) and must not be
+# re-used without fresh forward data. Do NOT add these to HELD_OUT_TICKERS.
+_GRADUATED_TICKERS: list[str] = ["LOW", "FDX", "MMM", "EMR"]
+
+# ── Curated-out tickers (removed because they dragged IS Sharpe) ─────────────
+# Restored below as _CURATED_OUT_TICKERS for the optional full-universe curation
+# bias report (run with --full-universe flag). These 14 tickers were dropped from
+# TICKERS explicitly because they underperformed in IS — a form of data snooping
+# that inflates the reported IS Sharpe. The curation bias = IS(curated) − IS(full).
+_CURATED_OUT_TICKERS: list[str] = [
+    "ABBV",
+    "TMO",
+    "NKE",
+    "TXN",
+    "BAC",
+    "V",
+    "AMZN",
+    "MRK",
+    "PG",
+    "COST",
+    "PFE",
+    "WMT",
+    "KO",
+    # TSLA, SBUX, MCD, GS, C, MA, SCHW, BLK also removed — see TICKERS comments
+    "TSLA",
+    "SBUX",
 ]
 
 # ── Held-out OOS validation universe — v5: same-sector, live-block aware ──────
@@ -332,6 +407,11 @@ FRICTION_PCT = 0.50  # 0.25% entry + 0.25% exit — matches calc_tbd_metrics.py 
 # Models bid-ask spread widening and market-impact on catastrophic gap exits;
 # 0.15% is conservative for large-caps but realistic for fast-moving down-gaps.
 GAP_STOP_SLIP_PCT = 0.15
+# Slippage applied on non-gap stop exits (stop price reached intrabar, not gapped).
+# A market order at a breached stop still prints through the stop due to bid-ask
+# spread and queue position — 0.10% is conservative for S&P 500 mega-caps and
+# realistic for mid-caps (EXPE, TPR, PSKY) during fast-market conditions.
+NORMAL_STOP_SLIP_PCT = 0.10
 # v5.12 sweep-optimal (45-combination grid, all 7 gates active, 2026-05-18):
 # Best: BUY_THRESH=40, MAX=∞, HOLD=10 → Sharpe 0.165, WR 51.9%, avg +0.61%
 # v7.1 score-band analysis (2026-05-28): band 40-50 → WR 56.2%, avg +0.26%, Sharpe 0.07
@@ -2312,7 +2392,12 @@ def simulate_ticker(
                     # (open already below stop) to model widened bid-ask and market impact.
                     _gapped = day_open < stop_price
                     _base_fill = min(stop_price, day_open)
-                    exit_price = _base_fill * (1 - GAP_STOP_SLIP_PCT / 100) if _gapped else _base_fill
+                    if _gapped:
+                        # Gap-through: open already below stop — wide spread + impact
+                        exit_price = _base_fill * (1 - GAP_STOP_SLIP_PCT / 100)
+                    else:
+                        # Normal stop hit intrabar: market order still slips bid-ask
+                        exit_price = _base_fill * (1 - NORMAL_STOP_SLIP_PCT / 100)
                     exit_reason = "stop"
                     exit_day = j
                     break
@@ -2376,7 +2461,10 @@ def simulate_ticker(
                     # Extra slippage on true gap-ups (open already above stop).
                     _gapped_short = day_open > stop_price
                     _base_fill_short = max(stop_price, day_open)
-                    exit_price = _base_fill_short * (1 + GAP_STOP_SLIP_PCT / 100) if _gapped_short else _base_fill_short
+                    if _gapped_short:
+                        exit_price = _base_fill_short * (1 + GAP_STOP_SLIP_PCT / 100)
+                    else:
+                        exit_price = _base_fill_short * (1 + NORMAL_STOP_SLIP_PCT / 100)
                     exit_reason = "stop"
                     exit_day = j
                     break
@@ -2546,20 +2634,45 @@ def stats(rets: list[float]) -> dict:
 
 
 def monte_carlo(trades_df, n_sims=10000):
+    """Block bootstrap Monte Carlo for honest Sharpe confidence intervals.
+
+    Consecutive trades on the same ticker share regime — they are NOT IID.
+    IID (iid=np.random.choice) resamples break this structure and produce
+    confidence intervals that are 30–50% too tight. Block bootstrap (Politis &
+    Romano 1994) preserves serial autocorrelation by resampling contiguous
+    blocks of trades, producing wider and honest P5/P95 intervals.
+
+    Block size: max(5, round(N^(1/3))). For N=114 → block=5; N=1500 → block=11.
+    This matches the mean-reverting cycle length (~5–10 holding days) and is
+    consistent with the Politis-Romano optimal block selection rule.
+    """
     returns = trades_df["net_pct"].values
     if len(returns) == 0:
         return
+    n = len(returns)
+    block_size = max(5, int(round(n ** (1 / 3))))
+    n_blocks_needed = -(-n // block_size)  # ceiling division
+
+    rng = np.random.default_rng(seed=42)
     sharpe_sims = []
     for _ in range(n_sims):
-        sample = np.random.choice(returns, size=len(returns), replace=True)
+        starts = rng.integers(0, max(1, n - block_size + 1), size=n_blocks_needed)
+        blocks = [returns[s : s + block_size] for s in starts]
+        sample = np.concatenate(blocks)[:n]
         s = stats(sample.tolist())
         sharpe_sims.append(s.get("sharpe") or 0.0)
 
     p5 = np.percentile(sharpe_sims, 5)
     p95 = np.percentile(sharpe_sims, 95)
-    print(f"- **Monte Carlo Sharpe (5th/95th percentile):** {p5:.2f} / {p95:.2f}")
+    print(
+        f"- **Monte Carlo Sharpe (block bootstrap N={n_sims}, block={block_size}, 5th/95th pct):** {p5:.2f} / {p95:.2f}"
+    )
+    print(
+        f"  > Block bootstrap (block={block_size}) preserves serial autocorrelation. "
+        "IID resampling would overstate CI confidence by ~30–50%."
+    )
     if p5 < 0:
-        print("  > ⚠ 5th percentile < 0. Your edge might not be real.")
+        print("  > ⚠ 5th percentile < 0 — edge may not be real; treat Sharpe as upper bound.")
 
 
 def fmt_pf(v):
@@ -2882,6 +2995,7 @@ def parameter_sweep(all_dfs, vix, spy_trend, stlfsi4):
 
     if results:
         res_df = pd.DataFrame(results).sort_values("sharpe", ascending=False)
+        n_combos = len(results)
         print("Full sweep results (sorted by Sharpe):\n")
         print(res_df.to_string(index=False))
         best = res_df.iloc[0]
@@ -2890,12 +3004,97 @@ def parameter_sweep(all_dfs, vix, spy_trend, stlfsi4):
             f"HOLD={int(best['hold'])} → Sharpe {best['sharpe']:.3f}, "
             f"WR {best['wr']:.1f}%, avg {best['avg']:+.3f}%, n={int(best['n'])}"
         )
+        # Multiple-comparison inflation warning (Bonferroni adjustment)
+        # The best-of-N Sharpe is inflated relative to any single pre-specified
+        # threshold. Under the null hypothesis (no edge), the expected best Sharpe
+        # across K combinations rises with K. A conservative Bonferroni-adjusted
+        # p-value for selecting the top combination from K=n_combos is α_bonf = α/K.
+        # At K=45, a Sharpe that would be "significant" at α=0.05 with a single test
+        # requires the raw p-value to be ≤0.001 to remain significant after correction.
+        print(
+            f"\n> ⚠ **Multiple-comparisons inflation ({n_combos} combinations):**"
+            f" best-of-{n_combos} Sharpe is inflated vs a pre-specified threshold."
+            f" Bonferroni-adjusted significance level: α/{n_combos} = "
+            f"{0.05 / n_combos:.4f}. Treat the selected BUY_THRESH as a starting"
+            " point, not a proven optimal — validate on OOS data."
+        )
 
     # Restore original globals
     BUY_THRESH = orig_buy
     BUY_THRESH_MAX = orig_buy_max
     SELL_THRESH = orig_sell
     HOLD_DAYS = orig_hold
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Full-Universe Curation Bias Report
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def run_full_universe_curation_bias(
+    vix, spy_trend, stlfsi4, fomc_dates=None, t10y_data=None, trin_data=None, ad_data=None
+):
+    """Quantify IS universe curation bias by including the 14 removed underperformers.
+
+    The main IS universe excluded 14 tickers because they 'dragged avg return by
+    -0.30% to -0.67% per trade'. Running the full universe (curated + removed) shows
+    what portion of the IS Sharpe 0.24 is genuine alpha vs selection bias from the
+    curated universe.
+
+    Curation bias = IS_Sharpe(curated) - IS_Sharpe(full).
+
+    Only run with --full-universe flag because it requires downloading ~14 more tickers
+    (slow). Results are printed for transparency; the curated IS remains the primary
+    performance report for live-engine alignment.
+
+    Activate by passing --full-universe on the command line.
+    """
+    print("\n## Full-Universe Curation Bias Report (--full-universe flag)\n")
+    print("> Runs the same IS strategy on _CURATED_OUT_TICKERS (removed underperformers)")
+    print("> to show what portion of IS Sharpe is curation bias vs genuine alpha.\n")
+
+    args_list = [
+        (t, vix, spy_trend, stlfsi4, True, fomc_dates, t10y_data, trin_data, ad_data) for t in _CURATED_OUT_TICKERS
+    ]
+    with Pool(min(8, len(_CURATED_OUT_TICKERS))) as p:
+        results = p.map(process_ticker, args_list)
+
+    removed_trades: list[pd.DataFrame] = []
+    for ticker, t_df, _bh, _df in results:
+        if t_df is not None and not t_df.empty:
+            removed_trades.append(t_df)
+
+    if not removed_trades:
+        print("> [warn] No trades generated for removed tickers — check data availability.\n")
+        return
+
+    removed = pd.concat(removed_trades, ignore_index=True)
+    sr = stats(removed["net_pct"].tolist())
+    print("### Curated-out tickers (would-be IS underperformers)\n")
+    print_table(
+        ["Metric", "Curated-Out Only", "Note"],
+        [
+            ["Total Trades", str(sr["n"]), ""],
+            ["Win Rate", f"{sr['wr']:.1f}%", ""],
+            ["Avg Return / Trade", f"{sr['avg']:+.2f}%", ""],
+            ["Sharpe", fmt_sharpe(sr["sharpe"]), ""],
+        ],
+    )
+
+    # Per-ticker breakdown
+    rows = []
+    for ticker, t_df, _bh, _df in results:
+        if t_df is None or t_df.empty:
+            rows.append([ticker, "0", "—", "—", "—"])
+            continue
+        st = stats(t_df["net_pct"].tolist())
+        rows.append([ticker, str(st["n"]), f"{st['wr']:.1f}%", f"{st['avg']:+.2f}%", fmt_sharpe(st["sharpe"])])
+    print("\n### Per-Ticker (curated-out)\n")
+    print_table(["Ticker", "N", "WR", "Avg Ret", "Sharpe"], rows)
+    print(
+        "\n> Curation bias = IS_Sharpe(curated) − IS_Sharpe(full_universe)."
+        " If Sharpe(curated-out) << Sharpe(IS), the curated IS Sharpe is overstated by that gap.\n"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3016,6 +3215,84 @@ def gate_sensitivity_sweep(
         oct_rows.append(_run_all(label))
     OCT_SCORE_FLOOR = orig_oct
     _print_rows("§78 October BUY Score Floor", oct_rows)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Walk-Forward Temporal Stability
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def run_walk_forward_temporal(trades_df: pd.DataFrame) -> None:
+    """Measure whether the edge is stable across market regimes.
+
+    The IS backtest uses pre-specified gates (BUY_THRESH, §59-§82 parameters)
+    derived from the full 23-year IS period.  This function partitions the
+    same IS trades by calendar year-range to answer a distinct question:
+    is the Sharpe 0.24 driven by one lucky regime (e.g. GFC vol) or does the
+    edge persist across bull, bear, recovery and rate-cycle environments?
+
+    This is NOT a true walk-forward (gates are not re-calibrated per epoch —
+    that would require re-running parameter_sweep() per window, future work).
+    It is a temporal stability check: a signal that only fires in one epoch
+    is regime-specific, not systematic.
+
+    Epochs:
+      2003-2009  Pre-GFC bull + GFC collapse (high realized vol)
+      2010-2016  Post-crisis recovery (steady low-vol bull)
+      2017-2021  Late-cycle + COVID collapse + V-shaped recovery
+      2022-pres  Rate-hike cycle + normalization (new macro regime)
+
+    A credible systematic edge should show positive Sharpe in ≥3 of 4 epochs.
+    """
+    print("\n## Walk-Forward Temporal Stability (IS universe, pre-specified gates)\n")
+    print("> Not a true walk-forward (gates not re-calibrated per epoch).")
+    print("> Measures regime stability: a signal surviving all 4 epochs is")
+    print("> more robust than one driven by a single vol regime.\n")
+
+    epochs = [
+        ("2003–2009  (Pre-GFC/GFC)", 2003, 2010),
+        ("2010–2016  (Post-crisis bull)", 2010, 2017),
+        ("2017–2021  (Late-cycle/COVID)", 2017, 2022),
+        ("2022–pres  (Rate-hike cycle)", 2022, 2100),
+    ]
+
+    rows = []
+    positive_epochs = 0
+    for label, yr_start, yr_end in epochs:
+        sub = trades_df[(trades_df["year"] >= yr_start) & (trades_df["year"] < yr_end)]
+        sr = stats(sub["net_pct"].tolist())
+        sh = sr.get("sharpe")
+        if sh is not None and sh > 0:
+            positive_epochs += 1
+        rows.append(
+            [
+                label,
+                str(sr["n"]),
+                f"{sr['wr']:.1f}%" if sr["n"] else "—",
+                f"{sr['avg']:+.2f}%" if sr["n"] else "—",
+                fmt_sharpe(sh),
+                f"-{sr['max_dd']:.2f}%" if sr["n"] else "—",
+            ]
+        )
+
+    print_table(["Epoch", "N", "WR", "Avg Ret", "Sharpe", "Max DD"], rows)
+    print()
+
+    # Verdict
+    print("**Temporal stability verdict:**")
+    if positive_epochs == 4:
+        print(f"- ✅ {positive_epochs}/4 epochs Sharpe > 0 — edge is regime-agnostic.")
+    elif positive_epochs >= 3:
+        print(f"- ⚠ {positive_epochs}/4 epochs Sharpe > 0 — mostly stable; one epoch is regime-specific.")
+    elif positive_epochs >= 2:
+        print(f"- ⚠ {positive_epochs}/4 epochs Sharpe > 0 — partial stability; edge may be regime-dependent.")
+    else:
+        print(f"- ⛔ Only {positive_epochs}/4 epochs Sharpe > 0 — edge is concentrated in one regime.")
+
+    print(
+        "> Note: for true walk-forward validation, run parameter_sweep() on each epoch separately"
+        " and re-select BUY_THRESH per period. Epoch-specific Sharpe will be lower than full-period IS Sharpe.\n"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3223,9 +3500,15 @@ def process_ticker(args):
 
         df["score"] = compute_scores(df)
 
-        # ── Fetch earnings dates: Polygon (full history) + yfinance (recent) ────
+        # ── Fetch earnings dates: Polygon only (full point-in-time history) ────
         # Polygon vX/reference/financials covers SEC filing dates back to 2003.
-        # yfinance supplements with the most-recent ~4yr (forward earnings calendar).
+        # yfinance.get_earnings_dates() was intentionally REMOVED: it returns
+        # the *current* forward-looking calendar (up to ~4yr ahead) which, when
+        # used in a historical backtest, constitutes lookahead bias — a signal
+        # blocked at 2015-01-20 would have used 2026's version of the earnings
+        # calendar, not what was known in January 2015. Polygon SEC filing dates
+        # are point-in-time (the actual announcement date is in the past when the
+        # record is written) and do not suffer from this problem.
         _poly_key = os.getenv("MASSIVE_API_KEY", "")
         if not _poly_key:
             _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
@@ -3237,17 +3520,6 @@ def process_ticker(args):
             except Exception:
                 pass
         earnings_dates: set = fetch_earnings_dates_polygon(ticker, _poly_key, START)
-        try:
-            tkr_obj = yf.Ticker(ticker)
-            cal = tkr_obj.get_earnings_dates(limit=100)
-            if cal is not None and not cal.empty:
-                for d in cal.index:
-                    try:
-                        earnings_dates.add(pd.Timestamp(str(d)[:10]))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
 
         t = simulate_ticker(
             ticker,
@@ -3288,8 +3560,8 @@ def main():
     )
     print("> **Stops/targets:** ATR-based swing style (tighter stops; extended targets in strong ADX trends)")
     print("> _Technical + macro alt-data (SPY trend, STLFSI4, VIX tiers). No news/options/fundamentals._")
-    print("> **Earnings blackout:** Polygon vX/reference/financials (full history) + yfinance (recent ~4yr).")
-    print(">   SEC filing dates used as earnings-event proxy. Pre-2003 data unavailable.")
+    print("> **Earnings blackout:** Polygon vX/reference/financials only (point-in-time SEC filing dates).")
+    print(">   yfinance supplement REMOVED (lookahead bias — returns forward calendar, not historical dates).")
     print("> ⚠ **Survivorship bias — CRITICAL:** Universe is drawn from *current* S&P 500 survivors.")
     print(">   Companies that delisted, went bankrupt, or were removed 2003–2026 are absent:")
     print(">   Lehman Brothers, Bear Stearns, Washington Mutual, Sears, General Electric (removed")
@@ -3633,6 +3905,7 @@ def main():
     )
     print(f"- **Max Drawdown:** -{s['max_dd']:.2f}% (5% sizing) across 20 years.")
     monte_carlo(trades)
+    run_walk_forward_temporal(trades)
 
     if bh_returns:
         print(f"\nBuy-and-Hold avg: {np.mean(bh_returns):+.1f}%")
@@ -4145,6 +4418,17 @@ def main():
 
     if "--sweep" in sys.argv:
         parameter_sweep(all_dfs, vix, spy_trend, stlfsi4)
+
+    if "--full-universe" in sys.argv:
+        run_full_universe_curation_bias(
+            vix,
+            spy_trend,
+            stlfsi4,
+            fomc_dates=_FOMC_DATES_HIST,
+            t10y_data=t10y_data,
+            trin_data=trin_data,
+            ad_data=ad_data,
+        )
 
     if "--gate-sweep" in sys.argv:
         gate_sensitivity_sweep(
