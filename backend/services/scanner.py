@@ -1310,6 +1310,7 @@ async def _persist_scan_signals(
                 ticker=sig["ticker"],
                 company=sig.get("company"),
                 action=sig["action"],
+                raw_score=sig.get("raw_score"),
                 confidence=sig["confidence"],
                 confidence_warning=bool(sig.get("confidence_warning", False)),
                 price=sig["price"],

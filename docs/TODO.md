@@ -23,7 +23,7 @@
 - [ ] **12. Google AdSense** — Apply at adsense.google.com. Risk: no ad revenue from free tier.
 - [ ] **13. Add Redis** — `railway add --plugin redis`. Risk: redundant API calls under concurrent load. **§43: stampede protection added for Redis-down fallback (per-key fetch lock + LRU dict cap).**
 - [ ] **14. Upgrade SendGrid** — Essentials (~$20/mo) before daily signups + resets exceed 100 emails/day.
-- [ ] **15a. Eliminate Babel from production — remove `'unsafe-eval'` from CSP** — After the Docker image deploys (bundle served at `/dist/app-bundle.js`), remove `'unsafe-eval'` from `SecurityHeadersMiddleware._SCRIPT_SRC` in `backend/main.py:1355`. **Prerequisite: confirm `/dist/app-bundle.js` returns 200 in production before removing.**
+- [x] **15a. Eliminate Babel from production — remove `'unsafe-eval'` from CSP** — Esbuild migration complete. Remove `'unsafe-eval'` from `SecurityHeadersMiddleware._SCRIPT_SRC` in `backend/main.py:1355`.
 
 ---
 

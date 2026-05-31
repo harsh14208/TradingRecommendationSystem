@@ -39,6 +39,11 @@ class Signal(Base):
     rs_vs_sector = Column(Float, nullable=True)
     # Signal expiry — set at creation; nightly job deactivates past-expiry signals
     expires_at = Column(DateTime, nullable=True)
+    # Raw alpha score from _assemble_signal() — pre-heuristic, pre-haircut.
+    # Stored so the live ML model can train on it without the circular dependency
+    # that `confidence` creates (confidence is partially derived from the model's
+    # own output via Platt scaling → training on it is tautological).
+    raw_score = Column(Float, nullable=True)
     # Outcome tracking
     outcome_pct = Column(Float, nullable=True)  # % return from entry after ~7 trading days
     outcome_at = Column(DateTime, nullable=True)

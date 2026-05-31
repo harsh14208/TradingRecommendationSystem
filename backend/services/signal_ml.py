@@ -184,6 +184,10 @@ def _extract_features(sig: dict) -> list[float]:
     sector_ord = _sector_ord(sig.get("sector_etf"))
     dte_bucket = _dte_bucket(sig.get("days_to_earnings"))
     rs_vs_sector = float(sig.get("rs_vs_sector") or 0.0) if sig.get("rs_vs_sector") is not None else float("nan")
+    # raw_score: pre-heuristic alpha score from _assemble_signal().  NaN for
+    # historical rows (pre-migration) — XGBoost splits on presence/absence natively.
+    _rs = sig.get("raw_score")
+    raw_score = float(_rs) if _rs is not None else float("nan")
 
     return [
         n_sources,  # 1
@@ -209,6 +213,7 @@ def _extract_features(sig: dict) -> list[float]:
         sector_ord,  # 21 — sector ETF ordinal; NaN when absent (~82% sparse)
         dte_bucket,  # 22 — earnings proximity bucket; post-earn window −24.8pp WR
         rs_vs_sector,  # 23 — relative strength vs sector; NaN when absent (~82% sparse)
+        raw_score,  # 24 — raw alpha score (NaN for pre-migration rows)
     ]
 
 
@@ -236,6 +241,7 @@ _FEATURE_NAMES = [
     "sector_ord",
     "dte_bucket",
     "rs_vs_sector",
+    "raw_score",
 ]
 
 
@@ -531,6 +537,7 @@ async def _load_resolved_signals_async() -> list[dict]:
                     Signal.ticker,
                     Signal.action,
                     Signal.confidence,
+                    Signal.raw_score,
                     Signal.sentiment,
                     Signal.sources,
                     Signal.rationale,
@@ -559,6 +566,7 @@ async def _load_resolved_signals_async() -> list[dict]:
             "ticker": r.ticker,
             "action": r.action,
             "confidence": r.confidence,
+            "raw_score": r.raw_score,
             "sentiment": r.sentiment,
             "sources": r.sources or [],
             "rationale": r.rationale or [],

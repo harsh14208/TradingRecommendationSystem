@@ -1348,12 +1348,12 @@ app.add_middleware(DataComplianceMiddleware)
 
 # ── Security Headers Middleware ───────────────────────────────────────────────
 # Adds CSP, HSTS, X-Frame-Options, and related headers to all responses.
-# CSP keeps React CDN trusted while blocking inline eval (Babel standalone XSS surface).
-# NOTE: update script-src hashes when upgrading React/Babel CDN versions.
+# CSP blocks inline eval — esbuild pre-compiled bundle replaces Babel CDN.
+# NOTE: update script-src hashes when upgrading React/CDN versions.
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    # 'unsafe-eval' is required by Babel standalone (new Function() during JSX transform).
-    # REMOVE when dist/app-bundle.js (esbuild pre-compiled) replaces Babel CDN in HTML.
-    _SCRIPT_SRC = "'self' 'unsafe-eval' https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com"
+    # esbuild pre-compiles JSX via dist/app-bundle.js — Babel standalone no longer loaded.
+    # 'unsafe-eval' removed: no dynamic eval() required in production bundle.
+    _SCRIPT_SRC = "'self' https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com"
     _STYLE_SRC = "'self' 'unsafe-inline' https://fonts.googleapis.com"
     _FONT_SRC = "'self' https://fonts.gstatic.com data:"
     _IMG_SRC = "'self' data: blob:"

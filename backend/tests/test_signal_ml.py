@@ -35,10 +35,10 @@ def test_extract_features():
 
     features = _extract_features(sig)
 
-    # 23 features: confidence/sentiment removed (§ML-fix — they are Platt-scaled
-    # outputs of this same model, not independent signals; feeding them back in
-    # creates circular dependency that destroys probabilistic integrity).
-    assert len(features) == 23
+    # 24 features: confidence/sentiment excluded (circular dependency — they are
+    # Platt-scaled outputs of this same model); raw_score added (feature 24) as
+    # the pre-heuristic alpha score with NaN fallback for pre-migration rows.
+    assert len(features) == 24
     assert features[0] == 2  # n_sources
     assert features[1] == 3  # n_rationale
     assert features[2] == 2  # n_pos
@@ -62,6 +62,7 @@ def test_extract_features():
     assert features[20] == 0.0  # sector_ord (XLK = 0)
     assert features[21] == 3.0  # dte_bucket (80d → bucket 3)
     assert features[22] == 0.03  # rs_vs_sector
+    assert math.isnan(features[23])  # raw_score — absent in this dict → NaN
 
 
 def test_extract_features_sparse_nulls():
@@ -77,11 +78,12 @@ def test_extract_features_sparse_nulls():
         "target": 56.0,
     }
     features = _extract_features(sig)
-    assert len(features) == 23
+    assert len(features) == 24
     assert _math.isnan(features[18])  # dow — no created_at
     assert _math.isnan(features[20])  # sector_ord — None
     assert _math.isnan(features[21])  # dte_bucket — None
     assert _math.isnan(features[22])  # rs_vs_sector — None
+    assert _math.isnan(features[23])  # raw_score — absent → NaN
 
 
 def test_adjust_confidence():

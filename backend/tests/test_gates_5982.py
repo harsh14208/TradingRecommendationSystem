@@ -728,3 +728,248 @@ def test_hurst_requires_minimum_data():
     # With only 20 points, Hurst should be None or computed but not reliable
     # We just check it doesn't crash and returns a dict
     assert isinstance(result, dict)
+
+
+# ── §69–§72 Options Pack (score_options pure-function tests) ──────────────────
+
+
+def test_gex_flip_proximity_gate():
+    """§69 GEX flip level — near proxy (+5) and >3% above penalty (-2)."""
+    from services.options import score_options
+
+    # (a) spot 1% below flip → within [-2%, +1%] band → +5
+    delta_near, cards_near = score_options({"gex_flip_level": 99.0, "spot": 100.0})
+    heads_near = [c["head"] for c in cards_near]
+    assert any("GEX Flip" in h for h in heads_near), f"GEX near-flip card expected; got: {heads_near}"
+    assert delta_near >= 5, f"Expected score ≥ +5 for near-flip; got {delta_near}"
+    pos = [c for c in cards_near if "GEX Flip" in c.get("head", "")]
+    assert any(c["sentiment"] == "pos" for c in pos), "GEX near-flip card must be positive sentiment"
+
+    # (b) flip 5% above spot → >3% above band → -2 penalty
+    delta_far, cards_far = score_options({"gex_flip_level": 105.0, "spot": 100.0})
+    heads_far = [c["head"] for c in cards_far]
+    assert any("Above GEX" in h or "Dealer Short Delta" in h for h in heads_far), (
+        f"Above-GEX penalty card expected; got: {heads_far}"
+    )
+    assert delta_far <= -2, f"Expected score ≤ -2 for above-flip; got {delta_far}"
+
+
+def test_zero_dte_spike_gate():
+    """§70 Zero-DTE put spike — ratio > 0.30 fires (-4); ≤ 0.30 does not."""
+    from services.options import score_options
+
+    # (a) spike fires → negative card
+    delta, cards = score_options({"zero_dte_ratio": 0.45})
+    heads = [c["head"] for c in cards]
+    assert any("Zero-DTE" in h for h in heads), f"Zero-DTE card expected; got: {heads}"
+    assert delta <= -4, f"Expected score ≤ -4 for zero-DTE spike; got {delta}"
+    spike_cards = [c for c in cards if "Zero-DTE" in c.get("head", "")]
+    assert any(c["sentiment"] == "neg" for c in spike_cards), "Zero-DTE card must be negative sentiment"
+
+    # (b) below threshold → no card
+    _, cards_no = score_options({"zero_dte_ratio": 0.20})
+    assert not any("Zero-DTE" in c["head"] for c in cards_no), "Zero-DTE card must not fire at ratio=0.20"
+
+
+def test_max_pain_convergence_gate():
+    """§71 Max pain >2% above spot with expiry ≤ 2 days → +4; far expiry → no card."""
+    from services.options import score_options
+    from datetime import date, timedelta
+
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+
+    # (a) fires: max_pain 3% above spot, expiry tomorrow
+    delta, cards = score_options({"max_pain": 103.0, "spot": 100.0, "expiry": tomorrow})
+    heads = [c["head"] for c in cards]
+    assert any("Max Pain" in h for h in heads), f"Max Pain card expected; got: {heads}"
+    assert delta >= 4, f"Expected score ≥ +4 for max pain pull; got {delta}"
+
+    # (b) expiry 10 days out → doesn't fire
+    far_exp = (date.today() + timedelta(days=10)).isoformat()
+    _, cards_far = score_options({"max_pain": 103.0, "spot": 100.0, "expiry": far_exp})
+    assert not any("Max Pain" in c["head"] for c in cards_far), "Max Pain card must not fire when expiry > 2 days away"
+
+
+def test_vrp_proxy_gate():
+    """§72 VRP proxy — positive IV premium (+3) and negative IV backwardation (-2)."""
+    from services.options import score_options
+
+    # (a) positive VRP → +3 and pos card
+    delta_pos, cards_pos = score_options({"vrp_proxy": 0.08})
+    heads_pos = [c["head"] for c in cards_pos]
+    assert any("Volatility Risk Premium" in h or "VRP" in h for h in heads_pos), (
+        f"Positive VRP card expected; got: {heads_pos}"
+    )
+    assert delta_pos >= 3, f"Expected score ≥ +3 for positive VRP; got {delta_pos}"
+
+    # (b) negative VRP → -2 and neg card
+    delta_neg, cards_neg = score_options({"vrp_proxy": -0.10})
+    heads_neg = [c["head"] for c in cards_neg]
+    assert any("Negative VRP" in h or "Back-Month" in h for h in heads_neg), (
+        f"Negative VRP card expected; got: {heads_neg}"
+    )
+    assert delta_neg <= -2, f"Expected score ≤ -2 for negative VRP; got {delta_neg}"
+
+
+# ── §73/§74/§76 Gates (generate_signal integration, mocked fetchers) ─────────
+
+
+async def _gen_signal_mocked(*, insider=None, fundamentals=None, ticker="NVDA"):
+    """Run generate_signal with all external fetchers mocked out."""
+    import pandas as pd
+    from unittest.mock import AsyncMock, patch
+
+    n = 252
+    prices = [100.0 + i * 0.01 for i in range(n)]
+    idx = pd.date_range("2025-01-01", periods=n, freq="B")
+    mock_df = pd.DataFrame(
+        {
+            "Open": prices,
+            "High": [p * 1.01 for p in prices],
+            "Low": [p * 0.99 for p in prices],
+            "Close": prices,
+            "Volume": [2_000_000] * n,
+        },
+        index=idx,
+    )
+    mock_df_1h = pd.DataFrame({"Close": [100.0] * 20})
+
+    strong_tech = {
+        "price": 100.0,
+        "atr": 2.0,
+        "rsi": 22.0,
+        "bb_pct_b": 0.05,
+        "ibs": 0.10,
+        "macd_hist": 0.5,
+        "macd_hist_prev": -0.2,
+        "sma200": 80.0,
+        "sma50": 85.0,
+        "stoch_k": 12.0,
+        "stoch_d": 10.0,
+        "stoch_k_prev": 8.0,
+        "stoch_d_prev": 11.0,
+        "cci": -150.0,
+        "mfi": 14.0,
+        "volume": 2_000_000,
+        "avg_volume": 1_000_000,
+        "bb_upper": 106.0,
+        "bb_lower": 94.0,
+        "ema8": 100.0,
+        "ema21": 98.0,
+        "ema8_prev": 97.0,
+        "ema21_prev": 99.0,
+        "close_streak": 0,
+        "rvol": 1.5,
+    }
+
+    with (
+        patch("services.signal_engine.get_company_news", new_callable=AsyncMock, return_value=[]),
+        patch("services.signal_engine.get_scraped_news", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "services.signal_engine.get_insider_activity",
+            new_callable=AsyncMock,
+            return_value=insider or {},
+        ),
+        patch("services.signal_engine.get_analyst_recs", new_callable=AsyncMock, return_value={}),
+        patch("services.signal_engine.get_earnings_calendar", new_callable=AsyncMock, return_value={}),
+        patch("services.signal_engine.get_earnings_surprise", new_callable=AsyncMock, return_value={}),
+        patch("services.signal_engine.get_options_flow", new_callable=AsyncMock, return_value={}),
+        patch(
+            "services.signal_engine.get_fundamentals",
+            new_callable=AsyncMock,
+            return_value=fundamentals or {},
+        ),
+        patch("services.signal_engine.get_social_sentiment", new_callable=AsyncMock, return_value={}),
+        patch("services.signal_engine.get_google_trends", new_callable=AsyncMock, return_value={}),
+        patch("services.signal_engine.get_congress_signal", new_callable=AsyncMock, return_value={}),
+        patch("services.signal_engine.get_history", new_callable=AsyncMock) as m_hist,
+        patch(
+            "services.signal_engine.get_info",
+            new_callable=AsyncMock,
+            return_value={"company": "Test Inc"},
+        ),
+        patch(
+            "services.signal_engine.get_sector_relative_strength",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch("services.signal_engine.calculate_indicators", return_value=strong_tech),
+        patch("services.signal_ml.get_model", return_value=None),
+        patch("services.signal_ml.get_entry_model", return_value=None),
+    ):
+        m_hist.side_effect = [mock_df, mock_df_1h]
+        from services.signal_engine import generate_signal
+
+        return await generate_signal(ticker)
+
+
+@pytest.mark.asyncio
+async def test_insider_cluster_buy_gate():
+    """§73 Insider clustering — ≥ 3 unique buyers → cluster card; 1 buyer → no card."""
+    # (a) 3 unique buyers → 'Insider Cluster Buy — N Distinct Insiders' card
+    res = await _gen_signal_mocked(insider={"unique_buyers": 3})
+    if res is not None:
+        heads = [r["head"] for r in res.get("rationale", [])]
+        assert any("Distinct Insiders" in h for h in heads), (
+            f"Expected 'Insider Cluster Buy — N Distinct Insiders' card for unique_buyers=3; got: {heads}"
+        )
+
+    # (b) 1 unique buyer → no cluster card (threshold is ≥ 2)
+    res_single = await _gen_signal_mocked(insider={"unique_buyers": 1})
+    if res_single is not None:
+        heads_single = [r["head"] for r in res_single.get("rationale", [])]
+        assert not any("Distinct Insiders" in h for h in heads_single), (
+            f"unique_buyers=1 should not fire cluster card; got: {heads_single}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_beneish_m_score_gate():
+    """§74 Beneish M-Score — > -1.78 → manipulation flag (-12); < -1.78 → no card."""
+    # (a) M = -1.5 (above threshold) → flag fires
+    res = await _gen_signal_mocked(fundamentals={"beneish_m": -1.5})
+    if res is not None:
+        heads = [r["head"] for r in res.get("rationale", [])]
+        assert any("Beneish" in h for h in heads), f"Expected Beneish manipulation card for M=-1.5; got: {heads}"
+        beneish_cards = [r for r in res.get("rationale", []) if "Beneish" in r.get("head", "")]
+        assert all(r["sentiment"] == "neg" for r in beneish_cards), "Beneish card must be negative sentiment"
+
+    # (b) M = -2.5 (below threshold, no manipulation signal) → no card
+    res_safe = await _gen_signal_mocked(fundamentals={"beneish_m": -2.5})
+    if res_safe is not None:
+        heads_safe = [r["head"] for r in res_safe.get("rationale", [])]
+        assert not any("Beneish" in h for h in heads_safe), (
+            f"M=-2.5 (safe) should not fire Beneish card; got: {heads_safe}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_altman_z_score_gate():
+    """§76 Altman Z — distress (<1.81, -15), grey zone (1.81–2.67, -4), safe (>2.67, no card)."""
+    # (a) distress zone Z=1.5 → Distress Zone card
+    res_dist = await _gen_signal_mocked(fundamentals={"altman_z": 1.5})
+    if res_dist is not None:
+        heads = [r["head"] for r in res_dist.get("rationale", [])]
+        assert any("Altman" in h for h in heads), f"Expected Altman distress card for Z=1.5; got: {heads}"
+        z_cards = [r for r in res_dist.get("rationale", []) if "Altman" in r.get("head", "")]
+        assert any("Distress Zone" in r["head"] for r in z_cards), (
+            f"Z=1.5 must produce 'Distress Zone' card; got: {[r['head'] for r in z_cards]}"
+        )
+
+    # (b) grey zone Z=2.2 → Grey Zone card
+    res_grey = await _gen_signal_mocked(fundamentals={"altman_z": 2.2})
+    if res_grey is not None:
+        heads_grey = [r["head"] for r in res_grey.get("rationale", [])]
+        assert any("Altman" in h for h in heads_grey), f"Expected Altman grey card for Z=2.2; got: {heads_grey}"
+        z_grey = [r for r in res_grey.get("rationale", []) if "Altman" in r.get("head", "")]
+        assert any("Grey Zone" in r["head"] for r in z_grey), (
+            f"Z=2.2 must produce 'Grey Zone' card; got: {[r['head'] for r in z_grey]}"
+        )
+
+    # (c) safe zone Z=3.5 → no Altman card
+    res_safe = await _gen_signal_mocked(fundamentals={"altman_z": 3.5})
+    if res_safe is not None:
+        heads_safe = [r["head"] for r in res_safe.get("rationale", [])]
+        assert not any("Altman" in h for h in heads_safe), (
+            f"Z=3.5 (safe zone) must not fire Altman card; got: {heads_safe}"
+        )

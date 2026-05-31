@@ -21,16 +21,38 @@
 </head>
 <body>
 <div id="root"></div>
-<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
-<!-- PRODUCTION TODO: Babel standalone transpiles JSX at runtime — causes 2-5s TTI delays.
-     Migrate to a Vite build step before billing users. -->
+<!--
+  PATH A (production): compiled bundle — no Babel, no unsafe-eval, ~80ms TTI.
+    Build: npm install && npm run build  →  dist/site-bundle.js
+  PATH B (dev fallback): Babel standalone — auto-activates when bundle absent.
+    Requires 'unsafe-eval' in CSP. TTI: 2-5 s. XSS surface: text/babel is eval-equivalent.
+    Only suitable for localhost development.
+-->
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="/dist/site-bundle.js" id="site-bundle"></script>
 <script>
-if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-  console.warn('[Signal.Trade] Babel standalone active — not suitable for production. Migrate to Vite build.');
-}
+(function () {
+  var bundle = document.getElementById('site-bundle');
+  if (!bundle || !window.React) {
+    // Bundle absent (not yet built) — fall back to Babel for local dev only.
+    if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      console.error('[Signal.Trade] dist/site-bundle.js missing. Run: npm install && npm run build');
+      return;
+    }
+    var babelScript = document.createElement('script');
+    babelScript.src = 'https://unpkg.com/@babel/standalone@7.29.0/babel.min.js';
+    babelScript.onload = function () {
+      console.warn('[Signal.Trade] Babel fallback active — run npm run build for production.');
+      var s = document.createElement('script');
+      s.type = 'text/babel';
+      s.src = '/site.jsx';
+      document.body.appendChild(s);
+      if (window.Babel) Babel.transformScriptTags();
+    };
+    document.body.appendChild(babelScript);
+  }
+})();
 </script>
-<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
-<script type="text/babel" src="/site.jsx"></script>
 </body>
 </html>
