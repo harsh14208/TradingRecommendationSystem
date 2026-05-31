@@ -94,3 +94,93 @@ def test_score_option_chain():
     # Gap is 5% upward pull
     assert any("Gravitational Pull" in r["head"] for r in rat4)
     assert any("Upward" in r["head"] for r in rat4)
+
+
+@pytest.mark.asyncio
+async def test_get_option_chain_signals_non_200_returns_empty():
+    """Covers line 54: return {} when status != 200."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 403
+
+    from services.massive_options import _cache
+
+    _cache.clear()
+
+    with (
+        patch("services.massive_options.os.getenv", return_value="K"),
+        patch("services.massive_options.aiohttp.ClientSession.get") as m_get,
+    ):
+        m_get.return_value.__aenter__.return_value = mock_resp
+        result = await get_option_chain_signals("AAPL", 100.0)
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_get_option_chain_signals_exception_returns_empty():
+    """Covers lines 57-59: except → log → return {}."""
+    from services.massive_options import _cache
+
+    _cache.clear()
+
+    with (
+        patch("services.massive_options.os.getenv", return_value="K"),
+        patch("services.massive_options.aiohttp.ClientSession") as mock_cls,
+    ):
+        mock_cls.side_effect = Exception("network error")
+        result = await get_option_chain_signals("AAPL", 100.0)
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_get_option_chain_signals_empty_chain_returns_empty():
+    """Covers line 62: return {} when chain is empty."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json.return_value = {"results": []}
+
+    from services.massive_options import _cache
+
+    _cache.clear()
+
+    with (
+        patch("services.massive_options.os.getenv", return_value="K"),
+        patch("services.massive_options.aiohttp.ClientSession.get") as m_get,
+    ):
+        m_get.return_value.__aenter__.return_value = mock_resp
+        result = await get_option_chain_signals("AAPL", 100.0)
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_get_option_chain_signals_put_atm_iv():
+    """Covers lines 100-101: atm_put_iv assignment (put contract closer to ATM)."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json.return_value = {
+        "results": [
+            {
+                "strike_price": 100,
+                "contract_type": "put",
+                "open_interest": 1000,
+                "greeks": {"gamma": 0.05, "delta": -0.5},
+                "implied_volatility": 0.35,
+            },
+        ]
+    }
+
+    from services.massive_options import _cache
+
+    _cache.clear()
+
+    with (
+        patch("services.massive_options.os.getenv", return_value="K"),
+        patch("services.massive_options.aiohttp.ClientSession.get") as m_get,
+    ):
+        m_get.return_value.__aenter__.return_value = mock_resp
+        result = await get_option_chain_signals("AAPL", 100.0)
+
+    assert result is not None
+    assert result.get("atm_put_iv") == pytest.approx(35.0, abs=0.1)

@@ -255,6 +255,210 @@ def _fetch_fundamentals(ticker: str) -> dict:
         except Exception:
             pass
 
+        # §74 Beneish M-Score
+        try:
+            if fin is not None and bs is not None and cf is not None and len(fin.columns) >= 2:
+                rev_t = _row(fin, "total revenue", "revenue")
+                rev_p = (
+                    float(
+                        fin.loc[
+                            [i for i in fin.index if any(k in str(i).lower() for k in ["total revenue", "revenue"])][0]
+                        ].iloc[1]
+                    )
+                    if any(any(k in str(i).lower() for k in ["total revenue", "revenue"]) for i in fin.index)
+                    else None
+                )
+                ar_t = _row(bs, "accounts receivable", "net receivables")
+                ar_p = (
+                    float(
+                        bs.loc[
+                            [
+                                i
+                                for i in bs.index
+                                if any(k in str(i).lower() for k in ["accounts receivable", "net receivables"])
+                            ][0]
+                        ].iloc[1]
+                    )
+                    if any(
+                        any(k in str(i).lower() for k in ["accounts receivable", "net receivables"]) for i in bs.index
+                    )
+                    and len(bs.columns) >= 2
+                    else None
+                )
+                gp_t = _row(fin, "gross profit")
+                gp_p = (
+                    float(fin.loc[[i for i in fin.index if "gross profit" in str(i).lower()][0]].iloc[1])
+                    if any("gross profit" in str(i).lower() for i in fin.index) and len(fin.columns) >= 2
+                    else None
+                )
+                ta_t = _row(bs, "total assets")
+                ta_p = (
+                    float(bs.loc[[i for i in bs.index if "total assets" in str(i).lower()][0]].iloc[1])
+                    if any("total assets" in str(i).lower() for i in bs.index) and len(bs.columns) >= 2
+                    else None
+                )
+                ca_t = _row(bs, "current assets", "total current assets")
+                ca_p = (
+                    float(
+                        bs.loc[
+                            [
+                                i
+                                for i in bs.index
+                                if any(k in str(i).lower() for k in ["current assets", "total current assets"])
+                            ][0]
+                        ].iloc[1]
+                    )
+                    if any(
+                        any(k in str(i).lower() for k in ["current assets", "total current assets"]) for i in bs.index
+                    )
+                    and len(bs.columns) >= 2
+                    else None
+                )
+                ppe_t = _row(bs, "net ppe", "property plant equipment", "net property")
+                ppe_p = (
+                    float(
+                        bs.loc[
+                            [
+                                i
+                                for i in bs.index
+                                if any(
+                                    k in str(i).lower() for k in ["net ppe", "property plant equipment", "net property"]
+                                )
+                            ][0]
+                        ].iloc[1]
+                    )
+                    if any(
+                        any(k in str(i).lower() for k in ["net ppe", "property plant equipment", "net property"])
+                        for i in bs.index
+                    )
+                    and len(bs.columns) >= 2
+                    else None
+                )
+                dep_t = _row(cf, "depreciation", "depreciation and amortization")
+                dep_p = (
+                    float(
+                        cf.loc[
+                            [
+                                i
+                                for i in cf.index
+                                if any(k in str(i).lower() for k in ["depreciation", "depreciation and amortization"])
+                            ][0]
+                        ].iloc[1]
+                    )
+                    if any(
+                        any(k in str(i).lower() for k in ["depreciation", "depreciation and amortization"])
+                        for i in cf.index
+                    )
+                    and len(cf.columns) >= 2
+                    else None
+                )
+                sga_t = _row(fin, "selling general administrative", "sga", "operating expense")
+                sga_p = (
+                    float(
+                        fin.loc[
+                            [
+                                i
+                                for i in fin.index
+                                if any(
+                                    k in str(i).lower()
+                                    for k in ["selling general administrative", "sga", "operating expense"]
+                                )
+                            ][0]
+                        ].iloc[1]
+                    )
+                    if any(
+                        any(k in str(i).lower() for k in ["selling general administrative", "sga", "operating expense"])
+                        for i in fin.index
+                    )
+                    and len(fin.columns) >= 2
+                    else None
+                )
+                ltd_t = _row(bs, "long term debt")
+                ltd_p = (
+                    float(bs.loc[[i for i in bs.index if "long term debt" in str(i).lower()][0]].iloc[1])
+                    if any("long term debt" in str(i).lower() for i in bs.index) and len(bs.columns) >= 2
+                    else None
+                )
+                cl_t = _row(bs, "current liabilities", "total current liabilities")
+                cl_p = (
+                    float(
+                        bs.loc[
+                            [
+                                i
+                                for i in bs.index
+                                if any(
+                                    k in str(i).lower() for k in ["current liabilities", "total current liabilities"]
+                                )
+                            ][0]
+                        ].iloc[1]
+                    )
+                    if any(
+                        any(k in str(i).lower() for k in ["current liabilities", "total current liabilities"])
+                        for i in bs.index
+                    )
+                    and len(bs.columns) >= 2
+                    else None
+                )
+                ni_t = _row(fin, "net income")
+                cfo_t = _row(cf, "operating cash flow", "cash from operations", "total cash from operations")
+                if all(v is not None and v != 0 for v in [rev_t, rev_p, ar_t, ar_p, gp_t, gp_p, ta_t, ta_p]):
+                    DSRI = (ar_t / rev_t) / (ar_p / rev_p) if ar_p and rev_p else None
+                    GMI = (gp_p / rev_p) / (gp_t / rev_t) if gp_t and rev_t else None
+                    _nca_t = 1 - ((ca_t or 0) + (ppe_t or 0)) / ta_t
+                    _nca_p = 1 - ((ca_p or 0) + (ppe_p or 0)) / ta_p if ta_p else None
+                    AQI = _nca_t / _nca_p if _nca_p and _nca_p != 0 else None
+                    SGI = rev_t / rev_p if rev_p else None
+                    _dep_base_t = (ppe_t or 0) + (dep_t or 0)
+                    _dep_base_p = (ppe_p or 0) + (dep_p or 0)
+                    DEPI = (
+                        (dep_p / _dep_base_p) / (dep_t / _dep_base_t)
+                        if dep_t and dep_p and _dep_base_t and _dep_base_p
+                        else None
+                    )
+                    SGAI = (sga_t / rev_t) / (sga_p / rev_p) if sga_t and sga_p and rev_p else None
+                    _lev_t = ((ltd_t or 0) + (cl_t or 0)) / ta_t
+                    _lev_p = ((ltd_p or 0) + (cl_p or 0)) / ta_p if ta_p else None
+                    LVGI = _lev_t / _lev_p if _lev_p and _lev_p != 0 else None
+                    TATA = (ni_t - (cfo_t or 0)) / ta_t if ni_t is not None and ta_t else None
+                    if all(v is not None for v in [DSRI, GMI, AQI, SGI, DEPI, SGAI, LVGI, TATA]):
+                        m = (
+                            -4.84
+                            + 0.92 * DSRI
+                            + 0.528 * GMI
+                            + 0.404 * AQI
+                            + 0.892 * SGI
+                            + 0.115 * DEPI
+                            - 0.172 * SGAI
+                            + 4.679 * TATA
+                            - 0.327 * LVGI
+                        )
+                        result["beneish_m"] = round(float(m), 3)
+        except Exception:
+            pass
+
+        # §76 Altman Z-Score
+        try:
+            ta_z = _row(bs, "total assets")
+            ca_z = _row(bs, "current assets", "total current assets")
+            cl_z = _row(bs, "current liabilities", "total current liabilities")
+            re_z = _row(bs, "retained earnings")
+            ebit_z = _row(fin, "ebit", "operating income", "earnings before interest")
+            rev_z = _row(fin, "total revenue", "revenue")
+            tl_z = _row(bs, "total liabilities net minority interest", "total liabilities")
+            mve_z = float(info.get("marketCap") or 0) or None
+            if ta_z and ta_z != 0:
+                wc_z = (ca_z or 0) - (cl_z or 0)
+                z = (
+                    1.2 * (wc_z / ta_z)
+                    + 1.4 * ((re_z or 0) / ta_z)
+                    + 3.3 * ((ebit_z or 0) / ta_z)
+                    + 0.6 * ((mve_z or 0) / max(abs(tl_z or 1), 1))
+                    + 1.0 * ((rev_z or 0) / ta_z)
+                )
+                result["altman_z"] = round(float(z), 3)
+        except Exception:
+            pass
+
     except Exception as e:
         print(f"[fundamentals] {ticker}: {e}")
 

@@ -1,0 +1,26 @@
+{
+  "trained_at": "2026-05-30T20:18:35.952442",
+  "sector_etf": "XLF",
+  "n_train": 19,
+  "n_test": 9,
+  "oos_auc": 0.5,
+  "champion_auc": null,
+  "deployed": true,
+  "feature_names": [
+    "bb_pct_b",
+    "ibs",
+    "vwap_pct",
+    "rsi",
+    "adx",
+    "rvol",
+    "atr_pct",
+    "price_zscore",
+    "ou_halflife",
+    "hurst",
+    "vix",
+    "sector_ord",
+    "dow",
+    "month"
+  ],
+  "feature_importances": []
+}

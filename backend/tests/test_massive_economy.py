@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from services.massive_economy import get_economy_data
@@ -42,3 +42,63 @@ async def test_get_economy_data_no_key():
 
         data = await get_economy_data()
         assert data == {}
+
+
+@pytest.mark.asyncio
+async def test_get_economy_data_uses_cache():
+    from services.massive_economy import _cache
+    import time
+
+    _cache["data"] = {"yield_10y": 4.0}
+    _cache["ts"] = time.time()  # fresh
+
+    data = await get_economy_data()
+    assert data == {"yield_10y": 4.0}
+
+
+@pytest.mark.asyncio
+async def test_fetch_returns_results_on_200():
+    from services.massive_economy import _fetch
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"results": [{"yield_10y": 4.0}]})
+
+    resp_ctx = AsyncMock()
+    resp_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    resp_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=resp_ctx)
+
+    result = await _fetch(mock_session, "economy/treasury_yields", {"apiKey": "K"})
+    assert result == [{"yield_10y": 4.0}]
+
+
+@pytest.mark.asyncio
+async def test_fetch_returns_empty_on_non_200():
+    from services.massive_economy import _fetch
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 403
+
+    resp_ctx = AsyncMock()
+    resp_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    resp_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=resp_ctx)
+
+    result = await _fetch(mock_session, "economy/treasury_yields", {"apiKey": "K"})
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_returns_empty_on_exception():
+    from services.massive_economy import _fetch
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=Exception("timeout"))
+
+    result = await _fetch(mock_session, "economy/treasury_yields", {"apiKey": "K"})
+    assert result == []

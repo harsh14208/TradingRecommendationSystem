@@ -10,6 +10,8 @@ Enhanced detection across multiple expiries:
 """
 
 import asyncio
+import json
+import logging
 import math
 import os
 import time as _time
@@ -18,6 +20,29 @@ from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
 
 from services.market_data import _retry, _session
+
+log = logging.getLogger("signal.options")
+
+# ── Redis connection (shared with market_data; same URL) ─────────────────────
+# Persists IV history and options flow cache across Uvicorn workers and restarts.
+# Falls back to in-process dicts if Redis is unavailable (non-critical for options).
+_opt_redis = None
+try:
+    import redis as _redis_lib
+
+    _opt_redis = _redis_lib.Redis.from_url(
+        os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+        socket_connect_timeout=1,
+        socket_timeout=1,
+        decode_responses=False,
+    )
+    _opt_redis.ping()
+except Exception as _redis_err:
+    _opt_redis = None
+    log.debug("[options] Redis unavailable (%s) — using in-process IV/flow cache", _redis_err)
+
+_IV_HIST_TTL = 366 * 86_400  # 1 year in seconds — covers full 252-day IV Rank window
+_OPT_FLOW_TTL = 300  # 5 min — matches CACHE_TTL for options flow
 
 
 def _bs_gamma(S: float, K: float, T: float, sigma: float, r: float = 0.05) -> float:
@@ -151,12 +176,75 @@ def compute_dealer_positioning(
 
 
 _executor = ThreadPoolExecutor(max_workers=8)
-_opt_cache: dict[str, tuple[dict, float]] = {}
-CACHE_TTL = 300  # 5 min — unlimited Polygon calls; options flow changes fast intraday
+CACHE_TTL = 300  # 5 min — options flow changes fast intraday
 
-# Per-ticker rolling IV history for IV Rank computation (populated over time)
+# In-process fallbacks (used when Redis is unavailable)
+_opt_cache: dict[str, tuple[dict, float]] = {}
 _iv_history: dict[str, list[float]] = {}
 _IV_HISTORY_MAX = 252
+
+
+# ── IV history helpers (Redis-persistent, in-process fallback) ───────────────
+
+
+def _ivh_load(ticker: str) -> list[float]:
+    """Return the stored IV history for ticker, preferring Redis over in-process."""
+    local = _iv_history.get(ticker, [])
+    if _opt_redis is not None:
+        try:
+            raw = _opt_redis.get(f"opt:ivh:{ticker}")
+            if raw:
+                hist = json.loads(raw)
+                if len(hist) > len(local):
+                    _iv_history[ticker] = hist  # warm local cache
+                    return hist
+        except Exception:
+            pass
+    return local
+
+
+def _ivh_save(ticker: str, hist: list[float]) -> None:
+    """Persist IV history to Redis and keep in-process cache in sync."""
+    _iv_history[ticker] = hist
+    if _opt_redis is not None:
+        try:
+            _opt_redis.setex(f"opt:ivh:{ticker}", _IV_HIST_TTL, json.dumps(hist))
+        except Exception:
+            pass
+
+
+# ── Options flow cache helpers (Redis-persistent, in-process fallback) ───────
+
+
+def _opt_cache_get(ticker: str) -> dict | None:
+    """Return cached options flow dict if not expired, else None."""
+    now = _time.time()
+    # Check Redis first (shared across workers)
+    if _opt_redis is not None:
+        try:
+            raw = _opt_redis.get(f"opt:flow:{ticker}")
+            if raw:
+                result = json.loads(raw)
+                _opt_cache[ticker] = (result, now)  # warm local cache
+                return result
+        except Exception:
+            pass
+    # In-process fallback
+    entry = _opt_cache.get(ticker)
+    if entry and now - entry[1] < CACHE_TTL:
+        return entry[0]
+    return None
+
+
+def _opt_cache_set(ticker: str, result: dict) -> None:
+    """Store options flow dict in Redis (with TTL) and in-process cache."""
+    now = _time.time()
+    _opt_cache[ticker] = (result, now)
+    if _opt_redis is not None:
+        try:
+            _opt_redis.setex(f"opt:flow:{ticker}", _OPT_FLOW_TTL, json.dumps(result))
+        except Exception:
+            pass
 
 
 def _fetch_options_polygon(ticker: str) -> dict | None:
@@ -254,6 +342,7 @@ def _fetch_options_polygon(ticker: str) -> dict | None:
 
     # IV stats for IV Rank / term spike (group by expiry)
     from collections import defaultdict
+    from datetime import datetime as _dt
 
     by_expiry: dict[str, list] = defaultdict(list)
     for r in raw:
@@ -270,15 +359,16 @@ def _fetch_options_polygon(ticker: str) -> dict | None:
     all_ivs = [float(r["implied_volatility"]) for r in raw if r.get("implied_volatility")]
     avg_iv = round(sum(all_ivs) / len(all_ivs), 4) if all_ivs else None
 
+    # IV Rank — load history from Redis so it survives restarts and is shared across workers
     if avg_iv and avg_iv > 0:
-        hist = _iv_history.setdefault(ticker, [])
+        hist = _ivh_load(ticker)
+        hist = hist[-(_IV_HISTORY_MAX - 1) :]  # cap before append
         hist.append(avg_iv)
-        if len(hist) > _IV_HISTORY_MAX:
-            _iv_history[ticker] = hist[-_IV_HISTORY_MAX:]
+        _ivh_save(ticker, hist)
 
     iv_rank = None
     if avg_iv:
-        iv_hist = _iv_history.get(ticker, [])
+        iv_hist = _ivh_load(ticker)
         if len(iv_hist) >= 10:
             iv_low = min(iv_hist)
             iv_high = max(iv_hist)
@@ -335,6 +425,135 @@ def _fetch_options_polygon(ticker: str) -> dict | None:
             if k < spot:
                 otm_put_vol += int((r.get("day") or {}).get("volume", 0) or 0)
 
+    # Net delta flow — Σ(delta × day_volume × 100) across all contracts.
+    # Positive = net buying pressure in share-equivalents; negative = net selling.
+    # Polygon real greeks make this precise (no Black-Scholes approximation needed).
+    net_delta_flow = 0.0
+    for r in raw:
+        greeks = r.get("greeks") or {}
+        d = float(greeks.get("delta", 0) or 0)
+        v = float((r.get("day") or {}).get("volume", 0) or 0)
+        if d != 0 and v > 0:
+            net_delta_flow += d * v * 100  # share-equivalents (calls: +delta; puts: -delta)
+    net_delta_flow = round(net_delta_flow, 0)
+    # Normalize to a -1…+1 ratio: divide by (total_vol × 50 shares), where 50 = 0.5 ATM delta × 100
+    delta_flow_ratio = round(net_delta_flow / (total_vol * 50), 3) if total_vol > 0 else 0.0
+
+    # chains_data — top 5 OI contracts per expiry for the nearest 2 expiries.
+    # Required by compute_dealer_positioning() (Vanna/Charm) in score_options().
+    _today_date = _dt.utcnow().date()
+    chains_data = []
+    for exp_str in sorted_exps[:2]:
+        try:
+            exp_date = _dt.strptime(exp_str, "%Y-%m-%d").date()
+            dte = max(1, (exp_date - _today_date).days)
+        except Exception:
+            dte = 30
+        exp_calls_raw = sorted(
+            [r for r in calls_pg if (r.get("details") or {}).get("expiration_date") == exp_str],
+            key=lambda x: int(x.get("open_interest", 0) or 0),
+            reverse=True,
+        )
+        exp_puts_raw = sorted(
+            [r for r in puts_pg if (r.get("details") or {}).get("expiration_date") == exp_str],
+            key=lambda x: int(x.get("open_interest", 0) or 0),
+            reverse=True,
+        )
+        chains_data.append(
+            {
+                "dte": dte,
+                "calls": [
+                    {
+                        "impliedVolatility": float(r.get("implied_volatility", 0) or 0),
+                        "strike": float((r.get("details") or {}).get("strike_price", 0) or 0),
+                        "openInterest": int(r.get("open_interest", 0) or 0),
+                    }
+                    for r in exp_calls_raw[:5]
+                ],
+                "puts": [
+                    {
+                        "impliedVolatility": float(r.get("implied_volatility", 0) or 0),
+                        "strike": float((r.get("details") or {}).get("strike_price", 0) or 0),
+                        "openInterest": int(r.get("open_interest", 0) or 0),
+                    }
+                    for r in exp_puts_raw[:5]
+                ],
+            }
+        )
+
+    # ── §70 Zero-DTE Put Activity Ratio ──────────────────────────────────────
+    from datetime import datetime as _dt2
+
+    _today_str2 = _dt2.utcnow().strftime("%Y-%m-%d")
+    _zdte_put_oi = sum(
+        int(r.get("open_interest", 0) or 0)
+        for r in puts_pg
+        if (r.get("details") or {}).get("expiration_date", "") == _today_str2
+    )
+    _zdte_total_put_oi = put_oi  # already computed above
+    zero_dte_ratio = round(_zdte_put_oi / _zdte_total_put_oi, 3) if _zdte_total_put_oi > 0 else 0.0
+
+    # ── §71 Max Pain ──────────────────────────────────────────────────────────
+    max_pain = None
+    if spot and spot > 0:
+        _all_strikes = sorted(
+            set(
+                float((r.get("details") or {}).get("strike_price", 0) or 0)
+                for r in raw
+                if (r.get("details") or {}).get("strike_price")
+            )
+        )
+        if _all_strikes and len(_all_strikes) <= 200:
+            _min_pain = float("inf")
+            for _s in _all_strikes:
+                _pain = sum(
+                    int(r.get("open_interest", 0) or 0)
+                    * max(
+                        0.0,
+                        _s - float((r.get("details") or {}).get("strike_price", 0) or 0),
+                    )
+                    for r in calls_pg
+                ) + sum(
+                    int(r.get("open_interest", 0) or 0)
+                    * max(
+                        0.0,
+                        float((r.get("details") or {}).get("strike_price", 0) or 0) - _s,
+                    )
+                    for r in puts_pg
+                )
+                if _pain < _min_pain:
+                    _min_pain = _pain
+                    max_pain = _s
+
+    # ── §72 VRP Proxy (near_iv − far_iv term premium) ────────────────────────
+    vrp_proxy = round(near_iv - far_iv, 4) if near_iv and far_iv else None
+
+    # ── §69 GEX Flip Level ────────────────────────────────────────────────────
+    gex_flip_level = None
+    if spot and spot > 0:
+        _strike_gex: dict[float, float] = {}
+        for r in raw:
+            greeks = r.get("greeks") or {}
+            g = float(greeks.get("gamma", 0) or 0)
+            oi = float(r.get("open_interest", 0) or 0)
+            ctype = (r.get("details") or {}).get("contract_type", "call")
+            k = float((r.get("details") or {}).get("strike_price", 0) or 0)
+            if g == 0 or oi == 0 or k == 0:
+                continue
+            sign = -1 if ctype == "call" else 1
+            _strike_gex[k] = _strike_gex.get(k, 0.0) + sign * g * oi * 100 * spot
+        if _strike_gex:
+            _sorted_ks = sorted(_strike_gex.keys())
+            _cum_gex = 0.0
+            _prev_k = None
+            for _k in _sorted_ks:
+                _prev_gex = _cum_gex
+                _cum_gex += _strike_gex[_k]
+                if _prev_k is not None and _prev_gex * _cum_gex < 0:
+                    gex_flip_level = round((_prev_k + _k) / 2, 2)
+                    break
+                _prev_k = _k
+
     return {
         "call_vol": call_vol,
         "put_vol": put_vol,
@@ -356,19 +575,28 @@ def _fetch_options_polygon(ticker: str) -> dict | None:
         "put_iv_25d": put_iv_25d,
         "call_iv_25d": call_iv_25d,
         "gex": gex_total,
+        "net_delta_flow": net_delta_flow,
+        "delta_flow_ratio": delta_flow_ratio,
+        "spot": spot,
+        "chains_data": chains_data,
+        "zero_dte_ratio": zero_dte_ratio,
+        "max_pain": max_pain,
+        "vrp_proxy": vrp_proxy,
+        "gex_flip_level": gex_flip_level,
         "source": "polygon",
     }
 
 
 def _fetch_options(ticker: str) -> dict:
-    cached = _opt_cache.get(ticker)
-    if cached and _time.time() - cached[1] < CACHE_TTL:
-        return cached[0]
+    # Redis-backed cache shared across all Uvicorn workers — eliminates 3× duplicate fetches
+    cached = _opt_cache_get(ticker)
+    if cached:
+        return cached
 
     # Try Polygon Starter plan first (real market-implied greeks + real-time volume)
     result = _fetch_options_polygon(ticker)
     if result:
-        _opt_cache[ticker] = (result, _time.time())
+        _opt_cache_set(ticker, result)
         return result
 
     try:
@@ -394,7 +622,8 @@ def _fetch_options(ticker: str) -> dict:
                     all_calls.append(calls_df)
                     all_puts.append(puts_df)
                     chains.append((exp, chain.calls, chain.puts))
-            except Exception:
+            except Exception as _chain_err:
+                log.debug("[options] %s chain fetch for expiry %s failed: %s", ticker, exp, _chain_err)
                 continue
 
         if not all_calls:
@@ -489,8 +718,8 @@ def _fetch_options(ticker: str) -> dict:
                             if K > 0 and oi > 0 and iv > 0:
                                 g = _bs_gamma(spot, K, T, iv)
                                 gex_total += sign * g * oi * 100 * spot
-        except Exception:
-            pass
+        except Exception as _gex_err:
+            log.debug("[options] %s GEX calculation failed: %s", ticker, _gex_err)
         gex_total = round(gex_total, 0)
 
         total_oi = call_oi + put_oi
@@ -505,15 +734,16 @@ def _fetch_options(ticker: str) -> dict:
                 ]
             )
             avg_iv = round(float(atm_iv_vals.mean()), 4) if len(atm_iv_vals) > 0 else None
-        except Exception:
+        except Exception as _iv_err:
+            log.debug("[options] %s avg IV calculation failed: %s", ticker, _iv_err)
             avg_iv = None
 
-        # ── Track IV history for IV Rank ─────────────────────────────────
+        # ── Track IV history for IV Rank (Redis-persistent) ──────────────
         if avg_iv and avg_iv > 0:
-            hist = _iv_history.setdefault(ticker, [])
+            hist = _ivh_load(ticker)
+            hist = hist[-(_IV_HISTORY_MAX - 1) :]
             hist.append(avg_iv)
-            if len(hist) > _IV_HISTORY_MAX:
-                _iv_history[ticker] = hist[-_IV_HISTORY_MAX:]
+            _ivh_save(ticker, hist)
 
         # ── 25-delta approximation skew ───────────────────────────────────
         skew_25d = None
@@ -534,13 +764,13 @@ def _fetch_options(ticker: str) -> dict:
                     skew_25d = round(p25_iv - c25_iv, 4)
                     put_iv_25d = round(p25_iv, 4)
                     call_iv_25d = round(c25_iv, 4)
-        except Exception:
-            pass
+        except Exception as _skew_err:
+            log.debug("[options] %s skew calculation failed: %s", ticker, _skew_err)
 
-        # ── IV Rank ───────────────────────────────────────────────────────
+        # ── IV Rank (uses Redis-loaded history) ───────────────────────────
         iv_rank = None
         if avg_iv:
-            iv_hist = _iv_history.get(ticker, [])
+            iv_hist = _ivh_load(ticker)
             if len(iv_hist) >= 10:
                 iv_low = min(iv_hist)
                 iv_high = max(iv_hist)
@@ -568,11 +798,11 @@ def _fetch_options(ticker: str) -> dict:
             "call_iv_25d": call_iv_25d,
             "gex": gex_total,
         }
-        _opt_cache[ticker] = (result, _time.time())
+        _opt_cache_set(ticker, result)
         return result
 
     except Exception as e:
-        print(f"[options] {ticker}: {e}")
+        log.warning("[options] %s: fetch failed — %s", ticker, e)
         return {}
 
 
@@ -717,17 +947,27 @@ def score_options(opt: dict) -> tuple[float, list[dict]]:
             }
         )
 
-    # ── Near-term IV term structure spike (event risk) ────────────────────────
+    # ── Near-term IV term structure spike ────────────────────────────────────
+    # From an options-buyer view: near-term IV spike means expensive premium (bad).
+    # From an equity MR view: acute near-term panic priced in = dealer hedging is
+    # at its most intense right now → snap-back will be sharp once exhaustion hits.
+    # Score: general -3 for event uncertainty; MR-specific +4 applied separately in
+    # _assemble_signal() where we know whether the signal IS an MR BUY entry.
     if iv_spike is not None and iv_spike > 1.5:
+        score -= 3  # general option-premium cost penalty
         rationale.append(
             {
                 "src": "Options",
-                "head": f"Near-term IV Spike ({iv_spike:.1f}× back-month)",
-                "body": f"Short-dated IV is {iv_spike:.1f}× the next expiry's IV. "
-                "The market is pricing a large near-term move. "
-                "Check for upcoming earnings, FDA announcements, or macro events.",
+                "head": f"Near-term IV Spike ({iv_spike:.1f}× back-month) — Acute Event Pricing",
+                "body": (
+                    f"Short-dated IV is {iv_spike:.1f}× the next expiry's IV. "
+                    "The market is pricing a large near-term move — options premium is expensive. "
+                    "For directional options trades: avoid, premium is at a premium. "
+                    "For equity MR entries: this acute panic level is exactly when dealer unwind "
+                    "snap-backs are sharpest (see §48/§49 MR gate for the +4pp MR credit)."
+                ),
                 "sentiment": "neg",
-                "meta": f"Near IV / Far IV = {iv_spike:.1f}×",
+                "meta": f"iv_term_spike={iv_spike:.2f} near_iv={opt.get('near_iv', 0):.3f} far_iv={opt.get('far_iv', 0):.3f}",
             }
         )
 
@@ -916,7 +1156,158 @@ def score_options(opt: dict) -> tuple[float, list[dict]]:
                                 "meta": f"net_charm={net_c:+.5f}/day",
                             }
                         )
-            except Exception:
-                pass
+            except Exception as _vanna_err:
+                log.debug("[options] Vanna/Charm dealer positioning failed: %s", _vanna_err)
+
+    # ── Net delta flow (Polygon plan only) ───────────────────────────────────
+    # delta_flow_ratio = net_delta_flow / (total_vol × 50 share-eq).
+    # > +0.20: more buying pressure than a neutral market would generate → bullish.
+    # < -0.20: net selling pressure dominates → bearish.
+    # Only available from Polygon (real greeks); yfinance path leaves this None.
+    dfr = opt.get("delta_flow_ratio")
+    if dfr is not None and abs(dfr) >= 0.20:
+        if dfr > 0:
+            score += 3
+            rationale.append(
+                {
+                    "src": "Options",
+                    "head": f"Net Bullish Delta Flow (+{dfr:.2f} ratio)",
+                    "body": (
+                        f"Polygon-derived net delta flow ratio: {dfr:+.2f} — weighted buying pressure "
+                        f"dominates across {opt.get('total_vol', 0):,} contracts. "
+                        "Buyers are paying up for delta, not just hedging. Bullish directional signal."
+                    ),
+                    "sentiment": "pos",
+                    "meta": f"delta_flow_ratio={dfr:+.3f} net_delta_flow={opt.get('net_delta_flow', 0):+.0f}",
+                }
+            )
+        else:
+            score -= 3
+            rationale.append(
+                {
+                    "src": "Options",
+                    "head": f"Net Bearish Delta Flow ({dfr:.2f} ratio)",
+                    "body": (
+                        f"Polygon-derived net delta flow ratio: {dfr:+.2f} — weighted selling pressure "
+                        f"dominates across {opt.get('total_vol', 0):,} contracts. "
+                        "Institutions are net short delta; options market confirms downside pressure."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"delta_flow_ratio={dfr:+.3f} net_delta_flow={opt.get('net_delta_flow', 0):+.0f}",
+                }
+            )
+
+    # ── §70 Zero-DTE Put Spike (event risk flag) ─────────────────────────────
+    _zdtr = opt.get("zero_dte_ratio", 0) or 0
+    if _zdtr > 0.30:
+        score -= 4
+        rationale.append(
+            {
+                "src": "Options",
+                "head": f"Zero-DTE Put Dominance — {_zdtr:.0%} of Put OI",
+                "body": (
+                    f"{_zdtr:.0%} of total put open interest is in zero-DTE contracts. "
+                    "This signals hedging against an imminent same-day catalyst, not typical "
+                    "MR panic — the move may resolve intraday rather than over 10 days."
+                ),
+                "sentiment": "neg",
+                "meta": f"zero_dte_ratio={_zdtr:.3f}",
+            }
+        )
+
+    # ── §71 Max Pain Convergence ──────────────────────────────────────────────
+    _mp = opt.get("max_pain")
+    _spot_mp = opt.get("spot") or opt.get("price") or 0
+    _near_exp = opt.get("expiry")
+    if _mp and _spot_mp and _near_exp:
+        try:
+            from datetime import date as _date_mp, datetime as _dt_mp
+
+            _exp_date = _date_mp.fromisoformat(_near_exp)
+            _days_to_exp = (_exp_date - _dt_mp.utcnow().date()).days
+            _mp_gap_pct = (_mp - _spot_mp) / _spot_mp
+            if _days_to_exp <= 2 and _mp_gap_pct > 0.02:
+                score += 4
+                rationale.append(
+                    {
+                        "src": "Options",
+                        "head": f"Max Pain Pull — ${_mp:.2f} target ({_mp_gap_pct:.1%} above spot)",
+                        "body": (
+                            f"Options expiry in {_days_to_exp}d. Max pain level ${_mp:.2f} is "
+                            f"{_mp_gap_pct:.1%} above current spot — dealer hedging creates "
+                            "gravitational pull toward max pain, amplifying the MR bounce."
+                        ),
+                        "sentiment": "pos",
+                        "meta": f"max_pain={_mp:.2f} spot={_spot_mp:.2f} dte={_days_to_exp}",
+                    }
+                )
+        except Exception as _mp_err:
+            log.debug("[options] max pain calculation failed: %s", _mp_err)
+
+    # ── §72 VRP Proxy (IV term premium) ──────────────────────────────────────
+    _vrp = opt.get("vrp_proxy")
+    if _vrp is not None:
+        if _vrp > 0.05:
+            score += 3
+            rationale.append(
+                {
+                    "src": "Options",
+                    "head": f"Positive Volatility Risk Premium (+{_vrp:.2f})",
+                    "body": (
+                        f"Near-term IV exceeds back-month IV by {_vrp:.2f} — the options market "
+                        "is overcharging for near-term protection. This systematic fear overpricing "
+                        "historically precedes faster bounce completions."
+                    ),
+                    "sentiment": "pos",
+                    "meta": f"vrp_proxy={_vrp:+.4f} near_iv={opt.get('near_iv')} far_iv={opt.get('far_iv')}",
+                }
+            )
+        elif _vrp < -0.05:
+            score -= 2
+            rationale.append(
+                {
+                    "src": "Options",
+                    "head": f"Negative VRP ({_vrp:.2f}) — Back-Month Fear",
+                    "body": (
+                        "Back-month IV exceeds near-term IV — longer-duration fear dominates. "
+                        "Typically signals persistent structural concern rather than acute panic."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"vrp_proxy={_vrp:+.4f}",
+                }
+            )
+
+    # ── §69 GEX Flip Level Proximity ─────────────────────────────────────────
+    _gfl = opt.get("gex_flip_level")
+    _spot_gfl = opt.get("spot") or opt.get("price") or 0
+    if _gfl and _spot_gfl and _spot_gfl > 0:
+        _gfl_gap = (_gfl - _spot_gfl) / _spot_gfl
+        if -0.02 <= _gfl_gap <= 0.01:
+            score += 5
+            rationale.append(
+                {
+                    "src": "Options",
+                    "head": f"GEX Flip Level Proximity — ${_gfl:.2f} ({_gfl_gap:+.1%})",
+                    "body": (
+                        f"Price within 2% of GEX flip level ${_gfl:.2f}. Below the flip, "
+                        "dealers are short gamma → they must buy as price falls, mechanically "
+                        "amplifying the MR bounce. SpotGamma: 73% of bottoms occur within "
+                        "0.5% of the GEX flip."
+                    ),
+                    "sentiment": "pos",
+                    "meta": f"gex_flip={_gfl:.2f} spot={_spot_gfl:.2f} gap={_gfl_gap:+.2%}",
+                }
+            )
+        elif _gfl_gap > 0.03:
+            score -= 2
+            rationale.append(
+                {
+                    "src": "Options",
+                    "head": f"Above GEX Flip — Dealer Short Delta Zone ({_gfl_gap:+.1%})",
+                    "body": "Price above flip level — dealers long gamma, dampen moves. Lower bounce energy.",
+                    "sentiment": "neg",
+                    "meta": f"gex_flip={_gfl:.2f} spot={_spot_gfl:.2f}",
+                }
+            )
 
     return round(score, 1), rationale

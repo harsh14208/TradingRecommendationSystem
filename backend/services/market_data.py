@@ -425,6 +425,8 @@ def _fetch_info(ticker: str) -> dict:
             "avg_volume": info.get("averageVolume"),
             "short_float_pct": round(float(sfloat) * 100, 2) if sfloat else None,
             "short_ratio": info.get("shortRatio"),
+            "shares_short": info.get("sharesShort"),
+            "shares_short_prior": info.get("sharesShortPriorMonth"),
             "beta": info.get("beta"),
             # Analyst price targets & consensus (free via yfinance)
             "target_mean": info.get("targetMeanPrice"),

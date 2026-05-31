@@ -2,7 +2,7 @@
 
 Everything you need to set up, configure, and use the system day-to-day.
 
-> **Version: v6.1** · Last updated: 2026-05-25
+> **Version: v6.9** · Last updated: 2026-05-29
 
 cd backend
 source venv/bin/activate
@@ -293,7 +293,7 @@ For **subscribers** to receive signals, they must link their personal Telegram:
 
 1. User goes to `/app` → Account Settings → Telegram Alerts section
 2. They see a unique link code (e.g. `A1B2C3D4`)
-3. They open your Signal.Trade bot on Telegram and send:  
+3. They open your Signal.Trade bot on Telegram and send:
    `/start A1B2C3D4`
 4. The bot confirms: "✅ Telegram linked to Signal.Trade!"
 5. From the next scan onwards, they receive signals automatically
@@ -778,7 +778,7 @@ STRIPE_PRICE_PRO=           # Auto-filled by: python3 stripe_setup.py
 # VAPID_SUBJECT=mailto:admin@yourdomain.com
 ```
 
-> `.env` changes are picked up every 30 seconds — no restart needed.  
+> `.env` changes are picked up every 30 seconds — no restart needed.
 > Exception: `JWT_SECRET` and `DATABASE_URL` require a restart.
 
 ---
@@ -923,7 +923,7 @@ docker run -p 8000:8000 --env-file .env signal-trade
 
 ### "passlib / bcrypt" error on Python 3.14
 
-- The system uses `bcrypt` directly (passlib bypassed). If you see this error, ensure `bcrypt` is installed:  
+- The system uses `bcrypt` directly (passlib bypassed). If you see this error, ensure `bcrypt` is installed:
   `pip install bcrypt`
 
 ### XGBoost model not adjusting confidence

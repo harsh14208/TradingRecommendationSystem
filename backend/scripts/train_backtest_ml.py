@@ -1,0 +1,543 @@
+"""
+Train XGBoost entry model on 23-year backtest trades.
+
+Answers: given the *technical setup* at entry (BB%B, IBS, VWAP%, RSI, ADX, …),
+what is the probability this MR trade wins?
+
+This is complementary to signal_ml.py (which learns from signal *metadata* —
+sources, rationale, style). Together they cover:
+  • Entry model   → technical setup quality   (trained here, 23yr backtest)
+  • Signal model  → signal assembly quality   (signal_ml.py, live DB signals)
+
+The two win-probs are blended 50/50 in _assemble_signal() before applying
+the multiplicative confidence adjustment.
+
+Champion/challenger gate: new model only deployed if OOS AUC > current champion.
+
+Usage:
+  cd backend && python scripts/train_backtest_ml.py
+"""
+
+import json
+import math
+import multiprocessing
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import numpy as np
+import pandas as pd
+
+_DATA_DIR = Path(__file__).parent.parent / "data"
+_MODEL_FILE = _DATA_DIR / "backtest_ml_model.json"
+_FEATURE_FILE = _DATA_DIR / "backtest_ml_features.json"
+_EVAL_FILE = _DATA_DIR / "backtest_ml_eval.json"
+
+# 14 technical features — all computable from live `tech` dict + VIX + sector
+ENTRY_FEATURE_NAMES = [
+    "bb_pct_b",  # Bollinger Band %B (0=lower band, 1=upper)
+    "ibs",  # Intraday Bar Score (0=bottom of range, 1=top)
+    "vwap_pct",  # % deviation below 20d VWAP (MR: negative is oversold)
+    "rsi",  # RSI(14)
+    "adx",  # ADX(14) trend strength
+    "rvol",  # Relative volume vs 20d avg
+    "atr_pct",  # ATR as % of price (volatility)
+    "price_zscore",  # Price z-score (20d rolling)
+    "ou_halflife",  # OU mean-reversion half-life (days)
+    "hurst",  # Hurst exponent (0.5=random, <0.5=MR, >0.5=trending)
+    "vix",  # VIX level (macro regime)
+    "sector_ord",  # Sector ETF ordinal (XLK=0 … XLU=10)
+    "dow",  # Day of week (0=Mon … 4=Fri)
+    "month",  # Month (1–12, seasonal effect)
+]
+
+_NAN = float("nan")
+
+
+def _safe(v) -> float:
+    try:
+        f = float(v)
+        return _NAN if math.isnan(f) else f
+    except (TypeError, ValueError):
+        return _NAN
+
+
+def _extract_entry_row(row: pd.Series, trade: dict, vix_dict: dict, sector_ord: float) -> list[float]:
+    """Build the 14-feature vector from the signal bar + trade metadata."""
+    date_key = pd.Timestamp(str(trade["date"])[:10])
+    vix_val = vix_dict.get(date_key)
+
+    return [
+        _safe(row.get("bb_pct_b")),
+        _safe(row.get("ibs")),
+        _safe(row.get("vwap_pct")),
+        _safe(row.get("rsi")),
+        _safe(row.get("adx")),
+        _safe(row.get("rvol")),
+        _safe(trade.get("atr_pct")),  # atr/entry*100 — already in trade record
+        _safe(row.get("price_zscore")),
+        _safe(row.get("ou_halflife")),
+        _safe(row.get("hurst")),
+        float(vix_val) if vix_val is not None else _NAN,
+        sector_ord,
+        float(trade["dow"]) if trade.get("dow") is not None else _NAN,
+        float(trade["date"].month) if hasattr(trade.get("date"), "month") else _NAN,
+    ]
+
+
+def _build_dataset(all_results: list, vix_dict: dict) -> tuple[np.ndarray, np.ndarray]:
+    """
+    all_results: list of (ticker, trades_df, bh_return, indicator_df) from process_ticker
+    Returns X (N×14), y (N,) arrays.
+    """
+    from scripts.backtest_technicals import TICKER_TO_SECTOR
+    from services.signal_ml import _sector_ord
+
+    X_rows, y_rows = [], []
+    for ticker, trades, _, df in all_results:
+        if trades is None or trades.empty or df is None:
+            continue
+        sector = TICKER_TO_SECTOR.get(ticker, "")
+        s_ord = _sector_ord(sector)
+
+        for _, trade in trades.iterrows():
+            trade_date = pd.Timestamp(str(trade["date"])[:10])
+            if trade_date not in df.index:
+                continue
+            row = df.loc[trade_date]
+            features = _extract_entry_row(row, trade, vix_dict, s_ord)
+            label = 1 if float(trade.get("net_pct", 0)) > 0 else 0
+            X_rows.append(features)
+            y_rows.append(label)
+
+    if not X_rows:
+        return np.empty((0, len(ENTRY_FEATURE_NAMES))), np.empty(0)
+
+    return np.array(X_rows, dtype=float), np.array(y_rows, dtype=int)
+
+
+def main():
+    print("\n# Backtest Entry Model Training — Signal.Trade\n")
+
+    try:
+        import xgboost as xgb
+    except ImportError:
+        print("xgboost not installed — pip install xgboost")
+        sys.exit(1)
+    try:
+        from sklearn.metrics import roc_auc_score
+    except ImportError:
+        print("scikit-learn not installed — pip install scikit-learn")
+        sys.exit(1)
+
+    from scripts.backtest_technicals import (
+        END,
+        START,
+        TICKERS,
+        fetch_ad_breadth,
+        fetch_spy_trend,
+        fetch_stlfsi4,
+        fetch_t10y,
+        fetch_trin,
+        process_ticker,
+    )
+    import yfinance as yf
+
+    print(f"IS universe: {len(TICKERS)} tickers  |  {START} → {END}\n")
+
+    # ── Fetch shared market data (same as main backtest) ─────────────────────
+    print("Fetching macro data (VIX, SPY, STLFSI4, T10Y, TRIN, A/D)…")
+
+    raw_vix = yf.download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
+    if isinstance(raw_vix.columns, pd.MultiIndex):
+        raw_vix.columns = raw_vix.columns.get_level_values(0)
+    vix_dict: dict = {}
+    for d, row in raw_vix.iterrows():
+        try:
+            vix_dict[pd.Timestamp(str(d)[:10])] = float(row["Close"])
+        except Exception:
+            pass
+
+    spy_trend = fetch_spy_trend(START, END)
+    stlfsi4 = {}
+    t10y_data = {}
+    trin_data = {}
+    ad_data = {}
+    try:
+        _api_key = os.getenv("MASSIVE_API_KEY", "")
+        stlfsi4 = fetch_stlfsi4(START, END, _api_key)
+    except Exception as e:
+        print(f"  STLFSI4 fetch skipped: {e}")
+    try:
+        t10y_data = fetch_t10y(START, END)
+    except Exception as e:
+        print(f"  T10Y fetch skipped: {e}")
+    try:
+        trin_data = fetch_trin(START, END)
+    except Exception as e:
+        print(f"  TRIN fetch skipped: {e}")
+    try:
+        ad_data = fetch_ad_breadth(START, END)
+    except Exception as e:
+        print(f"  A/D fetch skipped: {e}")
+
+    print(f"  VIX: {len(vix_dict)} days | SPY trend: {len(spy_trend)} days\n")
+
+    # ── FOMC dates ─────────────────────────────────────────────────────────────
+    fomc_dates: frozenset | None = None
+    try:
+        _fomc_path = Path(__file__).parent.parent / "data" / "fomc_dates.json"
+        if _fomc_path.exists():
+            fomc_dates = frozenset(json.loads(_fomc_path.read_text()))
+    except Exception:
+        pass
+
+    # ── Run backtest for all IS tickers in parallel ───────────────────────────
+    print(f"Running IS backtest on {len(TICKERS)} tickers…")
+    args_list = [
+        (ticker, vix_dict, spy_trend, stlfsi4, True, fomc_dates, t10y_data, trin_data, ad_data) for ticker in TICKERS
+    ]
+    n_cpu = max(1, multiprocessing.cpu_count() - 1)
+    with multiprocessing.Pool(n_cpu) as pool:
+        all_results = pool.map(process_ticker, args_list)
+
+    # process_ticker returns (ticker, trades_df, bh_return, indicator_df)
+    # but it uses mr_only=True from the args tuple (index 4)
+    total_trades = sum(len(t) for _, t, _, _ in all_results if t is not None)
+    print(f"Total IS trades: {total_trades}\n")
+
+    if total_trades < 100:
+        print(f"Insufficient data ({total_trades} < 100 trades) — aborting.")
+        sys.exit(1)
+
+    # ── Build feature matrix ──────────────────────────────────────────────────
+    print("Extracting entry features…")
+    X, y = _build_dataset(all_results, vix_dict)
+    print(f"Feature matrix: {X.shape}  |  Win rate: {y.mean():.3f}\n")
+
+    # ── Temporal train/test split (70/30 by row order = time order) ──────────
+    split = int(len(X) * 0.70)
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
+
+    print(f"Train: {len(X_train)} | Test (OOS): {len(X_test)}\n")
+
+    # ── Train XGBoost ─────────────────────────────────────────────────────────
+    dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=ENTRY_FEATURE_NAMES)
+    dtest = xgb.DMatrix(X_test, label=y_test, feature_names=ENTRY_FEATURE_NAMES)
+
+    params = {
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "max_depth": 4,
+        "eta": 0.05,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "min_child_weight": 5,
+        "seed": 42,
+    }
+    evals_result: dict = {}
+    booster = xgb.train(
+        params,
+        dtrain,
+        num_boost_round=300,
+        evals=[(dtrain, "train"), (dtest, "test")],
+        early_stopping_rounds=30,
+        evals_result=evals_result,
+        verbose_eval=False,
+    )
+
+    oos_preds = booster.predict(dtest)
+    oos_auc = float(roc_auc_score(y_test, oos_preds)) if len(set(y_test)) > 1 else None
+
+    # Save eval data so eval_ml.py §7 can show calibration/lift without re-running backtest
+    _EVAL_FILE.write_text(
+        json.dumps(
+            {
+                "y_test": y_test.tolist(),
+                "oos_preds": oos_preds.tolist(),
+                "feature_names": ENTRY_FEATURE_NAMES,
+            }
+        )
+    )
+
+    print("## Training Results\n")
+    print("| Metric | Value |")
+    print("|:---|---:|")
+    print(f"| N train | {len(X_train)} |")
+    print(f"| N test (OOS) | {len(X_test)} |")
+    print(f"| OOS AUC | {f'{oos_auc:.4f}' if oos_auc else '—'} |")
+    print(f"| OOS WR | {y_test.mean():.3f} |")
+    print()
+
+    # ── Feature importances ───────────────────────────────────────────────────
+    scores = booster.get_score(importance_type="gain")
+    total_gain = sum(scores.values()) or 1
+    fi = sorted(
+        [{"feature": k, "importance": v / total_gain} for k, v in scores.items()],
+        key=lambda x: -x["importance"],
+    )
+    print("## Feature Importances\n")
+    print("| Rank | Feature | Importance |")
+    print("|:---|:---|---:|")
+    for rank, f in enumerate(fi[:10], 1):
+        bar = "█" * int(f["importance"] * 200)
+        print(f"| {rank} | {f['feature']} | {f['importance']:.5f} {bar} |")
+    print()
+
+    # ── Champion/challenger gate ──────────────────────────────────────────────
+    _champion_auc: float | None = None
+    if _FEATURE_FILE.exists():
+        try:
+            _champion_auc = json.loads(_FEATURE_FILE.read_text()).get("oos_auc")
+        except Exception:
+            pass
+
+    should_deploy = oos_auc is not None and (_champion_auc is None or oos_auc > _champion_auc)
+
+    if should_deploy:
+        booster.save_model(str(_MODEL_FILE))
+        meta = {
+            "trained_at": datetime.utcnow().isoformat(),
+            "n_train": int(len(X_train)),
+            "n_test": int(len(X_test)),
+            "oos_auc": oos_auc,
+            "champion_auc": _champion_auc,
+            "deployed": True,
+            "feature_names": ENTRY_FEATURE_NAMES,
+            "feature_importances": fi,
+        }
+        _FEATURE_FILE.write_text(json.dumps(meta, indent=2))
+        if _champion_auc is None:
+            print(f"✅ First champion deployed — OOS AUC {oos_auc:.4f}")
+        else:
+            print(f"✅ New champion deployed — OOS AUC {oos_auc:.4f} > champion {_champion_auc:.4f}")
+    else:
+        print(
+            f"⛔ Challenger rejected — OOS AUC {f'{oos_auc:.4f}' if oos_auc else '—'} "
+            f"≤ champion {f'{_champion_auc:.4f}' if _champion_auc else '—'}. Keeping existing model."
+        )
+
+    print()
+
+
+def train_sector_model(
+    all_results: list,
+    vix_dict: dict,
+    sector_etf: str,
+    sector_tickers: set[str],
+    champion_auc: "float | None",
+) -> "float | None":
+    """Train a sector-specific entry model and save if it beats the champion.
+
+    Returns the deployed OOS AUC, or None if training was skipped / failed.
+    """
+    try:
+        import xgboost as xgb
+        from sklearn.metrics import roc_auc_score
+    except ImportError:
+        return None
+
+    from scripts.backtest_technicals import TICKER_TO_SECTOR
+    from services.signal_ml import _sector_ord
+
+    X_rows, y_rows = [], []
+    for ticker, trades, _, df in all_results:
+        if ticker.upper() not in sector_tickers:
+            continue
+        if trades is None or trades.empty or df is None:
+            continue
+        s_ord = _sector_ord(TICKER_TO_SECTOR.get(ticker, ""))
+        for _, trade in trades.iterrows():
+            trade_date = pd.Timestamp(str(trade["date"])[:10])
+            if trade_date not in df.index:
+                continue
+            row = df.loc[trade_date]
+            features = _extract_entry_row(row, trade, vix_dict, s_ord)
+            label = 1 if float(trade.get("net_pct", 0)) > 0 else 0
+            X_rows.append(features)
+            y_rows.append(label)
+
+    if len(X_rows) < 20:
+        print(f"  {sector_etf}: {len(X_rows)} trades — insufficient for sector model (need ≥20). Skipped.")
+        return None
+
+    X = np.array(X_rows, dtype=float)
+    y = np.array(y_rows, dtype=int)
+
+    split = int(len(X) * 0.70)
+    if split < 10 or len(X) - split < 5:
+        print(f"  {sector_etf}: not enough data for train/test split ({len(X)} trades). Skipped.")
+        return None
+
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
+
+    dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=ENTRY_FEATURE_NAMES)
+    dtest = xgb.DMatrix(X_test, label=y_test, feature_names=ENTRY_FEATURE_NAMES)
+
+    params = {
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "max_depth": 3,  # shallower than global model — less data
+        "eta": 0.05,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "min_child_weight": 3,
+        "seed": 42,
+    }
+    booster = xgb.train(
+        params,
+        dtrain,
+        num_boost_round=200,
+        evals=[(dtrain, "train"), (dtest, "test")],
+        early_stopping_rounds=20,
+        verbose_eval=False,
+    )
+
+    oos_preds = booster.predict(dtest)
+    oos_auc = float(roc_auc_score(y_test, oos_preds)) if len(set(y_test)) > 1 else None
+
+    model_file = _DATA_DIR / f"backtest_ml_model_{sector_etf}.json"
+    feature_file = _DATA_DIR / f"backtest_ml_features_{sector_etf}.json"
+
+    should_deploy = oos_auc is not None and (champion_auc is None or oos_auc > champion_auc)
+
+    if should_deploy:
+        booster.save_model(str(model_file))
+        scores = booster.get_score(importance_type="gain")
+        total_gain = sum(scores.values()) or 1
+        fi = sorted(
+            [{"feature": k, "importance": v / total_gain} for k, v in scores.items()],
+            key=lambda x: -x["importance"],
+        )
+        meta = {
+            "trained_at": datetime.utcnow().isoformat(),
+            "sector_etf": sector_etf,
+            "n_train": int(len(X_train)),
+            "n_test": int(len(X_test)),
+            "oos_auc": oos_auc,
+            "champion_auc": champion_auc,
+            "deployed": True,
+            "feature_names": ENTRY_FEATURE_NAMES,
+            "feature_importances": fi,
+        }
+        feature_file.write_text(json.dumps(meta, indent=2))
+        label = "First" if champion_auc is None else "New"
+        print(
+            f"  {sector_etf}: ✅ {label} sector model — N={len(X)} trades | "
+            f"OOS AUC {oos_auc:.4f}{f' > {champion_auc:.4f}' if champion_auc else ''}"
+        )
+        return oos_auc
+    else:
+        print(
+            f"  {sector_etf}: ⛔ Challenger rejected — OOS AUC {f'{oos_auc:.4f}' if oos_auc else '—'} "
+            f"≤ champion {f'{champion_auc:.4f}' if champion_auc else '—'}. Keeping existing."
+        )
+        return None
+
+
+# Sector-specific ticker sets for sector model training.
+# Only sectors where we have enough IS backtest trades to train.
+_SECTOR_TICKER_SETS: dict[str, set[str]] = {
+    "XLF": {"JPM", "BAC", "WFC", "C", "BK", "V", "AXP", "SPGI", "MS", "GS", "BLK", "SCHW"},
+    "XLP": {"PG", "KO", "PEP", "CL", "KMB", "GIS", "MO", "PM", "COST", "WMT", "TGT"},
+    "XLU": {"NEE", "DUK", "SO", "D", "AEP", "EXC", "XEL", "SRE", "ED", "AWK"},
+}
+
+
+if __name__ == "__main__":
+    main()
+
+    # ── Sector-specific model training ─────────────────────────────────────────
+    # Train after the global model so we can reuse all_results from main().
+    # This is a standalone invocation path — re-run the backtest for sector models.
+    print("\n## Sector-Specific Model Training\n")
+    print("Re-running IS backtest to build sector models (XLF, XLP, XLU)...\n")
+
+    try:
+        from scripts.backtest_technicals import (
+            END,
+            START,
+            TICKERS,
+            fetch_ad_breadth,
+            fetch_spy_trend,
+            fetch_stlfsi4,
+            fetch_t10y,
+            fetch_trin,
+            process_ticker,
+        )
+        import yfinance as yf
+
+        # Fetch macro data (same as main())
+        raw_vix_s = yf.download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
+        if isinstance(raw_vix_s.columns, pd.MultiIndex):
+            raw_vix_s.columns = raw_vix_s.columns.get_level_values(0)
+        vix_dict_s: dict = {}
+        for d, row in raw_vix_s.iterrows():
+            try:
+                vix_dict_s[pd.Timestamp(str(d)[:10])] = float(row["Close"])
+            except Exception:
+                pass
+
+        spy_trend_s = fetch_spy_trend(START, END)
+        stlfsi4_s = {}
+        t10y_s = {}
+        trin_s = {}
+        ad_s = {}
+        try:
+            stlfsi4_s = fetch_stlfsi4(START, END, os.getenv("MASSIVE_API_KEY", ""))
+        except Exception:
+            pass
+        try:
+            t10y_s = fetch_t10y(START, END)
+        except Exception:
+            pass
+        try:
+            trin_s = fetch_trin(START, END)
+        except Exception:
+            pass
+        try:
+            ad_s = fetch_ad_breadth(START, END)
+        except Exception:
+            pass
+
+        # Expand TICKERS to include the blocked-sector tickers for sector model training
+        _all_sector_tickers = set().union(*_SECTOR_TICKER_SETS.values())
+        _sector_train_tickers = sorted(_all_sector_tickers - set(TICKERS))
+
+        if _sector_train_tickers:
+            print(f"Fetching {len(_sector_train_tickers)} additional sector tickers: {_sector_train_tickers}\n")
+            sector_args = [
+                (t, vix_dict_s, spy_trend_s, stlfsi4_s, True, None, t10y_s, trin_s, ad_s) for t in _sector_train_tickers
+            ]
+            n_cpu_s = max(1, multiprocessing.cpu_count() - 1)
+            with multiprocessing.Pool(n_cpu_s) as pool:
+                sector_results = pool.map(process_ticker, sector_args)
+        else:
+            sector_results = []
+
+        # Combine: re-run main tickers + sector tickers
+        main_args_s = [(t, vix_dict_s, spy_trend_s, stlfsi4_s, True, None, t10y_s, trin_s, ad_s) for t in TICKERS]
+        n_cpu_s = max(1, multiprocessing.cpu_count() - 1)
+        with multiprocessing.Pool(n_cpu_s) as pool:
+            main_results_s = pool.map(process_ticker, main_args_s)
+
+        all_results_s = main_results_s + sector_results
+
+        for sector_etf, sector_tickers in _SECTOR_TICKER_SETS.items():
+            champion_auc_s: float | None = None
+            feat_file_s = _DATA_DIR / f"backtest_ml_features_{sector_etf}.json"
+            if feat_file_s.exists():
+                try:
+                    champion_auc_s = json.loads(feat_file_s.read_text()).get("oos_auc")
+                except Exception:
+                    pass
+
+            train_sector_model(all_results_s, vix_dict_s, sector_etf, sector_tickers, champion_auc_s)
+
+    except Exception as _e:
+        print(f"Sector model training failed: {_e}")

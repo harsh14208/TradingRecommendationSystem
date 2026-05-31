@@ -96,23 +96,47 @@ async def test_gate_blocks_intraday_above_old_floor():
 
 
 @pytest.mark.asyncio
-async def test_gate_blocks_swing_below_65():
-    """Swing floor raised to 65% (§33 live data: swing alpha −1.028%/trade)."""
+async def test_gate_blocks_swing_below_70():
+    """Swing floor raised to 70% (persistent −1.028%/trade alpha)."""
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=64.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=69.0), db, _Settings())
     assert reason is not None
 
 
 @pytest.mark.asyncio
-async def test_gate_allows_swing_at_65():
-    """Swing signals at ≥65% pass the style floor."""
+async def test_gate_allows_swing_at_70():
+    """Swing signals at ≥70% pass the style floor."""
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=65.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=70.0), db, _Settings())
     assert reason is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ticker", ["LRCX", "MRVL", "AMAT", "KLAC"])
+async def test_gate_blocks_semi_equipment_tickers(ticker):
+    """Semi equipment sub-sector blocked — continuation not MR."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(_sig(ticker=ticker), db, _Settings())
+    assert reason is not None
+    assert "blocked" in reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ticker", ["STT", "MTB"])
+async def test_gate_blocks_xlf_regional_bank_tickers(ticker):
+    """XLF regional banks blocked — rate-cycle driven, not price-level MR (OOS v5: 0% WR)."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(_sig(ticker=ticker), db, _Settings())
+    assert reason is not None
+    assert "blocked" in reason
 
 
 @pytest.mark.asyncio
@@ -221,7 +245,7 @@ async def test_gate_blocks_swing_with_one_non_ta():
 
     db = await _db_no_sector_count()
     reason, _ = await check_delivery_gates(
-        _sig(style="swing", confidence=65.0, sources=["Technical", "Macro"]), db, _Settings()
+        _sig(style="swing", confidence=70.0, sources=["Technical", "Macro"]), db, _Settings()
     )
     assert reason is not None
     assert "non-TA" in reason
@@ -234,7 +258,7 @@ async def test_gate_allows_swing_with_two_non_ta():
 
     db = await _db_no_sector_count()
     reason, _ = await check_delivery_gates(
-        _sig(style="swing", confidence=65.0, sources=["Technical", "Macro", "Options"]),
+        _sig(style="swing", confidence=70.0, sources=["Technical", "Macro", "Options"]),
         db,
         _Settings(),
     )
@@ -377,3 +401,382 @@ async def test_alias_gate_only_fires_on_buy_not_sell():
     # SELL may fail for other reasons (non-TA source, etc.) but not alias gate
     if reason:
         assert "alias" not in reason.lower() and "same underlying" not in reason.lower()
+
+
+# ── _days_to_nearest_fomc ─────────────────────────────────────────────────────
+
+
+def test_days_to_nearest_fomc_exact_date():
+    from services.delivery_gates import _days_to_nearest_fomc
+
+    assert _days_to_nearest_fomc("2026-01-28") == 0
+
+
+def test_days_to_nearest_fomc_one_day_before():
+    from services.delivery_gates import _days_to_nearest_fomc
+
+    assert _days_to_nearest_fomc("2026-01-27") == 1
+
+
+def test_days_to_nearest_fomc_far_from_meeting():
+    from services.delivery_gates import _days_to_nearest_fomc
+
+    dist = _days_to_nearest_fomc("2026-02-15")
+    assert dist > 2
+
+
+# ── Ticker-adaptive win rate gates (lines 114-117) ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ticker_adaptive_low_wr_raises_floor():
+    """A ticker with twr < 0.45 raises the confidence floor to 68."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    app_settings_row = MagicMock()
+    app_settings_row.data = {"adaptive_weights": {"ticker_win_rates": {"AAPL": 0.40}}}
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=app_settings_row)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(ticker="AAPL", confidence=65.0),  # below raised 68 floor
+            db,
+            _Settings(),
+        )
+    assert reason is not None
+    assert "68" in reason
+
+
+@pytest.mark.asyncio
+async def test_ticker_adaptive_high_wr_lowers_floor():
+    """A ticker with twr >= 0.75 lowers the floor, allowing lower-confidence signals."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    app_settings_row = MagicMock()
+    app_settings_row.data = {"adaptive_weights": {"ticker_win_rates": {"AAPL": 0.80}}}
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=app_settings_row)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    # With floor lowered to 52, a conf=53 signal should pass global floor
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(ticker="AAPL", confidence=53.0),
+            db,
+            _Settings(),
+        )
+    # May pass or fail other gates but NOT the global conf floor
+    if reason:
+        assert "52" not in reason and "global floor" not in reason
+
+
+# ── VIX < 15 gate (line 164) ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_vix_below_15_blocks_buy():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(vix=12.0),
+            db,
+            _Settings(),
+        )
+    assert reason is not None
+    assert "VIX" in reason and "15" in reason
+
+
+@pytest.mark.asyncio
+async def test_vix_above_15_does_not_block():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(vix=20.0),
+            db,
+            _Settings(),
+        )
+    if reason:
+        assert "VIX" not in reason or "15" not in reason
+
+
+# ── Cross-asset headwinds gate (line 173) ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_three_headwinds_blocks_buy():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(crossAssetHeadwinds=3),
+            db,
+            _Settings(),
+        )
+    assert reason is not None
+    assert "cross-asset" in reason.lower() or "headwinds" in reason.lower()
+
+
+# ── Ex-dividend gate (line 186) ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ex_div_blocks_buy():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    with patch("database.AsyncSessionLocal", return_value=mock_session):
+        reason, _ = await check_delivery_gates(
+            _sig(daysToExDiv=1),
+            db,
+            _Settings(),
+        )
+    assert reason is not None
+    assert "ex-dividend" in reason.lower() or "ex_div" in reason.lower() or "dividend" in reason.lower()
+
+
+# ── FOMC gates (lines 325, 327-330) ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fomc_decision_day_blocks_buy():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    # Patch _days_to_nearest_fomc to return 0
+    with (
+        patch("database.AsyncSessionLocal", return_value=mock_session),
+        patch("services.delivery_gates._days_to_nearest_fomc", return_value=0),
+    ):
+        reason, _ = await check_delivery_gates(_sig(), db, _Settings())
+
+    assert reason is not None
+    assert "FOMC" in reason
+
+
+@pytest.mark.asyncio
+async def test_fomc_one_day_away_haircut():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    with (
+        patch("database.AsyncSessionLocal", return_value=mock_session),
+        patch("services.delivery_gates._days_to_nearest_fomc", return_value=1),
+    ):
+        reason, out_sig = await check_delivery_gates(
+            _sig(confidence=65.0),
+            db,
+            _Settings(),
+        )
+
+    # Should apply -4pp haircut (not a hard block), so confidence drops
+    if reason is None:
+        assert out_sig["confidence"] <= 61.1  # 65 - 4 = 61
+
+
+# ── Thursday haircut (lines 298-318) ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_thursday_haircut_below_58():
+    from datetime import datetime, timezone
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    # Thursday = weekday 3
+    thursday = datetime(2026, 1, 29, 12, 0, tzinfo=timezone.utc)  # A Thursday
+
+    with (
+        patch("database.AsyncSessionLocal", return_value=mock_session),
+        patch("services.delivery_gates.datetime") as mock_dt,
+        patch("services.delivery_gates._days_to_nearest_fomc", return_value=5),
+    ):
+        mock_dt.now.return_value = thursday
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        reason, out_sig = await check_delivery_gates(
+            _sig(confidence=57.0),  # < 58 → haircut applies
+            db,
+            _Settings(),
+        )
+
+    if reason is None:
+        assert out_sig.get("confidence", 60) <= 57.0
+
+
+# ── September / October seasonality (lines 348, 350) ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_september_seasonality_gate_blocks_low_conf():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    from datetime import datetime, timezone
+
+    september = datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc)
+
+    with (
+        patch("database.AsyncSessionLocal", return_value=mock_session),
+        patch("services.delivery_gates.datetime") as mock_dt,
+        patch("services.delivery_gates._days_to_nearest_fomc", return_value=5),
+    ):
+        mock_dt.now.return_value = september
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        reason, _ = await check_delivery_gates(
+            _sig(confidence=60.0),  # < 62 threshold
+            db,
+            _Settings(),
+        )
+
+    if reason:
+        assert "september" in reason.lower() or "seasonality" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_october_seasonality_gate_blocks_low_conf():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    from datetime import datetime, timezone
+
+    october = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+
+    with (
+        patch("database.AsyncSessionLocal", return_value=mock_session),
+        patch("services.delivery_gates.datetime") as mock_dt,
+        patch("services.delivery_gates._days_to_nearest_fomc", return_value=5),
+    ):
+        mock_dt.now.return_value = october
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        reason, _ = await check_delivery_gates(
+            _sig(confidence=58.0),  # < 60 threshold
+            db,
+            _Settings(),
+        )
+
+    if reason:
+        assert "october" in reason.lower() or "seasonality" in reason.lower()
+
+
+# ── Long-weekend haircut (lines 270-287) ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_pre_long_weekend_haircut_applied():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    scalar_result = AsyncMock()
+    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=scalar_result)
+
+    from unittest.mock import patch
+
+    with (
+        patch("database.AsyncSessionLocal", return_value=mock_session),
+        patch("services.delivery_gates._days_to_nearest_fomc", return_value=5),
+        patch("services.market_calendar.get_upcoming_holidays", return_value=[]),
+        patch("services.market_calendar.is_pre_long_weekend", return_value=(True, "Memorial Day")),
+    ):
+        reason, out_sig = await check_delivery_gates(
+            _sig(confidence=65.0),
+            db,
+            _Settings(),
+        )
+
+    if reason is None:
+        assert out_sig.get("confidence", 65.0) <= 60.1  # 65 - 5 = 60

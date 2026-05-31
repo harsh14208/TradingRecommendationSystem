@@ -795,6 +795,87 @@ async def get_macro_context() -> dict:
     except Exception:
         pass
 
+    # ── §55 Cross-Asset Macro Composite (TLT + UUP + XLE) ───────────────────
+    # Bridgewater/Dalio: triangulate equity panic against bonds, dollar, commodities.
+    # All 3 rising (TLT+UUP) while energy (XLE) collapses = systemic macro breakdown,
+    # not an equity-specific oversell → MR reversion is unreliable.
+    # Score 0–3 headwinds stored in result["cross_asset_headwinds"]:
+    #   0 = equity-specific panic (cleanest MR setup)
+    #   3 = macro breakdown (suppress BUY confidence downstream)
+    try:
+        tlt_df, uup_df, xle_df = await asyncio.gather(
+            get_history("TLT", period="2mo", interval="1d"),
+            get_history("UUP", period="2mo", interval="1d"),
+            get_history("XLE", period="2mo", interval="1d"),
+        )
+        _ca_headwinds = 0
+        _ca_details: list[str] = []
+        if tlt_df is not None and len(tlt_df) >= 6:
+            tlt_5d = (float(tlt_df["Close"].iloc[-1]) / float(tlt_df["Close"].iloc[-6]) - 1) * 100
+            result["tlt_5d"] = round(tlt_5d, 2)
+            if tlt_5d > 1.5:
+                _ca_headwinds += 1
+                _ca_details.append(f"TLT+{tlt_5d:.1f}%")
+        if uup_df is not None and len(uup_df) >= 6:
+            uup_5d = (float(uup_df["Close"].iloc[-1]) / float(uup_df["Close"].iloc[-6]) - 1) * 100
+            result["uup_5d"] = round(uup_5d, 2)
+            if uup_5d > 1.0:
+                _ca_headwinds += 1
+                _ca_details.append(f"UUP+{uup_5d:.1f}%")
+        if xle_df is not None and len(xle_df) >= 6:
+            xle_5d = (float(xle_df["Close"].iloc[-1]) / float(xle_df["Close"].iloc[-6]) - 1) * 100
+            result["xle_5d"] = round(xle_5d, 2)
+            if xle_5d < -3.0:
+                _ca_headwinds += 1
+                _ca_details.append(f"XLE{xle_5d:.1f}%")
+        result["cross_asset_headwinds"] = _ca_headwinds
+        if _ca_headwinds >= 3:
+            score -= 10
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": f"Cross-Asset Macro Breakdown ({', '.join(_ca_details)})",
+                    "body": (
+                        "All 3 macro indicators signal systemic flight-to-quality: "
+                        "bonds rallying (TLT), dollar strengthening (UUP), and energy collapsing (XLE). "
+                        "Equity MR setups are unreliable in macro breakdown — oversold stocks tend "
+                        "to continue lower rather than mean-revert. Reduce BUY confidence."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"cross_asset_headwinds=3 ({', '.join(_ca_details)})",
+                }
+            )
+        elif _ca_headwinds == 2:
+            score -= 5
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": f"Partial Cross-Asset Stress ({', '.join(_ca_details)})",
+                    "body": (
+                        f"2 of 3 macro signals show flight-to-quality pressure ({', '.join(_ca_details)}). "
+                        "MR setups may work but require stronger technical confirmation."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"cross_asset_headwinds=2 ({', '.join(_ca_details)})",
+                }
+            )
+        elif _ca_headwinds == 0:
+            score += 3
+            rationale.append(
+                {
+                    "src": "Macro",
+                    "head": "Clean Macro Backdrop — Equity-Specific Oversell",
+                    "body": (
+                        "No cross-asset macro headwinds (bonds stable, dollar not surging, energy stable). "
+                        "Oversold equity condition is stock-specific, not systemic → cleanest MR setup."
+                    ),
+                    "sentiment": "pos",
+                    "meta": "cross_asset_headwinds=0",
+                }
+            )
+    except Exception as e:
+        print(f"[macro] cross-asset: {e}")
+
     # ── Sector rotation stage ─────────────────────────────────────────────
     result["sector_rotation"] = _sector_rotation_stage(
         vix=result.get("vix"),
@@ -805,6 +886,47 @@ async def get_macro_context() -> dict:
 
     result["macro_score"] = score
     result["rationale"] = rationale
+
+    # ── §65 TRIN (Arms Index) ─────────────────────────────────────────────
+    try:
+        trin_df = await get_history("^TRIN", period="5d", interval="1d")
+        if trin_df is not None and not trin_df.empty:
+            result["trin"] = round(float(trin_df["Close"].iloc[-1]), 3)
+    except Exception:
+        pass
+
+    # ── §66 NYSE A/D Breadth Thrust (Zweig) ──────────────────────────────
+    try:
+        ad_df = await get_history("^NYAD", period="1mo", interval="1d")
+        if ad_df is not None and len(ad_df) >= 12:
+            ad_chg = ad_df["Close"].diff().dropna()
+            ad_ema10 = float(ad_chg.ewm(span=10, adjust=False).mean().iloc[-1])
+            result["ad_ema10_chg"] = round(ad_ema10, 1)
+            ema_series = ad_chg.ewm(span=10, adjust=False).mean()
+            if len(ema_series) >= 10:
+                was_neg = any(v < 0 for v in ema_series.iloc[-10:-1].values)
+                result["zweig_thrust"] = bool(was_neg and ad_ema10 > 50)
+    except Exception:
+        pass
+
+    # ── §64 10Y-3M Yield Spread ───────────────────────────────────────────
+    try:
+        irx_df = await get_history("^IRX", period="5d", interval="1d")
+        if irx_df is not None and not irx_df.empty and result.get("t10y") is not None:
+            t3m = round(float(irx_df["Close"].iloc[-1]), 4)
+            t10y_pct = result.get("t10y", 0)
+            result["t10y2y_spread"] = round(t10y_pct - t3m, 4)
+    except Exception:
+        pass
+
+    # ── §68 10Y Rate 30-day Change ────────────────────────────────────────
+    try:
+        t10y_hist = await get_history("^TNX", period="3mo", interval="1d")
+        if t10y_hist is not None and len(t10y_hist) >= 22:
+            t10y_30d_chg = float(t10y_hist["Close"].iloc[-1]) - float(t10y_hist["Close"].iloc[-22])
+            result["t10y_30d_chg"] = round(t10y_30d_chg, 3)
+    except Exception:
+        pass
 
     # ── Market status from Polygon.io ─────────────────────────────────────
     # Replaces the time-heuristic check with authoritative NYSE open/close state.

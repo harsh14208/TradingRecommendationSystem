@@ -727,6 +727,45 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     except Exception as e:
         print(f"Indicator calculation error: {e}")
 
+    # §59 OU half-life
+    try:
+        if len(close) >= 63:
+            _p = close.values[-63:].astype(float)
+            _lp = np.log(np.maximum(_p, 1e-10))
+            _y = np.diff(_lp)
+            _x = _lp[:-1]
+            _b = float(np.polyfit(_x, _y, 1)[0])
+            out["ou_halflife"] = round(-np.log(2) / _b, 1) if _b < 0 else None
+    except Exception:
+        pass
+
+    # §60 Hurst exponent
+    try:
+        if len(close) >= 63:
+            _lr = np.diff(np.log(np.maximum(close.values[-63:].astype(float), 1e-10)))
+            _rs_pts = []
+            for _lag in [4, 8, 16, 32]:
+                _n = (len(_lr) // _lag) * _lag
+                if _n < _lag * 2:
+                    continue
+                _sub = _lr[:_n].reshape(-1, _lag)
+                _rs_row = []
+                for _row in _sub:
+                    _mu = _row.mean()
+                    _cd = np.cumsum(_row - _mu)
+                    _R = float(_cd.max() - _cd.min())
+                    _S = float(_row.std(ddof=1)) or 1e-10
+                    if _R > 0:
+                        _rs_row.append(_R / _S)
+                if _rs_row:
+                    _rs_pts.append((np.log(_lag), np.log(float(np.mean(_rs_row)))))
+            if len(_rs_pts) >= 3:
+                _xh = np.array([v[0] for v in _rs_pts])
+                _yh = np.array([v[1] for v in _rs_pts])
+                out["hurst"] = round(float(max(0.0, min(1.0, np.polyfit(_xh, _yh, 1)[0]))), 3)
+    except Exception:
+        pass
+
     return out
 
 
@@ -780,3 +819,45 @@ def batch_calculate_indicators(
         except Exception:
             pass
     return results
+
+
+def compute_cointegration_zscore(
+    stock_prices: "pd.Series",
+    etf_prices: "pd.Series",
+    window: int = 252,
+) -> "float | None":
+    """Engle-Granger sector cointegration Z-score (§63).
+
+    Regresses stock on sector ETF using the last `window` overlapping observations,
+    then returns the Z-score of the current residual vs its rolling distribution.
+
+    Positive Z → stock above long-run relationship with sector (overbought vs peers).
+    Negative Z → stock below long-run relationship (oversold vs peers — MR signal).
+
+    Returns None when there are fewer than 60 usable overlapping points.
+    """
+    try:
+        import numpy as np
+        import pandas as pd
+
+        # Align on common index and drop NaNs
+        combined = pd.DataFrame({"stock": stock_prices, "etf": etf_prices}).dropna()
+        combined = combined.tail(window)
+        if len(combined) < 60:
+            return None
+
+        s = combined["stock"].values.astype(float)
+        e = combined["etf"].values.astype(float)
+
+        # OLS: stock ~ beta * etf + alpha  (Engle-Granger step 1)
+        beta, alpha = np.polyfit(e, s, 1)
+        residuals = s - (beta * e + alpha)
+
+        # Z-score of latest residual vs residual distribution
+        mu = float(np.mean(residuals))
+        sigma = float(np.std(residuals, ddof=1))
+        if sigma < 1e-8:
+            return None
+        return float((residuals[-1] - mu) / sigma)
+    except Exception:
+        return None

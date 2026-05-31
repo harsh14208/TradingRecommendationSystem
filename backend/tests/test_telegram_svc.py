@@ -311,3 +311,38 @@ class TestSendTelegram:
         assert "Stop $144.00" in payload["text"]
         assert payload["parse_mode"] == "Markdown"
         assert payload["chat_id"] == "-1001234567890"
+
+
+# ---------------------------------------------------------------------------
+# send_telegram_message direct coverage (missing line 34)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_message_not_configured_no_token():
+    from services.telegram_svc import send_telegram_message
+
+    import types
+
+    fake_settings = types.SimpleNamespace(telegram_bot_token="", telegram_chat_id="123")
+
+    with patch("config.get_settings", return_value=fake_settings):
+        ok, msg = await send_telegram_message("123", "hello")
+
+    assert ok is False
+    assert "Not configured" in msg
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_message_not_configured_no_chat_id():
+    from services.telegram_svc import send_telegram_message
+
+    import types
+
+    fake_settings = types.SimpleNamespace(telegram_bot_token="bot:XYZ", telegram_chat_id="")
+
+    with patch("config.get_settings", return_value=fake_settings):
+        ok, msg = await send_telegram_message("", "hello")
+
+    assert ok is False
+    assert "Not configured" in msg

@@ -1,0 +1,120 @@
+{
+  "trained_at": "2026-05-30T07:11:05.149350",
+  "n_train": 382,
+  "n_test": 164,
+  "oos_accuracy": 0.628,
+  "oos_auc": 0.7331,
+  "oos_precision": 0.6395,
+  "oos_recall": 0.6471,
+  "top_features": [
+    "is_buy",
+    "has_fundamentals_source",
+    "stop_pct",
+    "n_pos_rationale",
+    "price_log"
+  ],
+  "feature_importances": [
+    {
+      "feature": "is_buy",
+      "importance": 0.14406
+    },
+    {
+      "feature": "has_fundamentals_source",
+      "importance": 0.10063
+    },
+    {
+      "feature": "stop_pct",
+      "importance": 0.07362
+    },
+    {
+      "feature": "n_pos_rationale",
+      "importance": 0.0729
+    },
+    {
+      "feature": "price_log",
+      "importance": 0.07053
+    },
+    {
+      "feature": "target_pct",
+      "importance": 0.06706
+    },
+    {
+      "feature": "n_rationale",
+      "importance": 0.05951
+    },
+    {
+      "feature": "sentiment",
+      "importance": 0.05693
+    },
+    {
+      "feature": "n_sources",
+      "importance": 0.05286
+    },
+    {
+      "feature": "change_pct",
+      "importance": 0.04495
+    },
+    {
+      "feature": "n_neg_rationale",
+      "importance": 0.04394
+    },
+    {
+      "feature": "day_of_week",
+      "importance": 0.04211
+    },
+    {
+      "feature": "has_options_source",
+      "importance": 0.0414
+    },
+    {
+      "feature": "has_macro_source",
+      "importance": 0.03458
+    },
+    {
+      "feature": "has_earnings_source",
+      "importance": 0.03313
+    },
+    {
+      "feature": "month",
+      "importance": 0.03159
+    },
+    {
+      "feature": "confidence",
+      "importance": 0.03019
+    },
+    {
+      "feature": "rr_numeric",
+      "importance": 0.0
+    },
+    {
+      "feature": "has_dark_pool_source",
+      "importance": 0.0
+    },
+    {
+      "feature": "has_institutional_source",
+      "importance": 0.0
+    },
+    {
+      "feature": "is_pre_market",
+      "importance": 0.0
+    },
+    {
+      "feature": "is_position_style",
+      "importance": 0.0
+    },
+    {
+      "feature": "sector_ord",
+      "importance": 0.0
+    },
+    {
+      "feature": "dte_bucket",
+      "importance": 0.0
+    },
+    {
+      "feature": "rs_vs_sector",
+      "importance": 0.0
+    }
+  ],
+  "deployed": true,
+  "champion_auc": null
+}

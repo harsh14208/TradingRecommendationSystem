@@ -1,7 +1,7 @@
 # Signal.Trade — Research Learnings & Alpha Inventory
 
 > Living document. Updated as each research section completes.
-> Last updated: 2026-05-25 after §20 OOS relaxed params. Key finding: MR edge is regime-conditional (VIX-driven). No static threshold stack passes ≥3/5 OOS. 2024-25 hostile. Next: §21 VIX-regime switching.
+> Last updated: 2026-05-29 after §45 OSC weight reversal. Key findings: MR edge is regime-conditional (VIX-driven). OSC×0.3 (§40) was wrong for 105-ticker universe — reversed to 1.0 (§45). TREND and VOL families are active drags (+0.29/+0.15 Sharpe if removed). OOS=0.00 is sector contamination artifact. No static threshold stack passes ≥3/5 OOS. 2024-25 hostile.
 > Primary research script: `backend/scripts/signal_alpha_decomposition.py`
 > Primary backtest: `backend/scripts/backtest_technicals.py`
 > Live engine: `backend/services/signal_engine.py`
@@ -155,7 +155,9 @@ Each sector has a fundamentally different recovery speed (§15b):
 - LH/LL + RSI<45: score +7 (was momentum −7). Downtrend extended → approaching oversold reversal
 
 **Confirmed redundant (16 families, all removed):**
-OSC, MFI, WK52, RSI_DIV, STREAK, PIVOT, SUPER, HURST, GAP, RSI_LEVEL, EARN-score, REDDAY, MOM_DECEL, BB_PURE, IBS_PURE, VWAP_DIST, DONCHIAN-score, PRICESTR-score, RS_QUALITY, SECTOR_RS
+MFI, WK52, RSI_DIV, STREAK, PIVOT, SUPER, HURST, GAP, RSI_LEVEL, EARN-score, REDDAY, MOM_DECEL, BB_PURE, IBS_PURE, VWAP_DIST, DONCHIAN-score, PRICESTR-score, RS_QUALITY, SECTOR_RS
+
+> **§45 note (2026-05-29):** OSC was classified redundant in §40 (24-ticker v10 subset). This finding does NOT hold for the 105-ticker BASE_WEIGHTS universe. §45 OSC sweep: OSC×1.0 = Sharpe 0.00 (only breakeven); OSC×0.3 = Sharpe −0.24. OSC weight restored to 1.0 in live engine and decomp script. OSC remains load-bearing for the full production universe.
 
 **The exhaustion finding:** The OHLCV signal space is fully explored. All 27 tested families cover the entire price/volume surface. No new pure technical signal will materially improve beyond current architecture. Future per-trade Sharpe gains (above the ~0.50 ceiling) require alternative data: options flow, short interest velocity, or earnings revision momentum.
 

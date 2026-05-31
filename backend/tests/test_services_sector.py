@@ -70,3 +70,23 @@ async def test_get_sector_relative_strength_exception():
         m_hist.side_effect = Exception("API error")
         res = await get_sector_relative_strength("AAPL")
         assert res is None
+
+
+@pytest.mark.asyncio
+async def test_get_sector_relative_strength_ticker_df_used_directly():
+    """Covers line 814: df = ticker_df (when ticker_df is provided with sufficient rows)."""
+    from services.sector import _etf_cache
+
+    mock_etf_df = pd.DataFrame({"Close": [100.0 + i * 0.5 for i in range(25)]})
+    mock_ticker_df = pd.DataFrame({"Close": [200.0 + i for i in range(25)]})
+
+    _etf_cache.clear()
+
+    with patch("services.sector.get_history", new_callable=AsyncMock) as m_hist:
+        # Only ETF needs to be fetched; ticker_df is provided
+        m_hist.return_value = mock_etf_df
+
+        res = await get_sector_relative_strength("AAPL", ticker_df=mock_ticker_df, lookback=21)
+
+    assert res is not None
+    assert "rs_vs_sector" in res

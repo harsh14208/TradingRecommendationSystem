@@ -1,0 +1,54 @@
+{
+  "trained_at": "2026-05-30T09:14:08.381721",
+  "n_train": 80,
+  "n_test": 35,
+  "oos_auc": 0.6398601398601399,
+  "champion_auc": null,
+  "deployed": true,
+  "feature_names": [
+    "bb_pct_b",
+    "ibs",
+    "vwap_pct",
+    "rsi",
+    "adx",
+    "rvol",
+    "atr_pct",
+    "price_zscore",
+    "ou_halflife",
+    "hurst",
+    "vix",
+    "sector_ord",
+    "dow",
+    "month"
+  ],
+  "feature_importances": [
+    {
+      "feature": "adx",
+      "importance": 0.19684503169129763
+    },
+    {
+      "feature": "ibs",
+      "importance": 0.19603557051742534
+    },
+    {
+      "feature": "ou_halflife",
+      "importance": 0.16685300140577378
+    },
+    {
+      "feature": "vix",
+      "importance": 0.1498003618230392
+    },
+    {
+      "feature": "rvol",
+      "importance": 0.12254097902552206
+    },
+    {
+      "feature": "rsi",
+      "importance": 0.09655886689464627
+    },
+    {
+      "feature": "sector_ord",
+      "importance": 0.07136618864229571
+    }
+  ]
+}

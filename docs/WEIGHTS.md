@@ -1,8 +1,9 @@
 # Signal.Trade — Scoring Weights & Signal Gates Reference
 
-> **Version: v6.9+** · Updated: 2026-05-27 (§40 risk gate refinements applied)
+> **Version: v6.9+** · Updated: 2026-05-29 (§45 OSC weight reversal applied)
 > Source of truth: `backend/services/signal_scoring.py` + `backend/services/signal_engine.py`
-> **Notable changes in §40:** OSC weight 1.0→0.3, RSI removed from MR gate, VIX<20 global gate added, ATR stops tightened 2.0s/2.5t→1.0s/2.0t
+> **§40 changes:** RSI removed from MR gate, VIX<20 global gate added, ATR stops tightened 2.0s/2.5t→1.0s/2.0t, OSC weight reduced 1.0→0.3
+> **§45 reversal:** OSC weight restored 0.3→1.0 — OSC×0.3 was calibrated on 24-ticker subset only; §45 OSC sweep on 105-ticker universe found OSC×1.0 is the only breakeven setting (Sharpe 0.00 vs −0.24 at 0.3)
 
 ---
 
@@ -174,9 +175,9 @@
 |:---|:---|:---|:---|
 | > 40 (strong) | ×1.20 | ×0.10 | ×0.30 if \|osc\| < 16 |
 | 25–40 (moderate) | unchanged | ×0.40 | unchanged |
-| < 25 (ranging) | ×0.30 | ×1.20 (+×1.30 if BB%B<0.10) | **×0.30** (§40: global weight, was variable) |
+| < 25 (ranging) | ×0.30 | ×1.20 (+×1.30 if BB%B<0.10) | ×1.0 (§45: restored from 0.3) |
 
-> **§40 note:** Oscillator total weight reduced from 1.0 to 0.3 globally. §12 alpha decomp found OSC redundant with DONCHIAN (corr=0.74); 0.3 weight acts as quality selector not signal generator (per-trade Sharpe 0.33, N=26 in §12 sweep).
+> **§45 note (2026-05-29):** OSC weight restored to 1.0 globally. §40 had reduced it to 0.3 based on 24-ticker v10 sweep — §45 OSC sweep on 105-ticker universe showed OSC×0.3 = Sharpe −0.24; OSC×1.0 = Sharpe 0.00 (only breakeven setting). Applied in `signal_engine.py:3777` and `signal_alpha_decomposition.py:313`.
 
 ### Layer 2 — Price vs SMA200
 

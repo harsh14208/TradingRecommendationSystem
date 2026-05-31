@@ -1,10 +1,10 @@
 # Signal.Trade — Development Progress
 
-> **Version: v6.1** · Updated: 2026-05-25 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v6.3** · Updated: 2026-05-30 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
 > ~210 tickers (incl. 52 leveraged ETFs) · 70+ signal blocks · 116 API endpoints · Max confidence: 72% (empirically calibrated)
 > **Data: Polygon.io/Massive-first (bulk OHLCV + quotes + reference info) · yfinance fallback · Massive WebSocket (dark pool) · FRED (macro + credit spreads)**
 > **Database: PostgreSQL 16 (primary) · SQLite removed · 7,015+ signals · 8 users**
-> **Tests: 660 passed, 0 failed, 4 skipped (`backend/venv/bin/python -m pytest backend/tests`)**
+> **Tests: 916 passed, 0 failed, 3 skipped · Backtest IS: N=114, WR=67.5%, Sharpe=0.28, MC P5=0.13 ✅ (v6.3 gates are live-path only — IS unchanged) · OOS v3: N=14, WR=50.0%, Sharpe=0.06 ⚠**
 
 ## 📊 Live database stats (2026-05-17)
 
@@ -42,6 +42,66 @@
 ---
 
 ## ✅ Implemented
+
+### v6.3 (2026-05-30) — Signal Quality Hardening: CMF Ablation, §63/§80/§81/§83, SHAP Audit, Sector XGBoost
+
+**CMF ablation (§46 decomp follow-up):**
+`BASE_WEIGHTS["cmf"]=0.00` in `signal_alpha_decomposition.py` — CMF family confirmed redundant when TREND=0; OBV/RVOL carry the same money-flow information. Live engine CMF scoring halved (×0.5) to eliminate double-counting while preserving qualitative gate. Projected ΔSharpe: +0.04 (from §46 decomp; IS rerun pending).
+
+**§63 Sector Cointegration Gate:**
+`compute_cointegration_zscore(stock_prices, etf_prices, window=252)` added to `technicals.py`. Engle-Granger regression of stock on sector ETF; residual Z-score measures deviation from long-run pair equilibrium. Gate: Z<−2.0→+4pp (double dislocation), Z<−1.0→+2pp, Z>0.5→−2pp. Zero additional API calls — sector ETF Close series injected into `market_ctx["etf_histories"]` from already-prefetched watchlist histories in `scan_all()`. Projected ΔSharpe: +0.08–0.15 (per TODO §219).
+
+**§80 NBBO Spread Quality Gate:**
+Extracts bid/ask from `_snapshot_cache.lastQuote` (already populated by `get_polygon_snapshot_batch()`). Spread >1.0%→−10pp, >0.5%→−5pp, <0.1%→+1pp. Enforces honest friction calibration: backtest assumes 0.5% round-trip; wide-spread names make this 2–3× too optimistic. Validation: tag resolved trades with spread at entry.
+
+**§81 Block Print Detection:**
+`get_recent_block_prints(ticker, min_block_size=5000)` added to `polygon_client.py`. Fetches last 500 trades via `/v3/trades`, classifies: at_low (≤day_low×1.01) = accumulation, at_high (≥day_high×0.99) = distribution. Gate: ≥3 block buys + bbv>bsv×2→+5pp, ≥3 block sells + bsv>bbv×2→−6pp. 10-min TTL cache. Projected ΔSharpe: +0.10–0.20 on names with clear block activity.
+
+**§83 Cross-Signal Correlation Penalty:**
+In `scan_all()`, after all signals scored: build 63d return matrix for simultaneous BUY signals, compute avg pairwise correlation per signal vs. the rest. avg_corr>0.75→positionSizeScale cut by min(0.40, (corr−0.75)×1.6). Follows existing architecture: correlation risk is inventory risk, not alpha uncertainty — confidence unchanged, only sizing reduced.
+
+**SHAP Feature Audit (eval_ml.py §7):**
+`shap_audit(rows, model)` added using `shap.TreeExplainer`. Reports mean |SHAP| per feature with direction (pos/neg), flags inverted features (negative SHAP on expected-positive features), lists near-zero candidates for removal. `shap>=0.45.0` added to `requirements.txt`. Note: requires Python 3.11 CI environment (numba incompatible with Python 3.14 local).
+
+**Sector XGBoost (XLF/XLP/XLU):**
+`train_sector_model(all_results, vix_dict, sector_etf, sector_tickers, champion_auc)` in `train_backtest_ml.py` — trains sector-specific XGBoost (max_depth=3 vs 4 global, shallower to avoid overfit on smaller sector N) and saves `backtest_ml_model_{SECTOR}.json` only if OOS AUC > global champion. `get_sector_entry_model(sector_etf)` and `predict_entry_prob_sector(tech, vix, sector_etf)` added to `signal_ml.py` — transparently falls back to global model when no sector file exists. `_assemble_signal()` now calls `predict_entry_prob_sector` instead of `predict_entry_prob` directly.
+
+**Test fixes:**
+- `test_options_sweep_gex_gives_15pp_bonus` — added `patch("services.signal_ml.get_entry_model", return_value=None)` alongside existing `get_model` patch; new `predict_entry_prob_sector` was reading the live backtest model and boosting both test paths to the 72.0 ceiling, masking the sweep vs GEX-only difference.
+- `test_pre_long_weekend_haircut_applied` — corrected patch target from `services.delivery_gates` to `services.market_calendar`; `get_upcoming_holidays`/`is_pre_long_weekend` are local imports inside the function, not module-level attributes.
+
+**Test count:** 916 passed, 0 failed, 3 skipped (up from 762 in v6.2; 154 additional tests from new test modules).
+
+### v6.2 (2026-05-29) — §59–§82 Full Gate Stack + Backtest Universe Expansion
+
+**Backtest `backtest_technicals.py`:**
+All §59–§82 research gates wired into backtest simulation and analysis sections. New gates in `simulate_ticker()`: §59 OU half-life (HALFLIFE_MAX=25d), §60 Hurst (CEIL=0.80), §61 idiosyncratic vol (>55%), §64 yield-curve XLF penalty, §67 FOMC day hard block, §68 rising-rates XLK penalty, §78 Sep/Oct seasonality floor. New `compute_indicators()` columns: `ou_halflife`, `hurst`, `realized_vol_63`, `near_52wk_low`. New macro fetches: `fetch_t10y()` (§64/§68), `fetch_trin()` (§65), `fetch_ad_breadth()` (§66). Trade dict gains `trin`, `ad_ema10_chg`, `zweig_thrust`, `near_52wk_low` metadata fields. Three new analysis sections: §14 TRIN capitulation split, §15 Zweig/A-D breadth split, §16 tax-loss harvest window split. Gate calibration empirically adjusted (Hurst 0.60→0.80, OU 12d→25d — large-cap median H=0.71; 0.60 blocked 88–95% of signals). §55 `fetch_cross_asset_composite` bug fixed: `get_loc` KeyError on misaligned tz-aware indices replaced with vectorized DataFrame join + index normalization.
+
+**Universe expansion 48→74 tickers (balanced across sectors):** XLB: +LIN/SHW/APD/ECL/NUE (1→6) · XLC: +DIS/T/VZ (5→8) · XLF: +V/AXP/SPGI (8→11) · XLY: +BKNG/GM/TJX (13→16) · XLK: +ANET (15→16) · XLV: +JNJ/MRK/LLY/UNH (research) · XLE: +XOM/CVX/COP (research) · XLI: +HON/RTX (research) · XLP: +PG/KO (research). ETF expansion tested and rejected: broad/sector ETFs (SPY/QQQ/IWM/XLK/XLY/XLB/XLI) all showed WR 33–50% avg −0.5 to −1.0% — MR signals calibrated on individual stock vol don't hold at index level.
+
+**Result:** IS N=114, WR=67.5%, Avg +0.98%, Sharpe=0.28, **MC P5=0.12** ✅ (>0.10 = edge generalises). Sector-filtered: N=94, WR=64.9%, Sharpe=0.24.
+
+### v6.9 (2026-05-25–29) — Security Hardening, esbuild Pipeline, Alpha Research §32–§45
+
+**Infrastructure & Security:**
+PostgreSQL migration complete (7,015+ signals, 8 users, SQLite removed). Alembic installed with initial 13-table schema migration. CI fixed: pytest-timeout added, accuracy gate now fails builds, pip-audit enforced. SecurityHeadersMiddleware (CSP, HSTS, X-Frame-Options). Stripe webhook idempotency via `StripeEvent` table. Password-reset tokens moved to DB (SHA-256, expiry, prior token invalidation). All 11 background tasks supervised via `_supervise()`; `/api/health` reports live/dead status.
+
+**Auth & Frontend Security:**
+Access tokens moved from `localStorage` to JS module-level variable. DOM injection removed from login/signup/verify-email (textContent replaces innerHTML). `test_frontend_smoke.py` added (6 antipattern checks). esbuild pipeline: `build.mjs` → `dist/app-bundle.js`; Dockerfile multi-stage (Node.js build → Python serve); `load-app.js` + `init.js` extracted for CSP compliance. `'unsafe-eval'` added temporarily for Babel fallback (remove after bundle confirmed in prod).
+
+**Backend Architecture:**
+Scanner decomposed: `fetch_market_context()`, `_persist_scan_signals()`, `_deliver_scan_signals()` extracted; `_run_scan_impl` is a thin 11-step orchestrator. Admin MRR uses `TIER_PRICES_CENTS`. All `datetime.utcnow()` replaced with timezone-aware equivalents. Confidence-weighted position sizing: `positionSizeScale = portfolio_size_scale × clamp(conf/62, 0.5, 1.5)`.
+
+**Signal Engine Features:**
+EPS revision hard gate (blocks MR BUY 8–14d pre-earnings without analyst revision or unusual calls). Fundamental value-trap gate (revenue <−20% YoY AND FCF <−5%). VIX<20 gate (blocks all MR in calm markets, 103-ticker 23yr finding). GEX + options flow hard gate (yfinance, no paid API). Adaptive exit (RSI>55 / MACD+ / VWAP while profitable): 17.1% of trades exit early at 100% WR, avg +3.20%. Score-segmented hold: low-score trades (40–49) use 5-day hold; WR +6.1pp, Ann.Sh +0.12.
+
+**Research §32–§35:**
+SELL signals (−45 thresh): collapse Sharpe 0.20→−0.03 — disabled. Energy sub-sectors (XOM/CVX/COP/SLB): N=13, WR=61.5%, Ann.Sharpe=2.03. XLU: no viable MR edge, blocked. §35b adaptive exit RSI accepted: WR +7pp. ATR 2.0/2.5× confirmed optimal. Covered call overlay rejected (kills right-tail convexity). Intraday disabled (WR 34.8%). Confidence gap closed: +1.2pp vs prior +11pp.
+
+**Research §40/§42–§45 — OSC/MR Weight Calibration:**
+RSI removed from MR gate (non-binding). MR weight 0.50→0.70 (optimal, 105-ticker sweep). OSC weight: 1.0→0.3 (§40, 24-ticker subset) then REVERSED 0.3→1.0 (§45: OSC×1.0 only breakeven on 105-ticker universe; OSC×0.3 = Sharpe −0.24 — was a calibration error). DONCHIAN 1.0→0.50 (OSC↔DONCHIAN corr=0.70; live engine MR-path scores halved: 8→4, 5→2). BUY_THRESH confirmed non-binding (no trades in 30–49 band). OOS=0.00 identified as sector contamination artifact (MS/XLF: WR=16.7%, avg=−2.34% alone destroys OOS). §45 ablation: TREND removal = +0.29 Sharpe, VOL removal = +0.15 Sharpe, DONCHIAN removal = neutral. TREND=0 applied to decomp script; §46 validation running.
+
+---
 
 ### v6.1 (2026-05-25) — §16/§17 Sector Gates, Polygon Options Chain, Entry-Quality Filters
 

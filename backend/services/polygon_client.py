@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -9,6 +10,16 @@ import pandas as pd
 log = logging.getLogger("signal.trade.polygon")
 
 _BASE = "https://api.polygon.io"
+
+# In-process snapshot cache: keyed by ticker, value is (snap_dict, monotonic_ts).
+# Populated by get_polygon_snapshot_batch(); reused by get_polygon_extended_hours()
+# so a scan cycle's batch call eliminates per-ticker individual snapshot requests.
+_snapshot_cache: dict[str, tuple[dict, float]] = {}
+_SNAPSHOT_TTL = 300  # 5 min — one full scan cycle
+
+# Dividend reference cache: stable data, 24 h TTL
+_div_cache: dict[str, tuple[list, float]] = {}
+_DIV_TTL = 86_400
 
 
 def _get_api_key() -> str:
@@ -124,27 +135,67 @@ async def get_polygon_histories_batch(
     return out
 
 
+async def get_polygon_snapshot_batch(tickers: list[str]) -> dict[str, dict]:
+    """Single batch call → real-time price, change, VWAP, volume for all tickers.
+
+    Response is under the "tickers" key (NOT "results"). Each snap is cached in
+    _snapshot_cache so get_polygon_extended_hours() can reuse it without a second call.
+    """
+    api_key = _get_api_key()
+    if not api_key or not tickers:
+        return {}
+    url = f"{_BASE}/v2/snapshot/locale/us/markets/stocks/tickers"
+    params = {"tickers": ",".join(t.upper() for t in tickers), "apiKey": api_key}
+    try:
+        import ssl as _ssl
+
+        import certifi as _certifi
+
+        ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=15, ssl=ssl_ctx) as resp:
+                if resp.status != 200:
+                    log.warning("[polygon] snapshot batch: HTTP %s", resp.status)
+                    return {}
+                data = await resp.json()
+        now = time.monotonic()
+        out: dict[str, dict] = {}
+        for snap in data.get("tickers") or []:  # NOTE: "tickers" key, NOT "results"
+            t = (snap.get("ticker") or "").upper()
+            if not t:
+                continue
+            _snapshot_cache[t] = (snap, now)
+            out[t] = snap
+        return out
+    except Exception as e:
+        log.warning("[polygon] snapshot batch error: %s", e)
+        return {}
+
+
 async def get_polygon_quotes_batch(tickers: list[str]) -> list[dict]:
-    """Return quote-like {t, p, c} rows using recent Polygon daily bars."""
-    histories = await get_polygon_histories_batch(tickers, period="5d", interval="1d")
+    """Return real-time quote {t, p, c} rows via a single batch snapshot call.
+
+    Replaces the old approach of N individual OHLCV calls. Falls back to empty
+    list if Polygon is unavailable; market_data.py caller will use yfinance.
+    """
+    snaps = await get_polygon_snapshot_batch(tickers)
     quotes: list[dict] = []
     for ticker in tickers:
-        df = histories.get(ticker.upper())
-        if df is None or len(df) < 2:
+        snap = snaps.get(ticker.upper())
+        if not snap:
             continue
         try:
-            close = df["Close"].dropna()
-            if len(close) < 2:
-                continue
-            price = float(close.iloc[-1])
-            prev = float(close.iloc[-2])
-            if prev <= 0:
+            last_trade = snap.get("lastTrade") or {}
+            prev_day = snap.get("prevDay") or {}
+            price = float(last_trade.get("p") or 0)
+            prev_close = float(prev_day.get("c") or 0)
+            if price <= 0 or prev_close <= 0:
                 continue
             quotes.append(
                 {
                     "t": ticker.upper(),
                     "p": round(price, 2),
-                    "c": round((price - prev) / prev * 100, 2),
+                    "c": round((price - prev_close) / prev_close * 100, 2),
                 }
             )
         except Exception:
@@ -249,22 +300,79 @@ async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame 
 
 
 async def get_polygon_extended_hours(ticker: str) -> dict | None:
-    """
-    Return extended-hours (pre-market / after-hours) stats using the Polygon v2
-    snapshot endpoint.  Returns the same dict shape as market_data._fetch_extended_hours()
-    so the two sources are interchangeable.
-
-    Polygon snapshot returns lastTrade.p (most recent trade price, including pre/post-market)
-    and prevDay.c (previous regular-session close) — reliable even when yfinance is
-    rate-limited or impersonation headers expire.
+    """Return extended-hours stats. Checks _snapshot_cache first (populated by
+    get_polygon_snapshot_batch during scan), falling back to an individual call.
     """
     api_key = _get_api_key()
     if not api_key:
         return None
 
-    url = f"{_BASE}/v2/snapshot/locale/us/markets/stocks/tickers/{ticker.upper()}"
-    params = {"apiKey": api_key}
+    t = ticker.upper()
+    snap_cached, ts = _snapshot_cache.get(t, (None, 0.0))
+    if snap_cached is not None and time.monotonic() - ts < _SNAPSHOT_TTL:
+        t_data = snap_cached
+    else:
+        url = f"{_BASE}/v2/snapshot/locale/us/markets/stocks/tickers/{t}"
+        params = {"apiKey": api_key}
+        try:
+            import ssl as _ssl
 
+            import certifi as _certifi
+
+            ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+                    if resp.status != 200:
+                        log.debug("[polygon] snapshot %s: HTTP %s", t, resp.status)
+                        return None
+                    data = await resp.json()
+            t_data = data.get("ticker") or {}
+            _snapshot_cache[t] = (t_data, time.monotonic())
+        except Exception as e:
+            log.debug("[polygon] extended_hours %s: %s", t, e)
+            return None
+
+    last_trade = t_data.get("lastTrade") or {}
+    prev_day = t_data.get("prevDay") or {}
+    min_data = t_data.get("min") or {}
+
+    ext_price = last_trade.get("p")
+    prev_close = prev_day.get("c")
+    if not ext_price or not prev_close:
+        return None
+
+    ext_price = float(ext_price)
+    prev_close = float(prev_close)
+    gap_pct = round((ext_price - prev_close) / prev_close * 100, 3)
+    direction = "up" if gap_pct > 0.1 else "down" if gap_pct < -0.1 else "flat"
+    ext_volume = int(min_data.get("v") or 0)
+
+    return {
+        "price": ext_price,
+        "prev_close": prev_close,
+        "gap_pct": gap_pct,
+        "vol_ratio": 1.0,
+        "direction": direction,
+        "ext_volume": ext_volume,
+    }
+
+
+async def get_polygon_dividends(ticker: str) -> list[dict]:
+    """Fetch upcoming ex-dividend dates from Polygon reference API.
+
+    Returns list of {ex_dividend_date, cash_amount, pay_date, frequency},
+    sorted ascending by ex_dividend_date (nearest first).
+    Cached 24 h per ticker — dividend schedules are stable intraday.
+    """
+    api_key = _get_api_key()
+    if not api_key:
+        return []
+    t = ticker.upper()
+    cached, ts = _div_cache.get(t, (None, 0.0))
+    if cached is not None and time.monotonic() - ts < _DIV_TTL:
+        return cached
+    url = f"{_BASE}/v3/reference/dividends"
+    params = {"ticker": t, "limit": 5, "order": "desc", "sort": "ex_dividend_date", "apiKey": api_key}
     try:
         import ssl as _ssl
 
@@ -274,34 +382,128 @@ async def get_polygon_extended_hours(ticker: str) -> dict | None:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
                 if resp.status != 200:
-                    log.debug(f"[polygon] snapshot {ticker}: HTTP {resp.status}")
-                    return None
+                    return []
+                data = await resp.json()
+        results = [
+            {
+                "ex_dividend_date": r.get("ex_dividend_date"),
+                "cash_amount": r.get("cash_amount"),
+                "pay_date": r.get("pay_date"),
+                "frequency": r.get("frequency"),
+            }
+            for r in (data.get("results") or [])
+            if r.get("ex_dividend_date")
+        ]
+        results.sort(key=lambda x: x["ex_dividend_date"])
+        _div_cache[t] = (results, time.monotonic())
+        return results
+    except Exception as e:
+        log.debug("[polygon] dividends %s: %s", t, e)
+        return []
+
+
+# ── §81 Block Print Detection ──────────────────────────────────────────────────
+# Easley & O'Hara (1987): large trades carry more information than small trades.
+# Block prints (>=min_block_size shares) at the ask near day-low = institutional
+# accumulation; at the bid near day-high = institutional distribution.
+_block_print_cache: dict[str, tuple[dict, float]] = {}
+_BLOCK_PRINT_TTL = 600  # 10 min — refreshed each scan cycle
+
+
+async def get_recent_block_prints(
+    ticker: str,
+    min_block_size: int = 5_000,
+) -> dict:
+    """Return recent block-trade summary for `ticker`.
+
+    Fetches the last 500 trades via Polygon /v3/trades and classifies each
+    print as accumulation (at ask, near day-low) or distribution (at bid,
+    near day-high).
+
+    Returns:
+        {
+            "block_buys": int,
+            "block_sells": int,
+            "block_buy_volume": float,
+            "block_sell_volume": float,
+        }
+    An empty dict is returned on error or when Polygon is unavailable.
+    """
+    t = ticker.upper()
+    cached = _block_print_cache.get(t)
+    if cached and time.monotonic() - cached[1] < _BLOCK_PRINT_TTL:
+        return cached[0]
+
+    api_key = _get_api_key()
+    if not api_key:
+        return {}
+
+    # Get current price context from snapshot cache
+    snap_entry = _snapshot_cache.get(t)
+    if snap_entry is None:
+        return {}
+    snap, _ = snap_entry
+    day = snap.get("day") or {}
+    day_low = float(day.get("l") or 0)
+    day_high = float(day.get("h") or 0)
+    last_trade = snap.get("lastTrade") or {}
+    mid_price = float(last_trade.get("p") or 0)
+    if mid_price <= 0:
+        return {}
+
+    url = f"{_BASE}/v3/trades/{t}"
+    params = {
+        "limit": 500,
+        "sort": "timestamp",
+        "order": "desc",
+        "apiKey": api_key,
+    }
+    try:
+        import ssl as _ssl
+
+        import certifi as _certifi
+
+        ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+                if resp.status != 200:
+                    return {}
                 data = await resp.json()
 
-        t_data = data.get("ticker") or {}
-        last_trade = t_data.get("lastTrade") or {}
-        prev_day = t_data.get("prevDay") or {}
-        min_data = t_data.get("min") or {}
+        block_buys = 0
+        block_sells = 0
+        block_buy_vol = 0.0
+        block_sell_vol = 0.0
 
-        ext_price = last_trade.get("p")
-        prev_close = prev_day.get("c")
-        if not ext_price or not prev_close:
-            return None
+        for trade in data.get("results") or []:
+            size = int(trade.get("size") or 0)
+            if size < min_block_size:
+                continue
+            price = float(trade.get("price") or 0)
+            if price <= 0:
+                continue
 
-        ext_price = float(ext_price)
-        prev_close = float(prev_close)
-        gap_pct = round((ext_price - prev_close) / prev_close * 100, 3)
-        direction = "up" if gap_pct > 0.1 else "down" if gap_pct < -0.1 else "flat"
-        ext_volume = int(min_data.get("v") or 0)
+            # Classify by price relative to intraday range:
+            # Near day-low (within 1%): buyer-initiated = accumulation
+            # Near day-high (within 1%): seller-initiated = distribution
+            at_low = day_low > 0 and price <= day_low * 1.01
+            at_high = day_high > 0 and price >= day_high * 0.99
 
-        return {
-            "price": ext_price,
-            "prev_close": prev_close,
-            "gap_pct": gap_pct,
-            "vol_ratio": 1.0,  # snapshot doesn't provide avg ext-hours vol
-            "direction": direction,
-            "ext_volume": ext_volume,
+            if at_low:
+                block_buys += 1
+                block_buy_vol += size
+            elif at_high:
+                block_sells += 1
+                block_sell_vol += size
+
+        result = {
+            "block_buys": block_buys,
+            "block_sells": block_sells,
+            "block_buy_volume": block_buy_vol,
+            "block_sell_volume": block_sell_vol,
         }
+        _block_print_cache[t] = (result, time.monotonic())
+        return result
     except Exception as e:
-        log.debug(f"[polygon] extended_hours {ticker}: {e}")
-        return None
+        log.debug("[polygon] block_prints %s: %s", t, e)
+        return {}

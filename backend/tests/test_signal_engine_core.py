@@ -177,25 +177,32 @@ def test_assemble_signal_earnings_blackout():
 
 
 def test_assemble_signal_risk_free_rate_dampener():
-    res = _assemble_signal(
-        ticker="AAPL",
-        info={"company": "Apple"},
-        tech={"price": 100.0, "atr": 1.0, "rsi": 38.0},  # rsi<42 satisfies MR gate; target 100+3*1=103
-        score=50.0,  # BUY
-        rationale=[],
-        sources=set(),
-        _force_hold=False,
-        _is_low_atr=False,
-        _atr_pct_pre=0.01,
-        total_confidence_penalty=0.0,
-        avg_sent=0.0,
-        price=100.0,
-        atr=1.0,
-        market_ctx={"macro": {"t10y": 4.5, "sp500_trend": "up"}},  # 4.5% risk free rate
-        earnings_cal={},
-        sector_rs={"sector_etf": "XLY", "rs_vs_sector": 0},
-        days_to_earnings=None,
-    )
+    # Freeze to Wednesday so the day-of-week gate (blocks Friday BUY entries) doesn't fire.
+    from datetime import datetime as _dt
+    import services.signal_engine as _se
+
+    _wednesday = _dt(2026, 5, 27, 12, 0, 0)  # Wednesday
+    with patch.object(_se, "datetime", wraps=_se.datetime) as _mock_dt:
+        _mock_dt.now.return_value = _wednesday
+        res = _assemble_signal(
+            ticker="AAPL",
+            info={"company": "Apple"},
+            tech={"price": 100.0, "atr": 1.0, "rsi": 38.0},  # rsi<42 satisfies MR gate; target 100+3*1=103
+            score=50.0,  # BUY
+            rationale=[],
+            sources=set(),
+            _force_hold=False,
+            _is_low_atr=False,
+            _atr_pct_pre=0.01,
+            total_confidence_penalty=0.0,
+            avg_sent=0.0,
+            price=100.0,
+            atr=1.0,
+            market_ctx={"macro": {"t10y": 4.5, "sp500_trend": "up"}},  # 4.5% risk free rate
+            earnings_cal={},
+            sector_rs={"sector_etf": "XLY", "rs_vs_sector": 0},
+            days_to_earnings=None,
+        )
 
     assert "Macro" in res["sources"]
     assert any(
@@ -541,12 +548,22 @@ def test_ar1_gate_no_haircut_below_threshold():
 
 
 def test_ar1_gate_haircut_capped_at_10pp():
-    """Very high AR(1) = 0.30 should cap haircut at 10pp (not e.g. 50pp)."""
+    """Very high AR(1) = 0.30 should cap haircut at 10pp (not e.g. 50pp).
+
+    ML models are patched out so the test measures the raw AR(1) gate in isolation,
+    not ML amplification on top of it.
+    """
+    from unittest.mock import patch
+
     base = _mr_buy_kwargs(score=50.0)
     base["tech"] = {**base["tech"], "momentum_ar1": 0.30}
 
-    res_normal = _assemble_signal(**_mr_buy_kwargs(score=50.0))
-    res_high = _assemble_signal(**base)
+    with (
+        patch("services.signal_ml.get_model", return_value=None),
+        patch("services.signal_ml.get_entry_model", return_value=None),
+    ):
+        res_normal = _assemble_signal(**_mr_buy_kwargs(score=50.0))
+        res_high = _assemble_signal(**base)
 
     if res_normal and res_high:
         diff = res_normal.get("confidence", 0) - res_high.get("confidence", 0)
@@ -671,13 +688,19 @@ def test_ar1_rationale_mentions_revenue_context():
 
 def test_options_sweep_gex_gives_15pp_bonus():
     """Call sweep + positive GEX should give +15pp confidence, not just +5pp."""
+    from unittest.mock import patch
+
     base = _mr_buy_kwargs(score=50.0)
-    # Provide opt_flow with sweep_calls + positive GEX
     opt_with_sweep = {"sweep_calls": True, "gex": 50_000_000.0, "pc_ratio": 0.8, "iv_rank": None}
     opt_no_sweep = {"sweep_calls": False, "gex": 50_000_000.0, "pc_ratio": 0.6, "iv_rank": None}
 
-    res_sweep = _assemble_signal(**{**base, "opt_flow": opt_with_sweep})
-    res_no_sweep = _assemble_signal(**{**base, "opt_flow": opt_no_sweep})
+    # Patch out both ML models so confidence adjustment doesn't collapse the options scoring gap.
+    with (
+        patch("services.signal_ml.get_model", return_value=None),
+        patch("services.signal_ml.get_entry_model", return_value=None),
+    ):
+        res_sweep = _assemble_signal(**{**base, "opt_flow": opt_with_sweep})
+        res_no_sweep = _assemble_signal(**{**base, "opt_flow": opt_no_sweep})
 
     if res_sweep and res_no_sweep and res_sweep["action"] == res_no_sweep["action"] == "BUY":
         assert res_sweep["confidence"] > res_no_sweep["confidence"], (

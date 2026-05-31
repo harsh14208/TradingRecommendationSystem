@@ -135,7 +135,16 @@ async def get_insider_activity(ticker: str, days: int = 30) -> Optional[dict]:
     if not cik:
         return None
 
-    empty = {"buys": 0, "sells": 0, "buy_value": 0, "sell_value": 0, "net_shares": 0, "score": 0.0, "filings": 0}
+    empty = {
+        "buys": 0,
+        "sells": 0,
+        "buy_value": 0,
+        "sell_value": 0,
+        "net_shares": 0,
+        "score": 0.0,
+        "filings": 0,
+        "unique_buyers": 0,
+    }
 
     try:
         connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
@@ -176,6 +185,7 @@ async def get_insider_activity(ticker: str, days: int = 30) -> Optional[dict]:
             # ── Parse up to 5 most recent Form 4 XML docs ──────────────
             total_buys = total_sells = 0
             total_bv = total_sv = 0.0
+            _buyer_accs: set[str] = set()
 
             for f4 in form4s[:5]:
                 cik_int = int(cik)
@@ -190,6 +200,8 @@ async def get_insider_activity(ticker: str, days: int = 30) -> Optional[dict]:
                     total_bv += bv
                     total_sells += s
                     total_sv += sv
+                    if b > 0:
+                        _buyer_accs.add(f4["acc"])
                 except Exception:
                     continue
 
@@ -206,6 +218,7 @@ async def get_insider_activity(ticker: str, days: int = 30) -> Optional[dict]:
                 "net_shares": net,
                 "score": score,
                 "filings": len(form4s),
+                "unique_buyers": len(_buyer_accs),
             }
             _activity_cache[ticker] = (result, time.time())
             return result

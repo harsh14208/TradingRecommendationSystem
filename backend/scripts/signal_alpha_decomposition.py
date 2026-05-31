@@ -310,9 +310,15 @@ FAM_COLS = [
 ]
 
 BASE_WEIGHTS: dict[str, float] = {f: 1.0 for f in SIGNAL_FAMILIES}
-BASE_WEIGHTS["osc"] = 0.30  # v12 sweep: OSC×0.3 optimal (Sharpe 0.33, N=26) — quality selector not generator
-BASE_WEIGHTS["mr"] = 0.70  # v12 sweep: MR×0.7 optimal with OSC×0.3 (Sharpe 0.30, N=17)
+BASE_WEIGHTS["osc"] = (
+    1.00  # §45 OSC sweep: OSC×1.0 is only breakeven setting on 105-ticker universe (Sharpe 0.00 vs -0.24 at 0.3)
+)
+BASE_WEIGHTS["mr"] = 0.70  # v12 sweep: MR×0.7 optimal (confirmed); re-sweep jointly with OSC×1.0 if N changes
 BASE_WEIGHTS["donchian"] = 0.50  # §42: OSC↔DONCHIAN correlation=0.70 (double-counting MR signal); reduce from 1.0
+BASE_WEIGHTS["trend"] = 0.00  # §45 ablation: removing TREND = +0.29 Sharpe; MACD/EMA/ADX punish MR-oversold entries
+BASE_WEIGHTS["cmf"] = (
+    0.00  # §46 ablation: CMF redundant with TREND=0 (ΔSharpe +0.04 if removed); OBV/RVOL carry money-flow info
+)
 
 # v11: dual-gate tested but disabled — momentum trades (RSI 50-68) at 10-day hold
 # have near-zero edge (short-term reversal effect, Jegadeesh 1990) and dragged
@@ -1297,6 +1303,9 @@ def main() -> None:
     # ── Parallel download + bt indicators ─────────────────────────────────────
     _section(f"Downloading {len(TICKERS)} tickers")
     print(f"\nDownloading {len(TICKERS)} tickers (parallel)…\n")
+    import multiprocessing as _mp
+
+    _mp.set_start_method("fork", force=True)  # macOS Python 3.14 spawn→fork
     with Pool(8) as p:
         results = p.map(process_ticker, [(t, vix, spy_trend, stlfsi4, True) for t in TICKERS])
 

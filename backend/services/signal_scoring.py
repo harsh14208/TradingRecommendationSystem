@@ -7,11 +7,55 @@ Each function returns (score_delta, rationale_items, dominant_hint) where:
   dominant_hint   — str or None; if set, update `dominant` in the caller
 
 Functions are pure (no side effects, no I/O) and safe to unit-test independently.
+
+──────────────────────────────────────────────────────────────────────────────
+Strategy Pattern — SignalModifier Protocol
+──────────────────────────────────────────────────────────────────────────────
+All scorer functions in this module implement the SignalModifier protocol:
+  (context: dict, **kwargs) → ScoringResult
+
+The protocol formalises the contract so that:
+ • Each scorer is independently unit-testable (pure function, no I/O)
+ • New strategies can be added without touching _assemble_signal
+ • Risk gates, fundamental scorers, and alt-data handlers are decoupled
+
+Current conforming scorers (already extracted):
+  score_oscillators, score_macd, score_ema_cross, score_moving_averages,
+  score_obv_adx  (all in this module)
+  score_options  (services/options.py)
+
+Remaining inline blocks in _assemble_signal to extract in future iterations:
+  _score_fundamentals(fundamentals, info, price, score) → ScoringResult
+  _score_macro_gates(macro, vix, action) → ScoringResult
+  _score_alt_data(insider, institutional, congress) → ScoringResult
+  _score_risk_gates(portfolio_ctx, sector_exposure, action) → ScoringResult
+
+Adding a scorer: implement the SignalModifier Protocol below, add it to
+_assemble_signal's scorer list, write a unit test — no other changes needed.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Protocol, runtime_checkable
+
+
+# ── SignalModifier protocol ───────────────────────────────────────────────────
+# The formal contract all scorer functions must satisfy.
+# `context` is a dict of relevant market/technical data for that scorer family.
+# Returns: (score_delta, rationale_items).
+# dominant_hint is scorer-specific and returned separately where applicable.
+
+
+@runtime_checkable
+class SignalModifier(Protocol):
+    """
+    Callable contract for all signal scoring functions.
+
+    A SignalModifier takes a context dict and returns a (delta, rationale) pair.
+    The runner in _assemble_signal accumulates all deltas and extends rationale.
+    """
+
+    def __call__(self, context: dict, **kwargs: object) -> tuple[float, list[dict]]: ...
 
 
 def score_oscillators(
@@ -477,3 +521,36 @@ def score_moving_averages(
             )
 
     return ma_delta, rationale
+
+
+# ── Protocol adapters for existing scorers ────────────────────────────────────
+# These bridge legacy function signatures to the SignalModifier protocol,
+# allowing callers to treat them uniformly without changing the original functions.
+
+
+def score_options_adapter(context: dict, **_kwargs: object) -> tuple[float, list[dict]]:
+    """
+    Adapts services.options.score_options to the SignalModifier protocol.
+    context must contain 'opt_flow' key with the options flow dict.
+    """
+    from services.options import score_options as _score_options
+
+    opt = context.get("opt_flow") or {}
+    delta, rationale = _score_options(opt)
+    return float(delta), rationale
+
+
+def score_oscillators_adapter(context: dict, **_kwargs: object) -> tuple[float, list[dict]]:
+    """Adapts score_oscillators to the SignalModifier protocol."""
+    tech = context.get("tech") or {}
+    rsi = context.get("rsi")
+    delta, rationale, _ = score_oscillators(tech, rsi)
+    return float(delta), rationale
+
+
+def score_macd_adapter(context: dict, **_kwargs: object) -> tuple[float, list[dict]]:
+    """Adapts score_macd to the SignalModifier protocol."""
+    hist = context.get("macd_hist")
+    hist_p = context.get("macd_hist_p")
+    delta, _, rationale, _ = score_macd(hist, hist_p)
+    return float(delta), rationale

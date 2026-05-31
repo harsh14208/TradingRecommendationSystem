@@ -1,18 +1,28 @@
 """
-XGBoost confidence adjustment model.
+XGBoost confidence adjustment — two complementary models.
 
-Trained on resolved signals (outcome_pct not null) from the local DB.
-Produces a multiplicative confidence adjustment (0.75–1.25×) that blends
-with the deterministic Platt-scaled confidence.
+Signal model  (live DB):   learns from signal metadata (sources, rationale, style).
+Entry model   (backtest):  learns from technical setup at entry (BB%B, IBS, VWAP%,
+                           RSI, ADX, VIX…) trained on 23yr × 74-ticker backtest.
 
-Feature vector: 20 features extracted from the signal dict.
-Target: binary win (outcome_pct > 0 for BUY, < 0 for SELL).
-Output: adjusted_confidence = base_confidence * clamp(xgb_win_prob / base_win_prob, 0.75, 1.25)
+At inference both win-probs are blended (50/50) then applied as a single
+multiplicative adjustment (0.75–1.25×) to the deterministic Platt-scaled confidence.
+
+Signal model feature vector : 23 raw structural features from signal dict.
+  NOTE: `confidence` and `sentiment` (Platt-scaled heuristic outputs) are
+  intentionally excluded — feeding the scoring function's own output back into
+  XGBoost as a feature creates a circular dependency: the model learns a
+  tautological "high confidence → high win rate" relationship and conflates
+  alpha quality with portfolio-risk haircuts already baked into the score.
+  The 23 remaining features are all independent signals available at generation time.
+Entry model feature vector  : 14 raw features from tech dict + VIX + sector.
+Target (both models)        : binary win (net_pct > 0 for BUY, < 0 for SELL).
 """
 
 import json
 import logging
 import math
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +31,8 @@ log = logging.getLogger("signal.ml")
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _MODEL_FILE = _DATA_DIR / "signal_ml_model.json"
 _FEATURE_FILE = _DATA_DIR / "signal_ml_features.json"
+_ENTRY_MODEL_FILE = _DATA_DIR / "backtest_ml_model.json"
+_ENTRY_FEATURE_FILE = _DATA_DIR / "backtest_ml_features.json"
 _MAX_CONFIDENCE = 72.0
 
 # Minimum resolved signals before we attempt training
@@ -28,9 +40,54 @@ _MIN_SAMPLES = 50
 # Temporal train/test split — same philosophy as factor_miner.py
 _TRAIN_SPLIT = 0.70
 
-# ── Module-level model cache ───────────────────────────────────────────────────
-_model = None  # cached XGBoost Booster (or None)
-_model_mtime: float = 0.0  # mtime of the file when last loaded
+# ── Module-level model caches ─────────────────────────────────────────────────
+_model = None  # signal model (live DB)
+_model_mtime: float = 0.0
+_entry_model = None  # entry model (backtest)
+_entry_model_mtime: float = 0.0
+
+
+# ── Feature helpers ───────────────────────────────────────────────────────────
+
+_SECTOR_ORD: dict[str, int] = {
+    "XLK": 0,
+    "XLY": 1,
+    "XLC": 2,
+    "XLF": 3,
+    "XLB": 4,
+    "XLI": 5,
+    "XLV": 6,
+    "XLE": 7,
+    "XLP": 8,
+    "XLRE": 9,
+    "XLU": 10,
+}
+
+
+def _sector_ord(sector: str | None) -> float:
+    """Sector ETF → ordinal int; -1 (NaN proxy) when missing."""
+    if not sector:
+        return float("nan")
+    return float(_SECTOR_ORD.get(sector.upper(), -1))
+
+
+def _dte_bucket(dte: int | None) -> float:
+    """
+    Days-to-earnings → bucket int; NaN when missing.
+    0 = <7d (blackout zone)
+    1 = 7–34d (approaching earnings)
+    2 = 35–65d (post-earnings exhaustion — −24.8pp WR in backtest §53)
+    3 = >65d (clean, far from earnings)
+    """
+    if dte is None:
+        return float("nan")
+    if dte < 7:
+        return 0.0
+    if dte < 35:
+        return 1.0
+    if dte <= 65:
+        return 2.0
+    return 3.0
 
 
 # ── Feature extraction ─────────────────────────────────────────────────────────
@@ -38,12 +95,14 @@ _model_mtime: float = 0.0  # mtime of the file when last loaded
 
 def _extract_features(sig: dict) -> list[float]:
     """
-    Extract the 20-feature vector from a signal dict.
+    Extract the 23-feature structural vector from a signal dict.
     All values are available at generation time — no look-ahead.
+    `confidence` and `sentiment` are intentionally absent: they are Platt-scaled
+    outputs of the heuristic scoring function, and including them would create a
+    circular dependency (the ML model would learn from its own input signal).
+    Sparse fields (sector, dte, rs_vs_sector) use NaN when absent;
+    XGBoost handles NaN natively via its missing-value split logic.
     """
-    confidence = float(sig.get("confidence") or 0)
-    sentiment = float(sig.get("sentiment") or 0)
-
     sources = sig.get("sources") or []
     if isinstance(sources, str):
         try:
@@ -109,35 +168,51 @@ def _extract_features(sig: dict) -> list[float]:
     target_pct = abs(target - entry) / entry * 100 if entry > 0 and target > 0 else 0.0
     price_log = math.log10(price) if price > 0 else 0.0
 
+    # ── Calendar features (proven in backtest: 38pp DOW WR gap, Sep/Oct effect) ─
+    try:
+        dt = datetime.fromisoformat(str(sig.get("created_at") or ""))
+        dow = float(dt.weekday())  # 0=Mon … 4=Fri
+        month = float(dt.month)  # 1–12
+    except (ValueError, TypeError):
+        dow = float("nan")
+        month = float("nan")
+
+    # ── Price-action context (100% populated) ────────────────────────────────────
+    change_pct = float(sig.get("change_pct") or 0.0)
+
+    # ── Sparse context features (NaN when absent; XGBoost handles natively) ──────
+    sector_ord = _sector_ord(sig.get("sector_etf"))
+    dte_bucket = _dte_bucket(sig.get("days_to_earnings"))
+    rs_vs_sector = float(sig.get("rs_vs_sector") or 0.0) if sig.get("rs_vs_sector") is not None else float("nan")
+
     return [
-        confidence,  # 1
-        sentiment,  # 2
-        n_sources,  # 3
-        n_rationale,  # 4
-        n_pos,  # 5
-        n_neg,  # 6
-        rr_numeric,  # 7
-        is_buy,  # 8
-        has_options,  # 9
-        has_dark_pool,  # 10
-        has_fundamentals,  # 11
-        has_institutional,  # 12
-        has_macro,  # 13
-        has_earnings,  # 14
-        is_pre_market,  # 15
-        is_position_style,  # 16
-        stop_pct,  # 17
-        target_pct,  # 18
-        price_log,  # 19
-        # confidence_bin removed: it was a binned duplicate of confidence (feature 1)
-        # and was amplifying the high-confidence→low-win-rate inversion by giving
-        # the model two correlated channels to overfit on the top confidence band.
+        n_sources,  # 1
+        n_rationale,  # 2
+        n_pos,  # 3
+        n_neg,  # 4
+        rr_numeric,  # 5
+        is_buy,  # 6
+        has_options,  # 7
+        has_dark_pool,  # 8
+        has_fundamentals,  # 9
+        has_institutional,  # 10
+        has_macro,  # 11
+        has_earnings,  # 12
+        is_pre_market,  # 13
+        is_position_style,  # 14
+        stop_pct,  # 15
+        target_pct,  # 16
+        price_log,  # 17
+        change_pct,  # 18 — day's price move at signal time; MR fires on down days
+        dow,  # 19 — day of week; Mon 79.4% WR vs Thu 41.2% (backtest §5b)
+        month,  # 20 — Sep/Oct seasonality (-5pp gate already in delivery_gates)
+        sector_ord,  # 21 — sector ETF ordinal; NaN when absent (~82% sparse)
+        dte_bucket,  # 22 — earnings proximity bucket; post-earn window −24.8pp WR
+        rs_vs_sector,  # 23 — relative strength vs sector; NaN when absent (~82% sparse)
     ]
 
 
 _FEATURE_NAMES = [
-    "confidence",
-    "sentiment",
     "n_sources",
     "n_rationale",
     "n_pos_rationale",
@@ -155,7 +230,82 @@ _FEATURE_NAMES = [
     "stop_pct",
     "target_pct",
     "price_log",
+    "change_pct",
+    "day_of_week",
+    "month",
+    "sector_ord",
+    "dte_bucket",
+    "rs_vs_sector",
 ]
+
+
+# ── Entry model — technical features ─────────────────────────────────────────
+# 14 features, all derivable from the live `tech` dict + VIX + sector + datetime.
+
+_ENTRY_FEATURE_NAMES = [
+    "bb_pct_b",  # Bollinger Band %B (0=lower band, 1=upper)
+    "ibs",  # Intraday Bar Score (0=bottom of bar range, 1=top)
+    "vwap_pct",  # % deviation from 20d VWAP (negative = oversold)
+    "rsi",  # RSI(14)
+    "adx",  # ADX(14) trend strength
+    "rvol",  # Relative volume vs 20d avg
+    "atr_pct",  # ATR as % of price
+    "price_zscore",  # Price z-score (20d rolling)
+    "ou_halflife",  # OU mean-reversion half-life (days)
+    "hurst",  # Hurst exponent (<0.5 = mean-reverting)
+    "vix",  # VIX level (macro regime)
+    "sector_ord",  # Sector ETF ordinal (XLK=0 … XLU=10)
+    "dow",  # Day of week (0=Mon … 4=Fri)
+    "month",  # Month (1–12)
+]
+
+
+def _extract_entry_features(
+    tech: dict,
+    vix: float | None,
+    sector_etf: str | None,
+    dow: int | None,
+    month: int | None,
+) -> list[float]:
+    """
+    Extract the 14-feature entry vector from the live tech dict.
+    All values are available at signal-generation time — no look-ahead.
+    Missing fields return NaN; XGBoost handles NaN via its missing-value split.
+    """
+
+    def _f(key: str) -> float:
+        v = tech.get(key)
+        if v is None:
+            return float("nan")
+        try:
+            f = float(v)
+            return float("nan") if math.isnan(f) else f
+        except (TypeError, ValueError):
+            return float("nan")
+
+    price = tech.get("price") or 0.0
+    atr = tech.get("atr") or 0.0
+    try:
+        atr_pct = float(atr) / float(price) * 100.0 if float(price) > 0 else float("nan")
+    except (TypeError, ValueError):
+        atr_pct = float("nan")
+
+    return [
+        _f("bb_pct_b"),
+        _f("ibs"),
+        _f("vwap_pct"),
+        _f("rsi"),
+        _f("adx"),
+        _f("rvol"),
+        atr_pct,
+        _f("price_zscore"),
+        _f("ou_halflife"),
+        _f("hurst"),
+        float(vix) if vix is not None else float("nan"),
+        _sector_ord(sector_etf),
+        float(dow) if dow is not None else float("nan"),
+        float(month) if month is not None else float("nan"),
+    ]
 
 
 # ── Training ──────────────────────────────────────────────────────────────────
@@ -239,7 +389,6 @@ def train_model() -> Optional[dict]:
             gamma=0.3,  # min split-loss gain — prunes low-value splits
             reg_alpha=0.1,  # L1: drives weak feature weights to zero
             reg_lambda=2.0,  # L2: shrinks all weights, reduces overfit
-            use_label_encoder=False,
             eval_metric="logloss",
             random_state=42,
         )
@@ -307,7 +456,7 @@ def train_model() -> Optional[dict]:
         try:
             model.get_booster().save_model(str(_MODEL_FILE))
             _deployed = True
-            if _champion_auc is None:
+            if _champion_auc is None or oos_auc is None:
                 log.info(f"[signal_ml] First model deployed — OOS AUC={oos_auc}")
             else:
                 log.info(
@@ -394,6 +543,10 @@ async def _load_resolved_signals_async() -> list[dict]:
                     Signal.target,
                     Signal.price,
                     Signal.created_at,
+                    Signal.change_pct,
+                    Signal.days_to_earnings,
+                    Signal.sector_etf,
+                    Signal.rs_vs_sector,
                 )
                 .where(Signal.outcome_pct.isnot(None))
                 .where(Signal.action.in_(["BUY", "SELL"]))
@@ -418,6 +571,10 @@ async def _load_resolved_signals_async() -> list[dict]:
             "target": r.target,
             "price": r.price,
             "created_at": str(r.created_at) if r.created_at else "",
+            "change_pct": r.change_pct,
+            "days_to_earnings": r.days_to_earnings,
+            "sector_etf": r.sector_etf,
+            "rs_vs_sector": r.rs_vs_sector,
         }
         for r in rows
     ]
@@ -516,3 +673,163 @@ def adjust_confidence(sig_dict: dict, model) -> float:
     except Exception as e:
         log.debug(f"[signal_ml] adjust_confidence error: {e}")
         return sig_dict.get("confidence", 0)
+
+
+# ── Entry model — loader + inference ─────────────────────────────────────────
+
+
+def get_entry_model():
+    """
+    Return the cached backtest entry model, reloading on file change.
+    Returns None when the file is absent or xgboost is unavailable.
+    """
+    global _entry_model, _entry_model_mtime
+
+    if not _ENTRY_MODEL_FILE.exists():
+        return None
+
+    try:
+        current_mtime = _ENTRY_MODEL_FILE.stat().st_mtime
+    except OSError:
+        return _entry_model
+
+    if _entry_model is None or current_mtime != _entry_model_mtime:
+        try:
+            import xgboost as xgb
+
+            b = xgb.Booster()
+            b.load_model(str(_ENTRY_MODEL_FILE))
+            _entry_model = b
+            _entry_model_mtime = current_mtime
+            log.info("[signal_ml] Entry model loaded/reloaded from disk")
+        except Exception as e:
+            log.warning(f"[signal_ml] Failed to load entry model: {e}")
+            _entry_model = None
+
+    return _entry_model
+
+
+# ── Sector-specific entry model cache ─────────────────────────────────────────
+# Keyed by sector ETF (e.g. "XLF"). Values are (booster, mtime) pairs.
+# Populated lazily by get_sector_entry_model().
+_sector_models: dict[str, tuple] = {}
+
+
+def get_sector_entry_model(sector_etf: str | None):
+    """Return the sector-specific backtest entry model, or None if unavailable.
+
+    Sector models are trained by train_backtest_ml.py and saved as
+    `backtest_ml_model_{SECTOR}.json`. They are preferred over the global model
+    for their respective sectors because they are calibrated on sector-specific
+    technical dynamics (XLF rate-sensitivity, XLU utility cycles, etc.).
+
+    Falls back gracefully: returns None when the sector file doesn't exist.
+    """
+    if not sector_etf:
+        return None
+    key = sector_etf.upper()
+    model_file = _DATA_DIR / f"backtest_ml_model_{key}.json"
+    if not model_file.exists():
+        return None
+
+    try:
+        current_mtime = model_file.stat().st_mtime
+    except OSError:
+        return _sector_models.get(key, (None, 0))[0]
+
+    cached_model, cached_mtime = _sector_models.get(key, (None, 0.0))
+    if cached_model is None or current_mtime != cached_mtime:
+        try:
+            import xgboost as xgb
+
+            b = xgb.Booster()
+            b.load_model(str(model_file))
+            _sector_models[key] = (b, current_mtime)
+            log.info(f"[signal_ml] Sector model loaded: {key}")
+            return b
+        except Exception as e:
+            log.warning(f"[signal_ml] Failed to load sector model {key}: {e}")
+            _sector_models[key] = (None, 0.0)
+            return None
+    return cached_model
+
+
+def predict_entry_prob_sector(
+    tech: dict,
+    vix: float | None,
+    sector_etf: str | None,
+) -> "float | None":
+    """Use the sector-specific entry model when available, else the global one.
+
+    For sectors that historically underperform with the global model (XLF/XLP/XLU),
+    a sector-trained model captures the specific technical dynamics of that sector.
+    Falls back to the global model when no sector-specific model exists.
+    """
+    sector_model = get_sector_entry_model(sector_etf)
+    target_model = sector_model if sector_model is not None else get_entry_model()
+    return predict_entry_prob(tech, vix, sector_etf, target_model)
+
+
+def predict_live_prob(sig_dict: dict, model) -> float | None:
+    """Return the signal-model win probability (0–1), or None on error/no model."""
+    if model is None:
+        return None
+    try:
+        import numpy as np
+        import xgboost as xgb
+
+        features = _extract_features(sig_dict)
+        dm = xgb.DMatrix(np.array([features], dtype=float), feature_names=_FEATURE_NAMES)
+        return float(model.predict(dm)[0])
+    except Exception as e:
+        log.debug(f"[signal_ml] predict_live_prob error: {e}")
+        return None
+
+
+def predict_entry_prob(
+    tech: dict,
+    vix: float | None,
+    sector_etf: str | None,
+    model,
+) -> float | None:
+    """Return the entry-model win probability (0–1), or None on error/no model."""
+    if model is None:
+        return None
+    try:
+        import numpy as np
+        import xgboost as xgb
+        from datetime import datetime
+
+        now = datetime.now()
+        features = _extract_entry_features(tech, vix, sector_etf, now.weekday(), now.month)
+        dm = xgb.DMatrix(np.array([features], dtype=float), feature_names=_ENTRY_FEATURE_NAMES)
+        return float(model.predict(dm)[0])
+    except Exception as e:
+        log.debug(f"[signal_ml] predict_entry_prob error: {e}")
+        return None
+
+
+def blend_confidence(
+    base_conf: float,
+    entry_prob: float | None,
+    live_prob: float | None,
+) -> float:
+    """
+    Blend entry and signal win-probs (50/50 when both available) and apply
+    a single multiplicative ratio to base_conf.
+
+    Falls back gracefully: uses whichever prob is available; returns base_conf
+    unchanged when both are None.
+    """
+    if entry_prob is None and live_prob is None:
+        return base_conf
+
+    if entry_prob is not None and live_prob is not None:
+        combined: float = 0.5 * entry_prob + 0.5 * live_prob
+    else:
+        combined = float(entry_prob if entry_prob is not None else live_prob)  # type: ignore[arg-type]
+
+    base_win_prob = base_conf / 100.0 * 0.85
+    ratio = combined / max(base_win_prob, 0.01)
+    ratio = max(0.75, min(1.25, ratio))
+    return round(min(_MAX_CONFIDENCE, base_conf * ratio), 1)

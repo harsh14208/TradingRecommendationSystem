@@ -31,6 +31,7 @@ pywebpush>=2.0.0            # web push notifications (VAPID)
 xgboost>=2.0.0
 scikit-learn>=1.4.0
 scipy>=1.11.0       # exact t-distribution p-values in calc_tbd_metrics
+shap>=0.45.0        # SHAP feature audit (eval_ml.py §7; offline analysis only)
 
 # ── Migrations ──
 alembic>=1.13.0
