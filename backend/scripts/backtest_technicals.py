@@ -209,7 +209,7 @@ HELD_OUT_TICKERS = [
 
 # Live-blocked tickers that appear in HELD_OUT_TICKERS — excluded from "clean" OOS metrics.
 # Included in full list so their trade count is visible; excluded from the headline Sharpe.
-_OOS_BLOCKED_TICKERS: frozenset[str] = frozenset({"AMAT", "KLAC"})
+_OOS_BLOCKED_TICKERS: frozenset[str] = frozenset({"AMAT", "KLAC", "STT", "MTB"})
 
 # ── Sector map: ticker → GICS sector ETF ─────────────────────────────────────
 # Used for delivery-gates-aligned sector filter (§10).
@@ -3031,8 +3031,8 @@ def run_oos_validation(vix, spy_trend, stlfsi4, fomc_dates=None, t10y_data=None,
 
     Reports two result sets:
       ALL  — all HELD_OUT_TICKERS (shows what each ticker contributed)
-      CLEAN — excludes _OOS_BLOCKED_TICKERS (KLAC/AMAT are live-blocked; their
-              OOS trades inflate the curation-bias gap artificially)
+      CLEAN — excludes _OOS_BLOCKED_TICKERS (AMAT/KLAC/STT/MTB are live-blocked;
+              their OOS trades inflate the curation-bias gap artificially)
 
     Interpretation guide:
       OOS Sharpe ≥ 0.10   → edge generalises; curation bias is small
