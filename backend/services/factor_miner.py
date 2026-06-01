@@ -100,7 +100,49 @@ async def run_factor_mining() -> dict:
         log.info("[factor_miner] No combinations met the minimum signal threshold.")
         return {"run_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), "combinations_tested": 0}
 
-    # Rank by OOS Sharpe (descending)
+    # ── Benjamini-Hochberg FDR correction (multiple comparisons) ─────────────
+    # Brute-forcing K combinations and selecting the top by OOS Sharpe is
+    # guaranteed to produce spurious factors by chance. With K=100 combinations
+    # at α=0.05, ~5 false positives are expected even with zero true alpha.
+    # Benjamini-Hochberg controls the False Discovery Rate (FDR) at 10%,
+    # meaning ≤10% of promoted factors are expected to be false discoveries.
+    #
+    # Approximation: convert OOS Sharpe to a one-sided z-test p-value using
+    # the normal approximation SE(Sharpe) ≈ sqrt((1 + 0.5 * Sh^2) / N).
+    # This is approximate; a bootstrap SE would be more accurate but expensive.
+    def _sharpe_pvalue(sh: float, n: int) -> float:
+        """One-sided p-value for H0: true Sharpe ≤ 0, approximate normal test."""
+        if sh <= 0 or n < 3:
+            return 1.0
+        se = math.sqrt((1 + 0.5 * sh**2) / n)
+        z = sh / se
+        # Approximate 1-sided p from z via complementary error function
+        return 0.5 * math.erfc(z / math.sqrt(2))
+
+    for r in results:
+        sh = r.get("oos_sharpe") or 0.0
+        n = r.get("oos_n") or 0
+        r["_pvalue"] = _sharpe_pvalue(sh, n)
+
+    # BH procedure: sort by p-value ascending, apply threshold p_i ≤ (i/K) * FDR_ALPHA
+    FDR_ALPHA = 0.10
+    results_with_p = sorted(results, key=lambda x: x["_pvalue"])
+    K = len(results_with_p)
+    bh_cutoff_idx = -1
+    for i, r in enumerate(results_with_p):
+        bh_threshold = (i + 1) / K * FDR_ALPHA
+        if r["_pvalue"] <= bh_threshold:
+            bh_cutoff_idx = i
+
+    # Mark each factor with BH significance status
+    for i, r in enumerate(results_with_p):
+        r["bh_significant"] = i <= bh_cutoff_idx
+        r["bh_threshold"] = round((i + 1) / K * FDR_ALPHA, 6)
+
+    n_significant = bh_cutoff_idx + 1 if bh_cutoff_idx >= 0 else 0
+    log.info(f"[factor_miner] BH FDR correction (α={FDR_ALPHA}): {n_significant}/{K} combinations are significant.")
+
+    # Rank by OOS Sharpe (descending); promote only BH-significant factors
     results.sort(key=lambda x: x.get("oos_sharpe") or -99, reverse=True)
     top = results[:_TOP_N]
 
@@ -110,7 +152,9 @@ async def run_factor_mining() -> dict:
         "sources_found": sorted(all_sources),
         "combinations_tested": len(results),
         "top_factors": top,
-        "promoted_count": len([t for t in top if (t.get("oos_sharpe") or 0) > 0.3]),
+        "promoted_count": len([t for t in top if (t.get("oos_sharpe") or 0) > 0.3 and t.get("bh_significant", False)]),
+        "bh_significant_count": n_significant,
+        "fdr_alpha": FDR_ALPHA,
     }
 
     # Persist — surface a clear error if the directory is not writable.
@@ -135,6 +179,9 @@ async def run_factor_mining() -> dict:
     return summary
 
 
+_MIN_OOS_N = 20  # minimum OOS samples for a reliable Sharpe estimate; SE(Sharpe) ≈ ±0.22 at N=20
+
+
 def _eval_factor(rows: list[dict], label: str) -> Optional[dict]:
     if len(rows) < _MIN_SIGNALS:
         return None
@@ -142,7 +189,10 @@ def _eval_factor(rows: list[dict], label: str) -> Optional[dict]:
     # Temporal train / test split — never look ahead
     split = max(_MIN_SIGNALS, int(len(rows) * _TRAIN_SPLIT))
     test_rows = rows[split:]
-    if len(test_rows) < 3:
+    # Require at least _MIN_OOS_N OOS samples; fewer produce unreliable Sharpe estimates
+    # that, when sorted by OOS Sharpe, will be dominated by noise (the well-known
+    # "lucky draw" effect in small-sample factor discovery).
+    if len(test_rows) < _MIN_OOS_N:
         return None
 
     test_returns = [r["outcome_pct"] for r in test_rows]

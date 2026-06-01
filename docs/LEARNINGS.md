@@ -1,7 +1,7 @@
 # Signal.Trade — Research Learnings & Alpha Inventory
 
 > Living document. Updated as each research section completes.
-> Last updated: 2026-05-29 after §45 OSC weight reversal. Key findings: MR edge is regime-conditional (VIX-driven). OSC×0.3 (§40) was wrong for 105-ticker universe — reversed to 1.0 (§45). TREND and VOL families are active drags (+0.29/+0.15 Sharpe if removed). OOS=0.00 is sector contamination artifact. No static threshold stack passes ≥3/5 OOS. 2024-25 hostile.
+> Last updated: 2026-05-31 after §31 Russell 1000 screener. Key new finding: Industrials (railways CSX/UNP, ETN, XYL) show Sharpe 0.30–0.50 — stronger than most live-eligible tickers. 44 WATCH tickers identified (PANW, HAL, MCO, APTV top live-eligible). Pre-scoring look-ahead bias makes full-20yr mode unreliable for discovery; use fast (2006-2016) mode only.
 > Primary research script: `backend/scripts/signal_alpha_decomposition.py`
 > Primary backtest: `backend/scripts/backtest_technicals.py`
 > Live engine: `backend/services/signal_engine.py`
@@ -443,3 +443,80 @@ Quality bar: WR≥55%, Sh≥0.35, N≥3.
 **Note:** These are base-discovery PASS tickers (thresh=35, no VIX floor, 2006-2016 period). Some (EXPE, LULU, MAR, TPR) previously failed §15f strict-gate validation (N<5 under high-threshold gates). With 56 tickers, §19 OOS walk-forward should reach N≥20/window, enabling statistically meaningful validation.
 
 **Confirmed FAIL (do not add):** AVGO, FFIV, INTU, DELL, MS, USB (negative alpha or structurally bad for MR), plus 66 others tested and below quality bar.
+
+---
+
+## §31 Results — Russell 1000 Screener (completed 2026-05-31)
+
+Script: `backend/scripts/screen_russell1000_mr_candidates.py --fast`
+Config: base discovery (thresh=35, ATR≥20, 2006–2016). Sectors: Tech+Consumer+Financial+Comm+Energy+**Healthcare+Industrials** (research-only).
+Quality bar: WR≥50%, Sh≥0.20, N≥3. WATCH: WR≥60%, Avg≥0.5%, N≥5.
+Universe: Wikipedia S&P 500 (503) + S&P 400 MidCap (400) = 903 → 455 after sector/cap/beta → 437 after ADV≥$50M.
+
+### Key methodological finding: pre-scoring look-ahead bias
+
+Full 20yr mode (`--fast` removed) produced *fewer* signals per ticker than fast 10yr mode (AMP: N=10→3, GOOGL: N=10→6). Root cause: `_prescore()` normalises scores using the full time-series window. Adding 2017-2026 data (including COVID crash and 2022 bear market) shifts the all-time percentile distribution, retroactively pushing 2006-2016 signal scores below the thresh=35 cutoff. **Always use `--fast` (2006-2016 window) for discovery screening** — the pre-scoring window is consistent with the signal window, no look-ahead contamination.
+
+### PASS tickers (Sharpe ≥ 0.20, N ≥ 3)
+
+All 5 are **Industrials (XLI) — research-only, blocked in live engine by §10**. Added to `backtest_technicals.py` TICKERS as research-only (same as HON/RTX/CAT/DE/LMT).
+
+| Ticker | Name | N | WR | Avg% | Sharpe | ADV | Action |
+|---|---|---|---|---|---|---|---|
+| CSX | CSX Corp (railway) | 10 | 67% | +1.58% | **0.50** | $866M | ✅ Added (Sh>0.29) |
+| UNP | Union Pacific (railway) | 11 | 73% | +1.50% | **0.44** | $1.16B | ✅ Added (Sh>0.29) |
+| ETN | Eaton (industrial/elec) | 10 | 70% | +1.49% | **0.43** | $1.0B | ✅ Added (Sh>0.29) |
+| XYL | Xylem (water tech) | 10 | 60% | +0.99% | **0.30** | $266M | ✅ Added (Sh>0.29) |
+| ITW | Illinois Tool Works | 10 | 73% | +0.59% | 0.28 | $588M | ⛔ Below IS Sh=0.29 |
+
+**Railway stocks (CSX/UNP) are the standout finding.** Sharpe 0.44–0.50 exceeds the IS universe aggregate (0.29). Cyclical demand cycles + institutional liquidity creates textbook MR setup. Also confirmed: AMP (Financial) added earlier from fast-mode (N=10, WR=80%, Sh=0.42) remains valid.
+
+### WATCH tickers — top live-eligible (no Sharpe, N<10)
+
+These need full §15f+§17f IS validation before adding to production. Sorted by WR descending.
+
+| Ticker | Sector | N | WR | Avg% | ADV | Note |
+|---|---|---|---|---|---|---|
+| PANW | Tech | 7 | 86% | +2.96% | $1.67B | Cybersec — was blocked, revisit |
+| HAL | Energy | 7 | 86% | +4.30% | $500M | Oil-cycle MR |
+| BWA | Consumer | 7 | 86% | +2.04% | $199M | Auto parts |
+| FTI | Energy | 6 | 83% | +2.88% | $385M | Subsea/industrial energy |
+| EQH | Financial | 5 | 80% | +2.62% | $188M | Insurance/annuities |
+| GAP | Consumer | 5 | 80% | +2.89% | $189M | Apparel retail |
+| MCO | Financial | 9 | 78% | +1.21% | $507M | Moody's — 1 trade shy of Sharpe |
+| APTV | Consumer | 8 | 75% | +1.87% | $208M | Auto tech (prev. WATCH) |
+| TRGP | Energy | 7 | 71% | +1.75% | $321M | Midstream energy |
+| M | Consumer | 9 | 67% | +2.67% | $103M | Macy's — low ADV concern |
+| FIVE | Consumer | 9 | 67% | +1.27% | $239M | Five Below |
+| DHI | Consumer | 8 | 62% | +1.61% | $380M | Homebuilder |
+| AMAT | Tech | 8 | 62% | +0.67% | $2.98B | Semi equipment (prev. blocked) |
+
+Research-only WATCH (Industrials/Healthcare — do not add to live):
+AXON (86%, +4.89%), CHRW (83%, +1.67%), FBIN (80%, +2.74%), OSK (80%, +2.25%), MTZ (80%, +2.42%), TDG (75%, +1.55%), MAS (71%, +1.54%), BA (67%, +0.74%), KNX (62%, +0.57%)
+Healthcare: EW (100%, +3.15%), BIO (80%, +1.93%), PODD (67%, +3.41%), MASI (67%, +1.79%), DXCM (60%, +1.69%), ALGN (60%, +1.66%), IQV (71%, +0.95%)
+
+### Screener bugs fixed (2026-05-31)
+
+All bugs were present in both `screen_russell1000_mr_candidates.py` and `screen_sp500_mr_candidates.py`:
+1. **WR display**: `stats()` returns WR as percent (80.0) but display multiplied by 100 again → 8000%. Fixed: removed `× 100`.
+2. **Avg display**: same double-multiplication. Fixed.
+3. **MaxDD key**: `stats()` returns `max_dd` but code read `maxdd` → always 0. Fixed.
+4. **MIN_WR**: was 0.55 (decimal) but WR stored as percent → filter always passed. Fixed to 55.0.
+5. **process_ticker args**: signature expanded to 12 args; screener was passing 5. Fixed.
+6. **iShares IWB URL**: returns HTML (bot-protection) not CSV. Fixed: HTML-detect in first 512 bytes → immediate fallback to Wikipedia S&P 500 + S&P 400.
+
+### Universe expansion summary (total additions to date)
+
+| Session | Tickers added | Source | Notes |
+|---|---|---|---|
+| §30 (2026-05-25) | 31 | S&P 500 screener | All live-eligible |
+| §31a (2026-05-31) | AMP | Russell 1000 fast | Financial; Sh=0.42 |
+| §31b (2026-05-31) | CSX, UNP, ETN, XYL | Russell 1000 fast | XLI research-only |
+| **Total IS universe** | **105** | | 100 individual stocks + 5 from §31 |
+
+### Next validation steps
+
+1. Run IS backtest with 105-ticker universe — confirm aggregate Sharpe ≥ 0.29 holds after additions
+2. Validate top WATCH tickers (MCO, HAL, PANW, APTV) with §15f+§17f IS backtest individually
+3. MCO (N=9, WR=78%) is one trade short of Sharpe computation — run full 20yr IS to confirm
+4. Consider enabling Energy sub-sector (HAL/FTI/TRGP all 71-86% WR) in live delivery_gates

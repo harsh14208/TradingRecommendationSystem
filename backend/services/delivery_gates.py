@@ -59,8 +59,11 @@ def _utcnow_naive() -> datetime:
 # negative alpha (−1.028%/trade) — only near-ceiling setups worth trading.
 STYLE_CONF_FLOORS: dict[str, float] = {
     "intraday": 999.0,  # DISABLED — alpha −0.321%/trade, WR 30.4% (May 2026 live data)
-    "swing": 70.0,  # raised 62→65→70 — alpha −1.028%/trade; only ≥70% setups pass
-    "position": 0.0,  # no additional floor — driven by global min_confidence (57%)
+    "swing": 46.0,  # recalibrated 70→46 post phantom-win correction (2026-05-31).
+    # Old 70% = top ~15% of phantom-inflated distribution (−1.028%/trade alpha, WR 41.2%).
+    # On honest 40-50% confidence scale, 46% selects the upper half of the distribution.
+    # Swing alpha was −1.028%/trade; only near-ceiling setups pass even at new scale.
+    "position": 0.0,  # no additional floor — driven by global min_confidence (40%)
 }
 
 # Sectors with empirical PF < 0.40x blocked until per-sector models retrained.
@@ -72,7 +75,18 @@ BLOCKED_SECTORS: frozenset[str] = frozenset({"XLF", "XLP", "XLU"})
 #    IS: LRCX −7.20%, MRVL −6.65%; OOS: KLAC −4.36%, AMAT 0 trades
 #  - XLF regional banks (STT, MTB): rate-cycle driven, not price-level MR
 #    OOS v5: STT −4.75% (0% WR), MTB −4.16% (0% WR)
-BLOCKED_TICKERS: frozenset[str] = frozenset({"LRCX", "MRVL", "AMAT", "KLAC", "STT", "MTB"})
+BLOCKED_TICKERS: frozenset[str] = frozenset(
+    {
+        "LRCX",
+        "MRVL",
+        "AMAT",
+        "KLAC",  # semi equipment — continuation not MR (IS: LRCX −7.20%, MRVL −6.65%)
+        "STT",
+        "MTB",  # XLF regional banks — rate-cycle driven (OOS v5: both 0% WR)
+        "APH",  # Amphenol — live data: N=4, 0% WR, −8.70% avg (2026-05-31)
+        # Electronic connectors tied to industrial/auto cycles; MR thesis fails
+    }
+)
 
 # Same-underlying aliases: if GOOGL signal fires, it counts as a GOOG position
 # (and vice versa) — both are Alphabet equity, different share classes only.
@@ -147,10 +161,13 @@ async def check_delivery_gates(
     if ticker in BLOCKED_TICKERS:
         _semi = {"LRCX", "MRVL", "AMAT", "KLAC"}
         _banks = {"STT", "MTB"}
+        _connectors = {"APH"}
         if ticker in _semi:
             reason = "semi equipment — continuation not MR (LRCX −7.20%, KLAC −4.36% OOS)"
         elif ticker in _banks:
             reason = "XLF regional bank — rate-cycle driven, not price-level MR (OOS v5: 0% WR)"
+        elif ticker in _connectors:
+            reason = "electronic connectors — industrial/auto cycle, not price-level MR (live: N=4, 0% WR, −8.70%)"
         else:
             reason = "ticker-specific block (no MR edge confirmed)"
         return (f"{ticker} blocked — {reason}", sig_dict)

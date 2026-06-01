@@ -2,7 +2,7 @@
 
 Everything you need to set up, configure, and use the system day-to-day.
 
-> **Version: v6.9** · Last updated: 2026-05-29
+> **Version: v6.3** · Last updated: 2026-05-31
 
 cd backend
 source venv/bin/activate
@@ -1196,7 +1196,7 @@ A GitHub Actions workflow runs on every push/PR to `main`.
 cd backend
 source venv/bin/activate
 pytest tests/ -v
-# Expected: 662 passed, 2 skipped, 0 failed
+# Expected: 995 passed, 2 skipped, 0 failed
 ```
 
 ### Running the accuracy gate manually

@@ -218,16 +218,26 @@ def main():
     X, y = _build_dataset(all_results, vix_dict)
     print(f"Feature matrix: {X.shape}  |  Win rate: {y.mean():.3f}\n")
 
-    # ── Temporal train/test split (70/30 by row order = time order) ──────────
-    split = int(len(X) * 0.70)
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
+    # ── Purged expanding-window cross-validation ──────────────────────────────
+    # Replaces the simple 70/30 split which, on time-series data, overstates
+    # AUC by 3–8pp because adjacent trades share regime information across the
+    # fold boundary. Purged CV (Lopez de Prado, AFML Ch.7) adds an embargo
+    # window between train and test to eliminate information leakage from serial
+    # correlation. We use an expanding train window (not rolling) to maximise
+    # the amount of training data per fold.
+    #
+    # K=5 folds, each OOS window = 20% of total N, embargo = 20 observations
+    # (≈ 4 holding-day cycles). CV-AUC is the primary quality metric; the final
+    # model is trained on all data and evaluated on the last 30% as the holdout.
+    EMBARGO = 20  # observations to drop at each fold boundary
+    K_FOLDS = 5
+    n = len(X)
+    fold_size = n // K_FOLDS
 
-    print(f"Train: {len(X_train)} | Test (OOS): {len(X_test)}\n")
-
-    # ── Train XGBoost ─────────────────────────────────────────────────────────
-    dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=ENTRY_FEATURE_NAMES)
-    dtest = xgb.DMatrix(X_test, label=y_test, feature_names=ENTRY_FEATURE_NAMES)
+    cv_aucs: list[float] = []
+    print("## Purged Expanding-Window Cross-Validation\n")
+    print("| Fold | Train N | Test N | OOS AUC |")
+    print("|:---|---:|---:|---:|")
 
     params = {
         "objective": "binary:logistic",
@@ -239,6 +249,58 @@ def main():
         "min_child_weight": 5,
         "seed": 42,
     }
+
+    for fold in range(1, K_FOLDS + 1):
+        # Test window: the fold-th non-overlapping 20% slice
+        test_start = (fold - 1) * fold_size
+        test_end = fold * fold_size if fold < K_FOLDS else n
+        # Train: everything before test_start minus the embargo buffer
+        train_end = max(0, test_start - EMBARGO)
+        if train_end < 50:
+            print(f"| {fold} | — | — | insufficient train data |")
+            continue
+        X_cv_train = X[:train_end]
+        y_cv_train = y[:train_end]
+        X_cv_test = X[test_start:test_end]
+        y_cv_test = y[test_start:test_end]
+
+        dtrain_cv = xgb.DMatrix(X_cv_train, label=y_cv_train, feature_names=ENTRY_FEATURE_NAMES)
+        dtest_cv = xgb.DMatrix(X_cv_test, label=y_cv_test, feature_names=ENTRY_FEATURE_NAMES)
+        booster_cv = xgb.train(
+            params,
+            dtrain_cv,
+            num_boost_round=300,
+            evals=[(dtrain_cv, "train"), (dtest_cv, "test")],
+            early_stopping_rounds=30,
+            verbose_eval=False,
+        )
+        preds_cv = booster_cv.predict(dtest_cv)
+        fold_auc = float(roc_auc_score(y_cv_test, preds_cv)) if len(set(y_cv_test.tolist())) > 1 else None
+        if fold_auc is not None:
+            cv_aucs.append(fold_auc)
+        print(f"| {fold} | {train_end} | {len(y_cv_test)} | {f'{fold_auc:.4f}' if fold_auc else '—'} |")
+
+    cv_auc_mean = float(np.mean(cv_aucs)) if cv_aucs else None
+    cv_auc_std = float(np.std(cv_aucs)) if len(cv_aucs) > 1 else None
+    print(
+        f"\n> CV-AUC: {f'{cv_auc_mean:.4f}' if cv_auc_mean else '—'}"
+        f" ± {f'{cv_auc_std:.4f}' if cv_auc_std else '—'}"
+        f"  (embargo={EMBARGO} obs, K={K_FOLDS} folds)"
+    )
+    print("> CV-AUC is the primary metric — more reliable than a single 70/30 split.\n")
+
+    # ── Final model: train on full dataset, holdout = last 30% ───────────────
+    # This is the model deployed to production. CV-AUC above estimates true OOS
+    # performance; this split provides the eval data for eval_ml.py §7.
+    split = int(len(X) * 0.70)
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
+
+    print(f"Final model — Train: {len(X_train)} | Holdout (30%): {len(X_test)}\n")
+
+    dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=ENTRY_FEATURE_NAMES)
+    dtest = xgb.DMatrix(X_test, label=y_test, feature_names=ENTRY_FEATURE_NAMES)
+
     evals_result: dict = {}
     booster = xgb.train(
         params,
@@ -260,16 +322,21 @@ def main():
                 "y_test": y_test.tolist(),
                 "oos_preds": oos_preds.tolist(),
                 "feature_names": ENTRY_FEATURE_NAMES,
+                "cv_auc_mean": cv_auc_mean,
+                "cv_auc_std": cv_auc_std,
+                "cv_fold_aucs": cv_aucs,
             }
         )
     )
 
-    print("## Training Results\n")
+    print("## Final Model Results (primary metric = CV-AUC above)\n")
     print("| Metric | Value |")
     print("|:---|---:|")
-    print(f"| N train | {len(X_train)} |")
-    print(f"| N test (OOS) | {len(X_test)} |")
-    print(f"| OOS AUC | {f'{oos_auc:.4f}' if oos_auc else '—'} |")
+    print(f"| N train (70%) | {len(X_train)} |")
+    print(f"| N holdout (30%) | {len(X_test)} |")
+    print(f"| Holdout AUC | {f'{oos_auc:.4f}' if oos_auc else '—'} |")
+    print(f"| CV-AUC (purged, K={K_FOLDS}) | {f'{cv_auc_mean:.4f}' if cv_auc_mean else '—'} |")
+    print(f"| CV-AUC std | {f'{cv_auc_std:.4f}' if cv_auc_std else '—'} |")
     print(f"| OOS WR | {y_test.mean():.3f} |")
     print()
 
@@ -289,14 +356,24 @@ def main():
     print()
 
     # ── Champion/challenger gate ──────────────────────────────────────────────
-    _champion_auc: float | None = None
+    # Use CV-AUC as primary champion metric (more robust than single holdout AUC).
+    # Fall back to holdout AUC when CV-AUC is unavailable.
+    _champ_meta: dict = {}
+    _champion_cv_auc: float | None = None
+    _champion_holdout_auc: float | None = None
     if _FEATURE_FILE.exists():
         try:
-            _champion_auc = json.loads(_FEATURE_FILE.read_text()).get("oos_auc")
+            _champ_meta = json.loads(_FEATURE_FILE.read_text())
+            _champion_cv_auc = _champ_meta.get("cv_auc_mean")
+            _champion_holdout_auc = _champ_meta.get("oos_auc")
         except Exception:
             pass
 
-    should_deploy = oos_auc is not None and (_champion_auc is None or oos_auc > _champion_auc)
+    # Prefer CV-AUC comparison; fall back to holdout when neither side has CV-AUC
+    challenger_score = cv_auc_mean if cv_auc_mean is not None else oos_auc
+    champion_score = _champion_cv_auc if _champion_cv_auc is not None else _champion_holdout_auc
+
+    should_deploy = challenger_score is not None and (champion_score is None or challenger_score > champion_score)
 
     if should_deploy:
         booster.save_model(str(_MODEL_FILE))
@@ -305,20 +382,24 @@ def main():
             "n_train": int(len(X_train)),
             "n_test": int(len(X_test)),
             "oos_auc": oos_auc,
-            "champion_auc": _champion_auc,
+            "cv_auc_mean": cv_auc_mean,
+            "cv_auc_std": cv_auc_std,
+            "cv_fold_aucs": cv_aucs,
+            "champion_cv_auc": _champion_cv_auc,
+            "champion_holdout_auc": _champion_holdout_auc,
             "deployed": True,
             "feature_names": ENTRY_FEATURE_NAMES,
             "feature_importances": fi,
         }
         _FEATURE_FILE.write_text(json.dumps(meta, indent=2))
-        if _champion_auc is None:
-            print(f"✅ First champion deployed — OOS AUC {oos_auc:.4f}")
+        if champion_score is None:
+            print(f"✅ First champion deployed — CV-AUC {cv_auc_mean:.4f if cv_auc_mean else oos_auc:.4f}")
         else:
-            print(f"✅ New champion deployed — OOS AUC {oos_auc:.4f} > champion {_champion_auc:.4f}")
+            print(f"✅ New champion deployed — CV-AUC {challenger_score:.4f} > champion {champion_score:.4f}")
     else:
         print(
-            f"⛔ Challenger rejected — OOS AUC {f'{oos_auc:.4f}' if oos_auc else '—'} "
-            f"≤ champion {f'{_champion_auc:.4f}' if _champion_auc else '—'}. Keeping existing model."
+            f"⛔ Challenger rejected — CV-AUC {f'{challenger_score:.4f}' if challenger_score else '—'} "
+            f"≤ champion {f'{champion_score:.4f}' if champion_score else '—'}. Keeping existing model."
         )
 
     print()

@@ -1,11 +1,15 @@
-const CACHE = 'signal-trade-v3';
+// A8 migration 2026-05-31: esbuild bundles replace Babel CDN.
+// React production builds replace dev builds. Babel removed from cache.
+const CACHE = 'signal-trade-v4';
 const STATIC = [
   '/',
   '/styles.css?v=3',
   '/manifest.json',
-  'https://unpkg.com/react@18.3.1/umd/react.development.js',
-  'https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js',
-  'https://unpkg.com/@babel/standalone@7.29.0/babel.min.js',
+  '/dist/app-bundle.js',
+  '/dist/mobile-bundle.js',
+  '/dist/site-bundle.js',
+  'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
+  'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
   'https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js',
 ];
 

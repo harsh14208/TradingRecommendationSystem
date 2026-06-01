@@ -112,7 +112,7 @@ _SKIP = set(_PRODUCTION_TICKERS) | {
 
 MIN_MARKET_CAP_B = 10.0  # $10B minimum
 MIN_BETA = 0.70  # beta floor — need mean-reversion on fear
-MIN_WR = 0.55  # win rate floor for inclusion
+MIN_WR = 55.0  # win rate floor — stats() returns percent (0–100), not decimal
 MIN_SHARPE = 0.35  # per-trade Sharpe floor for inclusion
 MIN_TRADES = 5  # minimum trade count (statistical significance)
 
@@ -218,7 +218,7 @@ def _backtest_candidate(
             # No VIX floor, no ATR ceiling, no jump filter — discovery pass
         )
         if tdf.empty:
-            return {"n": 0, "wr": 0.0, "avg": 0.0, "sharpe": 0.0, "ann": 0.0, "maxdd": 0.0}
+            return {"n": 0, "wr": 0.0, "avg": 0.0, "sharpe": 0.0, "ann": 0.0, "max_dd": 0.0}
         sv = stats(tdf["net_pct"].tolist())
         sv["ann"] = _ann_val(sv)
         return sv
@@ -239,7 +239,7 @@ def main(fast: bool = False) -> None:
         "> Backtest: base discovery (thresh=35, ATR≥20, sector hold, no VIX/ceiling/jump). PASS needs §15f+§17f validation."
     )
     print(f"> Period: {period_label}")
-    print(f"> Quality bar: WR ≥ {MIN_WR * 100:.0f}%, per-trade Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades}\n")
+    print(f"> Quality bar: WR ≥ {MIN_WR:.0f}%, per-trade Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades}\n")
 
     # ── 1. Get S&P 500 constituent list ───────────────────────────────────────
     _section("1. Loading S&P 500 constituents from Wikipedia")
@@ -388,11 +388,12 @@ def main(fast: bool = False) -> None:
         if i % 10 == 0 or i == total:
             _sh = sv.get("sharpe") or 0.0
             _wr = sv.get("wr") or 0.0
-            print(f"  [{i}/{total}] {ticker}: N={sv['n']}, WR={_wr * 100:.0f}%, Sh={_sh:.2f}")
+            print(f"  [{i}/{total}] {ticker}: N={sv['n']}, WR={_wr:.0f}%, Sh={_sh:.2f}")
 
     results_df = pd.DataFrame(results)
-    for _col in ("wr", "avg", "sharpe", "ann", "maxdd"):
-        results_df[_col] = pd.to_numeric(results_df[_col], errors="coerce").fillna(0.0)
+    for _col in ("wr", "avg", "sharpe", "ann", "max_dd"):
+        _series = pd.to_numeric(results_df[_col], errors="coerce")
+        results_df[_col] = _series.fillna(0.0)
     results_df = results_df.sort_values("ann", ascending=False)
 
     # ── 8. Print full results table ────────────────────────────────────────────
@@ -405,11 +406,11 @@ def main(fast: bool = False) -> None:
         n = r.get("n", 0)
         if n < 1:
             continue
-        wr_s = f"{(r.get('wr') or 0) * 100:.0f}%"
-        avg_s = f"{(r.get('avg') or 0) * 100:.2f}%"
+        wr_s = f"{(r.get('wr') or 0):.0f}%"
+        avg_s = f"{(r.get('avg') or 0):.2f}%"
         sh_s = fmt_sharpe(r.get("sharpe") or 0)
         ann_s = f"{r.get('ann') or 0:.2f}"
-        dd_s = f"{(r.get('maxdd') or 0) * 100:.1f}%"
+        dd_s = f"{(r.get('max_dd') or 0):.1f}%"
         flag = (
             " ✓" if ((r.get("wr") or 0) >= MIN_WR and (r.get("sharpe") or 0) >= MIN_SHARPE and n >= min_trades) else ""
         )
@@ -429,7 +430,7 @@ def main(fast: bool = False) -> None:
 
     insufficient_df = results_df[results_df["n"] < min_trades].copy()
 
-    print(f"\n  PASS: {len(pass_df)} tickers (WR ≥ {MIN_WR * 100:.0f}%, Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades})")
+    print(f"\n  PASS: {len(pass_df)} tickers (WR ≥ {MIN_WR:.0f}%, Sharpe ≥ {MIN_SHARPE}, N ≥ {min_trades})")
     print(f"  FAIL: {len(fail_df)} tickers (tested but below quality bar)")
     print(f"  SKIP: {len(insufficient_df)} tickers (N < {min_trades} — insufficient signal history)")
 

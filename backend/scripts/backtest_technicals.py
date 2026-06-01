@@ -98,6 +98,7 @@ TICKERS = [
     # MA removed: live defensive block (20yr backtest -1.20% avg; same dynamics as V/already blocked)
     # SCHW removed: live defensive block (20yr backtest -0.98% avg; rate-sensitive MR traps)
     "KKR",  # KKR — §18 screener PASS: alt-asset manager
+    "AMP",  # Ameriprise Financial — R1000 screener PASS: N=10, WR=80%, Sh=0.42 (2006-2016)
     "FITB",  # Fifth Third Bancorp — §18 screener PASS: regional bank MR
     "KEY",  # KeyCorp — §18 screener PASS: regional bank MR
     "RF",  # Regions Financial — §18 screener PASS: regional bank MR
@@ -196,6 +197,10 @@ TICKERS = [
     "CAT",  # Caterpillar — machinery; global construction/mining cycle MR
     "DE",  # Deere — agricultural machinery; seasonal demand-cycle MR
     "LMT",  # Lockheed Martin — defense; backlog-driven smooth MR
+    "CSX",  # CSX Corp — railway; R1000 screener PASS: N=10, WR=67%, Sh=0.50 (2006-2016)
+    "UNP",  # Union Pacific — railway; R1000 screener PASS: N=11, WR=73%, Sh=0.44 (2006-2016)
+    "ETN",  # Eaton — industrial/elec; R1000 screener PASS: N=10, WR=70%, Sh=0.43 (2006-2016)
+    "XYL",  # Xylem — water tech; R1000 screener PASS: N=10, WR=60%, Sh=0.30 (2006-2016)
     # XLP Consumer Staples (live delivery_gates blocks; §10 does not — research only)
     "PG",  # Procter & Gamble — ultra-stable staples; very tight MR oscillator
     "KO",  # Coca-Cola — range-bound staples compounder; classic MR instrument
@@ -280,11 +285,49 @@ HELD_OUT_TICKERS = [
     # XLF — Financials (not blocked in delivery_gates; same as JPM/WFC/BAC in IS)
     "STT",  # State Street — financial services; custody bank MR on rate cycles
     "MTB",  # M&T Bank — regional bank; same MR cadence as FITB/KEY/RF (IS)
+    # ── OOS v6 — pre-specified 2026-05-31, chosen BEFORE any IS research on these names ──
+    # Selection criteria: S&P 500 member since ≥2010, allowed sector (XLK/XLY/XLC/XLB/XLF),
+    # never appeared in TICKERS, _CURATED_OUT_TICKERS, HELD_OUT_TICKERS, or any backtest
+    # comment as tested/rejected. Target N≥50 clean trades for SE ≤ ±14pp on WR.
+    # XLK — Technology
+    "ANSS",  # ANSYS — simulation software; S&P 500 since 1994; engineering-cycle MR
+    "AKAM",  # Akamai — CDN/security; S&P 500 since 2007; sentiment-driven MR
+    "VRSN",  # VeriSign — DNS/domain registry; ultra-stable range-bound MR oscillator
+    "FTNT",  # Fortinet — cybersecurity; S&P 500 since 2011; earnings-cycle MR
+    "ZBRA",  # Zebra Technologies — enterprise mobility; S&P 500 since 2014; MR on demand cycles
+    "TYL",  # Tyler Technologies — govt software; S&P 500 since 2014; steady compounder MR
+    "CDW",  # CDW Corp — IT solutions; S&P 500 since 2013; B2B tech distribution MR
+    "KEYS",  # Keysight — electronic test/measurement; S&P 500 since 2014; capex-cycle MR
+    "SWKS",  # Skyworks Solutions — RF semiconductors; S&P 500 since 2008; smartphone-cycle MR
+    # XLY — Consumer Discretionary
+    "TSCO",  # Tractor Supply — farm/ranch retail; S&P 500 since 2009; steady compounder MR
+    "BBY",  # Best Buy — consumer electronics retail; S&P 500 since 2001; earnings-driven MR
+    "NVR",  # NVR Inc — homebuilder; S&P 500 since 1999; rate-cycle MR (non-overlapping DHI)
+    "HAS",  # Hasbro — toys; S&P 500 since 1980s; consumer sentiment MR
+    "DG",  # Dollar General — discount retail; S&P 500 since 2009; steady compounder MR
+    "WHR",  # Whirlpool — appliances; S&P 500 since 1980s; housing-cycle MR
+    "KMX",  # CarMax — used vehicles; S&P 500 since 2002; consumer credit cycle MR
+    # XLC — Communication Services
+    "OMC",  # Omnicom — advertising; S&P 500 since 1980s; stable range-bound MR
+    "LYV",  # Live Nation — live entertainment; S&P 500 since 2010; consumer spending MR
+    # XLB — Materials
+    "PKG",  # Packaging Corp of America — paper/packaging; S&P 500 since 2006; cycle MR
+    "SEE",  # Sealed Air — protective packaging; S&P 500 since 1990s; margin-cycle MR
+    "FMC",  # FMC Corp — agricultural chemicals; S&P 500 since 1990s; crop-price MR
+    "BALL",  # Ball Corp — aluminum packaging; S&P 500 since 1990s; commodity-input MR
+    # XLF — Financials
+    "CINF",  # Cincinnati Financial — P&C insurance; S&P 500 since 1990s; steady compounder MR
+    "HBAN",  # Huntington Bancshares — regional bank; S&P 500 since 1990s; rate-cycle MR
+    "ZION",  # Zions Bancorporation — regional bank; S&P 500 since 2000; rate-cycle MR
+    "CFG",  # Citizens Financial — regional bank; S&P 500 since 2015; consumer credit MR
+    "PRU",  # Prudential Financial — insurance/asset mgmt; S&P 500 since 2001; market-cycle MR
 ]
 
 # Live-blocked tickers that appear in HELD_OUT_TICKERS — excluded from "clean" OOS metrics.
 # Included in full list so their trade count is visible; excluded from the headline Sharpe.
-_OOS_BLOCKED_TICKERS: frozenset[str] = frozenset({"AMAT", "KLAC", "STT", "MTB"})
+# v6 additions: HBAN/ZION/CFG are regional banks (same profile as STT/MTB which showed 0% WR);
+# flagged so the clean OOS metric is not contaminated by delivery_gates-blocked names.
+_OOS_BLOCKED_TICKERS: frozenset[str] = frozenset({"AMAT", "KLAC", "STT", "MTB", "HBAN", "ZION", "CFG"})
 
 # ── Sector map: ticker → GICS sector ETF ─────────────────────────────────────
 # Used for delivery-gates-aligned sector filter (§10).
@@ -314,6 +357,10 @@ TICKER_TO_SECTOR: dict[str, str] = {
     "FDX": "XLI",
     "MMM": "XLI",
     "EMR": "XLI",
+    "CSX": "XLI",
+    "UNP": "XLI",
+    "ETN": "XLI",
+    "XYL": "XLI",
     # XLC — Communication Services
     "GOOG": "XLC",
     "META": "XLC",
@@ -343,6 +390,7 @@ TICKER_TO_SECTOR: dict[str, str] = {
     "BAC": "XLF",
     "BX": "XLF",
     "KKR": "XLF",
+    "AMP": "XLF",
     "FITB": "XLF",
     "KEY": "XLF",
     "RF": "XLF",
@@ -391,6 +439,34 @@ TICKER_TO_SECTOR: dict[str, str] = {
     "MTB": "XLF",
     # OOS v5 additions
     "MCD": "XLY",
+    # OOS v6 additions (pre-specified 2026-05-31)
+    "ANSS": "XLK",
+    "AKAM": "XLK",
+    "VRSN": "XLK",
+    "FTNT": "XLK",
+    "ZBRA": "XLK",
+    "TYL": "XLK",
+    "CDW": "XLK",
+    "KEYS": "XLK",
+    "SWKS": "XLK",
+    "TSCO": "XLY",
+    "BBY": "XLY",
+    "NVR": "XLY",
+    "HAS": "XLY",
+    "DG": "XLY",
+    "WHR": "XLY",
+    "KMX": "XLY",
+    "OMC": "XLC",
+    "LYV": "XLC",
+    "PKG": "XLB",
+    "SEE": "XLB",
+    "FMC": "XLB",
+    "BALL": "XLB",
+    "CINF": "XLF",
+    "HBAN": "XLF",
+    "ZION": "XLF",
+    "CFG": "XLF",
+    "PRU": "XLF",
 }
 _BLOCKED_SECTORS = {"XLI", "XLV", "XLE", "XLRE", "XLU"}
 
@@ -425,6 +501,15 @@ SELL_THRESH = -100  # SELLs disabled. §32 validation (2026-05-26): −45 thresh
 # (60.8% raw WR) is entirely alt-data driven — absent on OHLCV alone.
 POSITION_SIZE = 0.05  # 5% of capital per trade (for drawdown sim)
 
+# ── §QuantEngine research constants ──────────────────────────────────────────
+BETA_HEDGE_RATIO = 0.90  # short 90% of position value in SPY to neutralize beta
+BETA_HEDGE_FRICTION = 0.10  # extra round-trip friction for the SPY hedge leg (%)
+VOL_REF_ANN = 0.25  # reference annualized vol (S&P 500 median) for vol-targeting
+FORECAST_THRESH_DIV = 10.0  # score points per unit of continuous forecast above threshold
+FORECAST_FLOOR = 0.25  # minimum size multiplier for marginal entries
+FORECAST_CAP = 2.0  # maximum size multiplier for high-conviction entries
+MAX_PORTFOLIO_SLOTS = 5  # max concurrent positions in portfolio simulation
+
 # ── Mean-Reversion-Only mode — default for primary run ───────────────────────
 # §9 analysis showed MR-only is strictly better on every metric:
 #   WR +1.3pp, avg return +75% (+0.12%→+0.21%), Sharpe +0.03, MaxDD −47%.
@@ -442,9 +527,11 @@ DEEP_BEAR_RSI_MAX = 35  # In deep bear, only accept RSI < 35 (extreme oversold)
 # ── §59–§78 research gate parameters ─────────────────────────────────────────
 OU_HALFLIFE_MAX = 25.0  # §59: half-life > 25d → reversion too slow for 2.5× hold window
 HURST_TREND_CEIL = 0.80  # §60: H > 0.80 → strong trending regime; large-caps median ~0.71
-IDIO_VOL_MAX = 55.0  # §61: annualized 63d realized vol > 55% → high noise band
-SEP_SCORE_FLOOR = 55  # §78: September worst calendar month — extra conviction required
-OCT_SCORE_FLOOR = 53  # §78: October elevated-vol month — slightly higher bar
+IDIO_VOL_MAX = 999.0  # §61: DISABLED — Inv5 ablation: +3N, +0.01Sh when removed; dead gate
+# was 55.0 — removed 2026-05-31 based on joint ablation showing it reduces N without alpha
+SEP_SCORE_FLOOR = 0  # §78: DISABLED — Inv5 ablation: +2N, -0.01Sh; dead at 100-ticker scale
+OCT_SCORE_FLOOR = 0  # §78: DISABLED — Inv5 ablation: +9N, -0.00Sh; dead at 100-ticker scale
+# was 55/53 — removed 2026-05-31; ~5 affected IS trades total over 23yr (pure noise)
 
 # ── §67 Historical FOMC announcement dates (2003–2026) ───────────────────────
 # Day-0 = hard block: unpredictable rate decision gaps destroy MR stop levels.
@@ -1852,6 +1939,9 @@ def simulate_ticker(
     t10y_data: dict | None = None,
     trin_data: dict | None = None,
     ad_data: dict | None = None,
+    beta_hedge: bool = False,
+    spy_prices: dict | None = None,
+    forecast_sizing: bool = False,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -2063,6 +2153,7 @@ def simulate_ticker(
         # MR gate: RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<-0.75 (oversold setup)
         # MOM gate: RSI in [50,68], MACD accelerating, OBV positive, above SMA50,
         #           outperforming SPY (trending breakout setup — orthogonal to MR)
+        _mr_trigger_label: str = "none"  # set by gate-9 if mr_only trade fires
         _is_mr_setup = False
         _is_mom_setup = False
         if (mr_only or dual_gate) and is_buy_signal:
@@ -2073,7 +2164,18 @@ def simulate_ticker(
             # gap_pct and close_streak are no longer MR-gate triggers — matches
             # signal engine's _has_mr (RSI/BB/IBS/VWAP only). They still
             # contribute to the signal score via compute_scores().
-            _is_mr_setup = rsi_e < _mr_rsi_ceil or bb_e < MR_BB_CEIL or ibs_e < MR_IBS_CEIL or vwap_e < MR_VWAP_FLOOR
+            _trig_rsi = rsi_e < _mr_rsi_ceil
+            _trig_bb = bb_e < MR_BB_CEIL
+            _trig_ibs = ibs_e < MR_IBS_CEIL
+            _trig_vwap = vwap_e < MR_VWAP_FLOOR
+            _is_mr_setup = _trig_rsi or _trig_bb or _trig_ibs or _trig_vwap
+            # Build trigger label for analysis (Inv 1)
+            _active = [
+                t
+                for flag, t in [(_trig_ibs, "IBS"), (_trig_bb, "BB"), (_trig_vwap, "VWAP"), (_trig_rsi, "RSI")]
+                if flag
+            ]
+            _mr_trigger_label = "+".join(_active) if len(_active) == 1 else ("multi" if len(_active) > 1 else "none")
             if dual_gate and not _is_mr_setup:
                 _mh = float(row.get("macd_hist", 0)) if pd.notna(row.get("macd_hist")) else 0.0
                 _mhp = float(row.get("macd_hist_p", 0)) if pd.notna(row.get("macd_hist_p")) else 0.0
@@ -2360,6 +2462,13 @@ def simulate_ticker(
             break
         entry_price = float(df.iloc[_fill_bar]["Open"])
 
+        # ── Beta-hedge: record SPY open at fill bar for return offset ─────────
+        _spy_entry_price: float | None = None
+        if beta_hedge and spy_prices:
+            _fill_date_key = pd.Timestamp(str(df.index[_fill_bar])[:10])
+            _spy_entry_price = spy_prices.get(_fill_date_key)
+        _exit_bar_idx: int = _fill_bar  # updated in each exit branch; default = fill bar
+
         # Anchor stop/target to actual fill price, not signal-bar close.
         # Using signal close misplaces stops by the overnight gap distance.
         stop_price, target_price = atr_levels(entry_price, atr, action, adx_v, stop_mult_override, target_mult_override)
@@ -2400,11 +2509,13 @@ def simulate_ticker(
                         exit_price = _base_fill * (1 - NORMAL_STOP_SLIP_PCT / 100)
                     exit_reason = "stop"
                     exit_day = j
+                    _exit_bar_idx = _fill_bar + j
                     break
                 if day_high >= target_price:
                     exit_price = target_price
                     exit_reason = "target"
                     exit_day = j
+                    _exit_bar_idx = _fill_bar + j
                     break
                 # Cut losers early: only after _max_loss_days AND trade is ≥1% in the red
                 # (avoids exiting trades that are merely flat or marginally negative)
@@ -2412,6 +2523,7 @@ def simulate_ticker(
                     exit_price = day_close
                     exit_reason = "time_loss"
                     exit_day = j
+                    _exit_bar_idx = _fill_bar + j
                     break
                 # ── No-progress exit: thesis failed, RSI not recovering ──────────
                 # Fires when the trade hasn't gained ≥0.3% by day N AND RSI hasn't
@@ -2422,6 +2534,7 @@ def simulate_ticker(
                         exit_price = day_close
                         exit_reason = "no_progress"
                         exit_day = j
+                        _exit_bar_idx = _fill_bar + j
                         break
                 # ── Adaptive exit: MR bounce completion (profit-lock mechanism) ──
                 # Exit when indicators confirm the bounce is done AND we're profitable.
@@ -2454,6 +2567,7 @@ def simulate_ticker(
                         exit_price = day_close
                         exit_reason = "adaptive"
                         exit_day = j
+                        _exit_bar_idx = _fill_bar + j
                         break
             else:  # SELL / short
                 if day_high >= stop_price:
@@ -2467,21 +2581,25 @@ def simulate_ticker(
                         exit_price = _base_fill_short * (1 + NORMAL_STOP_SLIP_PCT / 100)
                     exit_reason = "stop"
                     exit_day = j
+                    _exit_bar_idx = _fill_bar + j
                     break
                 if day_low <= target_price:
                     exit_price = target_price
                     exit_reason = "target"
                     exit_day = j
+                    _exit_bar_idx = _fill_bar + j
                     break
                 if j >= _max_loss_days - 1 and day_close > entry_price * 1.01:
                     exit_price = day_close
                     exit_reason = "time_loss"
                     exit_day = j
+                    _exit_bar_idx = _fill_bar + j
                     break
 
         if exit_price is None:
             idx = min((i + 1) + (_hold_days - 1), len(df) - 1)
             exit_price = float(df.iloc[idx]["Close"])
+            _exit_bar_idx = idx
 
         # ── Return calculation ────────────────────────────────────────────────
         if action == "BUY":
@@ -2489,7 +2607,27 @@ def simulate_ticker(
         else:
             gross_pct = (entry_price - exit_price) / entry_price * 100
 
-        net_pct = gross_pct - FRICTION_PCT
+        # ── §QuantEngine: beta hedge — subtract 0.9× SPY return over same period ──
+        # Neutralises the beta=0.918 market exposure so net_pct reflects pure MR alpha.
+        # SPY leg friction: +0.10% round-trip (spy_prices uses adjusted closes).
+        _spy_leg_pct = 0.0
+        if beta_hedge and spy_prices and _spy_entry_price is not None:
+            _exit_date_key = pd.Timestamp(str(df.index[min(_exit_bar_idx, len(df) - 1)])[:10])
+            _spy_exit_price = spy_prices.get(_exit_date_key)
+            if _spy_exit_price is not None and _spy_entry_price > 0:
+                _spy_leg_pct = (_spy_exit_price - _spy_entry_price) / _spy_entry_price * 100
+                gross_pct -= BETA_HEDGE_RATIO * _spy_leg_pct
+
+        net_pct = gross_pct - FRICTION_PCT - (BETA_HEDGE_FRICTION if beta_hedge else 0.0)
+
+        # ── §QuantEngine: continuous forecast sizing (Carver FDM) ─────────────
+        # Position size scales linearly with score above threshold.
+        # Score at threshold (50) → FORECAST_FLOOR×; score 60 → 1.0×; score 70 → 2.0×.
+        # Stores multiplier for score-weighted stats reporting (--forecast-sizing).
+        _size_mult = 1.0
+        if forecast_sizing and is_buy_signal:
+            _forecast_val = (score - _buy_thresh) / FORECAST_THRESH_DIV
+            _size_mult = max(FORECAST_FLOOR, min(FORECAST_CAP, _forecast_val))
 
         # ── §65/§66/§77 context metadata for analysis splits ─────────────────
         _date_key = pd.Timestamp(str(date)[:10])
@@ -2515,6 +2653,36 @@ def simulate_ticker(
                 "exit_day": exit_day,
                 "gross_pct": round(gross_pct, 3),
                 "net_pct": round(net_pct, 3),
+                "spy_leg_pct": round(_spy_leg_pct, 3) if beta_hedge else None,
+                "size_mult": round(_size_mult, 3) if forecast_sizing else None,
+                "mr_trigger": _mr_trigger_label,
+                # ── Quality score (Option B — continuous trade ranking) ──────────
+                # Composite 0-100: rewards high signal score, fast OU mean-reversion,
+                # and low Hurst (more mean-reverting). Used to rank trades within the
+                # passing set — addresses Inv4 finding that confidence is flat (42-44%).
+                "quality_score": round(
+                    min(
+                        100.0,
+                        max(
+                            0.0,
+                            # 40% weight: score above threshold (normalized 0-30 → 0-40)
+                            min(40.0, (score - _buy_thresh) / 30.0 * 40.0)
+                            # 35% weight: OU halflife (shorter = faster MR; 0d=best, 25d=worst)
+                            + (
+                                35.0 * max(0.0, 1.0 - float(row.get("ou_halflife", 25)) / 25.0)
+                                if pd.notna(row.get("ou_halflife"))
+                                else 17.5
+                            )
+                            # 25% weight: Hurst (lower = more MR; 0.5=best, 0.80=worst)
+                            + (
+                                25.0 * max(0.0, 1.0 - (float(row.get("hurst", 0.65)) - 0.5) / 0.30)
+                                if pd.notna(row.get("hurst"))
+                                else 12.5
+                            ),
+                        ),
+                    ),
+                    1,
+                ),
                 "mfe_pct": round(_mfe_pct, 3),
                 "atr_pct": round(atr / entry_price * 100, 2) if entry_price > 0 else 0,
                 "days_to_earnings": _days_to_earn if _days_to_earn < 999 else None,
@@ -2675,6 +2843,53 @@ def monte_carlo(trades_df, n_sims=10000):
         print("  > ⚠ 5th percentile < 0 — edge may not be real; treat Sharpe as upper bound.")
 
 
+def sharpe_ci_print(sr: float | None, n: int, n_trials: int = 50, label: str = "IS") -> None:
+    """Print Lo (2002) 95% CI for a per-trade Sharpe ratio and Deflated Sharpe warning.
+
+    SE(SR) = sqrt((1 + SR^2/2) / N) where N is number of trades.
+    This is the IID special case of the Lo (2002) formula applied at trade level.
+
+    Also computes the expected maximum Sharpe from n_trials independent parameter
+    searches (Bailey & López de Prado 2014 Deflated Sharpe Ratio), showing whether
+    the IS Sharpe can be explained by data mining alone.
+
+    Prints: 95% CI bounds, whether SR=0 is inside, and the data-mining baseline.
+    """
+    if sr is None or n < 10:
+        return
+    se = math.sqrt((1 + sr**2 / 2) / n)
+    lo = round(sr - 1.96 * se, 2)
+    hi = round(sr + 1.96 * se, 2)
+    zero_inside = lo < 0 < hi
+
+    # Expected max Sharpe from n_trials independent searches (Gumbel extreme-value)
+    expected_max_sr = math.sqrt(1.0 / n) * math.sqrt(2 * math.log(n_trials))
+
+    print(f"\n### Sharpe Statistical Significance ({label})\n")
+    print(f"- **Lo (2002) 95% CI:** [{lo:.2f}, {hi:.2f}]  (SE={se:.3f}, N={n})")
+    if zero_inside:
+        print(
+            f"  > ⚠ SR=0 is INSIDE the 95% CI — the {label} Sharpe is not statistically "
+            f"significant at 5% on N={n} trades alone. Treat as directional evidence, not proof."
+        )
+    else:
+        print(f"  > ✅ SR=0 is outside the 95% CI — statistically significant at 5% on N={n} trades.")
+    print(
+        f"- **Deflated Sharpe (Bailey-López de Prado, {n_trials} trials):** "
+        f"expected max SR by chance = {expected_max_sr:.2f}"
+    )
+    if sr < expected_max_sr:
+        print(
+            f"  > ⚠ {label} Sharpe {sr:.2f} < data-mining expectation {expected_max_sr:.2f} "
+            f"from {n_trials} parameter searches. Cannot rule out partial data-mining artifact."
+        )
+    else:
+        print(
+            f"  > ✅ {label} Sharpe {sr:.2f} > data-mining expectation {expected_max_sr:.2f} — "
+            "unlikely to be explained by data mining alone."
+        )
+
+
 def fmt_pf(v):
     if v is None:
         return "∞"
@@ -2728,6 +2943,19 @@ def fetch_spy_trend(start: str, end: str) -> dict[pd.Timestamp, int]:
         return trend
     except Exception as e:
         print(f"failed ({e})")
+        return {}
+
+
+def fetch_spy_prices(start: str, end: str) -> dict[pd.Timestamp, float]:
+    """Return {date: adjusted_close} for SPY — used by the beta-hedge computation."""
+    try:
+        raw = yf.download("SPY", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
+        closes = raw["Close"].ffill()
+        return {pd.Timestamp(str(k)[:10]): float(v) for k, v in closes.items() if pd.notna(v)}
+    except Exception as e:
+        print(f"failed ({e}) — beta hedge disabled")
         return {}
 
 
@@ -3054,7 +3282,8 @@ def run_full_universe_curation_bias(
     print("> to show what portion of IS Sharpe is curation bias vs genuine alpha.\n")
 
     args_list = [
-        (t, vix, spy_trend, stlfsi4, True, fomc_dates, t10y_data, trin_data, ad_data) for t in _CURATED_OUT_TICKERS
+        (t, vix, spy_trend, stlfsi4, True, fomc_dates, t10y_data, trin_data, ad_data, False, {}, False)
+        for t in _CURATED_OUT_TICKERS
     ]
     with Pool(min(8, len(_CURATED_OUT_TICKERS))) as p:
         results = p.map(process_ticker, args_list)
@@ -3222,6 +3451,274 @@ def gate_sensitivity_sweep(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+_T_BILL_ANN = 0.035  # 3.5% historical average T-bill rate (conservative for 2003-2026)
+
+
+def run_portfolio_simulation(trades_df: pd.DataFrame, max_concurrent: int = MAX_PORTFOLIO_SLOTS) -> None:
+    """Concurrent-position portfolio equity-curve simulation.
+
+    Models:
+      1. Position overlap — multiple tickers open simultaneously (greedy slot allocation)
+      2. Compound drawdown — concurrent losing trades amplify portfolio DD
+      3. T-bill return on idle capital — each event records how many slots were idle
+         in the preceding interval and credits _T_BILL_ANN × idle_fraction × days/365
+      4. Capital compounding — position P&L and T-bill return recycle into next slot
+
+    Idle capital: when fewer than max_concurrent slots are occupied, the undeployed
+    fraction earns _T_BILL_ANN prorated to the calendar days between events.  This
+    models investing idle cash in T-bills/money market — the most conservative
+    assumption for uninvested capital (QE4).
+    """
+    if trades_df is None or trades_df.empty:
+        return
+
+    df = trades_df.copy().sort_values("date").reset_index(drop=True)
+
+    # Approximate calendar exit_dt from trading-bar hold count (×1.4 for cal days)
+    df["_entry_dt"] = pd.to_datetime(df["date"])
+    df["_exit_dt"] = df["_entry_dt"] + pd.to_timedelta((df["exit_day"].clip(lower=0) * 1.4 + 1).astype(int), unit="D")
+
+    slot_size = 1.0 / max_concurrent
+    capital = 10_000.0
+    peak = capital
+    max_dd = 0.0
+    open_slots: list = []  # [(exit_dt, net_pct)]
+    equity_log: list = [(df["_entry_dt"].iloc[0], capital)]
+    skipped = 0
+    last_event_dt = df["_entry_dt"].iloc[0]
+
+    def _apply_tbill(until_dt: pd.Timestamp) -> None:
+        """Credit T-bill return on idle slots between last_event_dt and until_dt."""
+        nonlocal capital, last_event_dt
+        dt_days = (until_dt - last_event_dt).days
+        if dt_days <= 0:
+            return
+        idle_slots = max_concurrent - len(open_slots)
+        if idle_slots <= 0:
+            return
+        idle_frac = idle_slots / max_concurrent
+        capital *= 1.0 + _T_BILL_ANN * idle_frac * (dt_days / 365.25)
+        last_event_dt = until_dt
+
+    for _, row in df.iterrows():
+        entry_dt = row["_entry_dt"]
+        exit_dt = row["_exit_dt"]
+        net_pct = float(row["net_pct"])
+
+        # Credit T-bill on idle capital up to this entry event
+        _apply_tbill(entry_dt)
+
+        # Close expired slots
+        still_open = []
+        for slot_exit, slot_pct in sorted(open_slots, key=lambda x: x[0]):
+            if slot_exit <= entry_dt:
+                capital += capital * slot_size * (slot_pct / 100)
+                peak = max(peak, capital)
+                max_dd = max(max_dd, (peak - capital) / peak * 100)
+                equity_log.append((slot_exit, round(capital, 4)))
+            else:
+                still_open.append((slot_exit, slot_pct))
+        open_slots = still_open
+
+        if len(open_slots) < max_concurrent:
+            open_slots.append((exit_dt, net_pct))
+        else:
+            skipped += 1
+
+    # Drain remaining slots
+    for slot_exit, slot_pct in sorted(open_slots, key=lambda x: x[0]):
+        _apply_tbill(slot_exit)
+        capital += capital * slot_size * (slot_pct / 100)
+        peak = max(peak, capital)
+        max_dd = max(max_dd, (peak - capital) / peak * 100)
+        equity_log.append((slot_exit, round(capital, 4)))
+
+    if len(equity_log) < 10:
+        return
+
+    # Annualized Sharpe via daily-equivalent event returns
+    event_rets = []
+    event_days = []
+    for i in range(1, len(equity_log)):
+        prev_dt, prev_cap = equity_log[i - 1]
+        curr_dt, curr_cap = equity_log[i]
+        if prev_cap > 0:
+            event_rets.append((curr_cap / prev_cap - 1) * 100)
+            event_days.append(max((curr_dt - prev_dt).days, 1))
+
+    if not event_rets:
+        return
+
+    daily_equiv = [r / d for r, d in zip(event_rets, event_days)]
+    mu_d = np.mean(daily_equiv)
+    std_d = np.std(daily_equiv, ddof=1)
+    ann_sharpe = round((mu_d / std_d) * np.sqrt(252), 3) if std_d > 0 else None
+
+    total_days = (equity_log[-1][0] - equity_log[0][0]).days
+    n_years = total_days / 365.25 if total_days > 0 else 1.0
+    cagr = round(((capital / 10_000) ** (1 / n_years) - 1) * 100, 2) if n_years > 0 else 0.0
+
+    # Counterfactual: pure T-bill CAGR over same period for comparison
+    tbill_cagr = round((_T_BILL_ANN * 100), 1)
+
+    n_events = len(equity_log) - 1
+    n_input = len(df)
+
+    print(f"\n## §QuantEngine: Portfolio Equity-Curve Simulation ({max_concurrent} concurrent slots)\n")
+    print_table(
+        ["Metric", "Value", "Note"],
+        [
+            ["Input trades", str(n_input), "signal-level"],
+            ["Skipped (slots full)", str(skipped), f"{skipped / n_input * 100:.1f}%"],
+            ["Exit events", str(n_events), "slot close events"],
+            ["Final capital", f"${capital:,.0f}", "from $10,000 start (incl. T-bill on idle)"],
+            ["CAGR", f"{cagr:+.1f}%", f"over {n_years:.1f} years"],
+            ["T-bill benchmark", f"+{tbill_cagr:.1f}%", f"{_T_BILL_ANN * 100:.1f}% annual on idle (QE4)"],
+            ["Portfolio Max DD", f"-{max_dd:.2f}%", "concurrent-position compound DD"],
+            ["Annualized Sharpe", fmt_sharpe(ann_sharpe) if ann_sharpe else "—", "event-time (see note)"],
+        ],
+    )
+    print(
+        f"\n> Idle capital earns {_T_BILL_ANN * 100:.1f}%/yr T-bill rate (QE4: 3.5% historical 2003-2026 avg).\n"
+        "> Ann. Sharpe from event-time daily-equivalent returns — use CAGR as the primary metric.\n"
+        f"> Concurrent DD compounding: {max_concurrent} simultaneous losing trades → "
+        f"{max_concurrent * POSITION_SIZE * 100:.0f}% max concurrent exposure.\n"
+    )
+
+
+def run_walk_forward_with_opt(
+    all_dfs: dict,
+    vix: dict,
+    spy_trend: dict,
+    stlfsi4: dict,
+    fomc_dates: frozenset | None = None,
+    t10y_data: dict | None = None,
+    trin_data: dict | None = None,
+    ad_data: dict | None = None,
+) -> None:
+    """True walk-forward validation with per-epoch BUY_THRESH optimisation.
+
+    Partitions the 23-year IS universe into 4 consecutive epochs.
+    For each epoch i (i > 0):
+      1. Select BUY_THRESH on all data BEFORE epoch i (expanding IS window).
+      2. Evaluate the selected threshold on epoch i (walk-forward OOS).
+
+    Yields 3 honest OOS Sharpe estimates — threshold selection never looks at
+    the epoch being evaluated.  This is a structural improvement over
+    run_walk_forward_temporal() which uses the globally-set BUY_THRESH (fit on
+    the full 23-yr IS) in all epochs.
+
+    Speed: pre-computes trade lists for each threshold candidate once, then
+    filters by year for IS/OOS splits — avoids N_tickers × N_epochs × N_thresh
+    re-downloads.
+    """
+    global BUY_THRESH
+    orig_thresh = BUY_THRESH
+
+    EPOCH_DEFS = [
+        ("2003–2009", 2003, 2010),
+        ("2010–2016", 2010, 2017),
+        ("2017–2021", 2017, 2022),
+        ("2022–pres", 2022, 2100),
+    ]
+    WF_THRESH = [40, 45, 50, 55, 60]
+
+    print("\n## §QuantEngine: Walk-Forward with BUY_THRESH Optimisation\n")
+    print("> Pre-computes trades for each threshold, then splits by epoch year range.")
+    print("> IS window = all data before OOS epoch (expanding) — threshold never sees OOS data.\n")
+
+    # Step 1: pre-compute full trade DataFrames for each threshold candidate
+    print("Pre-computing per-threshold trade lists…", end=" ", flush=True)
+    per_thresh: dict[int, pd.DataFrame] = {}
+    for thresh in WF_THRESH:
+        BUY_THRESH = thresh
+        t_list = []
+        for ticker, df in all_dfs.items():
+            t = simulate_ticker(
+                ticker,
+                df,
+                vix,
+                spy_trend,
+                stlfsi4,
+                mr_only=True,
+                fomc_dates=fomc_dates,
+                t10y_data=t10y_data,
+                trin_data=trin_data,
+                ad_data=ad_data,
+            )
+            if not t.empty:
+                t_list.append(t)
+        per_thresh[thresh] = pd.concat(t_list, ignore_index=True) if t_list else pd.DataFrame()
+    BUY_THRESH = orig_thresh
+    print("done.\n")
+
+    oos_sharpes: list[float] = []
+    rows = []
+
+    for epoch_i in range(1, len(EPOCH_DEFS)):
+        oos_label, oos_start, oos_end = EPOCH_DEFS[epoch_i]
+
+        # Step 2: select best threshold on all IS data before this epoch
+        best_thresh = orig_thresh
+        best_is_sh = -999.0
+        for thresh in WF_THRESH:
+            df_thresh = per_thresh.get(thresh)
+            if df_thresh is None or df_thresh.empty:
+                continue
+            is_sub = df_thresh[df_thresh["date"].dt.year < oos_start]
+            if is_sub.empty:
+                continue
+            s_is = stats(is_sub["net_pct"].tolist())
+            sh = s_is.get("sharpe") or -999.0
+            if sh > best_is_sh and s_is["n"] >= 10:
+                best_is_sh = sh
+                best_thresh = thresh
+
+        # Step 3: evaluate selected threshold on OOS epoch
+        df_oos_src = per_thresh.get(best_thresh)
+        if df_oos_src is not None and not df_oos_src.empty:
+            oos_sub = df_oos_src[(df_oos_src["date"].dt.year >= oos_start) & (df_oos_src["date"].dt.year < oos_end)]
+            s_oos = stats(oos_sub["net_pct"].tolist() if not oos_sub.empty else [])
+        else:
+            s_oos = dict(_EMPTY_STATS)
+
+        sh_oos = s_oos.get("sharpe")
+        if sh_oos is not None:
+            oos_sharpes.append(sh_oos)
+
+        rows.append(
+            [
+                oos_label,
+                str(best_thresh),
+                f"{best_is_sh:.2f}" if best_is_sh > -999 else "—",
+                str(s_oos["n"]),
+                f"{s_oos['wr']:.1f}%" if s_oos["n"] else "—",
+                f"{s_oos['avg']:+.2f}%" if s_oos["n"] else "—",
+                fmt_sharpe(sh_oos),
+            ]
+        )
+
+    print_table(
+        ["OOS Epoch", "Sel. Thresh", "IS Sharpe", "OOS N", "OOS WR", "OOS Avg", "OOS Sharpe"],
+        rows,
+    )
+
+    if oos_sharpes:
+        wf_avg = float(np.mean(oos_sharpes))
+        wf_pos = sum(1 for s in oos_sharpes if s > 0)
+        print(f"\n**Walk-Forward OOS Sharpe ({len(oos_sharpes)} epochs avg):** {wf_avg:.3f}")
+        print(f"**Positive OOS epochs:** {wf_pos}/{len(oos_sharpes)}")
+        verdict = (
+            "✅ Edge persists under parameter rotation — forward estimate is positive."
+            if wf_avg > 0.05
+            else "⚠ Marginal forward edge — may be in-sample inflation."
+            if wf_avg > 0
+            else "⛔ Negative walk-forward OOS — edge is in-sample only."
+        )
+        print(f"> {verdict}")
+    print()
+
+
 def run_walk_forward_temporal(trades_df: pd.DataFrame) -> None:
     """Measure whether the edge is stable across market regimes.
 
@@ -3324,7 +3821,8 @@ def run_oos_validation(vix, spy_trend, stlfsi4, fomc_dates=None, t10y_data=None,
     print("> Same MR-Only strategy, same gates, same period — zero data-mining benefit.\n")
 
     args_list = [
-        (t, vix, spy_trend, stlfsi4, True, fomc_dates, t10y_data, trin_data, ad_data) for t in HELD_OUT_TICKERS
+        (t, vix, spy_trend, stlfsi4, True, fomc_dates, t10y_data, trin_data, ad_data, False, {}, False)
+        for t in HELD_OUT_TICKERS
     ]
     with Pool(min(8, len(HELD_OUT_TICKERS))) as p:
         results = p.map(process_ticker, args_list)
@@ -3459,6 +3957,22 @@ def run_oos_validation(vix, spy_trend, stlfsi4, fomc_dates=None, t10y_data=None,
         print(line)
     print()
 
+    # Statistical significance of OOS Sharpe — essential context for any claim of alpha
+    sharpe_ci_print(sc.get("sharpe"), sc["n"], n_trials=50, label="OOS CLEAN")
+    sharpe_ci_print(s.get("sharpe"), s["n"], n_trials=50, label="OOS ALL")
+
+    # Minimum N needed for OOS CI lower bound to exceed 0.0
+    _target_sr = 0.10
+    _n_needed = math.ceil((1.96 / _target_sr) ** 2 * (1 + _target_sr**2 / 2))
+    _oos_clean_n = sc["n"]
+    _n_gap = _n_needed - _oos_clean_n
+    _n_verdict = "sufficient ✅" if _n_gap <= 0 else f"insufficient ({_n_gap} more needed) ⚠"
+    print(
+        f"\n> **Minimum OOS N for CI to exclude 0 at SR≥{_target_sr}:** "
+        f"≈{_n_needed} trades — current CLEAN N={_oos_clean_n} is {_n_verdict}"
+    )
+    print()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parallel Processing
@@ -3466,7 +3980,20 @@ def run_oos_validation(vix, spy_trend, stlfsi4, fomc_dates=None, t10y_data=None,
 
 
 def process_ticker(args):
-    ticker, vix, spy_trend, stlfsi4, mr_only, fomc_dates, t10y_data, trin_data, ad_data = args
+    (
+        ticker,
+        vix,
+        spy_trend,
+        stlfsi4,
+        mr_only,
+        fomc_dates,
+        t10y_data,
+        trin_data,
+        ad_data,
+        beta_hedge,
+        spy_prices,
+        forecast_sizing,
+    ) = args
     print(f"Processing {ticker}…", flush=True)
     try:
         raw = yf.download(ticker, start=START, end=END, interval="1d", auto_adjust=True, progress=False)
@@ -3533,6 +4060,9 @@ def process_ticker(args):
             t10y_data=t10y_data,
             trin_data=trin_data,
             ad_data=ad_data,
+            beta_hedge=beta_hedge,
+            spy_prices=spy_prices,
+            forecast_sizing=forecast_sizing,
         )
         if not t.empty:
             print(f"{ticker}: {len(t)} trades", flush=True)
@@ -3635,8 +4165,31 @@ def main():
     if BACKTEST_MR_DEFAULT:
         print(f"  MR gate: RSI<{MR_RSI_CEIL} OR BB%B<{MR_BB_CEIL} OR IBS<{MR_IBS_CEIL} OR VWAP%<{MR_VWAP_FLOOR}%\n")
 
+    _beta_hedge_flag = "--beta-hedge" in sys.argv
+    _forecast_sizing_flag = "--forecast-sizing" in sys.argv
+
+    # SPY prices are needed for the beta-hedge leg return computation
+    spy_prices: dict = {}
+    if _beta_hedge_flag:
+        print("Fetching SPY daily closes for beta-hedge computation…", end=" ", flush=True)
+        spy_prices = fetch_spy_prices(START, END)
+        print(f"ok ({len(spy_prices)} bars)" if spy_prices else "failed — beta hedge disabled")
+
     args_list = [
-        (t, vix, spy_trend, stlfsi4, BACKTEST_MR_DEFAULT, _FOMC_DATES_HIST, t10y_data, trin_data, ad_data)
+        (
+            t,
+            vix,
+            spy_trend,
+            stlfsi4,
+            BACKTEST_MR_DEFAULT,
+            _FOMC_DATES_HIST,
+            t10y_data,
+            trin_data,
+            ad_data,
+            _beta_hedge_flag,
+            spy_prices,
+            _forecast_sizing_flag,
+        )
         for t in TICKERS
     ]
 
@@ -3905,6 +4458,7 @@ def main():
     )
     print(f"- **Max Drawdown:** -{s['max_dd']:.2f}% (5% sizing) across 20 years.")
     monte_carlo(trades)
+    sharpe_ci_print(s.get("sharpe"), s["n"], n_trials=50, label="IS")
     run_walk_forward_temporal(trades)
 
     if bh_returns:
@@ -4020,6 +4574,67 @@ def main():
     # Blocked live sectors: XLI, XLV, XLE, XLRE, XLU.
     # Tickers in the main universe that fall in blocked sectors (ROP/TDY/TEL/
     # FDX/MMM/EMR) are excluded here to reveal what the live engine actually sees.
+    # ── §Inv-B. Quality Score Tier Analysis ──────────────────────────────────
+    # Option B: does the quality_score (OU halflife + Hurst + score above thresh)
+    # discriminate within the passing set? Addresses Inv4 finding (flat confidence).
+    if trades is not None and not trades.empty and "quality_score" in trades.columns:
+        print("\n## §Inv-B. Quality Score Tier Analysis\n")
+        print("> quality_score = 40%×(score-thresh) + 35%×OU_speed + 25%×Hurst_MR\n")
+        qs = trades["quality_score"].dropna()
+        if len(qs) > 10:
+            p33 = qs.quantile(0.33)
+            p67 = qs.quantile(0.67)
+            tiers = [
+                (f"Low  (0–{p33:.0f})", trades[trades["quality_score"] < p33]),
+                (
+                    f"Mid  ({p33:.0f}–{p67:.0f})",
+                    trades[(trades["quality_score"] >= p33) & (trades["quality_score"] < p67)],
+                ),
+                (f"High ({p67:.0f}–100)", trades[trades["quality_score"] >= p67]),
+            ]
+            qs_rows = []
+            for label, sub in tiers:
+                sr = stats(sub["net_pct"].tolist())
+                qs_rows.append(
+                    [label, str(sr["n"]), f"{sr['wr']:.1f}%", f"{sr['avg']:+.2f}%", fmt_sharpe(sr["sharpe"])]
+                )
+            print_table(["Quality Tier", "N", "WR", "Avg Ret", "Sharpe"], qs_rows)
+            _low = stats(trades[trades["quality_score"] < p33]["net_pct"].tolist())
+            _high = stats(trades[trades["quality_score"] >= p67]["net_pct"].tolist())
+            _spread = (_high.get("sharpe") or 0) - (_low.get("sharpe") or 0)
+            print(f"\n> High vs Low Sharpe spread: {_spread:+.2f}")
+            print("> If spread > 0.1 — quality_score discriminates; use for trade sizing.\n")
+
+    # ── §Inv1. MR Trigger Quality Split ──────────────────────────────────────
+    # Which MR condition (IBS / BB / VWAP / RSI / multi) drives the best alpha?
+    if trades is not None and not trades.empty and "mr_trigger" in trades.columns:
+        print("\n## §Inv1. MR Trigger Quality Split (Inv 1)\n")
+        print("> Which MR entry condition drives the best Sharpe and trade quality?\n")
+        _TRIGGER_ORDER = ["IBS", "BB", "VWAP", "RSI", "multi", "none"]
+        trig_rows = []
+        for trig in _TRIGGER_ORDER:
+            sub = trades[trades["mr_trigger"] == trig]["net_pct"].tolist()
+            if not sub:
+                continue
+            sr = stats(sub)
+            trig_rows.append(
+                [
+                    trig,
+                    str(sr["n"]),
+                    f"{sr['wr']:.1f}%",
+                    f"{sr['avg']:+.2f}%",
+                    fmt_sharpe(sr["sharpe"]),
+                    fmt_pf(sr["pf"]),
+                ]
+            )
+        print_table(["MR Trigger", "N", "WR", "Avg Ret", "Sharpe", "PF"], trig_rows)
+        _baseline = stats(trades["net_pct"].tolist())
+        print(
+            f"\n> Baseline (all): N={_baseline['n']}, WR={_baseline['wr']:.1f}%, Sharpe={fmt_sharpe(_baseline['sharpe'])}"
+        )
+        print("> IBS = closed in bottom 15% of day's range. BB = near lower Bollinger Band.")
+        print("> VWAP = below rolling VWAP by ≥0.75%. RSI = RSI < 42. multi = 2+ conditions.\n")
+
     if all_dfs and trades is not None and not trades.empty:
         _allowed = [t for t in trades["ticker"].unique() if TICKER_TO_SECTOR.get(t, "XLK") not in _BLOCKED_SECTORS]
         _blocked_tkrs = [t for t in trades["ticker"].unique() if TICKER_TO_SECTOR.get(t, "XLK") in _BLOCKED_SECTORS]
@@ -4404,6 +5019,203 @@ def main():
         else:
             print("> §17 verdict: baseline adaptive stops are optimal — do NOT widen.")
     print()
+
+    # ── §QuantEngine: portfolio equity curve simulation ──────────────────────
+    if "--portfolio" in sys.argv:
+        run_portfolio_simulation(trades)
+
+    # ── §QuantEngine: beta-hedge comparison ──────────────────────────────────
+    if _beta_hedge_flag and spy_prices:
+        print("\n## §QuantEngine: Beta-Hedge Comparison\n")
+        print(
+            f"> Each BUY: short {BETA_HEDGE_RATIO:.0%} SPY at entry, close at exit. "
+            f"Extra friction: +{BETA_HEDGE_FRICTION:.2f}% round-trip on SPY leg.\n"
+        )
+        _bh_spy_present = trades["spy_leg_pct"].notna().sum()
+        _bh_baseline = stats(trades["net_pct"].tolist())
+        # Beta-neutral net_pct is already baked into trades["net_pct"] when beta_hedge=True.
+        # Show side-by-side vs the unhedged equivalent (gross_pct - FRICTION_PCT).
+        _unhedged_net = (trades["gross_pct"] + BETA_HEDGE_RATIO * trades["spy_leg_pct"].fillna(0)) - FRICTION_PCT
+        _bh_unhedged_stats = stats(_unhedged_net.tolist())
+        print_table(
+            ["Metric", "Unhedged (no SPY)", "Beta-Hedged (−0.9×SPY)", "Δ"],
+            [
+                ["N Trades", str(s["n"]), str(_bh_baseline["n"]), ""],
+                [
+                    "Win Rate",
+                    f"{_bh_unhedged_stats['wr']:.1f}%",
+                    f"{_bh_baseline['wr']:.1f}%",
+                    f"{_bh_baseline['wr'] - _bh_unhedged_stats['wr']:+.1f}pp",
+                ],
+                [
+                    "Avg Return",
+                    f"{_bh_unhedged_stats['avg']:+.2f}%",
+                    f"{_bh_baseline['avg']:+.2f}%",
+                    f"{_bh_baseline['avg'] - _bh_unhedged_stats['avg']:+.2f}pp",
+                ],
+                [
+                    "Sharpe",
+                    fmt_sharpe(_bh_unhedged_stats["sharpe"]),
+                    fmt_sharpe(_bh_baseline["sharpe"]),
+                    f"{(_bh_baseline.get('sharpe') or 0) - (_bh_unhedged_stats.get('sharpe') or 0):+.2f}",
+                ],
+                ["Max DD", f"-{_bh_unhedged_stats['max_dd']:.2f}%", f"-{_bh_baseline['max_dd']:.2f}%", ""],
+            ],
+        )
+        print(f"\n> SPY hedge data available for {_bh_spy_present}/{s['n']} trades.")
+        monte_carlo(trades)
+
+    # ── §QuantEngine: continuous forecast sizing report ───────────────────────
+    if _forecast_sizing_flag and "size_mult" in trades.columns:
+        print("\n## §QuantEngine: Continuous Forecast Sizing (Carver FDM)\n")
+        print(
+            f"> Position size ∝ (score − {BUY_THRESH}) / {FORECAST_THRESH_DIV:.0f}, "
+            f"clamped [{FORECAST_FLOOR}×, {FORECAST_CAP}×].\n"
+        )
+        _sm = trades["size_mult"].fillna(1.0).tolist()
+        _rets = trades["net_pct"].tolist()
+        sw = stats_weighted(_rets, _sm)
+        sf = stats(_rets)
+        print_table(
+            ["Metric", "Flat Sizing", "Forecast Sizing", "Δ"],
+            [
+                ["Win Rate", f"{sf['wr']:.1f}%", f"{sw['wr']:.1f}%", f"{sw['wr'] - sf['wr']:+.1f}pp"],
+                ["Weighted Avg", f"{sf['avg']:+.2f}%", f"{sw['avg']:+.2f}%", f"{sw['avg'] - sf['avg']:+.2f}pp"],
+                [
+                    "Sharpe",
+                    fmt_sharpe(sf["sharpe"]),
+                    fmt_sharpe(sw["sharpe"]),
+                    f"{(sw.get('sharpe') or 0) - (sf.get('sharpe') or 0):+.2f}",
+                ],
+            ],
+        )
+        # Score-band breakdown of size multipliers
+        if "score_band" in trades.columns:
+            print("\n### Avg size multiplier by score band\n")
+            sb_rows = []
+            for band in ["40-50", "50-60", "60-70", "70+"]:
+                sub = trades[trades["score_band"] == band]
+                if sub.empty:
+                    continue
+                avg_mult = sub["size_mult"].mean()
+                sb_rows.append([str(band), f"{avg_mult:.2f}×", str(len(sub))])
+            print_table(["Score Band", "Avg Size Mult", "N"], sb_rows)
+
+    # ── §Inv2. VIX<20 gate ablation on 2022-present epoch ────────────────────
+    if "--inv2" in sys.argv and all_dfs:
+        print("\n## §Inv2. VIX<20 Gate Ablation — 2022-Present Epoch\n")
+        print("> Does the VIX<20 MR suspension gate kill alpha in the current low-VIX regime?")
+        print("> Comparing 2022-present with gate ON (default) vs gate OFF (vix_min_override=0).\n")
+        _epoch_start = pd.Timestamp("2022-01-01")
+        for _label, _vix_min in [("VIX<20 gate ON (default)", 20.0), ("VIX<20 gate OFF", 0.0)]:
+            _ep_list = []
+            for _t, _df in all_dfs.items():
+                _tr = simulate_ticker(
+                    _t,
+                    _df,
+                    vix,
+                    spy_trend,
+                    stlfsi4,
+                    mr_only=True,
+                    vix_min_override=_vix_min,
+                    fomc_dates=_FOMC_DATES_HIST,
+                    t10y_data=t10y_data,
+                    trin_data=trin_data,
+                    ad_data=ad_data,
+                )
+                if not _tr.empty:
+                    _ep_list.append(_tr[_tr["date"] >= _epoch_start])
+            if _ep_list:
+                _ep_df = pd.concat(_ep_list, ignore_index=True)
+                _se = stats(_ep_df["net_pct"].tolist())
+                print(
+                    f"**{_label}:** N={_se['n']}, WR={_se['wr']:.1f}%, Avg={_se['avg']:+.2f}%, Sharpe={fmt_sharpe(_se['sharpe'])}, MaxDD={_se['max_dd']:.2f}%"
+                )
+            else:
+                print(f"**{_label}:** 0 trades")
+        print()
+
+    # ── §Inv5. Joint gate ablation: §59/§60/§67/§78 suspect dead gates ────────
+    if "--inv5" in sys.argv and all_dfs:
+        print("\n## §Inv5. Joint Gate Ablation — Suspect Low-N Dead Gates\n")
+        print("> Each gate removed individually. ΔN = trades gained; ΔSharpe = alpha gained/lost.")
+        print("> A gate that increases N with no Sharpe drop is lowering N without adding alpha.\n")
+        global OU_HALFLIFE_MAX, HURST_TREND_CEIL, IDIO_VOL_MAX, SEP_SCORE_FLOOR, OCT_SCORE_FLOOR
+        _g_baseline_list = []
+        for _t, _df in all_dfs.items():
+            _tr = simulate_ticker(
+                _t,
+                _df,
+                vix,
+                spy_trend,
+                stlfsi4,
+                mr_only=True,
+                fomc_dates=_FOMC_DATES_HIST,
+                t10y_data=t10y_data,
+                trin_data=trin_data,
+                ad_data=ad_data,
+            )
+            if not _tr.empty:
+                _g_baseline_list.append(_tr)
+        _g_base = pd.concat(_g_baseline_list, ignore_index=True) if _g_baseline_list else pd.DataFrame()
+        _sb = stats(_g_base["net_pct"].tolist()) if not _g_base.empty else dict(_EMPTY_STATS)
+
+        def _ablate(label, **overrides):
+            _orig = {k: globals().get(k) for k in overrides}
+            for k, v in overrides.items():
+                globals()[k] = v
+            _list = []
+            for _t, _df in all_dfs.items():
+                _tr = simulate_ticker(
+                    _t,
+                    _df,
+                    vix,
+                    spy_trend,
+                    stlfsi4,
+                    mr_only=True,
+                    fomc_dates=_FOMC_DATES_HIST,
+                    t10y_data=t10y_data,
+                    trin_data=trin_data,
+                    ad_data=ad_data,
+                )
+                if not _tr.empty:
+                    _list.append(_tr)
+            _abl = pd.concat(_list, ignore_index=True) if _list else pd.DataFrame()
+            _sa = stats(_abl["net_pct"].tolist()) if not _abl.empty else dict(_EMPTY_STATS)
+            for k, v in _orig.items():
+                globals()[k] = v  # restore
+            _dn = _sa["n"] - _sb["n"]
+            _dsh = (_sa.get("sharpe") or 0) - (_sb.get("sharpe") or 0)
+            verdict = "✅ REMOVE" if _dn > 0 and _dsh >= -0.01 else ("⚠ CHECK" if _dn > 0 else "✓ Keep")
+            print(
+                f"  {label:<45} N={_sa['n']:>4} ({_dn:+d})  Sh={fmt_sharpe(_sa.get('sharpe'))} ({_dsh:+.2f})  {verdict}"
+            )
+
+        print(f"  {'Baseline (all gates)':<45} N={_sb['n']:>4}       Sh={fmt_sharpe(_sb.get('sharpe'))}\n")
+        _ablate("§59 OU halflife disabled (>999d)", OU_HALFLIFE_MAX=999.0)
+        _ablate("§60 Hurst ceiling disabled (>999)", HURST_TREND_CEIL=999.0)
+        _ablate("§61 Idio vol disabled (>999%)", IDIO_VOL_MAX=999.0)
+        _ablate("§78 Sep floor disabled (50→0)", SEP_SCORE_FLOOR=0)
+        _ablate("§78 Oct floor disabled (53→0)", OCT_SCORE_FLOOR=0)
+        _ablate("§59+§60 both disabled", OU_HALFLIFE_MAX=999.0, HURST_TREND_CEIL=999.0)
+        _ablate(
+            "§59+§60+§61 all statistical disabled", OU_HALFLIFE_MAX=999.0, HURST_TREND_CEIL=999.0, IDIO_VOL_MAX=999.0
+        )
+        _ablate("§78 Sep+Oct both disabled", SEP_SCORE_FLOOR=0, OCT_SCORE_FLOOR=0)
+        print()
+
+    # ── §QuantEngine: walk-forward with threshold optimisation ───────────────
+    if "--walk-forward" in sys.argv and all_dfs:
+        run_walk_forward_with_opt(
+            all_dfs,
+            vix,
+            spy_trend,
+            stlfsi4,
+            fomc_dates=_FOMC_DATES_HIST,
+            t10y_data=t10y_data,
+            trin_data=trin_data,
+            ad_data=ad_data,
+        )
 
     if "--oos" in sys.argv or "--sweep" in sys.argv:
         run_oos_validation(

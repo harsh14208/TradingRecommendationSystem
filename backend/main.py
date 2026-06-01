@@ -374,11 +374,15 @@ async def _nightly_outcome_resolution():
             import sys
 
             sys.path.insert(0, os.path.dirname(__file__))
-            from validate_predictions import resolve_mae_mfe, resolve_outcomes
+            from validate_predictions import fix_phantom_wins, resolve_mae_mfe, resolve_outcomes
 
             updated = await resolve_outcomes()
             mae_updated = await resolve_mae_mfe()
-            log.info(f"[nightly] resolved {updated} outcomes, {mae_updated} MAE/MFE records")
+            phantom_fixed = await fix_phantom_wins(apply=True)
+            log.info(
+                f"[nightly] resolved {updated} outcomes, {mae_updated} MAE/MFE records, "
+                f"{phantom_fixed} phantom wins corrected"
+            )
             # Refresh Platt + isotonic calibration now that outcomes are up-to-date
             from services.calibration import run_calibration
 
@@ -1195,7 +1199,20 @@ async def lifespan(app: FastAPI):
             'to a 64-char random string (python -c "import secrets; print(secrets.token_hex(32))"). '
             "Every container restart with an empty JWT_SECRET is a production security incident."
         )
-    if _s.owner_password and len(_s.owner_password) < 16 and not _is_local:
+    _DEFAULT_PW = "ChangeMe123!"
+    if _s.owner_password == _DEFAULT_PW:
+        if _is_local:
+            log.warning(
+                "[startup] SECURITY: OWNER_PASSWORD is the committed default 'ChangeMe123!'. "
+                "Change it in backend/.env before deploying. Set a 16+ char password."
+            )
+        else:
+            raise RuntimeError(
+                "FATAL: OWNER_PASSWORD is the committed default 'ChangeMe123!'. "
+                "Set OWNER_PASSWORD=<strong password> in your production environment and restart. "
+                "Refusing to start — the default password is public knowledge."
+            )
+    elif _s.owner_password and len(_s.owner_password) < 16 and not _is_local:
         log.critical(
             f"[startup] SECURITY: OWNER_PASSWORD is short ({len(_s.owner_password)} chars) — "
             "change it to a strong password before exposing /api/admin/ endpoints. "

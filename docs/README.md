@@ -2,7 +2,7 @@
 
 **Institutional-grade trading signals — 70+ independent indicators across 15 categories, real-time options sweeps, 13F institutional flow with QoQ trend tracking, structural market invariants, multi-user Telegram delivery, full subscription stack, and institutional performance analytics.**
 
-> **v6.9** · 762 tests passing · PostgreSQL primary · 7,015+ signals · 543 resolved trades
+> **v6.3** · 995 tests passing · PostgreSQL primary · 7,015+ signals · 543 resolved trades
 > Not financial advice. For informational and educational purposes only.
 
 ---

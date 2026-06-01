@@ -28,7 +28,7 @@ def _sig(**kwargs):
 
 
 class _Settings:
-    min_confidence = 55.0
+    min_confidence = 40.0  # recalibrated post phantom-win correction (was 55→57, now 40)
 
 
 async def _db_no_sector_count():
@@ -67,7 +67,7 @@ async def test_gate_blocks_low_global_confidence():
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(confidence=40.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(confidence=39.0), db, _Settings())
     assert reason is not None
     assert "global floor" in reason
 
@@ -96,22 +96,22 @@ async def test_gate_blocks_intraday_above_old_floor():
 
 
 @pytest.mark.asyncio
-async def test_gate_blocks_swing_below_70():
-    """Swing floor raised to 70% (persistent −1.028%/trade alpha)."""
+async def test_gate_blocks_swing_below_46():
+    """Swing floor recalibrated to 46% post phantom-win correction (was 70% on old scale)."""
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=69.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=45.0), db, _Settings())
     assert reason is not None
 
 
 @pytest.mark.asyncio
-async def test_gate_allows_swing_at_70():
-    """Swing signals at ≥70% pass the style floor."""
+async def test_gate_allows_swing_at_46():
+    """Swing signals at ≥46% pass the style floor."""
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=70.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=46.0), db, _Settings())
     assert reason is None
 
 

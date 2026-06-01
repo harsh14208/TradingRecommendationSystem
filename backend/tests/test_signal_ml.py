@@ -35,10 +35,10 @@ def test_extract_features():
 
     features = _extract_features(sig)
 
-    # 24 features: confidence/sentiment excluded (circular dependency — they are
-    # Platt-scaled outputs of this same model); raw_score added (feature 24) as
-    # the pre-heuristic alpha score with NaN fallback for pre-migration rows.
-    assert len(features) == 24
+    # 23 features: confidence/sentiment AND raw_score excluded (all are circular
+    # dependencies — confidence/sentiment are Platt-scaled outputs of this model;
+    # raw_score is the pre-scaling precursor encoding the same alpha quality signal).
+    assert len(features) == 23
     assert features[0] == 2  # n_sources
     assert features[1] == 3  # n_rationale
     assert features[2] == 2  # n_pos
@@ -62,7 +62,6 @@ def test_extract_features():
     assert features[20] == 0.0  # sector_ord (XLK = 0)
     assert features[21] == 3.0  # dte_bucket (80d → bucket 3)
     assert features[22] == 0.03  # rs_vs_sector
-    assert math.isnan(features[23])  # raw_score — absent in this dict → NaN
 
 
 def test_extract_features_sparse_nulls():
@@ -78,12 +77,12 @@ def test_extract_features_sparse_nulls():
         "target": 56.0,
     }
     features = _extract_features(sig)
-    assert len(features) == 24
+    assert len(features) == 23
     assert _math.isnan(features[18])  # dow — no created_at
     assert _math.isnan(features[20])  # sector_ord — None
     assert _math.isnan(features[21])  # dte_bucket — None
     assert _math.isnan(features[22])  # rs_vs_sector — None
-    assert _math.isnan(features[23])  # raw_score — absent → NaN
+    # raw_score (formerly index 23) is intentionally REMOVED — circular dependency
 
 
 def test_adjust_confidence():

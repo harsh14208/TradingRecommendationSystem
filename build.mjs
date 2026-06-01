@@ -52,9 +52,13 @@ const APP_FILES = [
 // Landing page — standalone single-file build.
 const LANDING_FILES = ['site.jsx'];
 
+// Mobile PWA — standalone single-file build.
+const MOBILE_FILES = ['mobile.jsx'];
+
 const TARGETS = [
   { files: APP_FILES,     out: 'dist/app-bundle.js' },
   { files: LANDING_FILES, out: 'dist/site-bundle.js' },
+  { files: MOBILE_FILES,  out: 'dist/mobile-bundle.js' },
 ];
 
 const OUT_DIR = 'dist';

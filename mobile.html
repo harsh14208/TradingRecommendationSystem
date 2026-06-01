@@ -19,19 +19,25 @@
 </head>
 <body>
 <div id="root"></div>
-<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
-<!-- PRODUCTION TODO: Babel standalone transpiles JSX at runtime — causes 2-5s TTI delays
-     and freezes low-end mobile CPUs. Migrate to a Vite build step before billing users. -->
-<script>
-if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-  console.warn('[Signal.Trade] Babel standalone active — not suitable for production. Migrate to Vite build.');
-}
-</script>
-<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
-<script type="text/babel" src="/mobile.jsx"></script>
-<script type="text/babel">
-  ReactDOM.createRoot(document.getElementById('root')).render(<MobileApp/>);
-</script>
+<!-- A8 migration complete 2026-05-31: esbuild bundle replaces Babel CDN -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="/dist/mobile-bundle.js" onerror="
+  var h=document.hostname||location.hostname;
+  if(h==='localhost'||h==='127.0.0.1'){
+    var b=document.createElement('script');
+    b.src='https://unpkg.com/@babel/standalone@7.29.0/babel.min.js';
+    b.onload=function(){Babel.transformScriptTags();};
+    document.body.appendChild(b);
+    var s=document.createElement('script');
+    s.type='text/babel';s.src='/mobile.jsx';
+    document.body.appendChild(s);
+  } else {
+    var d=document.createElement('div');
+    d.textContent='Bundle missing. Run node build.mjs.';
+    d.style.cssText='padding:2rem;color:#ef4444;font-family:monospace';
+    document.body.appendChild(d);
+  }
+"></script>
 </body>
 </html>

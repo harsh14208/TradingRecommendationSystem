@@ -24,9 +24,9 @@
 -->
 <script src="/init.js"></script>
 
-<!-- CDN: React 18.3.1 UMD (global window.React / window.ReactDOM) -->
-<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<!-- CDN: React 18.3.1 UMD production builds (no dev warnings overhead) -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
 
 <!-- CDN: lightweight-charts (global window.LightweightCharts) -->
 <script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous"></script>
@@ -35,19 +35,15 @@
 <script src="/data.js"></script>
 
 <!--
-  App loading — two paths, selected at runtime:
+  App loading — production bundle (A8 migration complete 2026-05-31):
 
-  PATH A — Production: dist/app-bundle.js (esbuild pre-compiled, minified, no eval)
-    Build: npm install && npm run build     (see build.mjs)
-    After first build: remove 'unsafe-eval' from CSP in backend/main.py _SCRIPT_SRC.
+  PATH A — Production: dist/app-bundle.js (esbuild-compiled, no eval)
+    Build: node build.mjs   (using Playwright node binary or any Node ≥18)
+    CSP: 'unsafe-eval' already removed from main.py SecurityHeadersMiddleware.
     TTI: <500 ms. Babel CDN (~900 KB) eliminated.
 
-  PATH B — Dev fallback: Babel standalone + individual JSX files (auto-activates when
-    dist/app-bundle.js returns 404, i.e. build not yet run).
-    Requires 'unsafe-eval' in CSP (Babel uses new Function() for JSX transform).
-    TTI: 2-5 s. XSS surface: type="text/babel" is eval-equivalent.
-
-  No JSX file changes required to switch between paths.
+  PATH B — Dev fallback (localhost only): Babel CDN auto-activates on 404.
+    load-app.js enforces localhost restriction — never fires in production.
 -->
 <!-- load-app.js: selects bundle (prod) vs Babel CDN (dev) — external to satisfy CSP -->
 <script src="/load-app.js"></script>

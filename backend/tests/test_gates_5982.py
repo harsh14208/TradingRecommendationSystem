@@ -312,37 +312,40 @@ def test_high_put_call_skew_adds_confidence():
 # ── §77 Tax-Loss Harvesting Window ────────────────────────────────────────────
 
 
-def test_tax_loss_window_adds_confidence_november():
-    """November + price near 52wk low → +4pp confidence."""
+def test_near_52wk_low_penalises_confidence():
+    """Near 52-week low now applies -4pp penalty (inverted 2026-05-31).
+
+    Live-data audit: near-52wk-low signals have 31% WR (−11.5pp vs 42.5% baseline).
+    The gate was inverted from +4pp boost → -4pp penalty based on Inv3 results.
+    """
     import services.signal_engine as _se
 
-    # November date
     nov_date = datetime(2026, 11, 15, 12, 0, 0, tzinfo=timezone.utc)
-    base = _mr_buy_kwargs(
+    near_low = _mr_buy_kwargs(
         info={"company": "NVDA", "week_52_low": 95.0},
         price=100.0,
         tech={"price": 100.0, "atr": 2.0, "rsi": 38.0, "volume": 5_000_000, "avg_volume": 4_000_000},
     )
-    base_no_low = _mr_buy_kwargs(
-        info={"company": "NVDA", "week_52_low": 50.0},  # price 100 >> 52wk low 50 (not near low)
+    far_from_low = _mr_buy_kwargs(
+        info={"company": "NVDA", "week_52_low": 50.0},
         price=100.0,
         tech={"price": 100.0, "atr": 2.0, "rsi": 38.0, "volume": 5_000_000, "avg_volume": 4_000_000},
     )
 
     with patch.object(_se, "datetime", wraps=_se.datetime) as mock_dt:
         mock_dt.now.return_value = nov_date
-        res = _asm(**base)
-        res_no = _asm(**base_no_low)
+        res_near = _asm(**near_low)
+        res_far = _asm(**far_from_low)
 
-    if res and res["action"] == "BUY":
-        heads = [r["head"] for r in res["rationale"]]
-        assert any("Tax" in h or "tax" in h.lower() or "Season" in h for h in heads), (
-            f"Expected tax-loss rationale in November near 52wk low; got: {heads}"
+    if res_near and res_near["action"] == "BUY":
+        heads = [r["head"] for r in res_near["rationale"]]
+        assert any("52-Week" in h or "52wk" in h.lower() or "Near" in h for h in heads), (
+            f"Expected near-52wk-low rationale card; got: {heads}"
         )
 
-    if res and res_no and res["action"] == res_no["action"] == "BUY":
-        assert res["confidence"] >= res_no["confidence"], (
-            "Tax-loss window (near 52wk low) should not reduce confidence vs far-from-low"
+    if res_near and res_far and res_near["action"] == res_far["action"] == "BUY":
+        assert res_near["confidence"] < res_far["confidence"], (
+            "Near 52-week low should reduce confidence vs far-from-low (inverted gate)"
         )
 
 
@@ -400,16 +403,37 @@ def test_trailing_stop_pct_scales_with_atr():
 
 
 def test_position_size_scale_increases_in_fear_regime():
-    """VIX 20–30 + conf≥58 should produce positionSizeScale > 1.0."""
-    base = _mr_buy_kwargs(
+    """VIX 20–30 + conf≥58 should produce positionSizeScale > VIX<15 (calm) scale.
+
+    With vol-targeting, absolute scale depends on ticker vol — a high-vol ticker
+    (ATR=2%) gets down-sized relative to median vol even in a fear regime.
+    The invariant is RELATIVE: fear-regime scale > calm-regime scale for the
+    same ticker/confidence, since VIX multipliers are 1.15 vs 0.75.
+    """
+    fear_kwargs = _mr_buy_kwargs(
         score=60.0,
         market_ctx={"macro": {"sp500_trend": "up", "vix": 25.0}},
     )
-    res = _asm(**base)
+    calm_kwargs = _mr_buy_kwargs(
+        score=60.0,
+        market_ctx={"macro": {"sp500_trend": "up", "vix": 12.0}},
+    )
+    fear_res = _asm(**fear_kwargs)
+    calm_res = _asm(**calm_kwargs)
 
-    if res and res["action"] == "BUY" and res.get("confidence", 0) >= 58:
-        scale = res.get("positionSizeScale", 1.0)
-        assert scale >= 1.0, f"VIX 25 + conf≥58 should not reduce position scale; got {scale}"
+    if (
+        fear_res
+        and fear_res["action"] == "BUY"
+        and fear_res.get("confidence", 0) >= 58
+        and calm_res
+        and calm_res["action"] == "BUY"
+    ):
+        fear_scale = fear_res.get("positionSizeScale", 1.0)
+        calm_scale = calm_res.get("positionSizeScale", 1.0)
+        assert fear_scale > calm_scale, (
+            f"Fear regime (VIX 25) scale {fear_scale} should exceed calm regime (VIX 12) "
+            f"scale {calm_scale} for the same ticker and confidence"
+        )
 
 
 def test_position_size_scale_reduces_in_calm_regime():

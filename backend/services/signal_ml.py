@@ -39,6 +39,16 @@ _MAX_CONFIDENCE = 72.0
 _MIN_SAMPLES = 50
 # Temporal train/test split — same philosophy as factor_miner.py
 _TRAIN_SPLIT = 0.70
+# Minimum live signals before deploying the live model.
+# At N=300, Hanley-McNeil 95% CI on AUC spans ±0.055 (with balanced classes),
+# making a 6pp improvement reliably detectable over the champion.
+# Below N=300, a 4pp AUC gain has a ~40% chance of being sampling noise,
+# making champion/challenger comparison statistically meaningless.
+_MIN_LIVE_N_FOR_DEPLOYMENT = 300
+# Minimum AUC improvement over champion to deploy challenger.
+# Prevents noise-driven churn: at N=529, SE(AUC)≈0.022, so 0.005 ≈ 0.2 SE —
+# a meaningful directional filter without requiring full statistical significance.
+_MIN_AUC_DELTA_TO_DEPLOY = 0.005
 
 # ── Module-level model caches ─────────────────────────────────────────────────
 _model = None  # signal model (live DB)
@@ -97,9 +107,16 @@ def _extract_features(sig: dict) -> list[float]:
     """
     Extract the 23-feature structural vector from a signal dict.
     All values are available at generation time — no look-ahead.
-    `confidence` and `sentiment` are intentionally absent: they are Platt-scaled
-    outputs of the heuristic scoring function, and including them would create a
-    circular dependency (the ML model would learn from its own input signal).
+    Intentionally excluded (circular dependency):
+      - `confidence` / `sentiment`: Platt-scaled outputs of the heuristic scoring
+        function; feeding them back as features creates a tautological loop where
+        the ML model learns "high confidence → high win rate" rather than genuine
+        new predictive content.
+      - `raw_score`: the pre-scaling precursor to `confidence`. Although
+        technically distinct, it captures the same alpha quality information as
+        `confidence` (same inputs, same function body, only scaling differs).
+        Including it would let the model circumvent the exclusion above by
+        learning from the equivalent quantity one step earlier in the pipeline.
     Sparse fields (sector, dte, rs_vs_sector) use NaN when absent;
     XGBoost handles NaN natively via its missing-value split logic.
     """
@@ -184,10 +201,7 @@ def _extract_features(sig: dict) -> list[float]:
     sector_ord = _sector_ord(sig.get("sector_etf"))
     dte_bucket = _dte_bucket(sig.get("days_to_earnings"))
     rs_vs_sector = float(sig.get("rs_vs_sector") or 0.0) if sig.get("rs_vs_sector") is not None else float("nan")
-    # raw_score: pre-heuristic alpha score from _assemble_signal().  NaN for
-    # historical rows (pre-migration) — XGBoost splits on presence/absence natively.
-    _rs = sig.get("raw_score")
-    raw_score = float(_rs) if _rs is not None else float("nan")
+    # raw_score intentionally EXCLUDED — see docstring for circular dependency reasoning.
 
     return [
         n_sources,  # 1
@@ -213,10 +227,10 @@ def _extract_features(sig: dict) -> list[float]:
         sector_ord,  # 21 — sector ETF ordinal; NaN when absent (~82% sparse)
         dte_bucket,  # 22 — earnings proximity bucket; post-earn window −24.8pp WR
         rs_vs_sector,  # 23 — relative strength vs sector; NaN when absent (~82% sparse)
-        raw_score,  # 24 — raw alpha score (NaN for pre-migration rows)
     ]
 
 
+# 23 features — raw_score removed (circular dependency with confidence, see _extract_features docstring)
 _FEATURE_NAMES = [
     "n_sources",
     "n_rationale",
@@ -241,7 +255,7 @@ _FEATURE_NAMES = [
     "sector_ord",
     "dte_bucket",
     "rs_vs_sector",
-    "raw_score",
+    # "raw_score" intentionally removed — circular dependency with confidence
 ]
 
 
@@ -314,6 +328,28 @@ def _extract_entry_features(
     ]
 
 
+# ── AUC confidence interval ───────────────────────────────────────────────────
+
+
+def auc_ci_95(auc: float, n_pos: int, n_neg: int) -> tuple[float, float]:
+    """Hanley-McNeil (1982) 95% CI for an AUC estimate.
+
+    SE(AUC) = sqrt((AUC*(1-AUC) + (n_pos-1)*(Q1-AUC^2) + (n_neg-1)*(Q2-AUC^2))
+                   / (n_pos * n_neg))
+    where Q1 = AUC/(2-AUC)  and  Q2 = 2*AUC^2/(1+AUC).
+
+    Returns (lo_95, hi_95) clamped to [0.0, 1.0].
+    Requires n_pos >= 1 and n_neg >= 1; returns (0.0, 1.0) when data is absent.
+    """
+    if n_pos < 1 or n_neg < 1:
+        return (0.0, 1.0)
+    q1 = auc / (2.0 - auc)
+    q2 = 2.0 * auc**2 / (1.0 + auc)
+    variance = (auc * (1.0 - auc) + (n_pos - 1) * (q1 - auc**2) + (n_neg - 1) * (q2 - auc**2)) / (n_pos * n_neg)
+    se = math.sqrt(max(variance, 0.0))
+    return (max(0.0, auc - 1.96 * se), min(1.0, auc + 1.96 * se))
+
+
 # ── Training ──────────────────────────────────────────────────────────────────
 
 
@@ -353,6 +389,17 @@ def train_model() -> Optional[dict]:
         log.info(f"[signal_ml] Only {len(rows)} resolved signals — need {_MIN_SAMPLES} before training. Skipping.")
         return None
 
+    if len(rows) < _MIN_LIVE_N_FOR_DEPLOYMENT:
+        log.warning(
+            f"[signal_ml] N={len(rows)} < _MIN_LIVE_N_FOR_DEPLOYMENT={_MIN_LIVE_N_FOR_DEPLOYMENT}. "
+            "Training for diagnostics only — model will NOT be deployed. "
+            "At this sample size, the Hanley-McNeil 95% CI on AUC spans ±0.07+, "
+            "making champion/challenger comparison unreliable."
+        )
+        _training_only = True
+    else:
+        _training_only = False
+
     # Sort oldest-first for temporal split
     rows.sort(key=lambda r: r.get("created_at") or "")
 
@@ -376,8 +423,14 @@ def train_model() -> Optional[dict]:
     X_train, X_test = X[:split], X[split:]
     y_train, y_test = y[:split], y[split:]
 
-    if len(X_test) < 5:
-        log.info("[signal_ml] Test set too small (< 5 samples) — skipping.")
+    # Require ≥15 OOS samples before the AUC estimate is trustworthy enough for
+    # champion/challenger comparison. At N=5, the 95% CI on AUC spans ±0.22,
+    # making any comparison statistically meaningless. At N=15 it narrows to ±0.13.
+    if len(X_test) < 15:
+        log.info(
+            f"[signal_ml] OOS test set too small ({len(X_test)} < 15 samples) — "
+            "AUC would be unreliable. Skipping to protect champion model."
+        )
         return None
 
     n_train, n_test = len(X_train), len(X_test)
@@ -418,11 +471,20 @@ def train_model() -> Optional[dict]:
         # roc_auc needs both classes present in y_test; guard gracefully
         if len(set(y_test)) > 1:
             oos_auc = round(float(roc_auc_score(y_test, y_prob)), 4)
+            # Hanley-McNeil 95% CI — essential context for champion/challenger comparison.
+            _n_pos = int(sum(y_test))
+            _n_neg = n_test - _n_pos
+            _auc_lo, _auc_hi = auc_ci_95(oos_auc, _n_pos, _n_neg)
+            log.info(
+                f"[signal_ml] OOS — accuracy={oos_acc:.3f}  precision={oos_prec:.3f}  "
+                f"recall={oos_rec:.3f}  AUC={oos_auc}  AUC_95CI=[{_auc_lo:.4f},{_auc_hi:.4f}]"
+            )
         else:
             oos_auc = None
-        log.info(
-            f"[signal_ml] OOS — accuracy={oos_acc:.3f}  precision={oos_prec:.3f}  recall={oos_rec:.3f}  AUC={oos_auc}"
-        )
+            _auc_lo = _auc_hi = None
+            log.info(
+                f"[signal_ml] OOS — accuracy={oos_acc:.3f}  precision={oos_prec:.3f}  recall={oos_rec:.3f}  AUC=None (single class)"
+            )
     except Exception as e:
         log.warning(f"[signal_ml] Evaluation failed: {e}")
         oos_acc = oos_prec = oos_rec = oos_auc = None
@@ -451,10 +513,24 @@ def train_model() -> Optional[dict]:
     except Exception:
         pass
 
+    # Deploy only when the OOS AUC is computable, beats the champion by at least
+    # _MIN_AUC_DELTA_TO_DEPLOY, and N_live >= _MIN_LIVE_N_FOR_DEPLOYMENT.
+    #
+    # Gate layers:
+    #   1. _training_only — N < _MIN_LIVE_N_FOR_DEPLOYMENT: skip deployment entirely.
+    #   2. oos_auc is None — single-class test set: do NOT deploy (degenerate sample).
+    #   3. _champion_auc is None — no existing champion: deploy on first run only.
+    #   4. oos_auc > _champion_auc + _MIN_AUC_DELTA — challenger must exceed champion
+    #      by the minimum meaningful delta, not just by noise.
     _should_deploy = (
-        oos_auc is None  # can't compute AUC (too few samples) — deploy anyway
-        or _champion_auc is None  # no existing champion — first run
-        or oos_auc > _champion_auc  # challenger beats champion
+        not _training_only  # N gate: enough live data for reliable AUC estimate
+        and (
+            _champion_auc is None  # first run — no champion to protect
+            or (
+                oos_auc is not None  # valid AUC (≥2 classes in test set)
+                and oos_auc > _champion_auc + _MIN_AUC_DELTA_TO_DEPLOY  # meaningful improvement
+            )
+        )
     )
 
     if _should_deploy:
@@ -465,33 +541,52 @@ def train_model() -> Optional[dict]:
             if _champion_auc is None or oos_auc is None:
                 log.info(f"[signal_ml] First model deployed — OOS AUC={oos_auc}")
             else:
+                _delta = oos_auc - _champion_auc
                 log.info(
                     f"[signal_ml] Challenger deployed — OOS AUC {oos_auc:.4f} > "
-                    f"champion {_champion_auc:.4f} (+{oos_auc - _champion_auc:.4f})"
+                    f"champion {_champion_auc:.4f} (Δ+{_delta:.4f} > min {_MIN_AUC_DELTA_TO_DEPLOY})"
                 )
         except Exception as e:
             log.error(f"[signal_ml] WRITE FAILED — {_MODEL_FILE}: {e}")
+    elif _training_only:
+        log.warning(
+            f"[signal_ml] Training-only run (N={len(rows)} < {_MIN_LIVE_N_FOR_DEPLOYMENT}) — "
+            "model not deployed. Increase resolved signal count before champion/challenger comparison."
+        )
+    elif oos_auc is not None and _champion_auc is not None:
+        _delta = oos_auc - _champion_auc
+        log.warning(
+            f"[signal_ml] Challenger rejected — OOS AUC {oos_auc:.4f} vs champion "
+            f"{_champion_auc:.4f} (Δ{_delta:+.4f}, min required +{_MIN_AUC_DELTA_TO_DEPLOY}). "
+            "Keeping existing model."
+        )
     else:
         log.warning(
-            f"[signal_ml] Challenger rejected — OOS AUC {oos_auc:.4f} <= "
-            f"champion {_champion_auc:.4f}. Keeping existing model."
+            f"[signal_ml] Challenger rejected — oos_auc={oos_auc} (single-class or None). Keeping existing model."
         )
 
     # ── Persist feature importances + metadata ─────────────────────────────────
     from datetime import datetime as _dt
 
+    _auc_lo_out = round(_auc_lo, 4) if _auc_lo is not None else None
+    _auc_hi_out = round(_auc_hi, 4) if _auc_hi is not None else None
     metadata = {
         "trained_at": _dt.utcnow().isoformat(),
         "n_train": n_train,
         "n_test": n_test,
+        "n_total": len(rows),
         "oos_accuracy": oos_acc,
         "oos_auc": oos_auc,
+        "oos_auc_ci_95": [_auc_lo_out, _auc_hi_out],
         "oos_precision": oos_prec,
         "oos_recall": oos_rec,
         "top_features": top_features,
         "feature_importances": fi,
         "deployed": _deployed,
+        "training_only": _training_only,
         "champion_auc": _champion_auc,
+        "min_live_n_for_deployment": _MIN_LIVE_N_FOR_DEPLOYMENT,
+        "min_auc_delta_to_deploy": _MIN_AUC_DELTA_TO_DEPLOY,
     }
     # Always write metadata (so the router can show the last training run even if not deployed)
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -504,12 +599,15 @@ def train_model() -> Optional[dict]:
     return {
         "oos_accuracy": oos_acc,
         "oos_auc": oos_auc,
+        "oos_auc_ci_95": [_auc_lo_out, _auc_hi_out],
         "oos_precision": oos_prec,
         "oos_recall": oos_rec,
         "n_train": n_train,
         "n_test": n_test,
+        "n_total": len(rows),
         "top_features": top_features,
         "deployed": _deployed,
+        "training_only": _training_only,
         "champion_auc": _champion_auc,
     }
 

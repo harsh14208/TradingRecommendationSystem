@@ -17,7 +17,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 import yfinance as yf
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -358,6 +358,86 @@ async def resolve_mae_mfe() -> int:
     return updated
 
 
+async def fix_phantom_wins(apply: bool = False) -> int:
+    """Retroactively correct phantom wins in the database.
+
+    A phantom win occurs when:
+      1. Price breaches the stop intraday (hit_stop=True in OHLC history).
+      2. Price recovers above entry by the 7-day mark-to-market measurement.
+      3. outcome_pct is therefore positive despite the stop being hit.
+
+    The correct outcome_pct is: (stop - entry) / entry × 100 for BUY,
+    (entry - stop) / entry × 100 for SELL — matching what the live account
+    would have realised at the stop fill price.
+
+    This function runs over all existing signals where hit_stop=True AND
+    outcome_pct > 0, correcting the stored value.  It is idempotent: running
+    it twice produces the same result.
+    """
+    engine = create_async_engine(DB_URL, echo=False)
+    Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with Session() as db:
+        phantoms = (
+            (
+                await db.execute(
+                    select(Signal).where(
+                        Signal.hit_stop == True,
+                        Signal.outcome_pct > 0,
+                        Signal.entry.isnot(None),
+                        Signal.stop.isnot(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    if not phantoms:
+        print("  No phantom wins found — nothing to fix.")
+        return 0
+
+    print(f"  Found {len(phantoms)} phantom wins (hit_stop=True, outcome_pct > 0).")
+    fixes = []
+    for sig in phantoms:
+        entry = float(sig.entry)
+        stop = float(sig.stop)
+        if entry <= 0:
+            continue
+        if sig.action == "BUY":
+            corrected = round((stop - entry) / entry * 100, 2)
+        else:
+            corrected = round((entry - stop) / entry * 100, 2)
+        fixes.append((sig.id, sig.ticker, float(sig.outcome_pct), corrected))
+
+    if not apply:
+        print(f"  DRY RUN — would correct {len(fixes)} signals.")
+        sample = fixes[:5]
+        for sid, tkr, old, new in sample:
+            print(f"    {tkr} id={sid}: {old:+.2f}% → {new:+.2f}%")
+        if len(fixes) > 5:
+            print(f"    … and {len(fixes) - 5} more")
+        print("  Re-run with apply=True (or --fix-phantoms --apply) to write changes.")
+        await engine.dispose()
+        return 0
+
+    async with Session() as db:
+        for sig_id, _, _, corrected in fixes:
+            # Correct both 7d (outcome_pct) and 14d (outcome_14d) to stop-fill level.
+            # run_calibration() prefers outcome_14d — if we only fix outcome_pct,
+            # the calibration still sees the phantom win via the 14d field.
+            # A stop-out trade has a realized P&L of (stop - entry); the 14d
+            # mark-to-market is counterfactual and irrelevant for calibration.
+            await db.execute(
+                update(Signal).where(Signal.id == sig_id).values(outcome_pct=corrected, outcome_14d=corrected)
+            )
+        await db.commit()
+
+    await engine.dispose()
+    print(f"  Fixed {len(fixes)} phantom wins — outcome_pct corrected to stop-fill level.")
+    return len(fixes)
+
+
 # ── step 2: calibration report ───────────────────────────────────────────────
 
 
@@ -603,14 +683,26 @@ async def calibration_report():
 # ── main ─────────────────────────────────────────────────────────────────────
 
 
-async def main():
+async def main(fix_phantoms: bool = False, apply_phantoms: bool = False):
+    if fix_phantoms:
+        print("\nStep 0 — Fixing phantom wins (hit_stop=True but outcome_pct > 0)…")
+        await fix_phantom_wins(apply=apply_phantoms)
+        return
     print("\nStep 1 — Resolving pending outcomes…")
     updated = await resolve_outcomes()
     print("\nStep 1b — Computing MAE/MFE / stop-target tracking…")
     await resolve_mae_mfe()
+    print("\nStep 1c — Correcting phantom wins…")
+    await fix_phantom_wins(apply=True)
     print("\nStep 2 — Running calibration report…")
     await calibration_report()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse as _ap
+
+    _parser = _ap.ArgumentParser()
+    _parser.add_argument("--fix-phantoms", action="store_true", help="Dry-run phantom win correction")
+    _parser.add_argument("--apply", action="store_true", help="Write phantom win corrections to DB")
+    _args = _parser.parse_args()
+    asyncio.run(main(fix_phantoms=_args.fix_phantoms, apply_phantoms=_args.apply))

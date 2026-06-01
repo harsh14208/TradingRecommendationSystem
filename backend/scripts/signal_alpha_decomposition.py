@@ -1253,6 +1253,15 @@ def run_ablation_suite(all_dfs, vix, spy_trend, stlfsi4, baseline_stats, baselin
 
 
 def main() -> None:
+    import argparse as _ap
+
+    _parser = _ap.ArgumentParser(add_help=False)
+    _parser.add_argument(
+        "--conflict-only", action="store_true", help="Skip §10-§14; run only §18 conflict analysis + baseline."
+    )
+    _args, _ = _parser.parse_known_args()
+    _conflict_only = _args.conflict_only
+
     years = datetime.today().year - int(START[:4])
     print("# Signal Alpha Decomposition — v10 (OSC×1.0 + MR×0.5 + 8 Quality Filters)\n")
     print("> v9 result: N=33, Sharpe=0.30 — ablation confirmed ROC/RS/ATR_REG all redundant.")
@@ -1307,7 +1316,10 @@ def main() -> None:
 
     _mp.set_start_method("fork", force=True)  # macOS Python 3.14 spawn→fork
     with Pool(8) as p:
-        results = p.map(process_ticker, [(t, vix, spy_trend, stlfsi4, True) for t in TICKERS])
+        results = p.map(
+            process_ticker,
+            [(t, vix, spy_trend, stlfsi4, True, None, None, None, None, False, None, False) for t in TICKERS],
+        )
 
     all_dfs: dict = {}
     for ticker, _t, _bh, df in results:
@@ -1368,154 +1380,153 @@ def main() -> None:
     )
     print(f"{'─' * 65}\n")
 
-    run_ablation_suite(
-        all_dfs=all_dfs,
-        vix=vix,
-        spy_trend=spy_trend,
-        stlfsi4=stlfsi4,
-        baseline_stats=baseline_stats_d,
-        baseline_trades=baseline_trades,
-    )
+    if not _conflict_only:
+        run_ablation_suite(
+            all_dfs=all_dfs,
+            vix=vix,
+            spy_trend=spy_trend,
+            stlfsi4=stlfsi4,
+            baseline_stats=baseline_stats_d,
+            baseline_trades=baseline_trades,
+        )
 
-    # ── 10j. Earnings Proximity Gate Test ────────────────────────────────────
-    # Validates the live finding (Stats.md §11c): signals fired 3-14d before
-    # earnings outperform the "safe" 15+d zone by 14-26pp WR.
-    # Tests: EARNINGS_BLACKOUT_DAYS=5 (current) vs =2 (proposed live-engine change).
-    _section("10j. Earnings Gate Test")
-    print("\n\n## 10j. Earnings Proximity Gate Test\n")
-    print("> Live data (529 trades, §11c): 3-14d pre-earnings outperforms safe zone.")
-    print("> Testing EARN blackout=5 (current) vs blackout=2 (proposed — hard blackout only).\n")
+    if not _conflict_only:
+        # ── 10j. Earnings Proximity Gate Test ────────────────────────────────
+        _section("10j. Earnings Gate Test")
+        print("\n\n## 10j. Earnings Proximity Gate Test\n")
+        print("> Live data (529 trades, §11c): 3-14d pre-earnings outperforms safe zone.")
+        print("> Testing EARN blackout=5 (current) vs blackout=2 (proposed — hard blackout only).\n")
 
-    print("Fetching earnings dates per ticker (yfinance, best-effort)…", flush=True)
-    earnings_map: dict[str, set] = {}
-    for ticker in list(all_dfs.keys()):
-        try:
-            cal = yf.Ticker(ticker).get_earnings_dates(limit=50)
-            if cal is not None and not cal.empty:
-                earnings_map[ticker] = {pd.Timestamp(str(d)[:10]) for d in cal.index}
-            else:
+        print("Fetching earnings dates per ticker (yfinance, best-effort)…", flush=True)
+        earnings_map: dict[str, set] = {}
+        for ticker in list(all_dfs.keys()):
+            try:
+                cal = yf.Ticker(ticker).get_earnings_dates(limit=50)
+                if cal is not None and not cal.empty:
+                    earnings_map[ticker] = {pd.Timestamp(str(d)[:10]) for d in cal.index}
+                else:
+                    earnings_map[ticker] = set()
+            except Exception:
                 earnings_map[ticker] = set()
-        except Exception:
-            earnings_map[ticker] = set()
-    n_with = sum(1 for v in earnings_map.values() if v)
-    print(f"  Earnings dates fetched for {n_with}/{len(earnings_map)} tickers\n")
+        n_with = sum(1 for v in earnings_map.values() if v)
+        print(f"  Earnings dates fetched for {n_with}/{len(earnings_map)} tickers\n")
 
-    def _run_earn_test(blackout: int) -> tuple[dict, pd.DataFrame]:
-        trades_list = []
-        for ticker, df in all_dfs.items():
-            t = simulate_ticker(
-                ticker,
-                df,
-                vix,
-                spy_trend,
-                stlfsi4,
-                mr_only=True,
-                dual_gate=DUAL_GATE_ON,
-                earnings_dates=earnings_map.get(ticker) or None,
-                earnings_blackout_days=blackout,
-            )
-            if not t.empty:
-                trades_list.append(t)
-        if not trades_list:
-            return dict(_EMPTY_STATS), pd.DataFrame()
-        tdf = pd.concat(trades_list, ignore_index=True)
-        return stats(tdf["net_pct"].tolist()), tdf
+        def _run_earn_test(blackout: int) -> tuple[dict, pd.DataFrame]:
+            trades_list = []
+            for ticker, df in all_dfs.items():
+                t = simulate_ticker(
+                    ticker,
+                    df,
+                    vix,
+                    spy_trend,
+                    stlfsi4,
+                    mr_only=True,
+                    dual_gate=DUAL_GATE_ON,
+                    earnings_dates=earnings_map.get(ticker) or None,
+                    earnings_blackout_days=blackout,
+                )
+                if not t.empty:
+                    trades_list.append(t)
+            if not trades_list:
+                return dict(_EMPTY_STATS), pd.DataFrame()
+            tdf = pd.concat(trades_list, ignore_index=True)
+            return stats(tdf["net_pct"].tolist()), tdf
 
-    print("Running blackout=5 (current)…", flush=True)
-    s5, tdf5 = _run_earn_test(5)
-    print("Running blackout=2 (proposed)…", flush=True)
-    s2, tdf2 = _run_earn_test(2)
+        print("Running blackout=5 (current)…", flush=True)
+        s5, tdf5 = _run_earn_test(5)
+        print("Running blackout=2 (proposed)…", flush=True)
+        s2, tdf2 = _run_earn_test(2)
 
-    # ── Side-by-side comparison ───────────────────────────────────────────────
-    def _d(a, b, key):
-        return (a.get(key) or 0.0) - (b.get(key) or 0.0)
+        def _d(a, b, key):
+            return (a.get(key) or 0.0) - (b.get(key) or 0.0)
 
-    print("\n### Gate Comparison\n")
-    print_table(
-        ["Config", "N", "Win Rate", "Avg Ret", "Sharpe", "Max DD"],
-        [
+        print("\n### Gate Comparison\n")
+        print_table(
+            ["Config", "N", "Win Rate", "Avg Ret", "Sharpe", "Max DD"],
             [
-                "blackout=5 (current, baseline)",
-                str(s5["n"]),
-                f"{s5['wr']:.1f}%",
-                f"{s5['avg']:+.2f}%",
-                fmt_sharpe(s5["sharpe"]),
-                f"-{s5['max_dd']:.2f}%",
-            ],
-            [
-                "blackout=2 (proposed — hard-only)",
-                str(s2["n"]),
-                f"{s2['wr']:.1f}%",
-                f"{s2['avg']:+.2f}%",
-                fmt_sharpe(s2["sharpe"]),
-                f"-{s2['max_dd']:.2f}%",
-            ],
-            [
-                "Delta (proposed − current)",
-                f"{s2['n'] - s5['n']:+d}",
-                f"{_d(s2, s5, 'wr'):+.1f}pp",
-                f"{_d(s2, s5, 'avg'):+.2f}pp",
-                f"{_d(s2, s5, 'sharpe'):+.2f}",
-                f"{_d(s5, s2, 'max_dd'):+.2f}pp",
-            ],
-        ],
-    )
-
-    # ── Earnings proximity bucket breakdown (blackout=2 trades) ───────────────
-    if not tdf2.empty and "days_to_earnings" in tdf2.columns:
-        print("\n### Earnings Proximity Bucket Breakdown (blackout=2 run)\n")
-        print("> Bucket = days_to_next_earnings at signal date. None = no upcoming earnings data.\n")
-
-        def _bucket(d):
-            if d is None or (isinstance(d, float) and math.isnan(d)):
-                return "No data"
-            d = int(d)
-            if d <= 2:
-                return "0-2d (hard blackout)"
-            if d <= 7:
-                return "3-7d (pre-earnings)"
-            if d <= 14:
-                return "8-14d (early caution)"
-            return "15+d (safe zone)"
-
-        tdf2["earn_bucket"] = tdf2["days_to_earnings"].apply(_bucket)
-        bkt_rows = []
-        for bkt in [
-            "0-2d (hard blackout)",
-            "3-7d (pre-earnings)",
-            "8-14d (early caution)",
-            "15+d (safe zone)",
-            "No data",
-        ]:
-            sub = tdf2[tdf2["earn_bucket"] == bkt]
-            if sub.empty:
-                continue
-            sv = stats(sub["net_pct"].tolist())
-            bkt_rows.append(
                 [
-                    bkt,
-                    str(sv["n"]),
-                    f"{sv['wr']:.1f}%",
-                    f"{sv['avg']:+.2f}%",
-                    fmt_pf(sv["pf"]),
-                    fmt_sharpe(sv["sharpe"]),
-                ]
-            )
-        print_table(["Bucket", "N", "Win Rate", "Avg Ret", "PF", "Sharpe"], bkt_rows)
-        print("\n> If 3-14d WR and avg ret > 15+d: gate direction confirmed wrong (matches live data).")
-        print("> If 3-14d underperforms: gate was correct and live finding was small-sample noise.")
+                    "blackout=5 (current)",
+                    str(s5["n"]),
+                    f"{s5['wr']:.1f}%",
+                    f"{s5['avg']:+.2f}%",
+                    fmt_sharpe(s5["sharpe"]),
+                    f"-{s5['max_dd']:.2f}%",
+                ],
+                [
+                    "blackout=2 (proposed)",
+                    str(s2["n"]),
+                    f"{s2['wr']:.1f}%",
+                    f"{s2['avg']:+.2f}%",
+                    fmt_sharpe(s2["sharpe"]),
+                    f"-{s2['max_dd']:.2f}%",
+                ],
+                [
+                    "Delta (proposed − current)",
+                    f"{s2['n'] - s5['n']:+d}",
+                    f"{_d(s2, s5, 'wr'):+.1f}pp",
+                    f"{_d(s2, s5, 'avg'):+.2f}pp",
+                    f"{_d(s2, s5, 'sharpe'):+.2f}",
+                    f"{_d(s5, s2, 'max_dd'):+.2f}pp",
+                ],
+            ],
+        )
 
-    # ── §11. Sharpe > 1.0 Research ───────────────────────────────────────────
-    run_sharpe_research(all_dfs, vix, spy_trend, stlfsi4)
+        if not tdf2.empty and "days_to_earnings" in tdf2.columns:
+            print("\n### Earnings Proximity Bucket Breakdown (blackout=2 run)\n")
+            print("> Bucket = days_to_next_earnings at signal date. None = no upcoming earnings data.\n")
 
-    # ── §12. Advanced Gate Research ──────────────────────────────────────────
-    run_advanced_research(all_dfs, vix, spy_trend, stlfsi4)
+            def _bucket(d):
+                if d is None or (isinstance(d, float) and math.isnan(d)):
+                    return "No data"
+                d = int(d)
+                if d <= 2:
+                    return "0-2d (hard blackout)"
+                if d <= 7:
+                    return "3-7d (pre-earnings)"
+                if d <= 14:
+                    return "8-14d (early caution)"
+                return "15+d (safe zone)"
 
-    # ── §13. ATR Regime & Beta-Hedge Research ────────────────────────────────
-    run_atr_research(all_dfs, vix, spy_trend, stlfsi4, spy_closes=spy_s)
+            tdf2["earn_bucket"] = tdf2["days_to_earnings"].apply(_bucket)
+            bkt_rows = []
+            for bkt in [
+                "0-2d (hard blackout)",
+                "3-7d (pre-earnings)",
+                "8-14d (early caution)",
+                "15+d (safe zone)",
+                "No data",
+            ]:
+                sub = tdf2[tdf2["earn_bucket"] == bkt]
+                if sub.empty:
+                    continue
+                sv = stats(sub["net_pct"].tolist())
+                bkt_rows.append(
+                    [
+                        bkt,
+                        str(sv["n"]),
+                        f"{sv['wr']:.1f}%",
+                        f"{sv['avg']:+.2f}%",
+                        fmt_pf(sv["pf"]),
+                        fmt_sharpe(sv["sharpe"]),
+                    ]
+                )
+            print_table(["Bucket", "N", "Win Rate", "Avg Ret", "PF", "Sharpe"], bkt_rows)
 
-    # ── §14. Tech/FAANG Sector Optimization ──────────────────────────────────
-    run_tech_optimization(all_dfs, vix, spy_trend, stlfsi4)
+    # ── §18. Conflicting Signals Deep Dive ───────────────────────────────────
+    run_conflict_analysis(all_dfs, vix, spy_trend, stlfsi4, baseline_trades)
+
+    if not _conflict_only:
+        # ── §11. Sharpe > 1.0 Research ───────────────────────────────────────
+        run_sharpe_research(all_dfs, vix, spy_trend, stlfsi4)
+
+        # ── §12. Advanced Gate Research ──────────────────────────────────────
+        run_advanced_research(all_dfs, vix, spy_trend, stlfsi4)
+
+        # ── §13. ATR Regime & Beta-Hedge Research ────────────────────────────
+        run_atr_research(all_dfs, vix, spy_trend, stlfsi4, spy_closes=spy_s)
+
+        # ── §14. Tech/FAANG Sector Optimization ──────────────────────────────
+        run_tech_optimization(all_dfs, vix, spy_trend, stlfsi4)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2451,6 +2462,425 @@ def run_tech_optimization(all_dfs, vix, spy_trend, stlfsi4, pool=None, pre_dfs: 
             _fmt14("Tech 5d hold + Thresh=38", sv_combo, base_sh14),
         ],
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# §18 — Conflicting Signals Deep Dive
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def run_conflict_analysis(
+    all_dfs: dict,
+    vix: dict,
+    spy_trend: dict,
+    stlfsi4: dict,
+    baseline_trades: pd.DataFrame,
+) -> None:
+    """§18: Identify which signal conflicts at entry destroy Sharpe, then apply the best filter.
+
+    §18a  Family scores at entry  — winner/loser decomposition
+    §18b  Conflict index gate     — block when sum of negative family scores < threshold
+    §18c  MA override analysis    — generators fire while MA shows structural breakdown
+    §18d  MA floor gate sweep     — block entries below MA score floor
+    §18e  Signal alignment gate   — require net bullish family count ≥ threshold
+    §18f  Best combined gate      — stack winning gates, report Sharpe improvement
+
+    Adds ~20 simulation runs (~3–4 min).
+    """
+    _section("18. Conflicting Signals Deep Dive")
+    print("\n\n## 18. Conflicting Signals Deep Dive\n")
+    print("> Research: which signal COMBINATIONS at entry produce losing trades?")
+    print("> Method: per-family score decomposition at entry → winner/loser split → conflict gate sweep.")
+    print("> ~20 parallel simulation runs (reuses _run_par pool infra).\n")
+
+    N_WORKERS = min(8, os.cpu_count() or 4)
+
+    # ── Pre-compute per-family scores and scored DataFrames once ──────────────
+    print("Pre-scoring tickers (return_families=True)…", end=" ", flush=True)
+    scored_dfs: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    for ticker, df in all_dfs.items():
+        df2 = df.copy()
+        fdf = compute_scores_masked(df2, return_families=True)
+        df2["score"] = fdf["score"]
+        fdf = fdf.copy()
+        fdf.index = pd.to_datetime(fdf.index).normalize()
+        scored_dfs[ticker] = (df2, fdf)
+    print(f"done ({len(scored_dfs)} tickers).")
+
+    sample_fdf = next(iter(scored_dfs.values()))[1]
+    family_cols = [c for c in FAM_COLS if c in sample_fdf.columns]
+    all_tickers = list(scored_dfs.keys())
+
+    # ── Gate blocking: returns {ticker: df_with_score_overrides} ─────────────
+    def _build_gated(conf_t=None, al_t=None, ma_f=None) -> dict[str, pd.DataFrame]:
+        """Apply entry-blocking to score column. Blocked bars get score=-100."""
+        out: dict[str, pd.DataFrame] = {}
+        for ticker, (df2, fdf) in scored_dfs.items():
+            if conf_t is None and al_t is None and ma_f is None:
+                out[ticker] = df2
+                continue
+            fa = np.stack([fdf[c].fillna(0.0).values for c in family_cols], axis=1)
+            allow = np.ones(len(df2), dtype=bool)
+            if conf_t is not None:
+                allow &= np.where(fa < -5.0, fa, 0.0).sum(axis=1) >= conf_t
+            if al_t is not None:
+                allow &= (fa > 5).sum(axis=1) - (fa < -5).sum(axis=1) >= al_t
+            if ma_f is not None:
+                allow &= fdf["ma_f"].fillna(0.0).values >= ma_f
+            if allow.all():
+                out[ticker] = df2
+            else:
+                df3 = df2.copy()
+                df3.loc[df3.index[~allow], "score"] = -100
+                out[ticker] = df3
+        return out
+
+    # ── Sequential simulation with conflict gate applied via score override ──────
+    def _sim_par(conf_t=None, al_t=None, ma_f=None) -> tuple[dict, pd.DataFrame]:
+        """Sequential simulation identical to _run() but with score blocking.
+        Uses the same code path as the baseline to avoid parallel-scoring discrepancies.
+        """
+        gated = _build_gated(conf_t, al_t, ma_f)
+        trades_list = []
+        for ticker, df_g in gated.items():
+            t = simulate_ticker(
+                ticker,
+                df_g,
+                vix,
+                spy_trend,
+                stlfsi4,
+                mr_only=True,
+                dual_gate=DUAL_GATE_ON,
+            )
+            if not t.empty:
+                trades_list.append(t)
+        if not trades_list:
+            return dict(_EMPTY_STATS), pd.DataFrame()
+        tdf = pd.concat(trades_list, ignore_index=True)
+        return stats(tdf["net_pct"].tolist()), tdf
+
+    # ── Join family scores to baseline trades ─────────────────────────────────
+    enriched_rows: list[dict] = []
+    for _, row in baseline_trades.iterrows():
+        ticker = str(row.get("ticker", ""))
+        pair = scored_dfs.get(ticker)
+        if pair is None:
+            continue
+        _, fdf = pair
+        entry_dt = pd.Timestamp(str(row["date"])[:10])
+        if entry_dt not in fdf.index:
+            continue
+        fam_row = fdf.loc[entry_dt]
+        if isinstance(fam_row, pd.DataFrame):
+            fam_row = fam_row.iloc[-1]
+        d: dict = {
+            "ticker": ticker,
+            "date": entry_dt,
+            "net_pct": float(row["net_pct"]),
+            "win": 1 if float(row["net_pct"]) > 0 else 0,
+        }
+        for col in family_cols:
+            val = fam_row.get(col)
+            d[col] = float(val) if val is not None and pd.notna(val) else 0.0
+        enriched_rows.append(d)
+
+    if not enriched_rows:
+        print("> [skip] No family scores could be joined to baseline trades.\n")
+        return
+
+    etdf = pd.DataFrame(enriched_rows)
+    n_joined = len(etdf)
+    winners = etdf[etdf["win"] == 1]
+    losers = etdf[etdf["win"] == 0]
+    bs_sv = stats(baseline_trades["net_pct"].tolist())
+    bs_sh = bs_sv.get("sharpe") or 0.0
+    print(f"Joined family scores to {n_joined}/{len(baseline_trades)} baseline trades.\n")
+
+    # ── §18a. Per-Family Score: Winners vs Losers ─────────────────────────────
+    _section("18a. Family Scores — Winners vs Losers")
+    print("\n### §18a. Per-Family Score at Entry: Winners vs Losers\n")
+    print("> Avg family score at entry for each outcome.")
+    print("> CONFLICT = losers distinctly more negative than winners.  DRAG = both negative.\n")
+
+    FAM_DISPLAY = [
+        ("osc_f", "OSC      (RSI/Stoch/WR)"),
+        ("mr_f", "MR       (BB/IBS/VWAP)"),
+        ("ma_f", "MA       (SMA/VWAP/Z-score) ← most critical"),
+        ("vol_f", "VOL      (OBV/Surge/Dry-up)"),
+        ("trend_f", "TREND    (MACD/EMA/ADX)"),
+        ("donchian_f", "DONCHIAN (20d low MR)"),
+        ("pricestr_f", "PRICESTR (LH/LL structure)"),
+        ("wk52_f", "WK52     (52-week range pos.)"),
+        ("hyg_f", "HYG      (credit stress)"),
+        ("cmf_f", "CMF      (Chaikin Money Flow)"),
+        ("rs_quality_f", "RS_QUAL  (63d RS rank + 52W)"),
+    ]
+    abl_rows: list[list] = []
+    for col, label in FAM_DISPLAY:
+        if col not in etdf.columns:
+            continue
+        w_avg = float(winners[col].mean()) if not winners.empty else 0.0
+        l_avg = float(losers[col].mean()) if not losers.empty else 0.0
+        delta = w_avg - l_avg
+        flag = " ← CONFLICT" if l_avg < -5.0 and delta > 3.0 else " ← DRAG" if l_avg < -3.0 and w_avg < -3.0 else ""
+        abl_rows.append([label, f"{w_avg:+.1f}", f"{l_avg:+.1f}", f"{delta:+.1f}{flag}"])
+
+    abl_rows.sort(key=lambda r: float(r[2].split()[0]))  # sort by most-negative loser first
+    print_table(["Family", "W avg", "L avg", "Δ (W−L)"], abl_rows)
+    print(f"\n> {len(winners)} winners  {len(losers)} losers  ({n_joined} trades with family data)")
+    print("> CONFLICT = family distinctly more negative for losers (conflict signal)")
+    print("> DRAG     = both winners and losers negative (structural cost of MR entry)\n")
+
+    # ── §18b. Conflict Index Gate Sweep ───────────────────────────────────────
+    _section("18b. Conflict Index Gate")
+    print("\n### §18b. Conflict Index Gate — Block High-Conflict Entries\n")
+    print("> conflict_score = sum of family scores < −5 at entry (more negative = more conflict)")
+    print("> Gate: block when conflict_score < threshold\n")
+
+    fam_arr_all = np.stack([etdf[c].values for c in family_cols], axis=1)
+    etdf["conflict_score"] = np.where(fam_arr_all < -5.0, fam_arr_all, 0.0).sum(axis=1)
+
+    dist_rows: list[list] = []
+    for lo, hi, lbl in [
+        (-999, -40, "< −40"),
+        (-40, -30, "−40 to −30"),
+        (-30, -20, "−30 to −20"),
+        (-20, -10, "−20 to −10"),
+        (-10, 0, "−10 to 0"),
+        (0, 999, "≥ 0"),
+    ]:
+        sub = etdf[(etdf["conflict_score"] >= lo) & (etdf["conflict_score"] < hi)]
+        if sub.empty:
+            continue
+        dist_rows.append(
+            [
+                lbl,
+                str(len(sub)),
+                f"{sub['win'].mean() * 100:.1f}%",
+                f"{sub['net_pct'].mean():+.2f}%",
+            ]
+        )
+    print_table(["Conflict score bucket", "N", "Win Rate", "Avg Ret"], dist_rows)
+
+    print("\n**Conflict gate simulation (block entries with conflict_score below threshold):**\n")
+    gate_rows: list[list] = [
+        [
+            "no gate (baseline)",
+            str(bs_sv["n"]),
+            f"{bs_sv['wr']:.1f}%",
+            f"{bs_sv['avg']:+.2f}%",
+            fmt_sharpe(bs_sv["sharpe"]),
+            f"-{bs_sv['max_dd']:.2f}%",
+        ]
+    ]
+    best_conf_sh = bs_sh
+    best_conf_thresh: float | None = None
+    for _i, thresh in enumerate([-40.0, -35.0, -30.0, -25.0, -20.0], 1):
+        _progress(_i, 5, f"conflict≥{thresh:.0f}")
+        sv, _ = _sim_par(conf_t=thresh)
+        d = (sv.get("sharpe") or 0.0) - bs_sh
+        gate_rows.append(
+            [
+                f"conflict ≥ {thresh:.0f}",
+                str(sv["n"]),
+                f"{sv['wr']:.1f}%",
+                f"{sv['avg']:+.2f}%",
+                f"{fmt_sharpe(sv['sharpe'])} ({d:+.2f})",
+                f"-{sv['max_dd']:.2f}%",
+            ]
+        )
+        if (sv.get("sharpe") or 0.0) > best_conf_sh and sv["n"] >= 50:
+            best_conf_sh = sv.get("sharpe") or 0.0
+            best_conf_thresh = thresh
+    print_table(["Config", "N", "WR", "Avg Ret", "Sharpe (Δ)", "MaxDD"], gate_rows)
+    print(f"\n> Best conflict gate (N≥50): threshold={best_conf_thresh} → Sharpe {best_conf_sh:.2f}")
+
+    # ── §18c. MA Override Analysis ────────────────────────────────────────────
+    _section("18c. MA Override Analysis")
+    print("\n### §18c. MA Override — Generators Firing Against Broken Price Structure\n")
+    print("> 'Override' trade: OSC > 12 AND MR > 6 but MA < floor")
+    print("> Hypothesis: when MA is severely negative, MR bounces don't hold for 10 days.\n")
+    if all(c in etdf.columns for c in ["ma_f", "osc_f", "mr_f"]):
+        for ma_floor in [-10, -14, -18]:
+            ov = etdf[(etdf["osc_f"] > 12) & (etdf["mr_f"] > 6) & (etdf["ma_f"] < ma_floor)]
+            al = etdf[(etdf["osc_f"] > 12) & (etdf["mr_f"] > 6) & (etdf["ma_f"] >= ma_floor)]
+            if ov.empty or al.empty:
+                continue
+            ov_wr = ov["win"].mean() * 100
+            al_wr = al["win"].mean() * 100
+            gap = ov_wr - al_wr
+            flag = " ← CONFLICT CONFIRMED" if gap < -3.0 else (" ← mild gap" if gap < 0.0 else "")
+            print(
+                f"  MA < {ma_floor:+d}: N={len(ov):>3}  WR={ov_wr:.1f}%  avg={ov['net_pct'].mean():+.2f}%  (override)"
+            )
+            print(f"  MA ≥ {ma_floor:+d}: N={len(al):>3}  WR={al_wr:.1f}%  avg={al['net_pct'].mean():+.2f}%  (aligned)")
+            print(f"           WR gap: {gap:+.1f}pp{flag}\n")
+
+    # ── §18d. MA Floor Gate Sweep ─────────────────────────────────────────────
+    _section("18d. MA Floor Gate Sweep")
+    print("\n### §18d. MA Floor Gate — Block Entries Where MA Score Is Severely Negative\n")
+    print("> MA is the most critical family (ΔSharpe −6.22 when removed). Severely negative MA =")
+    print("> structural breakdown — the stock is in a trend, not just oversold.")
+    print("> Gate: block entry when ma_f < floor\n")
+    ma_rows: list[list] = [
+        [
+            "no gate (baseline)",
+            str(bs_sv["n"]),
+            f"{bs_sv['wr']:.1f}%",
+            f"{bs_sv['avg']:+.2f}%",
+            fmt_sharpe(bs_sv["sharpe"]),
+            f"-{bs_sv['max_dd']:.2f}%",
+        ]
+    ]
+    best_ma_sh = bs_sh
+    best_ma_floor: float | None = None
+    for _i, maf in enumerate([-28.0, -24.0, -20.0, -18.0, -14.0], 1):
+        _progress(_i, 5, f"MA≥{maf:.0f}")
+        sv, _ = _sim_par(ma_f=maf)
+        d = (sv.get("sharpe") or 0.0) - bs_sh
+        ma_rows.append(
+            [
+                f"MA floor ≥ {maf:.0f}",
+                str(sv["n"]),
+                f"{sv['wr']:.1f}%",
+                f"{sv['avg']:+.2f}%",
+                f"{fmt_sharpe(sv['sharpe'])} ({d:+.2f})",
+                f"-{sv['max_dd']:.2f}%",
+            ]
+        )
+        if (sv.get("sharpe") or 0.0) > best_ma_sh and sv["n"] >= 50:
+            best_ma_sh = sv.get("sharpe") or 0.0
+            best_ma_floor = maf
+    print_table(["Config", "N", "WR", "Avg Ret", "Sharpe (Δ)", "MaxDD"], ma_rows)
+    print(f"\n> Best MA floor (N≥50): floor={best_ma_floor} → Sharpe {best_ma_sh:.2f}")
+
+    # ── §18e. Signal Alignment Gate Sweep ────────────────────────────────────
+    _section("18e. Signal Alignment Gate")
+    print("\n### §18e. Signal Alignment Gate — Net Bullish vs Bearish Families\n")
+    print("> alignment = (# families > 5) − (# families < −5) at entry")
+    print("> Gate: block entry when alignment < threshold (too many bearish families relative to bullish)\n")
+
+    etdf["alignment"] = etdf[family_cols].apply(
+        lambda row: sum(1 for v in row if v > 5) - sum(1 for v in row if v < -5), axis=1
+    )
+    align_dist: list[list] = []
+    for a_val in sorted(etdf["alignment"].unique()):
+        sub = etdf[etdf["alignment"] == int(a_val)]
+        align_dist.append(
+            [
+                str(int(a_val)),
+                str(len(sub)),
+                f"{sub['win'].mean() * 100:.1f}%",
+                f"{sub['net_pct'].mean():+.2f}%",
+            ]
+        )
+    print_table(["Alignment score", "N", "Win Rate", "Avg Ret"], align_dist)
+
+    print("\n**Alignment gate simulation:**\n")
+    al_rows: list[list] = [
+        [
+            "no gate (baseline)",
+            str(bs_sv["n"]),
+            f"{bs_sv['wr']:.1f}%",
+            f"{bs_sv['avg']:+.2f}%",
+            fmt_sharpe(bs_sv["sharpe"]),
+            f"-{bs_sv['max_dd']:.2f}%",
+        ]
+    ]
+    best_al_sh = bs_sh
+    best_al_thresh: int | None = None
+    for _i, at in enumerate([-3, -2, -1, 0, 1], 1):
+        _progress(_i, 5, f"align≥{at}")
+        sv, _ = _sim_par(al_t=at)
+        d = (sv.get("sharpe") or 0.0) - bs_sh
+        al_rows.append(
+            [
+                f"align ≥ {at}",
+                str(sv["n"]),
+                f"{sv['wr']:.1f}%",
+                f"{sv['avg']:+.2f}%",
+                f"{fmt_sharpe(sv['sharpe'])} ({d:+.2f})",
+                f"-{sv['max_dd']:.2f}%",
+            ]
+        )
+        if (sv.get("sharpe") or 0.0) > best_al_sh and sv["n"] >= 50:
+            best_al_sh = sv.get("sharpe") or 0.0
+            best_al_thresh = at
+    print_table(["Config", "N", "WR", "Avg Ret", "Sharpe (Δ)", "MaxDD"], al_rows)
+    print(f"\n> Best alignment gate (N≥50): align≥{best_al_thresh} → Sharpe {best_al_sh:.2f}")
+
+    # ── §18f. Best Combined Conflict Gate ─────────────────────────────────────
+    _section("18f. Best Combined Conflict Gate")
+    print("\n### §18f. Best Combined — Stack Winning Conflict Gates\n")
+    print("> Combine whichever single gates from §18b/d/e improved Sharpe with N≥50.\n")
+
+    combos: list[tuple[str, float | None, int | None, float | None]] = [
+        ("baseline (no gate)", None, None, None),
+    ]
+    if best_conf_thresh is not None:
+        combos.append((f"conflict≥{best_conf_thresh:.0f}", best_conf_thresh, None, None))
+    if best_al_thresh is not None:
+        combos.append((f"align≥{best_al_thresh}", None, best_al_thresh, None))
+    if best_ma_floor is not None:
+        combos.append((f"MA≥{best_ma_floor:.0f}", None, None, best_ma_floor))
+    if best_conf_thresh is not None and best_ma_floor is not None:
+        combos.append(
+            (
+                f"conflict≥{best_conf_thresh:.0f} + MA≥{best_ma_floor:.0f}",
+                best_conf_thresh,
+                None,
+                best_ma_floor,
+            )
+        )
+    if best_al_thresh is not None and best_ma_floor is not None:
+        combos.append(
+            (
+                f"align≥{best_al_thresh} + MA≥{best_ma_floor:.0f}",
+                None,
+                best_al_thresh,
+                best_ma_floor,
+            )
+        )
+    if any(x is not None for x in [best_conf_thresh, best_al_thresh, best_ma_floor]):
+        combos.append(("full stack", best_conf_thresh, best_al_thresh, best_ma_floor))
+
+    combo_rows: list[list] = []
+    best_final_sh = bs_sh
+    best_final_label = "baseline"
+    for _i, (lbl, ct, at, mf) in enumerate(combos, 1):
+        _progress(_i, len(combos), lbl)
+        sv, _ = _sim_par(conf_t=ct, al_t=at, ma_f=mf)
+        d = (sv.get("sharpe") or 0.0) - bs_sh
+        is_best = (sv.get("sharpe") or 0.0) > best_final_sh and sv["n"] >= 50
+        if is_best:
+            best_final_sh = sv.get("sharpe") or 0.0
+            best_final_label = lbl
+        flag = " ← BEST" if is_best else ""
+        combo_rows.append(
+            [
+                lbl + flag,
+                str(sv["n"]),
+                f"{sv['wr']:.1f}%",
+                f"{sv['avg']:+.2f}%",
+                f"{fmt_sharpe(sv['sharpe'])} ({d:+.2f})",
+                f"-{sv['max_dd']:.2f}%",
+            ]
+        )
+    print_table(["Config", "N", "WR", "Avg Ret", "Sharpe (Δ)", "MaxDD"], combo_rows)
+
+    print("\n### §18 Conclusions\n")
+    print(f"> Baseline: N={bs_sv['n']}, WR={bs_sv['wr']:.1f}%, Sharpe={fmt_sharpe(bs_sv['sharpe'])}")
+    if best_final_sh > bs_sh + 0.005:
+        lift = best_final_sh - bs_sh
+        print(f"> Best filter '{best_final_label}': Sharpe {bs_sh:.2f} → {best_final_sh:.2f} (+{lift:.2f})")
+        print("> Root cause: OSC/MR generators fire on extreme oversold while MA/alignment signals")
+        print(">   structural breakdown — stock trending down, not just temporarily oversold.")
+        print("> Fix: apply the winning gate above as a hard block in the score pipeline.")
+    else:
+        print("> No single conflict gate improved Sharpe > +0.005 with N≥50.")
+        print("> The existing bull_cnt/bear_cnt consensus filter in compute_scores_masked already")
+        print(">   handles most high-conflict bars. Possible that looser gates (N<50) show local lift.")
+    print(f"\n*§18 Conflicting Signals Deep Dive · {len(all_dfs)}-ticker universe · {END}*")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -6,18 +6,28 @@ Backfills historical signal confidence values using the current v2 calibration.
 WHY: The old pipeline used a narrow sigmoid + 65% ceiling + Platt bins that
      systematically overconfident signals in the 70-101% band (actual WR 55%
      vs predicted 85%). The v2 calibration (isotonic + 78% ceiling) corrects this.
+     The 26 gates added in §59–§82 shifted the score distribution — the isotonic
+     calibration trained on pre-§82 signals is no longer aligned with the new
+     distribution.  Running this script re-trains on post-§82 resolved signals
+     and backfills all stored confidence values.
 
 HOW: We don't store the raw score, so a perfect re-run is impossible. Instead
      we treat each signal's stored confidence as the raw input to the NEW
      calibration function. This correctly pulls overconfident signals downward
      and fixes the ceiling. The approximation error is small (~1-3pp) for
-     mid-band signals; signals capped at the old 65% ceiling are re-calibrated
-     as if they scored 65% (we can't know their true underlying score).
+     mid-band signals.
+
+READINESS GUARD (A4): The script requires ≥200 resolved signals created AFTER
+     the §82 gates launched (2026-05-29).  Below this threshold the calibration
+     map is too noisy to be reliable and the script exits with a warning.
+     Use --check to see the current count without attempting recalibration.
 
 USAGE:
-    python scripts/backfill_confidence.py           # dry run — shows what would change
-    python scripts/backfill_confidence.py --apply   # writes to DB
+    python scripts/backfill_confidence.py --check          # show readiness + Brier
+    python scripts/backfill_confidence.py                  # dry run — shows what would change
+    python scripts/backfill_confidence.py --apply          # writes to DB
     python scripts/backfill_confidence.py --apply --min-delta 3   # only update if delta ≥ 3pp
+    python scripts/backfill_confidence.py --force          # skip N≥200 guard (testing only)
 """
 
 from __future__ import annotations
@@ -30,16 +40,99 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _PARENT = os.path.dirname(_HERE)
 sys.path.insert(0, _PARENT)
 
+from datetime import datetime
+
 from database import get_db
 from models import Signal
 from services.calibration import apply_calibration, load_calibration, run_calibration
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
+
+# §82 gates launched 2026-05-29 — signals after this date use the new 26-gate stack.
+_SECTION_82_LAUNCH = datetime(2026, 5, 29)
+_MIN_POST_82_RESOLVED = 200  # minimum resolved signals after §82 to trust recalibration
 
 
-async def backfill(apply: bool = False, min_delta: float = 0.5) -> None:
+async def check_readiness() -> None:
+    """Report A4 recalibration readiness without modifying anything."""
+    print("# Confidence Recalibration Readiness Check (A4)\n")
+    db_gen = get_db()
+    db = await anext(db_gen)
+    try:
+        # Count all resolved signals
+        total_resolved = (
+            await db.execute(select(func.count()).select_from(Signal).where(Signal.outcome_pct.isnot(None)))
+        ).scalar_one()
+        # Count resolved signals after §82 launch
+        post82_resolved = (
+            await db.execute(
+                select(func.count())
+                .select_from(Signal)
+                .where(Signal.outcome_pct.isnot(None), Signal.created_at >= _SECTION_82_LAUNCH)
+            )
+        ).scalar_one()
+        # Count all signals
+        total_signals = (await db.execute(select(func.count()).select_from(Signal))).scalar_one()
+    finally:
+        await db.close()
+
+    needed = max(0, _MIN_POST_82_RESOLVED - post82_resolved)
+    ready = post82_resolved >= _MIN_POST_82_RESOLVED
+
+    print(f"  Total signals in DB:          {total_signals:,}")
+    print(f"  Total resolved:               {total_resolved:,}")
+    print(f"  Post-§82 resolved (≥{_SECTION_82_LAUNCH.date()}): {post82_resolved:,}")
+    print(f"  Required for recalibration:   {_MIN_POST_82_RESOLVED}")
+    print()
+
+    if ready:
+        print("  ✅ READY — run without --check to recalibrate.")
+    else:
+        print(f"  ⏳ NOT READY — need {needed} more resolved signals after {_SECTION_82_LAUNCH.date()}.")
+        print("     The §82 gates shifted the score distribution; recalibrating too early")
+        print("     produces a noisy isotonic map that can make Brier WORSE.")
+        print(f"     Estimated wait: ~{needed // 7 + 1} weeks at current signal volume.")
+
+    # Also show current Brier if calibration exists
+    try:
+        cal_map = load_calibration()
+        meta = cal_map.get("_meta", {})
+        if meta.get("brier_walkforward"):
+            print(f"\n  Current Brier (saved cal): {meta['brier_walkforward']:.4f}")
+            print(f"  Trained on N={meta.get('n_train', '?')} signals, validated on N={meta.get('n_valid', '?')}")
+    except Exception:
+        pass
+
+
+async def backfill(apply: bool = False, min_delta: float = 0.5, force: bool = False) -> None:
     print("# Confidence Backfill — v2 calibration\n")
     print(f"  Mode:      {'APPLY (writes to DB)' if apply else 'DRY RUN (no writes)'}")
     print(f"  Min delta: {min_delta}pp (signals with |Δ| < {min_delta}pp are skipped)\n")
+
+    # ── A4 readiness guard ────────────────────────────────────────────────────
+    if not force:
+        db_gen_check = get_db()
+        db_check = await anext(db_gen_check)
+        try:
+            post82_resolved = (
+                await db_check.execute(
+                    select(func.count())
+                    .select_from(Signal)
+                    .where(Signal.outcome_pct.isnot(None), Signal.created_at >= _SECTION_82_LAUNCH)
+                )
+            ).scalar_one()
+        finally:
+            await db_check.close()
+
+        if post82_resolved < _MIN_POST_82_RESOLVED:
+            needed = _MIN_POST_82_RESOLVED - post82_resolved
+            print(
+                f"  ⏳ READINESS GUARD: only {post82_resolved} post-§82 resolved signals "
+                f"(need {_MIN_POST_82_RESOLVED}, {needed} more).\n"
+                "  Recalibration skipped — isotonic map would be too noisy.\n"
+                "  Run --check for full status, or --force to override (testing only)."
+            )
+            return
+        print(f"  ✅ Readiness guard passed ({post82_resolved} post-§82 resolved ≥ {_MIN_POST_82_RESOLVED})\n")
 
     # ── Step 1: refresh calibration map from all resolved outcomes ─────────────
     print("Step 1/3 — Refreshing calibration map from resolved outcomes…")
@@ -56,12 +149,14 @@ async def backfill(apply: bool = False, min_delta: float = 0.5) -> None:
             return
         print(f"  Loaded saved cal_map ({len(cal_map)} keys)\n")
 
-    # ── Step 2: read all signals ───────────────────────────────────────────────
+    # ── Step 2: read all signals (only columns needed — avoids raw_score migration gap) ──
     print("Step 2/3 — Reading all signals from DB…")
     db_gen = get_db()
     db = await anext(db_gen)
     try:
-        rows = (await db.execute(select(Signal).order_by(Signal.created_at.asc()))).scalars().all()
+        rows = (
+            await db.execute(select(Signal.id, Signal.action, Signal.confidence).order_by(Signal.created_at.asc()))
+        ).all()
     finally:
         await db.close()
 
@@ -167,9 +262,15 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Backfill signal confidence with v2 calibration")
+    parser.add_argument("--check", action="store_true", help="Report readiness + current Brier without recalibrating")
     parser.add_argument("--apply", action="store_true", help="Write changes to DB (default: dry run)")
     parser.add_argument(
         "--min-delta", type=float, default=0.5, help="Minimum |Δconfidence| in pp to update (default: 0.5)"
     )
+    parser.add_argument("--force", action="store_true", help="Skip N≥200 readiness guard (testing only)")
     args = parser.parse_args()
-    asyncio.run(backfill(apply=args.apply, min_delta=args.min_delta))
+
+    if args.check:
+        asyncio.run(check_readiness())
+    else:
+        asyncio.run(backfill(apply=args.apply, min_delta=args.min_delta, force=args.force))

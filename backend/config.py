@@ -23,7 +23,10 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_api_secret: str = ""
     auto_send_notifications: bool = True
-    min_confidence: float = 57.0  # raised 55→57 (§31: 50-55% band adj-WR 52.2%, marginal)
+    min_confidence: float = 40.0  # recalibrated 57→40 post phantom-win correction (2026-05-31).
+    # Old 57% = phantom-win scale where "57%" → real WR ~42%. After correction all signals
+    # cluster at ~42% honest confidence. 40% floor preserves positive-EV filter:
+    # 42.5% WR × 1.63× payoff = +EV. Swing floor (70%) and position floor (0%) unchanged.
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     # Scale prep: when set, signals are posted to ONE broadcast channel instead of

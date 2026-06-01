@@ -1751,31 +1751,64 @@ def _assemble_signal(
         "beta": info.get("beta"),
         "dataWarnings": data_warnings,
         "positionSizeScale": round(
-            # True Kelly-inspired sizing: incorporates both win probability (confidence) and R:R
+            # §QuantEngine sizing stack (five layers):
+            # L1 portfolio_size_scale — sector concentration + PCA cross-sector (§43/§83)
+            # L2 VIX-regime overlay   — fear 1.15×/panic 1.10×/calm 0.75× (§56)
+            # L3 vol-targeting        — 0.25/ticker_vol_ann clamped [0.5,2.0]
+            # L4 conviction sizing    — (conf-57)/10+0.5 clamped [0.5,1.5]
+            # L5 gate-quality boost   — Inv3: Hurst+20.6pp, Piotroski+13.1pp, IVR+10.1pp
+            #    fires only for BUY; caps at 1.5× total; rewards best-predictor gates
+            # L6 regime dampener      — calm bull (VIX<18 + bull trend) reduces MR sizing 0.8×
+            #    AI-momentum regimes produce shallow bounces; Inv2+temporal: current regime weak
             portfolio_size_scale
             * (
                 1.15
-                if (vix is not None and 20 <= vix <= 30 and confidence >= 58)  # fear regime peak edge
+                if (vix is not None and 20 <= vix <= 30 and confidence >= 58)
                 else 1.10
-                if (vix is not None and vix > 30 and confidence >= 55)  # panic mode
+                if (vix is not None and vix > 30 and confidence >= 55)
                 else 0.75
-                if (vix is not None and vix < 15)  # low-vol, low edge
+                if (vix is not None and vix < 15)
                 else 1.0
             )
             * (
-                max(
-                    0.5,
-                    min(
-                        1.5,
-                        (
-                            (confidence / 100.0)
-                            - ((1.0 - (confidence / 100.0)) / max(0.1, float(rr) if rr != "—" else 2.0))
+                max(0.5, min(2.0, 0.25 / max(_atr_pct_pre * _np.sqrt(252), 0.05)))
+                * max(0.5, min(1.5, (confidence - 57.0) / 10.0 + 0.5))
+                * min(
+                    1.5,
+                    # L5: gate-quality — multiply for each high-predictor gate that fired
+                    (
+                        1.20
+                        if any("Hurst" in c.get("head", "") and c.get("sentiment") == "pos" for c in rationale)
+                        else 1.0
+                    )
+                    * (
+                        1.15
+                        if any("Piotroski" in c.get("head", "") and c.get("sentiment") == "pos" for c in rationale)
+                        else 1.0
+                    )
+                    * (
+                        1.10
+                        if any(
+                            ("IVR" in c.get("head", "") or "IV Rank" in c.get("head", ""))
+                            and c.get("sentiment") == "pos"
+                            for c in rationale
                         )
-                        / 0.43,
+                        else 1.0
                     ),
                 )
+                * (
+                    # L6: calm-bull regime dampener (AI-rally / low-VIX momentum)
+                    0.80
+                    if (
+                        vix is not None
+                        and vix < 18
+                        and (macro or {}).get("sp500_trend") == "up"
+                        and (macro or {}).get("macro_score", 0) > 3
+                    )
+                    else 1.0
+                )
                 if action == "BUY"
-                else 1.0  # Normalized against base Kelly of 0.43 (62% WR, 2.0 R:R)
+                else 1.0
             ),
             2,
         ),
@@ -5983,20 +6016,28 @@ async def generate_signal(
                     }
                 )
 
-        # ── Buyback Yield / Share Dilution ───────────────────────────────────
+        # ── Buyback Yield — DISABLED 2026-05-31 ──────────────────────────────
+        # Live-data audit (Inv 3, 546 resolved): signals with active buyback card
+        # have WR=33.8% (−8.7pp vs 42.5% baseline). Buybacks signal management
+        # confidence but NOT short-term price recovery — a company can be buying
+        # back shares while the stock continues to decline. The +2pp boost was
+        # producing net-negative signals. Disabled; rationale card still shown
+        # for information but confidence/score unchanged.
         bb_yield = fundamentals.get("buyback_yield")
         if bb_yield and bb_yield > 3:
             sources.add("Fundamentals")
-            # Bonus reduced from +4 → +2: buybacks were an unconditional positive with
-            # no negative counterpart, contributing to structural BUY bias.
-            score += 2
             rationale.append(
                 {
                     "src": "Fundamentals",
-                    "head": f"Active Share Buyback — {bb_yield:.1f}% Yield",
-                    "body": f"Company returned {bb_yield:.1f}% of market cap to shareholders through buybacks. Active repurchases signal management confidence and reduce the float — mechanically bullish.",
-                    "sentiment": "pos",
-                    "meta": f"Buyback yield: {bb_yield:.1f}%",
+                    "head": f"Active Share Buyback — {bb_yield:.1f}% Yield (info only)",
+                    "body": (
+                        f"Company returned {bb_yield:.1f}% of market cap to shareholders "
+                        "through buybacks. Note: live-data audit shows buyback signals have "
+                        "33.8% WR (−8.7pp vs baseline) — buybacks do not predict short-term "
+                        "MR bounces. Score unchanged; shown for informational context only."
+                    ),
+                    "sentiment": "neutral",
+                    "meta": f"buyback_yield={bb_yield:.1f}% score_delta=0 §75 disabled 2026-05-31",
                 }
             )
         # Share dilution — counterpart to buyback yield.

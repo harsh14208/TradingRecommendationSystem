@@ -23,6 +23,12 @@ pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2022-42969
 cd backend && python scripts/backtest_technicals.py
 cd backend && python scripts/backtest_technicals.py --oos
 
+# §QuantEngine research flags (combinable, each adds ~1 min)
+cd backend && python scripts/backtest_technicals.py --beta-hedge      # strip beta: IS 0.29→0.12 pure alpha
+cd backend && python scripts/backtest_technicals.py --forecast-sizing # Carver FDM: +0.04 Sharpe
+cd backend && python scripts/backtest_technicals.py --portfolio        # concurrent portfolio CAGR+MaxDD
+cd backend && python scripts/backtest_technicals.py --walk-forward     # BUY_THRESH OOS re-select (WF avg 0.455)
+
 # Alembic migrations
 cd backend && alembic upgrade head
 ```
@@ -67,7 +73,10 @@ backend/
 | Scanner semaphore | 8 per worker | `signal_engine.py:scan_all()` (was 15, §43 DB pool fix) |
 | Swing floor | 70% confidence | `delivery_gates.py:STYLE_CONF_FLOORS` (was 62→65→70; alpha −1.028%/trade) |
 | BLOCKED_TICKERS | LRCX/MRVL/AMAT/KLAC/STT/MTB | `delivery_gates.py` (semi equipment + XLF regional banks — no 10-day MR) |
-| Entry model OOS AUC | 0.6399 | `data/backtest_ml_features.json` (14 tech features, 23yr IS) |
+| Entry model OOS AUC | 0.6399 (champion) | `data/backtest_ml_features.json` (14 tech features, 23yr IS) |
+| Entry model CV-AUC | 0.6188 ± 0.1261 | purged expanding-window CV (K=5, embargo=20d) |
+| Min N for live model deploy | 300 | `signal_ml.py:_MIN_LIVE_N_FOR_DEPLOYMENT` (Hanley-McNeil CI justification) |
+| Min AUC delta to deploy | 0.005 | `signal_ml.py:_MIN_AUC_DELTA_TO_DEPLOY` |
 | Dual model blend | 50% entry + 50% live → ×[0.75, 1.25] | `signal_ml.py:blend_confidence()` |
 
 ## CI
@@ -81,26 +90,28 @@ Steps: install deps → syntax check → import smoke → pytest → accuracy ga
 
 `ruff.toml` sets `target-version = "py311"` — run `ruff check` locally to catch these before push.
 
-## Research baseline (§59–§83 complete as of 2026-05-30)
+## Research baseline (§59–§83 complete as of 2026-05-31)
 
-All §47–§83 implemented. v6.3 (2026-05-30): CMF ×0.5, §63 cointegration, §80 NBBO spread, §81 block prints, §83 corr penalty, SHAP audit, sector XGBoost. All v6.3 gates are live-path only (not in `simulate_ticker()`) — IS Sharpe unchanged from v6.2. Backtest canon:
+All §47–§83 implemented. v6.4 (2026-05-31): Lo(2002) Sharpe CI + Deflated Sharpe output; ML deployment N-gate + AUC CI + min-delta; universe expanded 74→100 tickers; 6 new methodology integrity tests. IS CI [0.13, 0.44] — SR=0 outside 95% CI for first time ✅. Backtest canon:
 
-| Universe | N | WR | Avg Ret | Sharpe | MC P5 |
-|---|---|---|---|---|---|
-| **IS (§59–§82 gates, 74 tickers)** | **114** | **67.5%** | **+0.98%** | **0.28** | **0.13** ✅ |
-| IS sector-filtered (live-equivalent) | 94 | 64.9% | +0.90% | 0.24 | — |
-| OOS v5 CLEAN (19 tickers: ex AMAT/KLAC) | 27 | 55.6% | +0.18% | 0.05 | ⚠ |
-| OOS v5 ALL (21 tickers: XLK/XLY/XLC/XLB/XLF) | 30 | 50.0% | −0.27% | −0.07 | ⛔ |
-| OOS v3 (10 tickers: ORCL/AMAT/KLAC/NOW/NKE/DHI/APTV/CHTR/TTWO/FCX) | 14 | 50.0% | +0.27% | 0.06 | ⚠ |
-| OOS v2 (w/ MS — XLF ticker; blocked individually) | 18 | 38.9% | −0.47% | −0.11 | ⛔ |
-| IS (§55 gate, 48 tickers — prior canon) | 98 | 65.3% | +0.92% | 0.24 | 0.07 |
-| IS (§46 pre-agenda baseline) | 126 | 60.3% | +0.68% | 0.18 | 0.04 |
+| Universe | N | WR | Avg Ret | Sharpe | MC P5 | 95% CI |
+|---|---|---|---|---|---|---|
+| **IS (§59–§82 gates, 100 tickers)** | **157** | **70.7%** | **+1.04%** | **0.29** | **0.16** ✅ | **[0.13, 0.44] ✅** |
+| IS sector-filtered (live-equivalent, 9 XLV/XLE/XLI removed) | 136 | 69.9% | +1.02% | 0.24 | — | — |
+| **OOS v6 CLEAN (pre-specified 2026-05-31, 41 tickers ex-blocked)** | **51** | **62.7%** | **+0.62%** | **0.16** | ⚠ | **[−0.12, +0.44] ⚠** |
+| OOS v6 ALL (48 tickers incl. regional banks) | 61 | 54.1% | −0.10% | −0.02 | ⛔ | — |
+| OOS v5 CLEAN (19 tickers: ex AMAT/KLAC) | 27 | 55.6% | +0.18% | 0.05 | ⚠ | [−0.36, +0.46] ⚠ |
+| OOS v3 (10 tickers) | 14 | 50.0% | +0.27% | 0.06 | ⚠ | — |
+| IS (§59–§82 gates, 74 tickers — prior canon) | 114 | 67.5% | +0.98% | 0.28 | 0.13 | — |
+| IS (§46 pre-agenda baseline) | 126 | 60.3% | +0.68% | 0.18 | 0.04 | — |
 
-**OOS v5 result (2026-05-30):** CLEAN (19 tickers, ex AMAT/KLAC): N=27, WR=55.6%, Avg=+0.18%, Sharpe=0.05 ⚠. ALL (21 tickers): N=30, WR=50.0%, Avg=−0.27%, Sharpe=−0.07. Gap vs IS sector-filtered: WR −9.3pp, Sharpe −0.19 → modest curation bias; signal is real but overstated. KLAC 3 losses (−4.36%) correctly excluded from CLEAN via `_OOS_BLOCKED_TICKERS`. STT/MTB still 0% WR (−4.75%/−4.16%): regional banks confirmed drag → A3b block pending. Strong: DHI (+10.22%), ADSK (+4.90%), AVGO (+2.28%), APTV (+1.53%). PPG: 0% WR, −3.12%.
+**IS v6.4 result (2026-05-31):** N=157, WR=70.7%, Sharpe=0.29. CI [0.13, 0.44] — SR=0 outside CI ✅. Deflated Sharpe 0.29 > 0.22 — unlikely pure data mining ✅. Temporal stability: 3/4 epochs positive.
 
-**OOS v5 action item (A3b — done 2026-05-30):** STT/MTB added to `BLOCKED_TICKERS` in `delivery_gates.py` — regional banks confirmed no 10-day MR edge (OOS v5: both 0% WR). Also consider blocking PPG (materials, −3.12%). N remains below ≥30 target due to 0-trade tickers (NOW, SNPS, BWA, FCX, IFF, AMAT).
+**OOS v6 result (2026-05-31):** CLEAN (41 tickers, pre-specified before IS research): N=51, WR=62.7%, Avg=+0.62%, Sharpe=0.16. Curation bias gap: WR −2.2pp, Sharpe −0.08 vs IS sector-filtered — **smallest gap ever ✅**. OOS Sharpe ≥ 0.10 → edge generalises verdict ✅. CI [−0.12, +0.44] — SR=0 still inside ⚠ (N=51; need ≈387 for exclusion). Score-band 50–60: N=43, WR=60.5%, Sharpe=0.15 confirms edge in the dominant band.
 
-**Universe:** 74 individual stocks (no ETFs — ETF MR doesn't work with stock-level signal calibration; tested and documented in `backtest_technicals.py`). 10 tickers in XLV/XLI/XLE removed by §10 sector filter for live-equivalent view.
+**§QuantEngine decomposition (2026-05-31):** Beta hedge strips IS Sharpe 0.29→0.12 (pure MR alpha). Phantom wins corrected (88 signals) → live WR 42.5%, live Sharpe 1.32 (honest). Calibration recorrected: Brier 0.2432, all signals at ~42% confidence (min_confidence lowered to 40%). Portfolio CAGR +1.1%/yr (7 trades/yr, 65% idle); concurrent MaxDD −7.06%. **Honest forward Sharpe estimate: 0.12–0.16** (beta-hedged IS to OOS v6 range).
+
+**Universe:** 100 individual stocks for IS backtest (no ETFs — ETF MR doesn't work with stock-level signal calibration). XLV/XLI/XLE/XLP tickers are research-only (blocked in live engine by §10 sector filter). 9 tickers removed for sector-filtered live-equivalent view.
 
 **Gate calibration notes:**
 - `OU_HALFLIFE_MAX = 25d` (was 12d — at 12d, threshold sat at the median, blocking 50% of signals)

@@ -70,42 +70,32 @@ def apply_calendar_gates(
         )
         return action, confidence, cards, new_sources  # terminal: DOW gate fires
 
-    # ── §77 Tax-Loss Harvesting Seasonal Window ───────────────────────────
+    # ── §77 Tax-Loss Harvesting Window — INVERTED 2026-05-31 ─────────────────
+    # Live-data audit (Inv 3, 546 resolved signals): signals near 52-week low
+    # have WR=31.0% (−11.5pp vs baseline 42.5%). The academic tax-loss recovery
+    # hypothesis does not hold in our 10-day MR system — stocks near 52-week lows
+    # are in structural decline, not recoverable oversold. The prior +4pp boost was
+    # actively harmful. Replaced with a −4pp penalty: near-annual-low = structural
+    # seller pressure, not a temporary dislocation.
     _wk52l = info.get("week_52_low")
     if action == "BUY" and _wk52l and price and price > 0:
         _near_low = (_wk52l > 0) and (price <= _wk52l * 1.08)
-        if _near_low and month in (11, 12):
-            confidence = round(min(72.0, confidence + 4), 1)
+        if _near_low:
+            confidence = round(max(35.0, confidence - 4), 1)
             new_sources.add("Risk Gate")
             cards.append(
                 {
                     "src": "Risk Gate",
-                    "head": "Tax-Loss Selling Overshoot — Nov/Dec Season +4pp",
+                    "head": "Near 52-Week Low — Structural Decline Risk −4pp (§77)",
                     "body": (
-                        f"Price is within 8% of the 52-week low ({_wk52l:.2f}) "
-                        "in November/December — peak tax-loss harvesting season. "
-                        "Institutional forced selling near year-end creates temporary "
-                        "dislocations that revert sharply in January (Reinganum 1983). "
-                        "Confidence raised +4pp."
+                        f"Price is within 8% of the 52-week low ({_wk52l:.2f}). "
+                        "Live-data audit (546 trades): signals near 52-week lows win only "
+                        "31% of the time (−11.5pp vs baseline). These stocks are in "
+                        "structural decline — the dip is fundamental, not a recoverable "
+                        "oversold. Confidence reduced −4pp."
                     ),
-                    "sentiment": "pos",
-                    "meta": "tax_loss_season=Nov/Dec near_52wk_low=True (§77)",
-                }
-            )
-        elif month == 1:
-            confidence = round(min(72.0, confidence + 3), 1)
-            new_sources.add("Risk Gate")
-            cards.append(
-                {
-                    "src": "Risk Gate",
-                    "head": "January Effect — Tax-Loss Recovery Season +3pp",
-                    "body": (
-                        "January historically shows above-average returns for stocks beaten "
-                        "down in the prior Q4 tax-loss selling season. Mean-reversion entries "
-                        "here benefit from institutional re-deployment of harvested capital."
-                    ),
-                    "sentiment": "pos",
-                    "meta": "tax_loss_recovery=January (§77)",
+                    "sentiment": "neg",
+                    "meta": "near_52wk_low=True penalty=-4pp §77 (inverted 2026-05-31)",
                 }
             )
 
