@@ -27,9 +27,9 @@
 
 ---
 
-## End-to-End System Audit — v10.1 (2026-06-01, 107-ticker IS, L7+L8 sizing, quality gate sweep)
+## End-to-End System Audit — v10.2 (2026-06-01, L9 fix, §85-1 audit ready, ATR research reverted)
 
-> Updated from v10.0. v10.1 (2026-06-01): L8 quality_score sizing calibrated to IS p67/p33 (thresholds 43/35); §Inv-C validated +0.06 Sharpe; L7+L8 combined IS eff. Sh=0.37 (N=188, zero N drop); quality gate sweep (14 configs) — ATR≤70 only effective gate; §18 confirmed no conflict signals; AI-theme tickers (AAOI/COHR/LITE/MXL/SIMO) all FAIL; R2000 screener added (0.2% pass rate); OOS v7+v8 pre-specified (15 tickers); BLOCKED_SECTORS corrected; cross-sectional amenability OOS r=0.355; honest forward Sharpe revised 0.12–0.16 → 0.18–0.25. Tests: 1039 passing.
+> Updated from v10.1. v10.2 (2026-06-01): ATR≤70 gate REVERTED from live (N halves, ann.Sharpe 0.95→0.78 — N reduction dominates, research finding only); L9 HMM bear dampener removed (bear WR=72%>baseline, was cutting best trades; transition dampener 0.85× kept, MaxDD 0.86→0.73 confirmed); atrPctRank added to signal dict; §85-1 audit script ready (--section85 flag, needs ≥200 resolved signals); 1086 tests pass.
 > Rating scale: completeness × soundness.
 
 ### Overall Rating
@@ -37,24 +37,24 @@
 | Area | Rating | Δ | Notes |
 |---|---:|---|---|
 | Product completeness | 8.0/10 | — | Signal product, auth, billing, Telegram, paper trading, mobile/PWA, admin tooling all present. |
-| Trading/research depth | 8.5/10 | ↑ from 8.0 | IS eff. Sh=0.37 with L7+L8 (N=188, no N loss). quality_score High Sh=0.51 spread +0.34. ATR≤70 gate confirms +0.05. Forward 0.18–0.25. Technical ceiling confirmed: OHLCV+macro tops at IS~0.40. |
-| Backtest methodology | 8.2/10 | ↑ from 7.8 | §18 conflict analysis (no conflict signals — universe dilution is cause). Quality gate sweep (14 configs). Cross-sectional amenability model (r=0.355 OOS). R2000 screener. BLOCKED_SECTORS corrected. §Inv-C L8 sizing validation. Ceiling: survivorship bias. |
-| OOS validation | 6.2/10 | ↑ from 6.0 | OOS v6 CLEAN Sh=0.16 ✅. OOS amenability r=0.355 ✅. OOS v7 (10 tickers) + v8 (5 tickers) pre-specified. Need ~300 more trades to narrow CI below SR=0. |
-| Signal alpha quality | 5.5/10 | ↑ from 5.2 | IS Sh=0.31 base → 0.37 with L7+L8 sizing (zero N reduction). Beta-hedged alpha Sh=0.12. Forward 0.18–0.25 (up from 0.12–0.16). Technical gate ceiling confirmed. |
-| Risk management | 8.0/10 | — | Phantom wins corrected. L5+L6+L7+L8 positionSizeScale. APH blocked. R2000 pass rate 0.2% confirms large-cap quality essential. |
+| Trading/research depth | 8.7/10 | ↑ from 8.5 | L9 bear fix. L7+L8 IS eff. Sh=0.37. Forward 0.18–0.25. ATR≤70 research: +0.05 IS Sh but N halves → ann.Sh drops 0.95→0.78 (not deployed live). Technical ceiling IS~0.40 confirmed. |
+| Backtest methodology | 8.2/10 | — | Quality gate sweep, §18 conflict analysis, amenability model r=0.355. Ceiling: survivorship bias. |
+| OOS validation | 6.2/10 | — | OOS v6 CLEAN Sh=0.16 ✅. v7+v8 pre-specified (15 tickers). Need ~300 more trades. |
+| Signal alpha quality | 5.7/10 | ↑ from 5.5 | L7+L8 IS eff. Sh=0.37. §85-1 audit ready (needs ≥200 resolved signals). ATR≤70 research-only. |
+| Risk management | 8.2/10 | ↑ from 8.0 | L9 bear fix: no longer sizing down best (highest-VIX) trades. atrPctRank in signal dict for future use. |
 | Calibration quality | 8.0/10 | — | Cal v4: Brier 0.2641. Next recal after ≥50 post-A19 resolved signals. |
-| ML methodology | 8.0/10 | — | Entry model OOS AUC 0.6399 unchanged. quality_score L8 adds non-ML quality discrimination (+0.06 Sharpe validated). |
-| Backend architecture | 7.0/10 | — | signal_engine.py L7+L8 sizing live. CLAUDE.md updated. R2000 screener added. |
+| ML methodology | 8.0/10 | — | Entry model OOS AUC 0.6399 unchanged. quality_score L8 +0.06 Sharpe validated. |
+| Backend architecture | 7.2/10 | ↑ from 7.0 | delivery_gates.py ATR gate + atrPctRank field. gate_contribution_analysis.py §85-1 mode. 1086 tests. |
 | Frontend architecture | 7.0/10 | — | A8 complete. |
 | Security posture | 7.0/10 | — | CSP `unsafe-eval` eliminated. **Default owner password still in .env ⚠ — critical pre-launch.** |
-| Testing/CI | 9.5/10 | — | 1039 passing. |
+| Testing/CI | 9.5/10 | — | 1086 passing (47 new since v10.0). |
 | Deployment readiness | 6.2/10 | — | HTTPS, Stripe webhook, SMTP, Telegram channel, VAPID all still needed. |
 
-**Overall project rating: 7.5/10** (↑ from 7.3 — L8 sizing validated, forward Sharpe revised up, amenability model OOS-confirmed, research agenda complete)
+**Overall project rating: 7.6/10** (↑ from 7.5 — L9 fixed, §85-1 audit ready, ATR research finding documented)
 
-> **Key honest assessment (v10.1):** IS base Sh=0.31 (N=188). L7+L8 sizing: IS eff. Sh=0.37.
-> OOS v6 Sh=0.16. Honest forward: 0.18–0.25 (L7+L8 ×0.55 haircut). Technical ceiling ~IS 0.40.
-> quality_score High Sh=0.51 — not blocked, just sized 1.30×. quality_score Low Sh=0.17 — sized 0.75×.
+> **Key honest assessment (v10.2):** IS base Sh=0.31. L7+L8 sizing: IS eff. Sh=0.37. OOS v6 Sh=0.16.
+> Forward: 0.18–0.25. ATR≤70: +0.05 IS Sh but ann.Sh drops (N halves) — research finding only, not live.
+> Next: §85-1 fundamental modifier audit at ≥200 resolved live signals.
 > To reach forward 0.50: external alpha data required (options flow, order flow).
 
 ---
@@ -76,7 +76,7 @@
 
 > Piotroski (§50), Beneish (§74), Altman (§76), and EDGAR insider clustering (§73) are score adjustments in the live engine only — they do NOT run in the IS backtest (`backtest_technicals.py` is technical-only). IS Sh=0.29 already excludes them. The IS/live WR gap (70.5% → 42.5%) may be partly driven by these modifiers misfiring on a 5–10 day horizon. The only way to audit them is on live resolved signals.
 
-- [ ] **§85-1. Segment live resolved signals by which fundamental modifier fired** — After ≥200 resolved live signals, use the DB to tag each trade by whether Piotroski±, Beneish−, Altman−, or insider_clustering fired. Compare WR for each segment vs. baseline. This extends A5's per-gate ΔWR analysis to the fundamental modifiers specifically. Remove any modifier where the segment WR is within 1pp of unmodified-signal WR.
+- [x] **§85-1. Script ready** — `python scripts/gate_contribution_analysis.py --section85 --after 2026-06-01`. Segments by Piotroski/PE/ShortInt/Insider/Beneish/Altman/EPS-Revision. KEEP/WATCH/REMOVE verdicts at N≥30. **Pending live data:** needs ≥200 resolved signals. Run when ready; remove any modifier with ΔWR < −1pp + N≥30.
 - [ ] **§85-2. Audit EDGAR MD&A sentiment contribution** — `edgar.py` MD&A NLP is annual 10-K data applied to a 5-day trade. Tag live signals that received an MD&A score adjustment and compute ΔWR. If no improvement, disable. Low priority until §85-1 data is available (depends on A5 being tracked).
 
 ### Alpha Research (§45–§46, active)
@@ -189,7 +189,7 @@ All implemented. See CLAUDE.md for constants and gate details.
 ### 🟠 High Impact
 
 - [x] **A4. Confidence re-calibration** — v3 done 2026-05-31 (Brier 0.2432 val). v4 done 2026-06-01 post-A19: Brier 0.2641, 18,656 signals updated avg −1pp (all now <55%). L4 sizing recalibrated to new 40-54% confidence band. True §82/post-A19-aware cal needs N≥50 post-A19 resolved signals.
-- [ ] **A5. Live gate contribution monitoring** — Script ready: `python scripts/gate_contribution_analysis.py`. Detects gate firing from existing `rationale` JSON (no schema change needed). Run after ≥200 resolved signals. Add `--after 2026-06-01` to filter post-A19 signals only. Remove gates where ΔWR < −1pp with N≥30.
+- [x] **A5. Live gate contribution monitoring — script complete** — `python scripts/gate_contribution_analysis.py --after 2026-06-01`. Full gate audit + §85-1 fundamental-only mode (`--section85`). Pending: run when ≥200 resolved live signals available. Remove gates where ΔWR < −1pp with N≥30.
 - [ ] **A6. Monitor live stop-hit rate at 1.5s/2.0t** — If live stop-hit rate exceeds 55% on the first 50 resolved signals, revert to 1.5s/2.5t.
 
 ### 🟡 Medium Priority

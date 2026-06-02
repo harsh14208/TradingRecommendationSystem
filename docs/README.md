@@ -1,8 +1,8 @@
 # Signal.Trade
 
-**Institutional-grade trading signals — 70+ independent indicators across 15 categories, real-time options sweeps, 13F institutional flow with QoQ trend tracking, structural market invariants, multi-user Telegram delivery, full subscription stack, and institutional performance analytics.**
+**Quantitative mean-reversion trading signals — 70+ independent indicators, 23-year backtested MR strategy (IS Sharpe 0.37 with L7+L8 sizing), multi-user Telegram delivery, full subscription stack, and institutional performance analytics.**
 
-> **v6.3** · 995 tests passing · PostgreSQL primary · 7,015+ signals · 543 resolved trades
+> **v10.2** · 1086 tests passing · PostgreSQL primary · IS N=188 trades/23yr, OOS Sharpe=0.16 · Forward Sharpe est. 0.18–0.25
 > Not financial advice. For informational and educational purposes only.
 
 ---
@@ -11,8 +11,8 @@
 
 Signal.Trade is a personal quant desk that:
 
-- **Scans ~210 tickers** continuously (09:30–16:00 ET) using 70+ independent signals across 15 categories
-- **Scores each signal** into a calibrated confidence rating (40–72%) with a hard empirical ceiling
+- **Scans ~107 IS-validated tickers** continuously (09:30–16:00 ET) using 70+ independent signals across 15 categories
+- **Scores each signal** into a calibrated confidence rating (40–55%) — ceiling post-cal v4 (Brier 0.2641)
 - **Classifies trading style** (intraday / swing / position) from the actual rationale composition — not a heuristic flag
 - **Delivers high-confidence BUY/SELL signals** via Telegram with entry, stop, target, R:R, and plain-English explanation
 - **Applies structural market invariants** — VIX hard floor, risk-free rate yield dampener, VWAP liquidity filter, earnings blackout, sector peer confirmation, and correlation-based portfolio limits
@@ -120,7 +120,7 @@ These run as post-processing gates on every signal, regardless of technical scor
 | Invariant | Logic |
 |-----------|-------|
 | **Risk-Free Rate Dampener** | Projected return (entry→target) must clear 10Y Treasury + sector risk premium (+3.5pp high-beta, +2.0pp others). Below risk-free → −14pp confidence |
-| **VIX Hard Floor** | VIX > 30 AND confidence < 75% → forced HOLD. Prevents catching falling knives in panic regimes |
+| **VIX Gates** | VIX < 15 → MR entries suspended (too calm for fear-driven bounces). VIX > 20 required for MR entry (§9b). VIX > 25 → marginal signals blocked. VIX > 30 → extreme filter |
 | **VWAP Binary Filter** | Price >2% below 20-day VWAP on BUY → liquidity headwind penalty (1pt/%, capped −12). Exemption for RSI < 35 |
 | **Earnings Hard Blackout** | ≤2d to earnings → score zeroed → forced HOLD regardless of technical strength |
 | **Sector Peer Confirmation** | BUY with <2 of 3 sector peers also bullish → −6pp (1 peer) or −12pp (0 peers) confidence haircut |
@@ -138,13 +138,11 @@ These run as post-processing gates on every signal, regardless of technical scor
 
 ### Confidence Calibration
 
-The engine uses a sigmoid capped at **72% maximum confidence** (empirically calibrated ceiling — was 84%, lowered after validation showed 75–84% bands winning at only 48–50%):
+The engine uses a calibrated confidence scale. Post-calibration v4 (2026-06-01, Brier=0.2641): **all live signals are <55% confidence** (min_confidence=40%). The `⚠ CALIB` badge fires when confidence exceeds empirical win rate by >20pp. Post-signal calibration uses isotonic regression (preferred) or Platt bin-blend. IS backtest win rate: 70.7%. Live win rate (phantom-win corrected): 42.5%.
 
 ```
-confidence ≈ 40 + 44 × (1 − e^(−|score|/65)) + agreement_bonus
+confidence ≈ sigmoid(score) → isotonic-calibrated → capped empirically
 ```
-
-This ceiling is set by empirical calibration. The `⚠ CALIB` badge fires when confidence exceeds empirical win rate by >20pp. Post-signal calibration uses isotonic regression (preferred) or Platt bin-blend with `_MAX_BLEND=0.97`, `_N_FULL=15`.
 
 ---
 

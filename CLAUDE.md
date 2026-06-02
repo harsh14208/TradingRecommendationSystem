@@ -31,6 +31,12 @@ cd backend && python scripts/backtest_technicals.py --walk-forward     # BUY_THR
 cd backend && python scripts/backtest_technicals.py --inv2             # VIX<20 gate ablation (2022-present epoch)
 cd backend && python scripts/backtest_technicals.py --inv5             # dead gate ablation (§59/§60/§61/§78)
 # §Inv-B quality_score tier analysis runs automatically in every IS backtest (no flag needed)
+# §Inv-C L8 quality_score-weighted sizing validation runs automatically after §Inv-B
+cd backend && python scripts/backtest_technicals.py --quality-sweep  # 14-config entry quality gate sweep
+
+# Gate contribution + §85-1 fundamental modifier audit
+cd backend && python scripts/gate_contribution_analysis.py                        # A5: all gates, full report
+cd backend && python scripts/gate_contribution_analysis.py --section85 --after 2026-06-01  # §85-1: fundamentals only (needs ≥200 resolved signals)
 
 # Frontend build (A8 complete — bundle pre-built in dist/)
 node build.mjs                                                         # rebuild after JSX changes
@@ -79,7 +85,7 @@ backend/
     polygon_client.py  # Polygon REST + extended-hours snapshot
     delivery_gates.py  # Sector/session/volatility filters
     macro.py           # VIX, STLFSI4, SPY trend
-  tests/               # pytest suite (~1039 tests)
+  tests/               # pytest suite (~1086 tests)
   scripts/
     backtest_technicals.py  # 23-year MR backtest + OOS validation
     train_backtest_ml.py    # Train entry model on IS backtest outcomes
@@ -108,7 +114,8 @@ backend/
 | §78 SEP/OCT_SCORE_FLOOR | **0** (disabled) | `backtest_technicals.py` (dead at 100-ticker scale: Inv5 +11N −0.01Sh) |
 | §77 Tax-Loss | **−4pp penalty** | `gates/calendar.py` (inverted: live WR 31% near 52-wk low, was +4pp) |
 | §75 Buyback boost | **disabled** | `signal_engine.py` (live WR 33.8%, −8.7pp drag) |
-| positionSizeScale | L1×L2×L3×L4×L5×L6×L7×L8 | `signal_engine.py` (L7=raw-score Kelly ±15% +0.03Sh; L8=quality_score tier ≥43→1.30× / 35–43→1.0× / <35→0.75× +0.06Sh; combined L7+L8=+0.09Sh IS) |
+| positionSizeScale | L1×…×L8 (L9 bear removed) | `signal_engine.py` (L7=raw-score Kelly ±15% +0.03Sh; L8=quality_score ≥43→1.30×/35–43→1.0×/<35→0.75× +0.06Sh; L9 bear dampener removed — bear WR=72%>baseline, was cutting best trades) |
+| ATR≤70 research finding | Backtest-only (not live gate) | IS sweep: +0.05 Sharpe but N 197→98 (−50%). Ann.Sharpe DROPS: 0.95→0.78 (N reduction dominates). Keep for research reference; do not apply as live delivery gate. |
 | Entry model OOS AUC | 0.6399 (champion) | `data/backtest_ml_features.json` (14 tech features, 23yr IS) |
 | Entry model CV-AUC | 0.6188 ± 0.1261 | purged expanding-window CV (K=5, embargo=20d) |
 | Min N for live model deploy | 300 | `signal_ml.py:_MIN_LIVE_N_FOR_DEPLOYMENT` (Hanley-McNeil CI justification) |
@@ -128,7 +135,7 @@ Steps: install deps → syntax check → import smoke → pytest → accuracy ga
 
 ## Research baseline (§59–§83 complete as of 2026-06-01)
 
-All §47–§83 implemented. **v10.1 (2026-06-01):** L8 quality_score sizing recalibrated (thresholds 60/30→43/35 matching IS p67/p33); §Inv-C validated +0.06 Sharpe; L7+L8 combined IS=0.40; quality gate sweep confirmed ATR≤70 only effective gate (+0.05, N=98); AI-theme ticker screen completed (all FAIL — momentum stocks incompatible with 10d MR); R2000 screener added (pass rate 0.2% vs R1000 1.6%); OOS v7 (10 tickers) + OOS v8 (5 tickers) pre-specified. Backtest canon:
+All §47–§83 implemented. **v10.2 (2026-06-01):** ATR≤70 gate research finding REVERTED from live delivery (N halves 197→98, ann.Sharpe drops 0.95→0.78 — N reduction dominates; backtest-only); L9 HMM bear dampener removed (bear WR=72%>baseline, was cutting best trades; transition dampener 0.85× kept); atrPctRank added to signal dict; §85-1 script ready; 1086 tests. **v10.1:** L8 quality_score recalibrated (43/35, +0.06Sh); L7+L8 combined IS eff. Sh=0.37; quality gate sweep; AI-theme screened (all FAIL); R2000 screener; OOS v7+v8 pre-specified. Backtest canon:
 
 | Universe | N | WR | Avg Ret | Sharpe | MC P5 | 95% CI |
 |---|---|---|---|---|---|---|
@@ -147,7 +154,7 @@ All §47–§83 implemented. **v10.1 (2026-06-01):** L8 quality_score sizing rec
 | IS (v6.4, 100 tickers — prior canon before dead gate removal) | 157 | 70.7% | +1.04% | 0.29 | 0.16 | [0.13, 0.44] |
 | IS (§46 pre-agenda baseline) | 126 | 60.3% | +0.68% | 0.18 | 0.04 | — |
 
-**IS v10.1 (2026-06-01):** L8 quality_score sizing calibrated to IS p67/p33 (thresholds 43/35). §Inv-C: L8 alone +0.06 Sharpe (Sh 0.31→0.37, N=188, WR 70.7%→73.8%). L7+L8 combined: IS effective Sharpe ≈ **0.40** (zero N reduction). ATR≤70 quality gate confirmed only effective entry filter (+0.05 Sharpe, N=98). AI-theme tickers screened (AAOI, COHR, LITE, MXL, SIMO) — all FAIL (momentum stocks incompatible with 10d MR VIX gate). R2000 screened (1/440 PASS = 0.2% vs R1000 1.6% — large-cap quality essential). OOS v7+v8 pre-specified (15 total tickers).
+**IS v10.1 (2026-06-01):** L8 quality_score sizing calibrated to IS p67/p33 (thresholds 43/35). §Inv-C: L8 alone +0.06 Sharpe (Sh 0.31→0.37, N=188, WR 70.7%→73.8%). L7+L8 combined: IS effective Sharpe ≈ **0.37** (zero N reduction). Quality gate sweep: ATR≤70 gives +0.05 IS Sharpe but N drops 50% → ann.Sharpe FALLS; not deployed as live gate. AI-theme tickers (AAOI, COHR, LITE, MXL, SIMO) — all FAIL (momentum stocks incompatible with 10d MR VIX gate). R2000 screened (1/440 PASS = 0.2% vs R1000 1.6% — large-cap quality essential). OOS v7+v8 pre-specified (15 total tickers).
 
 **IS v10.0 (2026-06-01):** N=188 (was 173 — +MCO/HAL + sector map fix unlocking correct blocked-sector filtering). MC P5=0.20 (↑ from 0.16). SR=0 outside 95% CI at N=188 ✅. quality_score discrimination: High tier Sh=0.51 vs Low tier Sh=0.17 — spread +0.34. Deflated Sharpe 0.31 > data-mining expectation 0.20 ✅. L7 score-weighted sizing adds +0.03 Sharpe → 0.34, live in signal_engine.py.
 
