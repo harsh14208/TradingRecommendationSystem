@@ -143,37 +143,6 @@ async def fundamentals_worker(
     macro = (market_ctx or {}).get("macro") or {}
     t10y = macro.get("t10y")
 
-    # Piotroski F-Score
-    f = fundamentals.get("piotroski_f")
-    if f is not None:
-        result.sources.add("Fundamentals")
-        if f >= 7:
-            result.score += 12
-            result.rationale.append(
-                {
-                    "src": "Fundamentals",
-                    "head": f"Piotroski F-Score {f}/9 — Financially Strong",
-                    "body": f"F-Score of {f}/9: strong profitability, leverage, and efficiency. High-F-score stocks outperform by 7–9% annually.",
-                    "sentiment": "pos",
-                    "meta": f"F-Score: {f}/9",
-                }
-            )
-        elif f >= 5:
-            result.score += 5
-        elif f <= 2:
-            result.score -= 10
-            result.rationale.append(
-                {
-                    "src": "Fundamentals",
-                    "head": f"Piotroski F-Score {f}/9 — Financially Weak",
-                    "body": f"F-Score of only {f}/9: poor profitability, increasing leverage.",
-                    "sentiment": "neg",
-                    "meta": f"F-Score: {f}/9",
-                }
-            )
-        elif f <= 4:
-            result.score -= 4
-
     # FCF Yield
     fcf = fundamentals.get("fcf_yield")
     if fcf is not None:

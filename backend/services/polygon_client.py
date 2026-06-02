@@ -101,7 +101,7 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
                 # Return only the necessary columns in correct case
                 return df[["Open", "High", "Low", "Close", "Volume"]]
     except Exception as e:
-        log.warning(f"[polygon] Exception fetching {ticker}: {e}")
+        log.warning(f"[polygon] Exception fetching {ticker}: {type(e).__name__}: {e}")
         return None
 
 
@@ -409,6 +409,13 @@ async def get_polygon_dividends(ticker: str) -> list[dict]:
 _block_print_cache: dict[str, tuple[dict, float]] = {}
 _BLOCK_PRINT_TTL = 600  # 10 min — refreshed each scan cycle
 
+# ── OFI (Order Flow Imbalance) ────────────────────────────────────────────────
+# Lee-Ready (1991) approximation on 1-min Polygon aggregate bars.
+# ofi_t = V_t × sign(C_t − C_{t−1}): buyer-initiated if price ticked up, else seller.
+# Normalized by session ADV so the metric is comparable across tickers.
+_ofi_cache: dict[str, tuple[dict, float]] = {}
+_OFI_TTL = 600  # 10 min
+
 
 async def get_recent_block_prints(
     ticker: str,
@@ -506,4 +513,89 @@ async def get_recent_block_prints(
         return result
     except Exception as e:
         log.debug("[polygon] block_prints %s: %s", t, e)
+        return {}
+
+
+async def get_ofi_signals(ticker: str) -> dict:
+    """
+    Order Flow Imbalance from Polygon 1-minute aggregate bars.
+
+    Returns:
+        ofi_30m        — normalized OFI over last 30 bars (half-hour)
+        ofi_2h         — normalized OFI over last 120 bars (two hours)
+        ofi_1d         — normalized OFI over full session
+        ofi_divergence — price_ret * -1 * ofi_1d; positive when price fell
+                         but buyers were net absorbing (accumulation signal)
+
+    All values are normalized by session total volume; range roughly [-1, +1].
+    Empty dict returned on error or when Polygon key is absent.
+    """
+    t = ticker.upper()
+    cached = _ofi_cache.get(t)
+    if cached and time.monotonic() - cached[1] < _OFI_TTL:
+        return cached[0]
+
+    api_key = _get_api_key()
+    if not api_key:
+        return {}
+
+    try:
+        import ssl as _ssl
+
+        import certifi as _certifi
+        import numpy as _np
+
+        ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
+
+        # Fetch today's 1-minute bars (full session = up to 390 bars)
+        now_utc = datetime.now(timezone.utc)
+        # Use yesterday as from-date so pre-market bars are included
+        from_dt = (now_utc - timedelta(days=2)).strftime("%Y-%m-%d")
+        to_dt = now_utc.strftime("%Y-%m-%d")
+        url = f"{_BASE}/v2/aggs/ticker/{t}/range/1/minute/{from_dt}/{to_dt}"
+        params = {
+            "adjusted": "true",
+            "sort": "asc",
+            "limit": 1000,
+            "apiKey": api_key,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=5, ssl=ssl_ctx) as resp:
+                if resp.status != 200:
+                    return {}
+                data = await resp.json(content_type=None)
+
+        results = data.get("results") or []
+        if len(results) < 10:
+            return {}
+
+        closes = _np.array([float(r.get("c") or 0) for r in results])
+        volumes = _np.array([float(r.get("v") or 0) for r in results])
+
+        # Lee-Ready sign: price ticked up → buyer-initiated; down → seller
+        price_diff = _np.diff(closes, prepend=closes[0])
+        signs = _np.where(price_diff > 0, 1.0, _np.where(price_diff < 0, -1.0, 0.0))
+        ofi_series = signs * volumes
+
+        session_vol = float(volumes.sum()) or 1.0
+        ofi_30m = float(ofi_series[-30:].sum()) / session_vol
+        ofi_2h = float(ofi_series[-120:].sum()) / session_vol
+        ofi_1d = float(ofi_series.sum()) / session_vol
+
+        # Divergence: positive when price fell but net flow was buying
+        price_ret_today = float(closes[-1] / closes[0] - 1) if closes[0] > 0 else 0.0
+        ofi_divergence = price_ret_today * -1.0 * ofi_1d
+
+        result = {
+            "ofi_30m": round(ofi_30m, 4),
+            "ofi_2h": round(ofi_2h, 4),
+            "ofi_1d": round(ofi_1d, 4),
+            "ofi_divergence": round(ofi_divergence, 6),
+        }
+        _ofi_cache[t] = (result, time.monotonic())
+        return result
+
+    except Exception as e:
+        log.debug("[polygon] ofi %s: %s", t, e)
         return {}

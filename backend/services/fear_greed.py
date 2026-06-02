@@ -1,6 +1,9 @@
+import logging
 import ssl
 import time
 from typing import Optional
+
+log = logging.getLogger("signal.trade.fear_greed")
 
 import aiohttp
 import certifi
@@ -80,7 +83,7 @@ async def get_fear_greed() -> Optional[dict]:
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status != 200:
-                    print(f"[fear_greed] HTTP {resp.status} from CNN API")
+                    log.warning(f"[fear_greed] HTTP {resp.status} from CNN API")
                     return _cache["data"] if _cache.get("data") is not None else _neutral_result()
                 raw = await resp.json(content_type=None)
 
@@ -103,7 +106,7 @@ async def get_fear_greed() -> Optional[dict]:
         return result
 
     except Exception as e:
-        print(f"[fear_greed] {e}")
+        log.warning(f"[fear_greed] {e}")
         return _cache.get("data") if _cache.get("data") is not None else _neutral_result()
 
 

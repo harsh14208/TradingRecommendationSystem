@@ -4,9 +4,12 @@ Both use free public APIs (no key required).
 Cached per ticker: 30 minutes.
 """
 
+import logging
 import ssl
 import time
 from urllib.parse import quote
+
+log = logging.getLogger("signal.trade.social")
 
 import aiohttp
 import certifi
@@ -52,7 +55,7 @@ async def get_social_sentiment(ticker: str) -> dict:
                         result["st_bull"] = bull
                         result["st_bear"] = bear
         except Exception as e:
-            print(f"[social] StockTwits {ticker}: {e}")
+            log.warning(f"[social] StockTwits {ticker}: {e}")
 
         # ── Reddit WSB mention velocity ───────────────────────────────────
         try:
@@ -67,7 +70,7 @@ async def get_social_sentiment(ticker: str) -> dict:
                     day_posts = [p for p in posts if now_ts - p.get("data", {}).get("created_utc", 0) < 86400]
                     result["wsb_mentions_1d"] = len(day_posts)
         except Exception as e:
-            print(f"[social] Reddit {ticker}: {e}")
+            log.warning(f"[social] Reddit {ticker}: {e}")
 
     _cache[ticker] = (result, time.time())
     return result

@@ -141,6 +141,7 @@ TICKERS = [
     "V",  # Visa — payments network; smooth compounder; MR on rate fears
     "AXP",  # American Express — consumer spend proxy; strong MR on pullbacks
     "SPGI",  # S&P Global — data/ratings; predictable earnings, clean MR
+    "MCO",  # Moody's Corp — credit ratings; R1000 screener N=9, WR=78%, Avg=+1.21% (2006-2016)
     # XLY additions — travel + auto + off-price
     "BKNG",  # Booking Holdings — travel demand cycles; high-beta MR bounces
     "GM",  # General Motors — auto cyclical; oversold bounces well-defined
@@ -174,7 +175,7 @@ TICKERS = [
     "CF",  # CF Industries — fertilizer; nat-gas/crop-price commodity-cycle MR
     "MLM",  # Martin Marietta Materials — aggregates; construction-cycle MR
     "CE",  # Celanese — specialty chemicals; S&P 500 since 2010; cycle MR
-    # XLV Healthcare (§10 removes — blocked in live engine; backtest research only)
+    # XLV Healthcare (§10 removes — allowed in live engine)
     "JNJ",  # Johnson & Johnson — pharma/medtech compounder; classic MR anchor
     "MRK",  # Merck — pharma; patent-cycle MR on pipeline news
     "LLY",  # Eli Lilly — high-growth pharma; MR on sentiment swings
@@ -184,14 +185,17 @@ TICKERS = [
     "AMGN",  # Amgen — large biotech; stable enough for MR; S&P 500 since 1994
     "CI",  # Cigna — managed care peer to UNH; earnings-driven MR
     "HCA",  # HCA Healthcare — hospital operator; volume-cycle MR; S&P 500 since 2015
-    # XLE Energy (§10 removes — blocked in live engine; backtest research only)
+    # XLE Energy (§10 removes — allowed in live engine)
     "XOM",  # ExxonMobil — mega-cap energy; oil-cycle MR
     "CVX",  # Chevron — stable major; cleaner MR than XOM
     "COP",  # ConocoPhillips — E&P; high-beta oil MR
     "SLB",  # SLB (Schlumberger) — oilfield services; oil-activity-cycle MR
     "EOG",  # EOG Resources — E&P; commodity-cycle MR; S&P 500 since 2000
     "MPC",  # Marathon Petroleum — refining; crack-spread-cycle MR
-    # XLI additions (§10 removes — blocked in live engine; backtest research only)
+    "HAL",  # Halliburton — oilfield services; R1000 screener WR=86%, Avg=+4.30% (fast mode)
+    # FTI removed: IS N=1 WR=0% Avg=-6.80% (§31-4 verdict: fast-mode 83% WR not replicated full IS)
+    # TRGP removed: IS N=4 WR=25% Avg=-1.30% (§31-4 verdict: midstream gas continuation not MR)
+    # XLI additions (§10 removes — allowed in live engine)
     "HON",  # Honeywell — diversified industrial; steady compounder MR
     "RTX",  # RTX Corp (Raytheon) — defense/aerospace; backlog-driven MR
     "CAT",  # Caterpillar — machinery; global construction/mining cycle MR
@@ -321,6 +325,30 @@ HELD_OUT_TICKERS = [
     "ZION",  # Zions Bancorporation — regional bank; S&P 500 since 2000; rate-cycle MR
     "CFG",  # Citizens Financial — regional bank; S&P 500 since 2015; consumer credit MR
     "PRU",  # Prudential Financial — insurance/asset mgmt; S&P 500 since 2001; market-cycle MR
+    # ── OOS v7 — pre-specified 2026-06-01, chosen BEFORE any IS research on these names ──
+    # Selection: amenability model (r=0.355 OOS validated) → healthcare + consumer + exchange operators.
+    # Healthcare (XLV — confirmed live-eligible, cross-sectional t=+2.12**):
+    "SYK",  # Stryker — surgical equipment/instruments; S&P 500 since 1998; rate-fear MR
+    "RMD",  # ResMed — sleep/respiratory devices; S&P 500 since 2004; earnings-cycle MR
+    "IDXX",  # IDEXX Laboratories — veterinary diagnostics; S&P 500 since 2011; sector-sentiment MR
+    "ZBH",  # Zimmer Biomet — orthopedic devices; S&P 500 since 2001; procedure-volume MR
+    # XLY — Consumer Discretionary (sect_consumer t=+2.37**):
+    "RL",  # Ralph Lauren — luxury apparel; S&P 500 since 1997; consumer sentiment MR
+    "DECK",  # Deckers Brands (UGG/HOKA) — footwear; S&P 500 since 2011; earnings-cycle MR
+    "POOL",  # Pool Corporation — pool supply distribution; S&P 500 since 2004; seasonal MR
+    # XLF — Exchange operators (not rate-credit sensitive; structural liquidity providers):
+    "NDAQ",  # Nasdaq — exchange/data; S&P 500 since 2002; market-cycle MR on vol spikes
+    "CBOE",  # Cboe Global Markets — options exchange; S&P 500 since 2010; VIX-cycle MR
+    "BR",  # Broadridge Financial — investor communications; S&P 500 since 2007; earnings MR
+    # ── OOS v8 — pre-specified 2026-06-01, from Russell 2000 screener ──────────────────────────
+    # R2000 screener: 1/440 PASS (LNC Sh=0.76), 4 credible WATCH. Excluded data artifacts:
+    # BILL (IPO 2019), FND (IPO 2017), GAP (ticker ambiguity — real ticker is GPS).
+    # R2000 pass rate 0.2% vs R1000 1.6% → confirms large-cap quality essential for 10d MR.
+    "LNC",  # Lincoln National — life insurance; R2000 PASS: N=11, WR=73%, Sh=0.76, avg=+2.82%
+    "AMG",  # Affiliated Managers Group — asset manager (BX/KKR profile); WATCH N=4, WR=100%
+    "PAYC",  # Paycom Software — payroll SaaS; WATCH N=8, WR=75% (IPO 2014; partial fast-mode)
+    "SIG",  # Signet Jewelers — jewelry retail; WATCH N=5, WR=100%, avg=+4.71%
+    "AEO",  # American Eagle Outfitters — apparel; WATCH N=4, WR=75%, avg=+1.48%
 ]
 
 # Live-blocked tickers that appear in HELD_OUT_TICKERS — excluded from "clean" OOS metrics.
@@ -350,7 +378,7 @@ TICKER_TO_SECTOR: dict[str, str] = {
     # OOS v5 additions (XLK)
     "AVGO": "XLK",
     "ACN": "XLK",
-    # XLI — Industrials (blocked in delivery_gates)
+    # XLI — Industrials (allowed in delivery_gates; §10 historical filter)
     "ROP": "XLI",
     "TDY": "XLI",
     "TEL": "XLI",
@@ -397,6 +425,7 @@ TICKER_TO_SECTOR: dict[str, str] = {
     "V": "XLF",
     "AXP": "XLF",
     "SPGI": "XLF",
+    "MCO": "XLF",
     # XLC — Communication Services
     "DIS": "XLC",
     "T": "XLC",
@@ -413,16 +442,16 @@ TICKER_TO_SECTOR: dict[str, str] = {
     "TJX": "XLY",
     # XLK — Technology
     "ANET": "XLK",
-    # XLV — Healthcare (blocked in §10)
+    # XLV — Healthcare (allowed in live engine)
     "JNJ": "XLV",
     "MRK": "XLV",
     "LLY": "XLV",
     "UNH": "XLV",
-    # XLE — Energy (blocked in §10)
+    # XLE — Energy (allowed in live engine)
     "XOM": "XLE",
     "CVX": "XLE",
     "COP": "XLE",
-    # XLI — Industrials additions (blocked in §10)
+    # XLI — Industrials additions (allowed in live engine)
     "HON": "XLI",
     "RTX": "XLI",
     # XLP — Consumer Staples (live-blocked; §10 does not block — research only)
@@ -467,8 +496,57 @@ TICKER_TO_SECTOR: dict[str, str] = {
     "ZION": "XLF",
     "CFG": "XLF",
     "PRU": "XLF",
+    # ── IS 100→105 expansion tickers (2026-05-31) — missing from map ──────────
+    # XLK — Technology
+    "INTU": "XLK",
+    "WDAY": "XLK",
+    "IBM": "XLK",
+    "MSI": "XLK",
+    # XLF — Financials
+    "ICE": "XLF",
+    "CME": "XLF",
+    "TROW": "XLF",
+    "COF": "XLF",
+    "CB": "XLF",
+    # XLY — Consumer Discretionary
+    "CMG": "XLY",
+    "PHM": "XLY",
+    "LEN": "XLY",
+    "ORLY": "XLY",
+    "DRI": "XLY",
+    "ULTA": "XLY",
+    # XLC — Communication Services
+    "CMCSA": "XLC",
+    "EA": "XLC",
+    "IPG": "XLC",
+    # XLB — Materials
+    "CF": "XLB",
+    "MLM": "XLB",
+    "CE": "XLB",
+    # XLV — Healthcare (allowed in delivery_gates (cross-sectional confirmed))
+    "ABT": "XLV",
+    "BSX": "XLV",
+    "AMGN": "XLV",
+    "CI": "XLV",
+    "HCA": "XLV",
+    # XLE — Energy (allowed in delivery_gates (cross-sectional confirmed))
+    "SLB": "XLE",
+    "EOG": "XLE",
+    "MPC": "XLE",
+    "HAL": "XLE",
+    # XLI — Industrials (allowed in delivery_gates (cross-sectional confirmed))
+    "CAT": "XLI",
+    "DE": "XLI",
+    "LMT": "XLI",
 }
-_BLOCKED_SECTORS = {"XLI", "XLV", "XLE", "XLRE", "XLU"}
+# §10 sector filter: matches ACTUAL delivery_gates.py BLOCKED_SECTORS.
+# delivery_gates.py: frozenset({"XLF", "XLP", "XLU"}) — XLV/XLI/XLE are allowed.
+# Cross-sectional model (2026-06-01): healthcare (t=+2.12**) and consumer (t=+2.37**)
+# confirmed positive MR alpha — removing them from §10 was incorrect.
+# XLF individual stocks (JPM/WFC/etc.) are NOT blocked — only XLF ETF itself.
+# We include XLF here for the §10 "sector-neutral" view since sectorEtf=XLF stocks
+# are tracked by the scanner but the ETF signal itself would be blocked.
+_BLOCKED_SECTORS = {"XLP", "XLU", "XLRE"}
 
 START = "2003-01-01"  # extended from 2006 — captures Pre-GFC Bull fully (was only 2006-07)
 END = datetime.today().strftime("%Y-%m-%d")
@@ -2692,6 +2770,14 @@ def simulate_ticker(
                 "ad_ema10_chg": round(_ad_chg_today, 1) if _ad_chg_today is not None else None,
                 "zweig_thrust": _zweig_today,
                 "near_52wk_low": _near_52wk_low_flag,
+                # ── Regime + microstructure context at entry (backtest_new_layers.py) ──
+                "vix_entry": round(float(vix_today), 2) if vix_today is not None else None,
+                "spy_trend_entry": int(spy_trend.get(date, 0)),
+                # OFI daily proxy: ibs and change_pct are computed per-bar in compute_scores()
+                "ibs_entry": round(float(row.get("ibs", 0.5)), 3) if pd.notna(row.get("ibs")) else None,
+                "change_pct_entry": round(float(row.get("change_pct", 0.0)), 3)
+                if pd.notna(row.get("change_pct"))
+                else None,
             }
         )
 
@@ -4081,6 +4167,15 @@ def process_ticker(args):
 
 
 def main():
+    global HOLD_DAYS, MAX_LOSS_DAYS
+    # --hold N : override hold period (e.g. --hold 5 for short-horizon MR validation)
+    if "--hold" in sys.argv:
+        _hi = sys.argv.index("--hold")
+        if _hi + 1 < len(sys.argv):
+            HOLD_DAYS = int(sys.argv[_hi + 1])
+            MAX_LOSS_DAYS = max(1, round(HOLD_DAYS * 0.4))
+            print(f"[--hold override] HOLD_DAYS={HOLD_DAYS}  MAX_LOSS_DAYS={MAX_LOSS_DAYS}")
+
     years = datetime.today().year - int(START[:4])
     print("# Tier-1 Technical Backtest — Signal.Trade Engine Rules\n")
     print(f"> **Tickers:** {', '.join(TICKERS)}")
@@ -4214,6 +4309,14 @@ def main():
     trades = pd.concat(all_trades, ignore_index=True)
     trades["year"] = trades["date"].dt.year
     print(f"\nTotal simulated trades: {len(trades)}\n")
+
+    # ── --save-trades: write CSV for backtest_new_layers.py sizing ablation ──
+    if "--save-trades" in sys.argv:
+        import os as _os
+
+        _save_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "data", "backtest_trades_is.csv")
+        trades.to_csv(_save_path, index=False)
+        print(f"[--save-trades] Saved {len(trades)} IS trades to {_save_path}\n")
 
     # ─────────────────────────────────────────────────────────────────────────
     # §1. Overall summary
@@ -4605,6 +4708,50 @@ def main():
             print(f"\n> High vs Low Sharpe spread: {_spread:+.2f}")
             print("> If spread > 0.1 — quality_score discriminates; use for trade sizing.\n")
 
+            # §Inv-C: L8 quality_score-weighted sizing simulation
+            # Thresholds recalibrated 2026-06-01 to IS p67/p33 from §Inv-B:
+            # High(≥43) N=63 Sh=0.51 | Mid(35–43) N=63 Sh=0.31 | Low(<35) N=62 Sh=0.17
+            _qs_vals = trades["quality_score"].fillna(39.0).tolist()
+            _l8_weights = [1.30 if q >= 43 else 0.75 if q < 35 else 1.0 for q in _qs_vals]
+            _sw_l8 = stats_weighted(trades["net_pct"].tolist(), _l8_weights)
+            _eq = stats(trades["net_pct"].tolist())
+            _d_sh_l8 = (_sw_l8.get("sharpe") or 0.0) - (_eq.get("sharpe") or 0.0)
+            _d_wr_l8 = _sw_l8["wr"] - _eq["wr"]
+            print("\n## §Inv-C. L8 Quality_Score-Weighted Sizing Validation\n")
+            print("> L8: high quality_score(≥43)→1.30×  mid(35–43)→1.0×  low(<35)→0.75×")
+            print("> Thresholds = IS p67/p33 (§Inv-B). Same trades, same entries — only sizing changes.\n")
+            print_table(
+                ["Config", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"],
+                [
+                    [
+                        "Equal-weight (baseline)",
+                        str(_eq["n"]),
+                        f"{_eq['wr']:.1f}%",
+                        f"{_eq['avg']:+.2f}%",
+                        fmt_sharpe(_eq["sharpe"]),
+                        f"-{_eq['max_dd']:.2f}%",
+                    ],
+                    [
+                        "L8 quality_score-weighted (1.30×/1.0×/0.75×)",
+                        str(_sw_l8["n"]),
+                        f"{_sw_l8['wr']:.1f}% ({_d_wr_l8:+.1f}pp)",
+                        f"{_sw_l8['avg']:+.2f}%",
+                        f"{fmt_sharpe(_sw_l8['sharpe'])} ({_d_sh_l8:+.2f})",
+                        f"-{_sw_l8['max_dd']:.2f}%",
+                    ],
+                ],
+            )
+            _n_high = sum(1 for q in _qs_vals if q >= 43)
+            _n_mid = sum(1 for q in _qs_vals if 35 <= q < 43)
+            _n_low = sum(1 for q in _qs_vals if q < 35)
+            print(f"\n> Distribution: High(≥43)={_n_high}  Mid(35–43)={_n_mid}  Low(<35)={_n_low}")
+            verdict_l8 = (
+                "✅ L8 adds value — quality_score sizing confirmed"
+                if _d_sh_l8 > 0.01
+                else ("➖ L8 neutral" if _d_sh_l8 > -0.01 else "⚠ L8 mildly negative — review quality_score thresholds")
+            )
+            print(f"> ΔSharpe = {_d_sh_l8:+.3f}  {verdict_l8}\n")
+
     # ── §Inv1. MR Trigger Quality Split ──────────────────────────────────────
     # Which MR condition (IBS / BB / VWAP / RSI / multi) drives the best alpha?
     if trades is not None and not trades.empty and "mr_trigger" in trades.columns:
@@ -4634,6 +4781,54 @@ def main():
         )
         print("> IBS = closed in bottom 15% of day's range. BB = near lower Bollinger Band.")
         print("> VWAP = below rolling VWAP by ≥0.75%. RSI = RSI < 42. multi = 2+ conditions.\n")
+
+    # ── §Inv2. L7 Score-Weighted Sizing Validation ────────────────────────────
+    # Validates signal_engine.py L7: positionSizeScale *= max(0.85, min(1.15, 0.85+(score-50)/100))
+    # score=50→0.85×  score=65→1.0×  score=80→1.15×
+    # If score-weighted Sharpe > equal-weight, the L7 multiplier adds value.
+    if trades is not None and not trades.empty and "score" in trades.columns:
+        _rets_l7 = trades["net_pct"].tolist()
+        _scores_l7 = [
+            max(0.85, min(1.15, 0.85 + (float(s) - 50.0) / 100.0)) for s in trades["score"].fillna(50).tolist()
+        ]
+        sw_l7 = stats_weighted(_rets_l7, _scores_l7)
+        eq_l7 = stats(_rets_l7)
+        print("\n## §Inv2. L7 Score-Weighted Sizing Validation\n")
+        print("> L7: positionSizeScale × max(0.85, min(1.15, 0.85+(score−50)/100))")
+        print("> score=50→0.85×  score=65→1.0×  score=80→1.15×\n")
+        _delta_sh = (sw_l7.get("sharpe") or 0.0) - (eq_l7.get("sharpe") or 0.0)
+        _delta_wr = sw_l7["wr"] - eq_l7["wr"]
+        print_table(
+            ["Config", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"],
+            [
+                [
+                    "Equal-weight (baseline)",
+                    str(eq_l7["n"]),
+                    f"{eq_l7['wr']:.1f}%",
+                    f"{eq_l7['avg']:+.2f}%",
+                    fmt_sharpe(eq_l7["sharpe"]),
+                    f"-{eq_l7['max_dd']:.2f}%",
+                ],
+                [
+                    "L7 score-weighted (±15%)",
+                    str(sw_l7["n"]),
+                    f"{sw_l7['wr']:.1f}% ({_delta_wr:+.1f}pp)",
+                    f"{sw_l7['avg']:+.2f}%",
+                    f"{fmt_sharpe(sw_l7['sharpe'])} ({_delta_sh:+.2f})",
+                    f"-{sw_l7['max_dd']:.2f}%",
+                ],
+            ],
+        )
+        verdict = (
+            "✅ L7 adds value — size up high-score trades"
+            if _delta_sh > 0.01
+            else (
+                "➖ L7 neutral — sizing nudge not harmful"
+                if _delta_sh > -0.01
+                else "⚠ L7 mildly negative — review score calibration"
+            )
+        )
+        print(f"\n> ΔSharpe = {_delta_sh:+.3f}  {verdict}\n")
 
     if all_dfs and trades is not None and not trades.empty:
         _allowed = [t for t in trades["ticker"].unique() if TICKER_TO_SECTOR.get(t, "XLK") not in _BLOCKED_SECTORS]
@@ -5204,6 +5399,61 @@ def main():
         _ablate("§78 Sep+Oct both disabled", SEP_SCORE_FLOOR=0, OCT_SCORE_FLOOR=0)
         print()
 
+    # ── A18. Friction sensitivity sweep ──────────────────────────────────────
+    if "--friction" in sys.argv and all_dfs:
+        print("\n## A18. Friction Sensitivity Sweep\n")
+        print("> Re-runs IS on cached all_dfs at each round-trip friction level.")
+        print("> Flags tipping point where Sharpe drops below 0.20 (NBBO gate review trigger).\n")
+        _friction_levels = [0.25, 0.50, 0.75, 1.00, 1.25]
+        _friction_orig = FRICTION_PCT
+
+        def _run_friction(label: str, fric: float) -> dict:
+            global FRICTION_PCT
+            FRICTION_PCT = fric
+            _lst = []
+            for _t, _df in all_dfs.items():
+                _tr = simulate_ticker(
+                    _t,
+                    _df,
+                    vix,
+                    spy_trend,
+                    stlfsi4,
+                    mr_only=True,
+                    fomc_dates=_FOMC_DATES_HIST,
+                    t10y_data=t10y_data,
+                    trin_data=trin_data,
+                    ad_data=ad_data,
+                )
+                if not _tr.empty:
+                    _lst.append(_tr)
+            FRICTION_PCT = _friction_orig
+            _combined = pd.concat(_lst, ignore_index=True) if _lst else pd.DataFrame()
+            return stats(_combined["net_pct"].tolist()) if not _combined.empty else dict(_EMPTY_STATS)
+
+        _fric_baseline = _run_friction("baseline", 0.50)
+        _fric_rows = []
+        for _fv in _friction_levels:
+            _fs = _run_friction(f"{_fv:.2f}%", _fv)
+            _dsh = (_fs.get("sharpe") or 0.0) - (_fric_baseline.get("sharpe") or 0.0)
+            _flag = ""
+            if _fs.get("sharpe") is not None and _fs["sharpe"] < 0.20:
+                _flag = "  ⚠ Sharpe<0.20 — tighten NBBO gate"
+            elif _fv == 0.50:
+                _flag = "  ← current"
+            _fric_rows.append(
+                f"  {_fv:.2f}%  |  N={_fs['n']:>3}  WR={_fs['wr']:.1f}%  Avg={_fs['avg']:+.2f}%  "
+                f"Sh={fmt_sharpe(_fs.get('sharpe'))}  MaxDD={_fs['max_dd']:.2f}%  "
+                f"ΔSh={_dsh:+.3f}{_flag}"
+            )
+        print(f"  {'Fric%':<6}  {'N':>3}  {'WR':>6}  {'Avg':>7}  {'Sharpe':>8}  {'MaxDD':>8}  ΔSharpe")
+        for _r in _fric_rows:
+            print(_r)
+        print(
+            "\nNote: ADV-participation cost model (friction = bid_ask/2 + 0.1×√(size/ADV30))"
+            " requires intraday ADV data not available in this backtest."
+        )
+        print()
+
     # ── §QuantEngine: walk-forward with threshold optimisation ───────────────
     if "--walk-forward" in sys.argv and all_dfs:
         run_walk_forward_with_opt(
@@ -5216,6 +5466,96 @@ def main():
             trin_data=trin_data,
             ad_data=ad_data,
         )
+
+    # ── Quality Gate Sweep — path to forward Sharpe 0.50 ─────────────────────
+    if "--quality-sweep" in sys.argv and all_dfs:
+        print("\n\n## Quality Gate Sweep — Entry Filter Combinations\n")
+        print("> Goal: find gate combo that lifts Sharpe toward 0.40+ with N ≥ 80.")
+        print("> Gates: multi-condition MR (OR→AND), ATR ceiling (≤70), jump filter (<−6%), IBS streak (≥5d).")
+        print("> All gates already validated individually in §12/§17. This sweeps combinations.\n")
+
+        def _qrun(require_mr=1, atr_max=None, ret_jump=None, ibs_streak=None):
+            trades_list = []
+            for ticker, df in all_dfs.items():
+                t = simulate_ticker(
+                    ticker,
+                    df,
+                    vix,
+                    spy_trend,
+                    stlfsi4,
+                    mr_only=True,
+                    require_mr_count_override=require_mr if require_mr > 1 else None,
+                    atr_pct_rank_max_override=atr_max,
+                    ret_jump_filter_override=ret_jump,
+                    ibs_sma20_streak_override=ibs_streak,
+                    fomc_dates=_FOMC_DATES_HIST,
+                    t10y_data=t10y_data,
+                    trin_data=trin_data,
+                    ad_data=ad_data,
+                )
+                if not t.empty:
+                    trades_list.append(t)
+            if not trades_list:
+                return dict(_EMPTY_STATS)
+            return stats(pd.concat(trades_list, ignore_index=True)["net_pct"].tolist())
+
+        _qs_baseline = _qrun()
+        _qs_bs = _qs_baseline.get("sharpe") or 0.0
+
+        _qs_configs = [
+            ("baseline (all current gates)", 1, None, None, None),
+            ("+ MR≥2 conditions", 2, None, None, None),
+            ("+ ATR%rank ≤ 70", 1, 70.0, None, None),
+            ("+ jump < −6%", 1, None, -6.0, None),
+            ("+ IBS streak ≥ 5d", 1, None, None, 5),
+            ("MR≥2 + ATR≤70", 2, 70.0, None, None),
+            ("MR≥2 + jump<−6%", 2, None, -6.0, None),
+            ("MR≥2 + IBS-streak≥5", 2, None, None, 5),
+            ("ATR≤70 + jump<−6%", 1, 70.0, -6.0, None),
+            ("ATR≤70 + IBS-streak≥5", 1, 70.0, None, 5),
+            ("MR≥2 + ATR≤70 + jump<−6%", 2, 70.0, -6.0, None),
+            ("MR≥2 + ATR≤70 + IBS-streak≥5", 2, 70.0, None, 5),
+            ("ATR≤70 + jump<−6% + IBS-streak≥5", 1, 70.0, -6.0, 5),
+            ("MR≥2 + ATR≤70 + jump<−6% + IBS≥5 (full stack)", 2, 70.0, -6.0, 5),
+        ]
+
+        _qs_rows = []
+        best_sh, best_label = _qs_bs, "baseline"
+        for i, (label, mr, atr, jump, ibs) in enumerate(_qs_configs, 1):
+            print(f"  [{i:>2}/{len(_qs_configs)}] {label}…", flush=True)
+            sv = _qrun(require_mr=mr, atr_max=atr, ret_jump=jump, ibs_streak=ibs)
+            sh = sv.get("sharpe") or 0.0
+            dsh = sh - _qs_bs
+            flag = " ← BEST" if sh > best_sh and sv["n"] >= 80 else ""
+            if sh > best_sh and sv["n"] >= 80:
+                best_sh = sh
+                best_label = label
+            target = " ★ TARGET" if sh >= 0.40 and sv["n"] >= 80 else ""
+            _qs_rows.append(
+                [
+                    label + flag + target,
+                    str(sv["n"]),
+                    f"{sv['wr']:.1f}%",
+                    f"{sv['avg']:+.2f}%",
+                    f"{fmt_sharpe(sh)} ({dsh:+.2f})",
+                    f"-{sv['max_dd']:.2f}%",
+                ]
+            )
+
+        print_table(["Config", "N", "WR", "Avg Ret", "Sharpe (Δ)", "MaxDD"], _qs_rows)
+        print(
+            f"\n> Baseline: N={_qs_baseline['n']}, WR={_qs_baseline['wr']:.1f}%, Sharpe={fmt_sharpe(_qs_baseline.get('sharpe'))}"
+        )
+        print(f"> Best (N≥80): '{best_label}' → Sharpe {best_sh:.2f}")
+        if best_sh >= 0.40:
+            print(
+                f"> ★ Target Sharpe ≥ 0.40 achieved. Forward Sharpe estimate: {best_sh * 0.55:.2f}–{best_sh * 0.65:.2f}"
+            )
+            print("> Next: run --oos with this config to validate on held-out tickers.")
+        else:
+            print(f"> Target Sharpe ≥ 0.40 not reached with N≥80. Best: {best_sh:.2f}")
+            print("> Consider relaxing N floor to 60, or combining with options flow data.")
+        print()
 
     if "--oos" in sys.argv or "--sweep" in sys.argv:
         run_oos_validation(

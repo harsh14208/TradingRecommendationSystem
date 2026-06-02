@@ -4,12 +4,16 @@ Uses pytrends (free, no API key). Cached 6h per ticker.
 """
 
 import asyncio
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+log = logging.getLogger("signal.trade.trends")
+
 _executor = ThreadPoolExecutor(max_workers=1)  # pytrends is not thread-safe at scale
 _cache: dict[str, tuple[dict, float]] = {}
-CACHE_TTL = 21600  # 6 hours
+CACHE_TTL = 21600  # 6 hours — successful results
+_BACKOFF_TTL = 1800  # 30 min — cache empty on failure so we don't hammer the API
 
 
 def _fetch_trends(ticker: str) -> dict:
@@ -50,7 +54,7 @@ def _fetch_trends(ticker: str) -> dict:
             "score": score,
         }
     except Exception as e:
-        print(f"[trends] {ticker}: {e}")
+        log.warning(f"[trends] {ticker}: {e}")
         return {}
 
 
@@ -59,6 +63,6 @@ async def get_google_trends(ticker: str) -> dict:
     if cached and time.time() - cached[1] < CACHE_TTL:
         return cached[0]
     result = await asyncio.get_running_loop().run_in_executor(_executor, _fetch_trends, ticker)
-    if result:
-        _cache[ticker] = (result, time.time())
+    ttl = CACHE_TTL if result else _BACKOFF_TTL
+    _cache[ticker] = (result or {}, time.time() - (CACHE_TTL - ttl))
     return result or {}

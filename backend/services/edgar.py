@@ -4,11 +4,14 @@ Uses EDGAR's free public JSON API — no API key required.
 Required by EDGAR ToS: always send a descriptive User-Agent.
 """
 
+import logging
 import ssl
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import Optional
+
+log = logging.getLogger("signal.trade.edgar")
 
 import aiohttp
 import certifi
@@ -75,7 +78,7 @@ async def _ensure_cik_map() -> None:
                         _cik_map[entry["ticker"]] = str(entry["cik_str"]).zfill(10)
                     _cik_map_ts = time.time()
     except Exception as e:
-        print(f"[edgar] tickers.json fetch failed: {e}")
+        log.warning(f"[edgar] tickers.json fetch failed: {e}")
 
 
 async def _get_cik(ticker: str) -> Optional[str]:
@@ -224,7 +227,7 @@ async def get_insider_activity(ticker: str, days: int = 30) -> Optional[dict]:
             return result
 
     except Exception as e:
-        print(f"[edgar] {ticker}: {e}")
+        log.warning(f"[edgar] {ticker}: {e}")
         return None
 
 
@@ -438,6 +441,6 @@ async def get_mda_delta(ticker: str) -> dict:
         _mda_cache[ticker] = (result, time.time())
         return result
     except Exception as e:
-        print(f"[edgar mda_delta] {ticker}: {e}")
+        log.warning(f"[edgar mda_delta] {ticker}: {e}")
         _mda_cache[ticker] = ({}, time.time())
         return {}

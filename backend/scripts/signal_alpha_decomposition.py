@@ -2531,7 +2531,9 @@ def run_conflict_analysis(
                 out[ticker] = df2
             else:
                 df3 = df2.copy()
-                df3.loc[df3.index[~allow], "score"] = -100
+                # 0 is in the neutral zone: BUY_THRESH=50 > 0 > SELL_THRESH=-100.
+                # Using -100 would fire SELL signals on blocked bars, cascading extra trades.
+                df3.loc[df3.index[~allow], "score"] = 0
                 out[ticker] = df3
         return out
 

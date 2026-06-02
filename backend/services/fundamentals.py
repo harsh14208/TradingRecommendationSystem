@@ -35,6 +35,12 @@ def _fetch_fundamentals(ticker: str) -> dict:
 
         # ── Pull all statements ────────────────────────────────────────────
         info = _retry(lambda: t.info)
+
+        # ETFs and mutual funds have no balance sheet / income statement — skip.
+        if (info or {}).get("quoteType") in ("ETF", "MUTUALFUND"):
+            _fund_cache[ticker] = ({}, time.time())
+            return {}
+
         fin = _retry(lambda: t.financials)  # annual income stmt
         qfin = _retry(lambda: t.quarterly_financials)  # quarterly income stmt
         bs = _retry(lambda: t.balance_sheet)  # annual balance sheet

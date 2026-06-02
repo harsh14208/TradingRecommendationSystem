@@ -1591,6 +1591,17 @@ async def analyze_db(snapshot_tag: str | None = None, since_days: int | None = N
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _sanitize_for_json(obj):
+    """Recursively replace NaN/Inf floats with None so the dict is valid JSON."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, float) and (obj != obj or obj == float("inf") or obj == float("-inf")):
+        return None
+    return obj
+
+
 async def _save_snapshot(tag: str, metrics: dict, gm: dict, am: dict | None = None) -> None:
     """Write a performance snapshot to the performance_snapshots table."""
     import subprocess
@@ -1624,7 +1635,7 @@ async def _save_snapshot(tag: str, metrics: dict, gm: dict, am: dict | None = No
         snap = PerformanceSnapshot(
             tag=tag,
             git_sha=git_sha,
-            metrics=metrics,
+            metrics=_sanitize_for_json(metrics),
             n_trades=gm["count"],
             win_rate=round(gm["wr"], 2),
             sharpe=round(metrics.get("risk", {}).get("sharpe", 0) or 0, 3),

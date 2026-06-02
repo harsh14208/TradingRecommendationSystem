@@ -33,6 +33,16 @@ _MODEL_FILE = _DATA_DIR / "signal_ml_model.json"
 _FEATURE_FILE = _DATA_DIR / "signal_ml_features.json"
 _ENTRY_MODEL_FILE = _DATA_DIR / "backtest_ml_model.json"
 _ENTRY_FEATURE_FILE = _DATA_DIR / "backtest_ml_features.json"
+# A17 challenger: same 23 live features + raw_score as feature 24.
+# Tests whether the heuristic point accumulator adds discriminating power
+# beyond the structural features already in the signal model.
+_CHALLENGER_MODEL_FILE = _DATA_DIR / "signal_ml_challenger_model.json"
+_CHALLENGER_FEATURE_FILE = _DATA_DIR / "signal_ml_challenger_features.json"
+# Meta-label model: predicts P(primary model is correct | context).
+# Features include entry_prob as the key input — teaches the model WHEN
+# the primary signal is reliable, not just which direction to trade.
+_META_MODEL_FILE = _DATA_DIR / "meta_label_model.json"
+_META_FEATURE_FILE = _DATA_DIR / "meta_label_features.json"
 _MAX_CONFIDENCE = 72.0
 
 # Minimum resolved signals before we attempt training
@@ -55,6 +65,8 @@ _model = None  # signal model (live DB)
 _model_mtime: float = 0.0
 _entry_model = None  # entry model (backtest)
 _entry_model_mtime: float = 0.0
+_meta_model = None  # meta-label model (triple-barrier relabeled backtest)
+_meta_model_mtime: float = 0.0
 
 
 # ── Feature helpers ───────────────────────────────────────────────────────────
@@ -230,6 +242,22 @@ def _extract_features(sig: dict) -> list[float]:
     ]
 
 
+def _extract_challenger_features(sig: dict) -> list[float]:
+    """
+    A17 challenger feature vector: 23 structural features + raw_score (feature 24).
+
+    raw_score is the heuristic point accumulator from generate_signal() before
+    Platt calibration.  Including it here deliberately — the challenger model
+    trains on [structural + heuristic] vs the signal model on [structural only].
+    If challenger OOS AUC exceeds signal model by > _MIN_AUC_DELTA_TO_DEPLOY, the
+    heuristic layer adds measurable discriminating power.  If not, the heuristic
+    score is redundant given the structural features.
+    """
+    base = _extract_features(sig)
+    raw = sig.get("raw_score")
+    return base + [float(raw) if raw is not None else float("nan")]
+
+
 # 23 features — raw_score removed (circular dependency with confidence, see _extract_features docstring)
 _FEATURE_NAMES = [
     "n_sources",
@@ -257,6 +285,9 @@ _FEATURE_NAMES = [
     "rs_vs_sector",
     # "raw_score" intentionally removed — circular dependency with confidence
 ]
+
+# A17 challenger: 23 structural features + raw_score as feature 24.
+_CHALLENGER_FEATURE_NAMES = _FEATURE_NAMES + ["raw_score"]
 
 
 # ── Entry model — technical features ─────────────────────────────────────────
@@ -612,6 +643,180 @@ def train_model() -> Optional[dict]:
     }
 
 
+def train_challenger_model() -> Optional[dict]:
+    """
+    A17: Train the challenger model — 23 structural features + raw_score (feature 24).
+
+    Tests whether the heuristic point accumulator (raw_score) adds discriminating
+    power beyond what the structural features already encode.
+
+    Deployment logic:
+      - Loads the same resolved-signal DB rows as train_model()
+      - Trains XGBoost on _CHALLENGER_FEATURE_NAMES (24 features)
+      - Compares OOS AUC vs the current signal model's AUC (from _FEATURE_FILE)
+      - Saves challenger to _CHALLENGER_MODEL_FILE only if delta > _MIN_AUC_DELTA_TO_DEPLOY
+      - Returns interpretation: what the AUC delta means for the heuristic layer
+
+    Requires _MIN_LIVE_N_FOR_DEPLOYMENT (300) resolved signals for deployment.
+    """
+    try:
+        import xgboost as xgb
+    except ImportError:
+        log.warning("[signal_ml] xgboost not installed — skipping train_challenger_model()")
+        return None
+
+    try:
+        from sklearn.metrics import roc_auc_score
+    except ImportError:
+        log.warning("[signal_ml] scikit-learn not installed — skipping train_challenger_model()")
+        return None
+
+    try:
+        rows = _load_resolved_signals_sync()
+    except Exception as e:
+        log.warning(f"[signal_ml] A17 DB read failed: {e}")
+        return None
+
+    if len(rows) < _MIN_SAMPLES:
+        log.info(f"[signal_ml] A17: only {len(rows)} resolved signals — need {_MIN_SAMPLES}. Skipping.")
+        return None
+
+    _training_only = len(rows) < _MIN_LIVE_N_FOR_DEPLOYMENT
+
+    rows.sort(key=lambda r: r.get("created_at") or "")
+
+    X, y = [], []
+    for r in rows:
+        action = (r.get("action") or "").upper()
+        outcome_pct = r.get("outcome_pct")
+        if action not in ("BUY", "SELL") or outcome_pct is None:
+            continue
+        label = 1 if (action == "BUY" and outcome_pct > 0) or (action == "SELL" and outcome_pct < 0) else 0
+        X.append(_extract_challenger_features(r))
+        y.append(label)
+
+    if len(X) < _MIN_SAMPLES:
+        return None
+
+    split = max(int(len(X) * _TRAIN_SPLIT), _MIN_SAMPLES)
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
+
+    if len(X_test) < 15:
+        log.info(f"[signal_ml] A17: OOS set too small ({len(X_test)}) — skipping.")
+        return None
+
+    try:
+        model = xgb.XGBClassifier(
+            n_estimators=200,
+            max_depth=3,
+            learning_rate=0.05,
+            min_child_weight=5,
+            subsample=0.8,
+            colsample_bytree=0.7,
+            gamma=0.3,
+            reg_alpha=0.1,
+            reg_lambda=2.0,
+            eval_metric="logloss",
+            random_state=42,
+        )
+        model.fit(X_train, y_train, verbose=False)
+    except Exception as e:
+        log.warning(f"[signal_ml] A17 XGBoost training failed: {e}")
+        return None
+
+    try:
+        y_prob = model.predict_proba(X_test)[:, 1]
+        if len(set(y_test)) < 2:
+            log.warning("[signal_ml] A17: single class in test set — cannot compute AUC.")
+            return None
+        challenger_auc = round(float(roc_auc_score(y_test, y_prob)), 4)
+    except Exception as e:
+        log.warning(f"[signal_ml] A17 evaluation failed: {e}")
+        return None
+
+    # Load current signal model AUC for comparison
+    baseline_auc: Optional[float] = None
+    try:
+        if _FEATURE_FILE.exists():
+            baseline_auc = json.loads(_FEATURE_FILE.read_text()).get("oos_auc")
+    except Exception:
+        pass
+
+    delta = (challenger_auc - baseline_auc) if baseline_auc is not None else None
+
+    # Interpretation: does the heuristic layer add value?
+    if delta is None:
+        interpretation = "No baseline signal model to compare against — cannot evaluate."
+    elif delta > _MIN_AUC_DELTA_TO_DEPLOY:
+        interpretation = (
+            f"raw_score adds +{delta:.4f} AUC over structural features alone. "
+            "The heuristic scoring layer has measurable discriminating power. Keep it."
+        )
+    else:
+        interpretation = (
+            f"raw_score adds only {delta:+.4f} AUC (threshold: +{_MIN_AUC_DELTA_TO_DEPLOY}). "
+            "The heuristic scoring layer appears redundant at this sample size — "
+            "structural features already encode the same information."
+        )
+
+    log.info(f"[signal_ml] A17 challenger AUC={challenger_auc:.4f} | baseline={baseline_auc} | {interpretation}")
+
+    # Deploy challenger only if it clears the AUC delta bar and we have enough data
+    _deployed = False
+    _should_deploy = not _training_only and delta is not None and delta > _MIN_AUC_DELTA_TO_DEPLOY
+    if _should_deploy:
+        try:
+            _DATA_DIR.mkdir(parents=True, exist_ok=True)
+            model.get_booster().save_model(str(_CHALLENGER_MODEL_FILE))
+            _deployed = True
+            log.info(f"[signal_ml] A17 challenger deployed to {_CHALLENGER_MODEL_FILE}")
+        except Exception as e:
+            log.error(f"[signal_ml] A17 WRITE FAILED — {_CHALLENGER_MODEL_FILE}: {e}")
+    elif not _should_deploy and _CHALLENGER_MODEL_FILE.exists():
+        # Remove stale challenger if it no longer clears the bar on new data
+        try:
+            _CHALLENGER_MODEL_FILE.unlink()
+            log.info("[signal_ml] A17: stale challenger removed (delta below threshold on retraining).")
+        except Exception:
+            pass
+
+    # Feature importances
+    try:
+        importances = model.feature_importances_.tolist()
+        fi = sorted(
+            [{"feature": n, "importance": round(float(v), 5)} for n, v in zip(_CHALLENGER_FEATURE_NAMES, importances)],
+            key=lambda x: -x["importance"],
+        )
+        raw_score_rank = next((i + 1 for i, f in enumerate(fi) if f["feature"] == "raw_score"), None)
+    except Exception:
+        fi = []
+        raw_score_rank = None
+
+    from datetime import datetime as _dt
+
+    metadata = {
+        "trained_at": _dt.utcnow().isoformat(),
+        "n_train": len(X_train),
+        "n_test": len(X_test),
+        "n_total": len(rows),
+        "challenger_auc": challenger_auc,
+        "baseline_auc": baseline_auc,
+        "delta": round(delta, 4) if delta is not None else None,
+        "deployed": _deployed,
+        "training_only": _training_only,
+        "raw_score_importance_rank": raw_score_rank,
+        "feature_importances": fi,
+        "interpretation": interpretation,
+    }
+    try:
+        _CHALLENGER_FEATURE_FILE.write_text(json.dumps(metadata, indent=2))
+    except Exception as e:
+        log.error(f"[signal_ml] A17 metadata write failed: {e}")
+
+    return metadata
+
+
 # ── DB access (synchronous, for use inside asyncio.to_thread) ──────────────────
 
 
@@ -815,6 +1020,68 @@ def get_entry_model():
     return _entry_model
 
 
+# ── A17 Challenger model cache ────────────────────────────────────────────────
+_challenger_model = None
+_challenger_model_mtime: float = 0.0
+
+
+def get_challenger_model():
+    """Return the A17 challenger model (23 features + raw_score), or None if absent.
+
+    The challenger file is only written by train_challenger_model() when the
+    24-feature model improves OOS AUC by > _MIN_AUC_DELTA_TO_DEPLOY over the
+    23-feature signal model.  If the file is absent the challenger hasn't
+    cleared the deployment bar — blend_confidence falls back to 2-way blend.
+    """
+    global _challenger_model, _challenger_model_mtime
+
+    if not _CHALLENGER_MODEL_FILE.exists():
+        return None
+
+    try:
+        current_mtime = _CHALLENGER_MODEL_FILE.stat().st_mtime
+    except OSError:
+        return _challenger_model
+
+    if _challenger_model is None or current_mtime != _challenger_model_mtime:
+        try:
+            import xgboost as xgb
+
+            b = xgb.Booster()
+            b.load_model(str(_CHALLENGER_MODEL_FILE))
+            _challenger_model = b
+            _challenger_model_mtime = current_mtime
+            log.info("[signal_ml] A17 challenger model loaded/reloaded from disk")
+        except Exception as e:
+            log.warning(f"[signal_ml] Failed to load challenger model: {e}")
+            _challenger_model = None
+
+    return _challenger_model
+
+
+def predict_challenger_prob(sig_dict: dict, model) -> "float | None":
+    """Return the A17 challenger win probability (0–1), or None on error/no model.
+
+    Uses the 24-feature vector (23 structural + raw_score) to test whether the
+    heuristic point accumulator adds discriminating power at inference time.
+    """
+    if model is None:
+        return None
+    try:
+        import numpy as np
+        import xgboost as xgb
+
+        features = _extract_challenger_features(sig_dict)
+        dm = xgb.DMatrix(
+            np.array([features], dtype=float),
+            feature_names=_CHALLENGER_FEATURE_NAMES,
+        )
+        return float(model.predict(dm)[0])
+    except Exception as e:
+        log.debug(f"[signal_ml] predict_challenger_prob error: {e}")
+        return None
+
+
 # ── Sector-specific entry model cache ─────────────────────────────────────────
 # Keyed by sector ETF (e.g. "XLF"). Values are (booster, mtime) pairs.
 # Populated lazily by get_sector_entry_model().
@@ -915,27 +1182,158 @@ def predict_entry_prob(
         return None
 
 
+# ── Meta-label model ─────────────────────────────────────────────────────────
+# 11-feature vector available at signal-generation time.
+# Key insight: entry_prob is the primary model output — the meta-label model
+# learns *when* the primary model is reliable, not just direction.
+_META_FEATURE_NAMES = [
+    "entry_prob",  # output of the entry XGBoost model (THE key feature)
+    "ou_halflife",  # OU mean-reversion speed
+    "hurst",  # Hurst exponent
+    "vix",  # macro fear level
+    "atr_pct",  # annualised volatility
+    "rvol",  # relative volume vs 20d avg
+    "hmm_bull_prob",  # HMM P(bull) — macro regime
+    "hmm_trans_risk",  # HMM transition risk
+    "dte_bucket",  # earnings proximity (0–3)
+    "sector_ord",  # sector ETF ordinal
+    "dow",  # day of week
+]
+
+
+def _extract_meta_features(
+    tech: dict,
+    entry_prob: float | None,
+    hmm_regime: dict | None,
+    vix: float | None,
+    sector_etf: str | None,
+    dow: int | None,
+    dte: int | None,
+) -> list[float]:
+    """Build the 11-feature meta-label vector."""
+
+    def _f(key: str) -> float:
+        v = tech.get(key)
+        if v is None:
+            return float("nan")
+        try:
+            f = float(v)
+            return float("nan") if math.isnan(f) else f
+        except (TypeError, ValueError):
+            return float("nan")
+
+    price = tech.get("price") or 0.0
+    atr_val = tech.get("atr") or 0.0
+    try:
+        atr_pct = float(atr_val) / float(price) * 100.0 if float(price) > 0 else float("nan")
+    except (TypeError, ValueError):
+        atr_pct = float("nan")
+
+    hmm = hmm_regime or {}
+    return [
+        float(entry_prob) if entry_prob is not None else float("nan"),
+        _f("ou_halflife"),
+        _f("hurst"),
+        float(vix) if vix is not None else float("nan"),
+        atr_pct,
+        _f("rvol"),
+        float(hmm.get("bull_prob", 0.5)),
+        float(hmm.get("transition_risk", 0.1)),
+        _dte_bucket(dte),
+        _sector_ord(sector_etf),
+        float(dow) if dow is not None else float("nan"),
+    ]
+
+
+def get_meta_model():
+    """Load meta-label XGBoost model from disk, caching by mtime."""
+    global _meta_model, _meta_model_mtime
+    try:
+        import xgboost as xgb
+
+        if not _META_MODEL_FILE.exists():
+            return None
+        mtime = _META_MODEL_FILE.stat().st_mtime
+        if _meta_model is not None and mtime == _meta_model_mtime:
+            return _meta_model
+        m = xgb.Booster()
+        m.load_model(str(_META_MODEL_FILE))
+        _meta_model = m
+        _meta_model_mtime = mtime
+        log.info("[signal_ml] Meta-label model loaded from %s", _META_MODEL_FILE.name)
+        return m
+    except Exception as e:
+        log.debug("[signal_ml] Meta model load: %s", e)
+        return None
+
+
+def predict_meta_prob(
+    tech: dict,
+    entry_prob: float | None,
+    hmm_regime: dict | None,
+    vix: float | None,
+    sector_etf: str | None,
+    dte: int | None,
+) -> float | None:
+    """
+    Predict P(primary model is correct | context) using the meta-label model.
+
+    Returns None when the model is absent or inputs are invalid.
+    Used to scale the final blend_confidence ratio: high meta_prob amplifies,
+    low meta_prob dampens.
+    """
+    model = get_meta_model()
+    if model is None:
+        return None
+    try:
+        import numpy as np
+        import xgboost as xgb
+        from datetime import datetime
+
+        now = datetime.now()
+        feats = _extract_meta_features(tech, entry_prob, hmm_regime, vix, sector_etf, now.weekday(), dte)
+        dm = xgb.DMatrix(np.array([feats], dtype=float), feature_names=_META_FEATURE_NAMES)
+        return float(model.predict(dm)[0])
+    except Exception as e:
+        log.debug("[signal_ml] predict_meta_prob error: %s", e)
+        return None
+
+
 def blend_confidence(
     base_conf: float,
     entry_prob: float | None,
     live_prob: float | None,
+    challenger_prob: float | None = None,
+    meta_prob: float | None = None,
 ) -> float:
     """
-    Blend entry and signal win-probs (50/50 when both available) and apply
+    Blend entry, signal, and (optionally) A17 challenger win-probs and apply
     a single multiplicative ratio to base_conf.
 
-    Falls back gracefully: uses whichever prob is available; returns base_conf
-    unchanged when both are None.
+    Available probs are averaged with equal weight.  Falls back gracefully:
+    returns base_conf unchanged when all three are None.
+
+    challenger_prob is only non-None when the A17 challenger model has cleared
+    the deployment bar (AUC delta > _MIN_AUC_DELTA_TO_DEPLOY).
+
+    meta_prob, when provided, further scales the blended ratio:
+        meta_scale = 0.60 + 0.80 × meta_prob  →  [0.60, 1.40]
+    This lets the meta-label model amplify high-conviction signals and
+    dampen signals where context is hostile to the primary prediction.
     """
-    if entry_prob is None and live_prob is None:
+    probs = [p for p in (entry_prob, live_prob, challenger_prob) if p is not None]
+    if not probs:
         return base_conf
 
-    if entry_prob is not None and live_prob is not None:
-        combined: float = 0.5 * entry_prob + 0.5 * live_prob
-    else:
-        combined = float(entry_prob if entry_prob is not None else live_prob)  # type: ignore[arg-type]
-
+    combined: float = sum(probs) / len(probs)
     base_win_prob = base_conf / 100.0 * 0.85
     ratio = combined / max(base_win_prob, 0.01)
     ratio = max(0.75, min(1.25, ratio))
+
+    # Meta-label scaling: meta_prob=0.5 → no change; 0.9 → amplify; 0.2 → dampen
+    if meta_prob is not None:
+        meta_scale = 0.60 + 0.80 * float(meta_prob)
+        meta_scale = max(0.60, min(1.40, meta_scale))
+        ratio = max(0.75, min(1.25, ratio * meta_scale))
+
     return round(min(_MAX_CONFIDENCE, base_conf * ratio), 1)

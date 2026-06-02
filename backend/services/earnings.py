@@ -3,8 +3,11 @@ Earnings calendar and EPS surprise history via yfinance (free, no API key).
 """
 
 import asyncio
+import logging
 import time as _time
 from concurrent.futures import ThreadPoolExecutor
+
+log = logging.getLogger("signal.trade.earnings")
 
 import yfinance as yf
 
@@ -78,7 +81,7 @@ def _fetch_earnings_calendar(ticker: str) -> dict:
         _cal_cache[ticker] = (result, _time.time())
         return result
     except Exception as e:
-        print(f"[earnings] calendar {ticker}: {e}")
+        log.warning(f"[earnings] calendar {ticker}: {e}")
         return {}
 
 
@@ -174,7 +177,7 @@ def _fetch_earnings_surprise(ticker: str) -> dict:
         _surp_cache[ticker] = (result, _time.time())
         return result
     except Exception as e:
-        print(f"[earnings] surprise {ticker}: {e}")
+        log.warning(f"[earnings] surprise {ticker}: {e}")
         return {}
 
 

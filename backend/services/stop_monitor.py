@@ -12,7 +12,6 @@ Deactivates the signal after either event so users aren't notified twice.
 import asyncio
 import logging
 import math
-from datetime import datetime, timezone
 
 import yfinance as yf
 from sqlalchemy import select
@@ -113,7 +112,6 @@ async def check_stop_targets_and_notify():
     prices = _fetch_current_prices(tickers)
     log.info(f"[stop_monitor] got prices for {len(prices)}/{len(tickers)} tickers.")
 
-    now_utc = datetime.now(timezone.utc)
     updated = 0
 
     async with AsyncSessionLocal() as db:

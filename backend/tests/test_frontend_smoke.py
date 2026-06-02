@@ -120,13 +120,20 @@ def test_html_files_parseable():
 
 
 def test_login_uses_refresh_cookie_not_localstorage():
-    """login.html should use the refresh-cookie flow, not localStorage for tokens."""
-    login = ROOT / "login.html"
-    if not login.exists():
+    """Login flow should use refresh-cookie, not localStorage.
+
+    The implementation moved from inline login.html to external login.js
+    (external script satisfies CSP script-src 'self' without 'unsafe-inline').
+    Check whichever file contains the implementation.
+    """
+    login_html = ROOT / "login.html"
+    login_js = ROOT / "login.js"
+    if not login_html.exists():
         return
-    src = _load(login)
-    assert "refresh-cookie" in src, "login.html missing refresh-cookie endpoint reference"
-    assert "localStorage.setItem" not in src or "token" not in src, "login.html still stores tokens in localStorage"
+    # Combine both files — implementation may be in either
+    src = _load(login_html) + (_load(login_js) if login_js.exists() else "")
+    assert "refresh-cookie" in src, "login flow missing refresh-cookie endpoint reference (check login.html + login.js)"
+    assert "localStorage.setItem" not in src or "token" not in src, "login still stores tokens in localStorage"
 
 
 # ── Test 4: auth JSX uses module-level token variable ─────────────────────────

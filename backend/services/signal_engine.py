@@ -1608,41 +1608,55 @@ def _assemble_signal(
         try:
             from services.signal_ml import (
                 blend_confidence as _ml_blend,
+                get_challenger_model as _get_challenger_model,
                 get_model as _get_live_model,
+                predict_challenger_prob as _pred_challenger,
                 predict_entry_prob_sector as _pred_entry_sector,
                 predict_live_prob as _pred_live,
+                predict_meta_prob as _pred_meta,
             )
 
             _live_model = _get_live_model()
             _sector_etf_ml = (sector_rs or {}).get("sector_etf")
 
-            _live_prob = _pred_live(
-                {
-                    "raw_score": score,  # Decoupled: Feeding raw alpha score instead of warped/scaled confidence
-                    "sentiment": avg_sent,
-                    "sources": list(sources),
-                    "rationale": rationale,
-                    "action": action,
-                    "style": style,
-                    "rr": rr,
-                    "entry": entry,
-                    "stop": stop,
-                    "target": target,
-                    "price": price,
-                    "session": _current_session(),
-                    "change_pct": _day_chg_pct,
-                    "days_to_earnings": days_to_earnings,
-                    "sector_etf": _sector_etf_ml,
-                    "rs_vs_sector": (sector_rs or {}).get("rs_vs_sector"),
-                },
-                _live_model,
-            )
+            _sig_dict_ml = {
+                "raw_score": score,
+                "sentiment": avg_sent,
+                "sources": list(sources),
+                "rationale": rationale,
+                "action": action,
+                "style": style,
+                "rr": rr,
+                "entry": entry,
+                "stop": stop,
+                "target": target,
+                "price": price,
+                "session": _current_session(),
+                "change_pct": _day_chg_pct,
+                "days_to_earnings": days_to_earnings,
+                "sector_etf": _sector_etf_ml,
+                "rs_vs_sector": (sector_rs or {}).get("rs_vs_sector"),
+            }
+            _live_prob = _pred_live(_sig_dict_ml, _live_model)
             # Use sector-specific entry model when available (XLF/XLP/XLU);
             # falls back to global model automatically via predict_entry_prob_sector.
             _entry_prob = _pred_entry_sector(tech, vix, _sector_etf_ml)
+            # A17 challenger: raw_score is already in _sig_dict_ml; model is None
+            # until train_challenger_model() clears the AUC delta bar.
+            _challenger_prob = _pred_challenger(_sig_dict_ml, _get_challenger_model())
+            # Meta-label: P(primary model is correct | context). Uses entry_prob as
+            # key input — teaches when the primary signal is reliable.
+            _meta_prob = _pred_meta(
+                tech,
+                _entry_prob,
+                (market_ctx or {}).get("hmm_regime"),
+                vix,
+                _sector_etf_ml,
+                days_to_earnings,
+            )
 
-            if _live_prob is not None or _entry_prob is not None:
-                confidence = _ml_blend(confidence, _entry_prob, _live_prob)
+            if _live_prob is not None or _entry_prob is not None or _challenger_prob is not None:
+                confidence = _ml_blend(confidence, _entry_prob, _live_prob, _challenger_prob, _meta_prob)
         except Exception as _ml_err:
             log.debug("[engine] %s ML blend failed (model may need retraining): %s", ticker, _ml_err)
 
@@ -1721,6 +1735,29 @@ def _assemble_signal(
             }
         ]
 
+    # ── L8 quality_score — IS-validated MR trade quality composite ───────────
+    # Formula: 40%×(score−50)/30 + 35%×OU_speed + 25%×Hurst_MR  → [0, 100]
+    # IS tier spread: High(≥60) Sh=0.49 vs Low(<30) Sh=0.17 (v10.0, 2026-06-01).
+    # All three inputs are already in tech dict — zero extra API cost.
+    _ou_hl_qs = float(tech.get("ou_halflife") or 12.5)
+    _hurst_qs = float(tech.get("hurst") or 0.65)
+    _quality_score = min(
+        100.0,
+        max(
+            0.0,
+            min(40.0, (score - 50.0) / 30.0 * 40.0)
+            + 35.0 * max(0.0, 1.0 - _ou_hl_qs / 25.0)
+            + 25.0 * max(0.0, 1.0 - (_hurst_qs - 0.5) / 0.30),
+        ),
+    )
+
+    # ── L9 HMM regime vars — sourced from macro_regime.py (1h cache) ─────────
+    _hmm_ctx = (market_ctx or {}).get("hmm_regime", {})
+    _hmm_regime_label = _hmm_ctx.get("regime", "")
+    _hmm_bear_prob = float(_hmm_ctx.get("bear_prob", 0.5))
+    _hmm_bull_prob = float(_hmm_ctx.get("bull_prob", 0.5))
+    _hmm_trans_risk = float(_hmm_ctx.get("transition_risk", 0.1))
+
     return {
         "ticker": ticker,
         "company": info.get("company", ticker),
@@ -1751,7 +1788,7 @@ def _assemble_signal(
         "beta": info.get("beta"),
         "dataWarnings": data_warnings,
         "positionSizeScale": round(
-            # §QuantEngine sizing stack (five layers):
+            # §QuantEngine sizing stack (nine layers):
             # L1 portfolio_size_scale — sector concentration + PCA cross-sector (§43/§83)
             # L2 VIX-regime overlay   — fear 1.15×/panic 1.10×/calm 0.75× (§56)
             # L3 vol-targeting        — 0.25/ticker_vol_ann clamped [0.5,2.0]
@@ -1760,6 +1797,14 @@ def _assemble_signal(
             #    fires only for BUY; caps at 1.5× total; rewards best-predictor gates
             # L6 regime dampener      — calm bull (VIX<18 + bull trend) reduces MR sizing 0.8×
             #    AI-momentum regimes produce shallow bounces; Inv2+temporal: current regime weak
+            # L7 raw-score Kelly      — §18/§12a: score-proportional sizing (±15%).
+            #    score=50→0.85×  score=65→1.0×  score=80→1.15×
+            # L8 quality_score tier   — IS Sh spread 0.49 (high) vs 0.17 (low), v10.0 2026-06-01
+            #    high(≥60)→1.30× mid(30–60)→1.0× low(<30)→0.75×; zero N impact (all trades pass)
+            # L9 HMM regime sizing    — macro_regime.py 2-state Baum-Welch leads VIX by 1-3d
+            #    IS ablation: bull 1.10× never fires on MR entries (low-VIX = no MR triggers)
+            #    bear(≥80%)→0.70× transition/trans_risk>20%→0.85× bull→1.0× (no amplification)
+            #    MaxDD confirmed: 0.86→0.73 from transition dampener (ablation 2026-06-01)
             portfolio_size_scale
             * (
                 1.15
@@ -1772,7 +1817,7 @@ def _assemble_signal(
             )
             * (
                 max(0.5, min(2.0, 0.25 / max(_atr_pct_pre * _np.sqrt(252), 0.05)))
-                * max(0.5, min(1.5, (confidence - 57.0) / 10.0 + 0.5))
+                * max(0.5, min(1.5, (confidence - 40.0) / 14.0 + 0.5))
                 * min(
                     1.5,
                     # L5: gate-quality — multiply for each high-predictor gate that fired
@@ -1807,6 +1852,24 @@ def _assemble_signal(
                     )
                     else 1.0
                 )
+                * max(0.85, min(1.15, 0.85 + (score - 50.0) / 100.0))  # L7 raw-score Kelly
+                # L8: quality_score tier — thresholds recalibrated 2026-06-01 to IS p67/p33.
+                # IS distribution: High(≥43) N=63 Sh=0.51 | Mid(35–43) N=63 Sh=0.31 | Low(<35) N=62 Sh=0.17
+                # Old thresholds (60/30) put 80% in Mid (neutral) → no lift. Corrected to (43/35).
+                * (1.30 if _quality_score >= 43 else 0.75 if _quality_score < 35 else 1.0)
+                # L9: HMM regime sizing (macro_regime.py 2-state Baum-Welch)
+                # IS ablation (2026-06-01): bear WR=72% > baseline — VIX>25 fires in high-vol
+                # periods when MR bounces are actually larger. Bull amplification never fires
+                # on MR entries (low-VIX bull = no MR triggers). Only retain the panic-level
+                # size cut (bear_prob≥0.80, not 0.70) and the transition dampener.
+                # MaxDD improvement confirmed: 0.86 → 0.73 from transition dampener alone.
+                * (
+                    0.70
+                    if (_hmm_regime_label == "bear" and _hmm_bear_prob >= 0.80)
+                    else 0.85
+                    if (_hmm_regime_label == "transition" or _hmm_trans_risk > 0.20)
+                    else 1.0
+                )
                 if action == "BUY"
                 else 1.0
             ),
@@ -1820,6 +1883,10 @@ def _assemble_signal(
         # §82: trailing stop as % of entry — 2× ATR provides dynamic stop that adapts
         # to realized vol and avoids being stopped out by normal intraday noise.
         "trailingStopPct": round(atr / price * 200, 2) if (price and atr and price > 0) else None,
+        # L8: quality_score tier for live tracking and hard-gate research
+        "qualityScore": round(_quality_score, 1),
+        # L9: HMM regime label for frontend display and future hard-gate research
+        "hmmRegime": _hmm_regime_label or None,
     }
 
 
@@ -2713,36 +2780,16 @@ async def generate_signal(
                 )
 
         # ── SEC EDGAR — insider trades (Form 4) ─────────────────────────
-        if insider and insider.get("filings", 0) > 0:
-            iscore = insider["score"]
-            score += iscore
-            if abs(iscore) >= 4:
-                sources.add("SEC EDGAR")
-                net = insider["net_shares"]
-                verb = "Buying" if net > 0 else "Selling"
-                rationale.append(
-                    {
-                        "src": "SEC EDGAR",
-                        "head": f"Insiders {verb} — {insider['filings']} Form 4s (30d)",
-                        "body": (
-                            f"{insider['filings']} insider filings in last 30 days. "
-                            f"Net: {abs(net):,} shares {'acquired' if net > 0 else 'disposed'}. "
-                            f"Buy value ${insider['buy_value']:,.0f} | Sell value ${insider['sell_value']:,.0f}."
-                        ),
-                        "sentiment": "pos" if iscore > 0 else "neg",
-                        "meta": f"Buys {insider['buys']:,} | Sells {insider['sells']:,}",
-                    }
-                )
-            # Confidence-level penalty when insider activity directly contradicts direction
-            # (score already penalises the direction; this adds a conviction-level haircut)
-            if insider.get("filings", 0) >= 3:
-                net = insider.get("net_shares", 0) or 0
-                sell_val = insider.get("sell_value", 0) or 0
-                buy_val = insider.get("buy_value", 0) or 0
-                if score > 0 and net < 0 and sell_val > 250_000:
-                    insider_confidence_penalty = 0.10
-                elif score < 0 and net > 0 and buy_val > 250_000:
-                    insider_confidence_penalty = 0.08
+        # Score contribution lives in institutional_worker (signal_workers.py).
+        # Confidence penalty stays here: it reads accumulated `score`, which workers cannot access.
+        if insider and insider.get("filings", 0) >= 3:
+            net = insider.get("net_shares", 0) or 0
+            sell_val = insider.get("sell_value", 0) or 0
+            buy_val = insider.get("buy_value", 0) or 0
+            if score > 0 and net < 0 and sell_val > 250_000:
+                insider_confidence_penalty = 0.10
+            elif score < 0 and net > 0 and buy_val > 250_000:
+                insider_confidence_penalty = 0.08
 
         # ── §73 Insider Clustering (see gates/fundamentals.py) ──────────────
         from services.gates.fundamentals import apply_insider_clustering as _ic_fn
@@ -5223,189 +5270,12 @@ async def generate_signal(
                     }
                 )
 
-        # ── Hurst Exponent — Regime Classification ────────────────────────────
-        hurst = tech.get("hurst")
-        if hurst is not None:
-            sources.add("Technical")
-            if hurst > 0.60:
-                # Persistent trending regime — trust momentum signals more
-                trend_bonus = 5 if score > 0 else (-5 if score < 0 else 0)
-                score += trend_bonus
-                rationale.append(
-                    {
-                        "src": "Technical",
-                        "head": f"Hurst Exponent {hurst:.2f} — Trending Regime",
-                        "body": (
-                            f"Hurst exponent of {hurst:.2f} > 0.5 confirms persistent price momentum. "
-                            "This stock is in a 'trending' state — breakout and momentum signals "
-                            "carry higher win rates here than oscillator-based reversals."
-                        ),
-                        "sentiment": "pos" if score > 0 else "neg",
-                        "meta": f"Hurst = {hurst:.2f} (>0.6 = strong trend)",
-                    }
-                )
-            elif hurst < 0.40:
-                # Anti-persistent mean-reverting regime — moderate strong directional signals
-                if abs(score) > 15:
-                    score *= 0.87
-                rationale.append(
-                    {
-                        "src": "Technical",
-                        "head": f"Hurst Exponent {hurst:.2f} — Mean-Reverting Regime",
-                        "body": (
-                            f"Hurst exponent of {hurst:.2f} < 0.5 indicates anti-persistent "
-                            "price behaviour — recent trends are likely to reverse. "
-                            "Momentum/breakout signals are suspect; oversold/overbought reversals are more reliable."
-                        ),
-                        "sentiment": "neu",
-                        "meta": f"Hurst = {hurst:.2f} (<0.4 = mean-reverting)",
-                    }
-                )
+        # ── §59/§60/§61/§63 Statistical gates ────────────────────────────────
+        from services.gates.statistical import apply_statistical_gates as _stat_gates_fn
 
-        # ── §59 OU Half-life — Mean-Reversion Speed ──────────────────────────
-        ou_hl = tech.get("ou_halflife")
-        if ou_hl is not None and not _is_lev_etf:
-            sources.add("Technical")
-            if ou_hl > 12:
-                score -= 5
-                rationale.append(
-                    {
-                        "src": "Technical",
-                        "head": f"Slow OU Reversion (Half-Life {ou_hl:.1f}d) — Weak MR Entry",
-                        "body": (
-                            f"Ornstein-Uhlenbeck half-life of {ou_hl:.1f} days exceeds the "
-                            "10-day hold window — the mean-reversion bounce may not complete "
-                            "before the position needs to be closed. Favour faster-reverting setups."
-                        ),
-                        "sentiment": "neg",
-                        "meta": f"ou_halflife={ou_hl:.1f}d (>12 = slow MR)",
-                    }
-                )
-            elif ou_hl < 5:
-                score += 4
-                rationale.append(
-                    {
-                        "src": "Technical",
-                        "head": f"Fast OU Reversion (Half-Life {ou_hl:.1f}d) — Strong MR Setup",
-                        "body": (
-                            f"Ornstein-Uhlenbeck half-life of {ou_hl:.1f} days — the price "
-                            "reverts strongly to its mean well within the hold window. "
-                            "Short half-life is the strongest predictor of realized MR returns."
-                        ),
-                        "sentiment": "pos",
-                        "meta": f"ou_halflife={ou_hl:.1f}d (<5 = fast MR)",
-                    }
-                )
-
-        # ── §63 Sector Cointegration Deviation Gate ──────────────────────────
-        # Gatev, Goetzmann & Rouwenhorst (2006): cointegration-based entries have
-        # 74% WR vs 58% for non-cointegrated pairs. When a stock is unusually
-        # depressed vs its sector ETF (coint_z < −2σ), the pair deviation adds a
-        # second confirmation that the selloff is temporary, not structural.
-        try:
-            _coint_etf = (sector_rs or {}).get("sector_etf")
-            _etf_hist = (market_ctx or {}).get("etf_histories", {})
-            if _coint_etf and _etf_hist and _coint_etf in _etf_hist and not _is_lev_etf and len(df) >= 60:
-                from services.technicals import compute_cointegration_zscore as _coint_fn
-
-                _coint_z = _coint_fn(
-                    df["Close"].astype(float),
-                    _etf_hist[_coint_etf],
-                )
-                if _coint_z is not None:
-                    if _coint_z < -2.0:
-                        score += 4
-                        sources.add("Technical")
-                        rationale.append(
-                            {
-                                "src": "Technical",
-                                "head": f"Cointegration Deviation −{abs(_coint_z):.1f}σ vs {_coint_etf} — Double Dislocation",
-                                "body": (
-                                    f"This stock is {abs(_coint_z):.1f} standard deviations below its "
-                                    f"long-run cointegration relationship with {_coint_etf}. "
-                                    "Pair deviations beyond −2σ revert 74% of the time (Gatev et al. 2006). "
-                                    "The stock is oversold vs both its own history AND its sector basket — "
-                                    "highest-quality MR setup."
-                                ),
-                                "sentiment": "pos",
-                                "meta": f"coint_z={_coint_z:.2f} etf={_coint_etf}",
-                            }
-                        )
-                    elif _coint_z < -1.0:
-                        score += 2
-                        sources.add("Technical")
-                        rationale.append(
-                            {
-                                "src": "Technical",
-                                "head": f"Sector Pair Deviation −{abs(_coint_z):.1f}σ vs {_coint_etf}",
-                                "body": (
-                                    f"Stock is {abs(_coint_z):.1f}σ below its cointegration mean with "
-                                    f"{_coint_etf}. Moderate deviation — adds confirmation to MR setup."
-                                ),
-                                "sentiment": "pos",
-                                "meta": f"coint_z={_coint_z:.2f} etf={_coint_etf}",
-                            }
-                        )
-                    elif _coint_z > 0.5:
-                        score -= 2
-                        rationale.append(
-                            {
-                                "src": "Technical",
-                                "head": f"Stock Above Sector Pair Mean (+{_coint_z:.1f}σ vs {_coint_etf})",
-                                "body": (
-                                    f"Stock is {_coint_z:.1f}σ above its long-run relationship with "
-                                    f"{_coint_etf} — already at or above equilibrium relative to peers. "
-                                    "MR entry lacks the pair-deviation confirmation."
-                                ),
-                                "sentiment": "neg",
-                                "meta": f"coint_z={_coint_z:.2f} etf={_coint_etf}",
-                            }
-                        )
-        except Exception:
-            pass
-
-        # ── §61 Idiosyncratic Volatility Gate ────────────────────────────────
-        try:
-            import numpy as _np_ivol
-
-            if len(df) >= 63 and not _is_lev_etf:
-                _r63 = df["Close"].astype(float).pct_change().dropna().values[-63:]
-                _ivol = float(_r63.std(ddof=1)) * _np_ivol.sqrt(252) * 100
-                if _ivol > 55.0:
-                    score -= 5
-                    sources.add("Technical")
-                    rationale.append(
-                        {
-                            "src": "Technical",
-                            "head": f"High Idiosyncratic Vol ({_ivol:.0f}%) — Wide Noise Band",
-                            "body": (
-                                f"63-day realized volatility of {_ivol:.0f}% (annualized) exceeds "
-                                "55%. Fat tails inflate the noise-to-signal ratio — short-term "
-                                "dips that resemble MR entries may be structural moves, not "
-                                "temporary dislocations."
-                            ),
-                            "sentiment": "neg",
-                            "meta": f"idio_vol={_ivol:.0f}% >55% threshold",
-                        }
-                    )
-                elif _ivol < 25.0:
-                    score += 2
-                    sources.add("Technical")
-                    rationale.append(
-                        {
-                            "src": "Technical",
-                            "head": f"Low Idiosyncratic Vol ({_ivol:.0f}%) — Stable Reverter",
-                            "body": (
-                                f"63-day realized volatility of only {_ivol:.0f}% (annualized). "
-                                "Low-vol stocks have tighter noise bands — moves away from mean "
-                                "are more likely genuine oversold dislocations than random noise."
-                            ),
-                            "sentiment": "pos",
-                            "meta": f"idio_vol={_ivol:.0f}% <25% threshold",
-                        }
-                    )
-        except Exception:
-            pass
+        score, _stat_cards, _stat_srcs = _stat_gates_fn(score, tech, sector_rs, market_ctx, df, _is_lev_etf)
+        rationale.extend(_stat_cards)
+        sources.update(_stat_srcs)
 
         # ── Fractal Dimension Index — Donchian & Bollinger regime filter ─────────
         # FDI complements Hurst: while Hurst uses variance scaling, FDI uses the ratio
@@ -5690,35 +5560,6 @@ async def generate_signal(
         score, _qs_cards, _qs_srcs = _qs_fn(score, info, fundamentals, _is_lev_etf, action)
         rationale.extend(_qs_cards)
         sources.update(_qs_srcs)
-
-        # ── Free Cash Flow Yield ─────────────────────────────────────────────
-        fcf_yield = fundamentals.get("fcf_yield")
-        if fcf_yield is not None:
-            sources.add("Fundamentals")
-            if fcf_yield > 8:
-                score += 8
-                rationale.append(
-                    {
-                        "src": "Fundamentals",
-                        "head": f"Strong FCF Yield {fcf_yield:.1f}%",
-                        "body": f"Free cash flow yield of {fcf_yield:.1f}% — substantially above current Treasury rates. The company generates enough cash to fund growth, buybacks, or dividends without new debt.",
-                        "sentiment": "pos",
-                        "meta": f"FCF Yield: {fcf_yield:.1f}%",
-                    }
-                )
-            elif fcf_yield > 4:
-                score += 4
-            elif fcf_yield < 0:
-                score -= 6
-                rationale.append(
-                    {
-                        "src": "Fundamentals",
-                        "head": "Negative Free Cash Flow",
-                        "body": "Company is burning more cash than it generates from operations. Requires external financing (debt or equity) to fund operations. Higher risk.",
-                        "sentiment": "neg",
-                        "meta": f"FCF Yield: {fcf_yield:.1f}%",
-                    }
-                )
 
         # ── Revenue Growth Acceleration ──────────────────────────────────────
         rev_acc = fundamentals.get("rev_accelerating")
@@ -7082,6 +6923,77 @@ async def generate_signal(
                             "meta": f"block_sells={_bs} vol={_bsv:,.0f} vs block_buys={_bb} vol={_bbv:,.0f}",
                         }
                     )
+        except Exception:
+            pass
+
+        # ── OFI: Order Flow Imbalance (Lee-Ready 1min approximation) ─────────
+        # Cont, Kukanov & Stoikov (2013): OFI predicts short-term price impact.
+        # Divergence (price down + net buy flow) = institutional accumulation = MR boost.
+        try:
+            if not _is_lev_etf:
+                from services.polygon_client import get_ofi_signals as _get_ofi
+
+                _ofi = await asyncio.wait_for(_get_ofi(ticker), timeout=3.0)
+                _ofi_1d = _ofi.get("ofi_1d", 0.0)
+                _ofi_div = _ofi.get("ofi_divergence", 0.0)
+
+                # Inline MR-entry check (mirrors _assemble_signal._has_mr)
+                _ofi_bb = tech.get("bb_pct_b")
+                _ofi_ibs = tech.get("ibs")
+                _ofi_vwap = tech.get("vwap_pct")
+                _ofi_has_mr = (
+                    float(tech.get("rsi") or 50) < 42
+                    or (_ofi_bb is not None and float(_ofi_bb) < 0.22)
+                    or (_ofi_ibs is not None and float(_ofi_ibs) < 0.15)
+                    or (_ofi_vwap is not None and float(_ofi_vwap) < -0.75)
+                )
+                if _ofi_has_mr and action == "BUY":
+                    if _ofi_div > 0.10:
+                        score += 5
+                        sources.add("Options/Flow")
+                        rationale.append(
+                            {
+                                "src": "Options/Flow",
+                                "head": "OFI Divergence — Institutional Accumulation",
+                                "body": (
+                                    f"Price fell today but net order flow was buyer-initiated "
+                                    f"(divergence={_ofi_div:+.3f}). Smart money absorbing retail sell — "
+                                    "strongest 1-min microstructure confirmation for MR BUY entry."
+                                ),
+                                "sentiment": "pos",
+                                "meta": f"ofi_1d={_ofi_1d:+.3f} ofi_div={_ofi_div:+.3f}",
+                            }
+                        )
+                    elif _ofi_1d > 0.20:
+                        score += 3
+                        sources.add("Options/Flow")
+                        rationale.append(
+                            {
+                                "src": "Options/Flow",
+                                "head": f"Positive OFI — Net Buy Flow ({_ofi_1d:+.2f}× session vol)",
+                                "body": (
+                                    f"1-minute order flow imbalance is net positive ({_ofi_1d:+.3f} normalized). "
+                                    "Buyers absorbing the dip — adds confirmation to MR BUY setup."
+                                ),
+                                "sentiment": "pos",
+                                "meta": f"ofi_1d={_ofi_1d:+.3f}",
+                            }
+                        )
+                    elif _ofi_1d < -0.35:
+                        score -= 6
+                        sources.add("Options/Flow")
+                        rationale.append(
+                            {
+                                "src": "Options/Flow",
+                                "head": f"Negative OFI — Active Distribution ({_ofi_1d:+.2f}× session vol)",
+                                "body": (
+                                    f"1-minute order flow is net seller-initiated ({_ofi_1d:+.3f} normalized). "
+                                    "Price dip driven by active sellers, not noise — MR entry is premature."
+                                ),
+                                "sentiment": "neg",
+                                "meta": f"ofi_1d={_ofi_1d:+.3f}",
+                            }
+                        )
         except Exception:
             pass
 

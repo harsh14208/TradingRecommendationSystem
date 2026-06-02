@@ -137,5 +137,47 @@ async def get_pairs_signals(watchlist: list[str]) -> dict[str, dict]:
 
     await asyncio.gather(*[_analyse_pair(a, b) for a, b in relevant])
 
+    # ── MST dynamic pairs — supplement static PAIRS with universe-wide discovery ─
+    # Loaded from data/mst_pairs_live.json (refreshed weekly by scanner).
+    # Only processes pairs not already covered by the static list above.
+    static_pair_set = {frozenset([a, b]) for a, b in PAIRS}
+    try:
+        from services.mst_cointegration import load_mst_pairs
+
+        mst_pairs = load_mst_pairs()
+        for mp in mst_pairs:
+            t1 = mp.get("t1", "")
+            t2 = mp.get("t2", "")
+            if not t1 or not t2:
+                continue
+            if frozenset([t1, t2]) in static_pair_set:
+                continue  # already handled by static list
+            if t1 not in watchlist and t2 not in watchlist:
+                continue
+            zscore = float(mp.get("zscore", 0))
+            corr = float(mp.get("correlation", 0))
+            if abs(corr) < 0.70 or abs(zscore) < 2.0:
+                continue
+            raw_score = float(np.clip(abs(zscore) * 4, 5, 16))
+            for target, sign in [(t1, -zscore), (t2, zscore)]:
+                if target not in watchlist:
+                    continue
+                direction_score = raw_score if sign > 0 else -raw_score
+                other = t2 if target == t1 else t1
+                candidate = {
+                    "score": round(direction_score, 1),
+                    "pair_ticker": other,
+                    "zscore": round(zscore, 2),
+                    "correlation": round(corr, 3),
+                    "direction": "undervalued" if direction_score > 0 else "overvalued",
+                    "beta": round(float(mp.get("beta", 0)), 4),
+                    "source": "mst",
+                }
+                existing = results.get(target)
+                if not existing or abs(direction_score) > abs(existing["score"]):
+                    results[target] = candidate
+    except Exception:
+        pass  # non-critical — degrade gracefully to static pairs only
+
     _cache[cache_key] = (time.time(), results)
     return results

@@ -7,9 +7,12 @@ If FRED_API_KEY is blank the FRED section is silently skipped.
 """
 
 import asyncio
+import logging
 import os
 import ssl
 from typing import Optional
+
+log = logging.getLogger("signal.trade.macro")
 
 import aiohttp
 import certifi
@@ -167,7 +170,7 @@ async def get_macro_context() -> dict:
                     }
                 )
     except Exception as e:
-        print(f"[macro] VIX: {e}")
+        log.warning(f"[macro] VIX: {e}")
 
     # ── 10-Year Treasury yield ────────────────────────────────────────────
     try:
@@ -198,7 +201,7 @@ async def get_macro_context() -> dict:
                     }
                 )
     except Exception as e:
-        print(f"[macro] TNX: {e}")
+        log.warning(f"[macro] TNX: {e}")
 
     # ── S&P 500 regime + SPY 1-month return + SMA200 neutral zone ───────────
     try:
@@ -239,7 +242,7 @@ async def get_macro_context() -> dict:
                 spy_1m = (sp_df["Close"].iloc[-1] / sp_df["Close"].iloc[-21] - 1) * 100
                 result["spy_1m_ret"] = round(float(spy_1m), 2)
     except Exception as e:
-        print(f"[macro] SP500: {e}")
+        log.warning(f"[macro] SP500: {e}")
 
     # ── FRED (optional) ───────────────────────────────────────────────────
     try:
@@ -528,7 +531,7 @@ async def get_macro_context() -> dict:
                         }
                     )
     except Exception as e:
-        print(f"[macro] FRED: {e}")
+        log.warning(f"[macro] FRED: {e}")
 
     # ── HYG — High-Yield Credit Stress (free via yfinance) ──────────────
     try:
@@ -537,7 +540,7 @@ async def get_macro_context() -> dict:
             hyg_1m = (float(hyg_df["Close"].iloc[-1]) / float(hyg_df["Close"].iloc[-21]) - 1) * 100
             result["hyg_1m_ret"] = round(hyg_1m, 2)
     except Exception as e:
-        print(f"[macro] HYG: {e}")
+        log.warning(f"[macro] HYG: {e}")
 
     # ── VIX term structure (VIX vs VIX3M) ────────────────────────────────
     try:
@@ -572,7 +575,7 @@ async def get_macro_context() -> dict:
                         }
                     )
     except Exception as e:
-        print(f"[macro] VIX3M: {e}")
+        log.warning(f"[macro] VIX3M: {e}")
 
     # ── VIX9D — near-term event risk ─────────────────────────────────────
     # The 9-day VIX captures concentrated near-term options demand (earnings,
@@ -601,7 +604,7 @@ async def get_macro_context() -> dict:
                     }
                 )
     except Exception as e:
-        print(f"[macro] VIX9D: {e}")
+        log.warning(f"[macro] VIX9D: {e}")
 
     # ── MOVE Index — Treasury volatility ─────────────────────────────────
     # CBOE MOVE = implied vol on Treasury options. High MOVE precedes equity
@@ -642,7 +645,7 @@ async def get_macro_context() -> dict:
                     }
                 )
     except Exception as e:
-        print(f"[macro] MOVE: {e}")
+        log.warning(f"[macro] MOVE: {e}")
 
     # ── Yield curve (2Y-10Y spread) ───────────────────────────────────────
     try:
@@ -676,7 +679,7 @@ async def get_macro_context() -> dict:
                     }
                 )
     except Exception as e:
-        print(f"[macro] IRX: {e}")
+        log.warning(f"[macro] IRX: {e}")
 
     # ── DXY — US Dollar Index ─────────────────────────────────────────────
     try:
@@ -687,7 +690,7 @@ async def get_macro_context() -> dict:
             result["dxy"] = dxy_now
             result["dxy_1m"] = dxy_1m
     except Exception as e:
-        print(f"[macro] DXY: {e}")
+        log.warning(f"[macro] DXY: {e}")
 
     # ── Copper/Gold ratio (growth vs safety demand) ───────────────────────
     try:
@@ -724,7 +727,7 @@ async def get_macro_context() -> dict:
                     }
                 )
     except Exception as e:
-        print(f"[macro] Cu/Au: {e}")
+        log.warning(f"[macro] Cu/Au: {e}")
 
     # ── Macro News Sentiment via SPY/QQQ Polygon news ───────────────────
     # SPY/QQQ ETF-level news acts as a market-wide fear/greed proxy.
@@ -874,7 +877,7 @@ async def get_macro_context() -> dict:
                 }
             )
     except Exception as e:
-        print(f"[macro] cross-asset: {e}")
+        log.warning(f"[macro] cross-asset: {e}")
 
     # ── Sector rotation stage ─────────────────────────────────────────────
     result["sector_rotation"] = _sector_rotation_stage(

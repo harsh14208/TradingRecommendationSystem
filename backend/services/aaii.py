@@ -12,9 +12,12 @@ Interpretation (contrarian):
 Cached 4 days (survey is weekly, released each Wednesday).
 """
 
+import logging
 import re
 import ssl
 import time
+
+log = logging.getLogger("signal.trade.aaii")
 
 import aiohttp
 import certifi
@@ -87,5 +90,5 @@ async def get_aaii_sentiment() -> dict | None:
         _cache["ts"] = now
         return result
     except Exception as e:
-        print(f"[naaim] {e}")
+        log.warning(f"[naaim] {e}")
         return _cache.get("data")

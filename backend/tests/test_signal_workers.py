@@ -439,45 +439,6 @@ async def test_fundamentals_worker_empty_fundamentals():
 
 
 @pytest.mark.asyncio
-async def test_fundamentals_worker_high_piotroski():
-    """F-Score >= 7 → +12 score with rationale."""
-    with (
-        patch("services.massive_ratios.get_polygon_dividend_data", new=AsyncMock(return_value={})),
-        patch("services.massive_ratios.get_annual_revenue_acceleration", new=AsyncMock(return_value={})),
-        patch("services.polygon_reference.get_float_data", new=AsyncMock(return_value={})),
-    ):
-        from services.signal_workers import fundamentals_worker
-
-        result = await fundamentals_worker(
-            ticker="AAPL",
-            fundamentals={"piotroski_f": 8},
-            market_ctx=None,
-            price=150.0,
-        )
-    assert result.score >= 12
-    assert any("F-Score" in r["head"] for r in result.rationale)
-
-
-@pytest.mark.asyncio
-async def test_fundamentals_worker_low_piotroski():
-    """F-Score <= 2 → -10 score."""
-    with (
-        patch("services.massive_ratios.get_polygon_dividend_data", new=AsyncMock(return_value={})),
-        patch("services.massive_ratios.get_annual_revenue_acceleration", new=AsyncMock(return_value={})),
-        patch("services.polygon_reference.get_float_data", new=AsyncMock(return_value={})),
-    ):
-        from services.signal_workers import fundamentals_worker
-
-        result = await fundamentals_worker(
-            ticker="AAPL",
-            fundamentals={"piotroski_f": 1},
-            market_ctx=None,
-            price=150.0,
-        )
-    assert result.score <= -10
-
-
-@pytest.mark.asyncio
 async def test_fundamentals_worker_high_fcf_yield():
     """FCF yield > 8% → +8 score."""
     with (

@@ -3092,3 +3092,105 @@ The calibration was not correcting after the phantom win fix because `run_calibr
 Fix: corrected `outcome_14d = outcome_pct` for all 112 signals where `hit_stop=True AND outcome_pct < 0 AND outcome_14d > 0`. Recalibration then applied −17.34pp average correction. All 40,686 signals correctly lowered to ~42% confidence.
 
 *§PostFix complete · validate_predictions.py + backfill_confidence.py v3 · 2026-05-31*
+
+---
+
+## §InvestigationResults — Five Alpha Investigations (2026-05-31)
+
+> Inv1–5 run on 100-ticker IS backtest + 546 live resolved signals. Results drove §77/§75/§61/§78 changes.
+
+### Inv1 — MR Trigger Quality Split
+
+All 173 IS trades fire 2+ MR conditions simultaneously ("multi"). No single-trigger entries pass the full 26-gate stack. The MR gate's OR logic is already delivering multi-condition confluence naturally. Requiring 2+ conditions (`require_mr_count_override=2`) would have no effect. The IS trades are already the highest-conviction multi-condition setups.
+
+### Inv2 — VIX<20 Gate Ablation (2022–present)
+
+Gate ON and Gate OFF: identical results (N=27, WR=59.3%, Sharpe=0.00). The gate is not firing — VIX stayed above 20 through most of 2022-present. The 2022–present Sharpe=−0.13 weakness is **structural** (MR doesn't work in rate-normalisation/AI-momentum regimes), not a gate configuration problem.
+
+### Inv3 — Live Per-Gate Contribution (546 resolved signals)
+
+| Gate | N | WR | ΔWR | Verdict |
+|---|---|---|---|---|
+| §77 Tax-Loss (near 52-wk low) | 42 | 31.0% | **−11.5pp** | **⛔ Inverted → −4pp penalty** |
+| §75 Buyback | 71 | 33.8% | **−8.7pp** | **⛔ Disabled** |
+| Options Flow | 197 | 45.2% | +2.7pp | Neutral |
+| §49 Put-Call skew | 243 | 47.7% | +5.2pp | ✅ |
+| §64 Yield curve | 420 | 49.8% | +7.3pp | ✅ |
+| §48 IVR | 213 | 52.6% | +10.1pp | ✅ |
+| §50 Piotroski F≥7 | 133 | 55.6% | +13.1pp | ✅ |
+| §66 Breadth (Zweig) | 23 | 56.5% | +14.0pp | ✅ |
+| §60 Hurst mean-reverting | 46 | 63.0% | **+20.6pp** | **✅ Best live predictor** |
+
+### Inv4 — Score Discrimination (546 live signals)
+
+Confidence collapsed to 42–44% for 82% of signals after v3 recalibration (correctly). No discrimination within the primary band. Fix: L5 gate-quality multiplier in `positionSizeScale` (Hurst×1.20, Piotroski×1.15, IVR×1.10) — sizes up trades where the best live predictors fire without relying on the compressed confidence number.
+
+### Inv5 — Joint Gate Ablation (100-ticker IS, 23yr)
+
+| Gate removed | ΔN | ΔSharpe | Verdict |
+|---|---|---|---|
+| §61 Idio vol (>55%) | +3 | **+0.01** | **✅ REMOVED** |
+| §78 Sep score floor | +2 | −0.01 | **✅ REMOVED** |
+| §78 Oct score floor | +9 | −0.00 | **✅ REMOVED** |
+| §59 OU halflife | +1 | −0.01 | Keep |
+| §60 Hurst ceiling | +28 | −0.05 | Keep (protecting alpha) |
+
+Dead gates removed: IS N rose 157→173, Sharpe maintained at 0.29.
+
+---
+
+## §InvB — Quality Score Tier Analysis (IS, 173 trades)
+
+> quality_score = 40%×(score−thresh) + 35%×OU_speed + 25%×Hurst_MR. Computed per trade in `simulate_ticker()`.
+
+| Quality Tier | N | WR | Avg Ret | Sharpe |
+|---|---|---|---|---|
+| **High** (score ≥43) | 58 | **81.0%** | **+1.58%** | **0.52** |
+| Mid (35–43) | 58 | 69.0% | +1.00% | 0.29 |
+| **Low** (score <35) | 57 | 61.4% | +0.59% | **0.14** |
+
+**Sharpe spread: +0.38** (High vs Low) — the strongest discriminating signal in the research stack. Trades in the High tier have fast OU mean-reversion speed AND low Hurst exponent. Next step: add `--quality-thresh` flag to restrict entries to High tier (halve N, nearly double Sharpe).
+
+---
+
+## §Russell1000 — MR Screener Results (fast 2006–2016, 2026-05-31)
+
+> 427 candidates backtested. Quality bar: WR≥50%, Sharpe≥0.20, N≥3.
+
+### PASS (5 tickers — all Industrials, blocked by XLI gate)
+
+| Ticker | WR | Avg | Sharpe | ADV |
+|---|---|---|---|---|
+| CSX | 67% | +1.58% | **0.50** | $588M |
+| UNP | 73% | +1.50% | **0.44** | $874M |
+| ETN | 70% | +1.49% | **0.43** | $1,160M |
+| XYL | 60% | +0.99% | **0.30** | $266M |
+| ITW | 73% | +0.59% | **0.28** | $358M |
+
+To use: validate in 23yr IS, then unlock XLI railways+electrical in `delivery_gates.py`. Projected Ann.Sharpe: +0.41 (conservative forward SR=0.15).
+
+### Top live-eligible WATCH
+
+| Ticker | WR | Avg | N | Sector |
+|---|---|---|---|---|
+| **PANW** | 86% | +2.96% | 7 | Tech ✅ |
+| **HAL** | 86% | **+4.30%** | 7 | Energy ✅ |
+| BWA | 86% | +2.04% | 7 | Consumer ✅ |
+| FTI | 83% | +2.88% | 6 | Energy ✅ |
+| **MCO** | 78% | +1.21% | 9 | Financial ✅ |
+| BKR | 60% | +0.96% | 10 | Energy ✅ |
+
+Validation queue: §31-1 to §31-5 in `docs/TODO.md`.
+
+---
+
+## §A8 — Babel → esbuild Migration (2026-05-31)
+
+Babel CDN removed from all production paths. Three esbuild bundles built:
+- `dist/app-bundle.js` — 408 KB (main dashboard, 8 JSX files)
+- `dist/site-bundle.js` — 53 KB (landing page)
+- `dist/mobile-bundle.js` — 50 KB (PWA mobile)
+
+`load-app.js` hardened: Babel fallback localhost-only, error shown in production if bundle missing. `sw.js` cache version bumped to v4. React dev builds → production builds. CSP `unsafe-eval` was already removed in §43; production path now truly eval-free.
+
+*§InvestigationResults + §Russell1000 + §A8 complete · 2026-05-31*

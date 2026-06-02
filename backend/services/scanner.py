@@ -411,7 +411,7 @@ async def _maybe_send(
             log.info(f" {sig_dict['ticker']} cooldown — already sent {sig_dict['action']} within {base_hours}h")
             return
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     now_et = datetime.now(_ET)  # New York time for display
     et_time = now_et.strftime("%H:%M:%S")  # "20:32:07 ET"
     emoji = "🟢" if sig_dict["action"] == "BUY" else "🔴"
@@ -1003,6 +1003,21 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
                         log.debug(f" PCA risk model failed (non-critical): {pca_e}")
         except Exception as e:
             log.debug(f" Portfolio context failed (non-critical): {e}")
+
+    # ── MST dynamic pairs refresh (Sunday only, uses prefetched histories) ─────
+    # compute_mst_pairs is CPU-bound (~2s for 154 tickers); run in thread pool.
+    try:
+        from datetime import datetime as _dt_now
+
+        if _dt_now.now().weekday() == 6:  # Sunday
+            from services.market_data import get_histories_batch as _ghb
+            from services.mst_cointegration import refresh_mst_pairs as _refresh_mst
+
+            _mst_hists = await _ghb(settings.tickers, period="6mo", interval="1d")
+            _n_mst = await _refresh_mst(_mst_hists)
+            log.info(f" MST pairs refresh: {_n_mst} dynamic pairs computed")
+    except Exception as e:
+        log.debug(f" MST pairs refresh failed (non-critical): {e}")
 
     # ── Cointegration / pairs trading signals (cached 2h) ────────────────────
     try:

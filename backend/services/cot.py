@@ -18,9 +18,12 @@ Column order in the CFTC Financial Futures legacy report (positions line):
   10 Other Reportables Short
 """
 
+import logging
 import re
 import ssl
 import time
+
+log = logging.getLogger("signal.trade.cot")
 
 import aiohttp
 import certifi
@@ -96,5 +99,5 @@ async def get_cot_signal() -> dict | None:
         _cache["ts"] = now
         return result
     except Exception as e:
-        print(f"[cot] {e}")
+        log.warning(f"[cot] {e}")
         return _cache.get("data")

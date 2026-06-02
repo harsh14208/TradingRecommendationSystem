@@ -199,7 +199,7 @@ async def admin_stats(
     sent_signals = (await db.execute(select(func.count()).select_from(Signal).where(Signal.is_sent == True))).scalar()
     from datetime import timezone as _tz
 
-    _now_utc = datetime.now(_tz.utc)
+    _now_utc = datetime.now(_tz.utc).replace(tzinfo=None)
     deliveries_30d = (
         await db.execute(
             select(func.count())
@@ -390,7 +390,7 @@ async def delivery_sla(
 
     import numpy as np
 
-    cutoff = datetime.now(_tz.utc) - timedelta(hours=24)
+    cutoff = datetime.now(_tz.utc).replace(tzinfo=None) - timedelta(hours=24)
     rows = (
         await db.execute(
             select(Signal.created_at, Signal.sent_at)

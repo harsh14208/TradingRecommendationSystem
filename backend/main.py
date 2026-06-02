@@ -307,7 +307,7 @@ async def _nightly_signal_cleanup():
             from models import Signal
             from sqlalchemy import select, update
 
-            cutoff = datetime.now(_tz.utc)
+            cutoff = datetime.now(_tz.utc).replace(tzinfo=None)
             async with AsyncSessionLocal() as db:
                 # 1. Deactivate expired signals
                 result = await db.execute(
@@ -445,7 +445,7 @@ async def _nightly_reflection_learning():
             from services.vector_store import store_reflection
             from sqlalchemy import select
 
-            cutoff = datetime.now(_tz.utc) - timedelta(days=7)
+            cutoff = datetime.now(_tz.utc).replace(tzinfo=None) - timedelta(days=7)
             async with AsyncSessionLocal() as db:
                 losses = (
                     (
@@ -558,13 +558,11 @@ async def _weekly_factor_mining():
 async def _run_weekly_digest():
     ET = pytz.timezone("America/New_York")
     try:
-        from datetime import timezone as _tz
-
         from database import AsyncSessionLocal
         from models import Signal
         from sqlalchemy import select
 
-        now = datetime.now(_tz.utc)
+        now = datetime.utcnow()
         week_ago = now - timedelta(days=7)
         two_weeks_ago = now - timedelta(days=14)
 
@@ -677,9 +675,14 @@ async def _run_weekly_digest():
                     if not chats_to_notify and s.telegram_chat_id:
                         chats_to_notify.add(s.telegram_chat_id)
 
+                    if not chats_to_notify:
+                        log.warning(
+                            "[digest] No Telegram recipients — owner has no telegram_chat_id linked and TELEGRAM_CHAT_ID env var is not set"
+                        )
+
                     for chat_id in chats_to_notify:
                         try:
-                            await session.post(
+                            resp = await session.post(
                                 url,
                                 json={
                                     "chat_id": chat_id,
@@ -687,6 +690,21 @@ async def _run_weekly_digest():
                                     "parse_mode": "Markdown",
                                 },
                             )
+                            result = await resp.json()
+                            if not result.get("ok"):
+                                # Retry without Markdown if parse error
+                                log.warning(
+                                    f"[digest] telegram to {chat_id} rejected (parse_mode=Markdown): {result.get('description')} — retrying plain"
+                                )
+                                resp2 = await session.post(
+                                    url,
+                                    json={"chat_id": chat_id, "text": message_text},
+                                )
+                                result2 = await resp2.json()
+                                if not result2.get("ok"):
+                                    log.warning(
+                                        f"[digest] telegram to {chat_id} failed (plain): {result2.get('description')}"
+                                    )
                         except Exception as e_tg:
                             log.warning(f"[digest] telegram to {chat_id} failed: {e_tg}")
                 log.info(f"[digest] Weekly digest sent via Telegram to {len(chats_to_notify)} chats")
@@ -723,7 +741,7 @@ async def _run_weekly_digest():
             log.warning(f"[digest] snapshot failed (non-critical): {e_snap}")
 
     except Exception as e:
-        print(f"[digest] error: {e}")
+        log.error(f"[digest] fatal error in weekly digest: {e}", exc_info=True)
 
 
 async def _weekly_digest():

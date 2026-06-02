@@ -4,9 +4,12 @@ Uses the bulk endpoint and filters by ticker — the per-ticker endpoint returns
 Bulk data is cached 4 hours; per-ticker results are cached 24 hours.
 """
 
+import logging
 import ssl
 import time
 from datetime import datetime, timedelta, timezone
+
+log = logging.getLogger("signal.trade.congress")
 
 import aiohttp
 import certifi
@@ -38,7 +41,7 @@ async def _fetch_bulk() -> list:
             _bulk_cache["ts"] = now
             return data
     except Exception as e:
-        print(f"[congress] bulk fetch: {e}")
+        log.warning(f"[congress] bulk fetch: {e}")
     return _bulk_cache["data"] or []
 
 
@@ -101,5 +104,5 @@ async def get_congress_signal(ticker: str) -> dict:
         return result
 
     except Exception as e:
-        print(f"[congress] {ticker}: {e}")
+        log.warning(f"[congress] {ticker}: {e}")
         return {}
