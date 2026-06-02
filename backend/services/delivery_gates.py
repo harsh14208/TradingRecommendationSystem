@@ -193,6 +193,19 @@ async def check_delivery_gates(
         if _vix_now is not None and _vix_now < 15.0:
             return f"VIX={_vix_now:.1f} < 15 — MR entry suspended in ultra-low vol regime (§54)", sig_dict
 
+    # ── ATR%rank ≤ 70 quality gate ───────────────────────────────────────────────
+    # Quality sweep (2026-06-01): only effective entry filter (+0.05 IS Sharpe, N 197→98).
+    # ATR%rank > 70 = top-30% volatility = trend-dominant regime. Confirmed by Quantpedia:
+    # P70 is the optimal MR ceiling — above it, momentum dominates and MR bounces fail.
+    # MR bounces are strongest in moderate-ATR fear spikes, not in expanding-volatility trends.
+    if action == "BUY":
+        _atr_rank = sig_dict.get("atrPctRank")
+        if _atr_rank is not None and _atr_rank > 70:
+            return (
+                f"ATR%rank={_atr_rank:.0f} > 70 — trend-dominant vol regime, MR edge absent (§quality-sweep)",
+                sig_dict,
+            )
+
     # ── §55 Cross-asset macro hard block (3/3 headwinds) ─────────────────────
     # Backtest §55: 3/3 headwinds (TLT+UUP+XLE stress) → +0.03 Sharpe when blocked.
     # macro.py applies −10 soft score reduction; this adds a hard block for

@@ -1857,19 +1857,14 @@ def _assemble_signal(
                 # IS distribution: High(≥43) N=63 Sh=0.51 | Mid(35–43) N=63 Sh=0.31 | Low(<35) N=62 Sh=0.17
                 # Old thresholds (60/30) put 80% in Mid (neutral) → no lift. Corrected to (43/35).
                 * (1.30 if _quality_score >= 43 else 0.75 if _quality_score < 35 else 1.0)
-                # L9: HMM regime sizing (macro_regime.py 2-state Baum-Welch)
-                # IS ablation (2026-06-01): bear WR=72% > baseline — VIX>25 fires in high-vol
-                # periods when MR bounces are actually larger. Bull amplification never fires
-                # on MR entries (low-VIX bull = no MR triggers). Only retain the panic-level
-                # size cut (bear_prob≥0.80, not 0.70) and the transition dampener.
-                # MaxDD improvement confirmed: 0.86 → 0.73 from transition dampener alone.
-                * (
-                    0.70
-                    if (_hmm_regime_label == "bear" and _hmm_bear_prob >= 0.80)
-                    else 0.85
-                    if (_hmm_regime_label == "transition" or _hmm_trans_risk > 0.20)
-                    else 1.0
-                )
+                # L9: HMM regime sizing — transition dampener only (2026-06-01 fix)
+                # Bear dampener REMOVED: IS ablation shows bear WR=72% > baseline 70.7%.
+                # HMM "bear" fires on highest-VIX periods — exactly when MR bounces are strongest
+                # (deepest fear = deepest overselling = most reliable 10d recovery). Sizing DOWN
+                # in these periods cut our best trades. Fix: bear → 1.0× (neutral).
+                # Transition dampener KEPT: MaxDD 0.86% → 0.73% confirmed (regime uncertainty
+                # = incomplete information = appropriate size reduction).
+                * (0.85 if (_hmm_regime_label == "transition" or _hmm_trans_risk > 0.20) else 1.0)
                 if action == "BUY"
                 else 1.0
             ),
@@ -1887,6 +1882,8 @@ def _assemble_signal(
         "qualityScore": round(_quality_score, 1),
         # L9: HMM regime label for frontend display and future hard-gate research
         "hmmRegime": _hmm_regime_label or None,
+        # ATR%rank — delivery_gates uses this for ATR≤70 quality gate (trend-dominant regime check)
+        "atrPctRank": round(float(tech.get("atr_pct_rank") or 50), 1),
     }
 
 

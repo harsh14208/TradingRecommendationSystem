@@ -145,13 +145,95 @@ async def _run(min_n: int, after_date: datetime | None) -> None:
     print(f"{'─' * 72}\n")
 
 
+_FUNDAMENTAL_GATES: list[tuple[str, list[str], str]] = [
+    ("§50 Piotroski F-Score", ["Piotroski"], "signal_engine.py apply_quality_screens"),
+    ("§51 Forward PE trap", ["Forward PE", "Value Trap", "PE Ratio"], "signal_engine.py"),
+    ("§52 Short Interest velocity", ["Short Interest"], "signal_engine.py"),
+    ("§73 Insider BUY clustering", ["Insider Cluster", "Insider Buy", "Form 4"], "edgar.py"),
+    ("§74 Beneish M-Score", ["Beneish"], "fundamentals.py"),
+    ("§76 Altman Z-Score", ["Altman"], "fundamentals.py"),
+    ("§58 EPS Revision", ["EPS Revision", "Analyst Revision"], "signal_engine.py"),
+]
+
+
+async def _run_section85(after_date: datetime | None) -> None:
+    """§85-1: Fundamental modifier audit — segment by each modifier, compare WR vs baseline.
+    Remove any modifier with ΔWR < −1pp and N≥30 (adds noise without IS backtest validation).
+    """
+    async with get_db() as db:
+        stmt = select(Signal).where(Signal.outcome_pct.isnot(None))
+        if after_date:
+            stmt = stmt.where(Signal.created_at >= after_date)
+        result = await db.execute(stmt)
+        signals: list[Signal] = list(result.scalars().all())
+
+    total = len(signals)
+    if not total:
+        print("No resolved signals found.")
+        return
+
+    wins = sum(1 for s in signals if _win(s.outcome_pct))
+    baseline_wr = wins / total * 100
+    avg_ret = sum(s.outcome_pct for s in signals if s.outcome_pct is not None) / total
+
+    print(f"\n{'─' * 75}")
+    print("  §85-1 Fundamental Modifier Audit")
+    print("  These modifiers are LIVE-ONLY — not in IS backtest (technical-only).")
+    print("  IS/live WR gap: 70.7% → 42.5%. Audit identifies which modifiers drag WR.")
+    if after_date:
+        print(f"  Filter: after {after_date.date()}")
+    print(f"{'─' * 75}")
+    print(f"  Resolved signals : {total:,}")
+    print(f"  Baseline WR      : {baseline_wr:.1f}%  avg_ret={avg_ret:+.2f}%")
+    if total < 200:
+        print(f"\n  ⚠  {total} resolved signals — need ≥200 for reliable §85-1 verdict.")
+        print("  Showing preliminary data. Rerun at N≥200 for removal decisions.")
+    print(f"{'─' * 75}\n")
+
+    rows = []
+    for name, patterns, source in _FUNDAMENTAL_GATES:
+        fired = [s for s in signals if _gate_fired(s.rationale or [], patterns)]
+        n = len(fired)
+        if n < 3:
+            rows.append((name, 0, 0.0, 0.0, "⏳ N<3", source))
+            continue
+        wr = sum(1 for s in fired if _win(s.outcome_pct)) / n * 100
+        delta = wr - baseline_wr
+        verdict = (
+            "✅ KEEP"
+            if delta >= 2.0
+            else "⚠  WATCH"
+            if abs(delta) < 1.0
+            else f"❌ REMOVE (N={n})"
+            if n >= 30
+            else f"❌ pending (N={n}<30)"
+        )
+        rows.append((name, n, wr, delta, verdict, source))
+
+    col_w = max(len(r[0]) for r in rows) + 2
+    print(f"  {'Fundamental Modifier':<{col_w}} {'N':>5}  {'WR%':>6}  {'ΔWR':>7}  Verdict")
+    print(f"  {'─' * col_w} {'─' * 5}  {'─' * 6}  {'─' * 7}  {'─' * 20}")
+    for name, n, wr, delta, verdict, source in rows:
+        n_s = str(n) if n else "—"
+        wr_s = f"{wr:>5.1f}%" if n else "—"
+        d_s = f"{delta:>+6.1f}pp" if n else "—"
+        print(f"  {name:<{col_w}} {n_s:>5}  {wr_s}  {d_s}  {verdict}")
+
+    print(f"\n  {'─' * col_w} {'─' * 5}  {'─' * 6}  {'─' * 7}")
+    print(f"  {'Baseline (all)':<{col_w}} {total:>5}  {baseline_wr:>5.1f}%  {'—':>7}")
+    print()
+    print("  ✅ KEEP: ΔWR ≥ +2pp  |  ⚠ WATCH: within ±1pp  |  ❌ REMOVE: ΔWR < −1pp + N≥30")
+    print("  Removal procedure: comment out score line in signal_engine.py, retest WR.")
+    print("  Each removal is a separate commit — revert if WR drops further.")
+    print(f"{'─' * 75}\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="A5 gate contribution monitoring")
+    parser.add_argument("--min-n", type=int, default=10, help="Minimum N to include in report (default: 10)")
+    parser.add_argument("--after", type=str, default=None, help="Only signals after this date (YYYY-MM-DD)")
     parser.add_argument(
-        "--min-n", type=int, default=10, help="Minimum N (gate-fired signals) to include in report (default: 10)"
-    )
-    parser.add_argument(
-        "--after", type=str, default=None, help="Only include signals created after this date (YYYY-MM-DD)"
+        "--section85", action="store_true", help="§85-1 mode: fundamental modifiers only, with removal recommendations"
     )
     args = parser.parse_args()
 
@@ -159,7 +241,10 @@ def main() -> None:
     if args.after:
         after_dt = datetime.fromisoformat(args.after).replace(tzinfo=timezone.utc)
 
-    asyncio.run(_run(args.min_n, after_dt))
+    if args.section85:
+        asyncio.run(_run_section85(after_dt))
+    else:
+        asyncio.run(_run(args.min_n, after_dt))
 
 
 if __name__ == "__main__":
