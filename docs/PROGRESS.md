@@ -23,26 +23,11 @@
 | Confidence gap | +11.0pp overconfident (raw) |
 | XGBoost training samples | 529 |
 
-## 🏅 Quality Ratings — v7.3 (Post-Adversarial Methodology Review, 2026-05-31)
+## 🏅 Quality Ratings — v7.4 (2026-06-05)
 
-> v7.3 supersedes v6.1. Ratings updated to reflect adversarial quant engineering audit + 10 methodology fixes.
-> Signal and research ratings now distinguish infrastructure completeness from statistical soundness.
-
-| Aspect | Score | Grade | Δ | Notes |
-|--------|-------|-------|---|-------|
-| **Signal Accuracy** | 8.5/10 | A− | ↓ from 9.2 | §16a sectors blocked, value-trap gate, live-validated 0% WR tickers blocked. Score reduced: IS WR/Sharpe are upper bounds after adversarial review — 15 curated-out underperformers, OOS-promoted tickers (LOW/FDX/MMM/EMR) now quarantined. Reported 67.5% IS WR is likely 61–64% after curation-bias correction. |
-| **Signal Engine** | 9.0/10 | A | ↓ from 9.4 | Per-sector MR config, §59–§82 gate stack (26 strategies), ATR stops, delivery gates, options flow. Reduction: 8k+ line monolith with no per-gate testing (gates/ module extraction pending). Thresholds frozen at IS-optimal values with no live re-calibration mechanism. |
-| **Frontend UX** | 8.8/10 | A− | — | Live WebSocket price, visual R:R zones, DOM pagination, keyboard shortcuts. |
-| **Code Maintainability** | 8.5/10 | B+ | ↑ from 8.0 | 15 new methodology integrity tests enforce invariants (IS/OOS disjointness, feature vector length, graduated ticker isolation, earnings lookahead absence). All 995 tests pass. |
-| **Security** | 7.0/10 | B− | — | JWT + HTTP-only cookies, bcrypt. Risk: default owner password pre-launch. |
-| **Backend Architecture** | 9.1/10 | A | — | Continuous market-hours scanner. Single-flight scan, Redis stampede locks, stop_monitor. |
-| **Data Pipeline** | 9.2/10 | A+ | — | Polygon full options chain, FRED, EDGAR, extended-hours snapshot. NBBO spread (§80), block prints (§81) live. yfinance earnings lookahead removed — Polygon point-in-time only. |
-| **Deployment Readiness** | 6.5/10 | C+ | — | Railway/Fly ready. Blockers: owner password, SMTP, Stripe webhook, HTTPS, VAPID. |
-| **Test Coverage** | 9.2/10 | A | ↑ from 8.8 | 995 passing, 2 skipped (up from 660). New: `test_backtest_methodology.py` (15 tests: block bootstrap, OOS contamination, earnings lookahead, feature circularity, BH annotation, champion gate logic). `test_signal_ml.py` updated to 23-feature post-audit count. |
-| **ML Methodology** | 8.0/10 | B+ | ↑ from 7.5 | Added: `_MIN_LIVE_N_FOR_DEPLOYMENT=300` (Hanley-McNeil CI justification), `_MIN_AUC_DELTA_TO_DEPLOY=0.005`, `auc_ci_95()` (Hanley-McNeil 1982) logged and persisted. Champion/challenger now requires both N-gate and meaningful AUC improvement. Entry model CV-AUC=0.6188 (holdout=0.6622), champion 0.6399 correctly retained. |
-| **Backtest Methodology** | 7.5/10 | B+ | ↑ from 7.0 | Added: Lo (2002) Sharpe CI printed for IS and OOS; Deflated Sharpe (Bailey-LPdP) warning; minimum OOS N required printed. IS CI [0.13, 0.44] — SR=0 now outside 95% CI at N=157 ✅. Deflated Sharpe 0.29 > 0.22 ✅. Ceiling: survivorship bias (200+ delisted tickers, ~1–4pp WR overstatement) requires Norgate/CRSP ($20–33/mo). |
-
-**Overall: 8.3 / 10 — B+** (↑ from 8.2 — methodology soundness improved; IS CI now clears significance threshold; ML deployment gates tightened)
+> Ratings maintained in **[`docs/Stats.md §15`](Stats.md)** — single source of truth.
+> **Overall: 8.0/10 product audit · 8.4/10 B+ quality grade** (v7.4, 2026-06-05).
+> v7.4: RISK-1/2/4 (bracket stops + DD circuit-breaker + kill switch), A16-UI, PROD-1/3, ML-4, CAL-4, BE-2. 1096 tests.
 
 ---
 

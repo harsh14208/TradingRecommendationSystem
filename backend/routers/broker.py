@@ -231,6 +231,51 @@ async def update_auto_execute_settings(
     }
 
 
+@router.put("/rotate-credentials", status_code=200)
+async def rotate_alpaca_credentials(
+    body: BrokerConnectIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    SEC-4: Rotate Alpaca API credentials without disconnecting.
+
+    New credentials are verified before saving; old credentials are invalidated
+    immediately on success. Use this instead of disconnect+connect when rotating
+    API keys for security hygiene.
+    """
+    _require_pro(user)
+
+    if not user.alpaca_key_enc:
+        raise HTTPException(status_code=422, detail="No existing broker connection — use /connect instead")
+
+    from services.broker_svc import encrypt_credential, verify_alpaca_connection
+
+    live = body.account_type == "live"
+    try:
+        account = await verify_alpaca_connection(body.api_key, body.api_secret, live)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    merged = await db.merge(user)
+    merged.alpaca_key_enc = encrypt_credential(body.api_key)
+    merged.alpaca_secret_enc = encrypt_credential(body.api_secret)
+    merged.alpaca_account_type = body.account_type
+    await db.commit()
+
+    log.info("SEC-4: Alpaca credentials rotated for user=%d broker=%s/%s", user.id, body.broker, body.account_type)
+    return {
+        "rotated": True,
+        "broker": body.broker,
+        "account_type": body.account_type,
+        "account": {
+            "id": account.get("id", ""),
+            "status": account.get("status", ""),
+            "equity": account.get("equity", ""),
+        },
+    }
+
+
 @router.get("/orders")
 async def list_broker_orders(
     limit: int = 50,

@@ -206,6 +206,48 @@ async def place_notional_order(
             return await r.json()
 
 
+async def place_bracket_order(
+    api_key: str,
+    api_secret: str,
+    symbol: str,
+    qty: float,
+    side: str,
+    stop_price: float,
+    take_profit_price: float | None = None,
+    live: bool = False,
+) -> dict:
+    """
+    Place a bracket market order with a stop-loss (and optional take-profit).
+
+    Uses share qty (not notional) so stop/take-profit legs can be anchored
+    to exact price levels from the signal's ATR stop and target.
+
+    Alpaca supports fractional qty brackets — qty may be < 1 share.
+    time_in_force must be "gtc" for bracket legs to survive past close.
+    """
+    body: dict[str, Any] = {
+        "symbol": symbol.upper(),
+        "qty": str(round(qty, 6)),
+        "side": side.lower(),
+        "type": "market",
+        "time_in_force": "gtc",
+        "order_class": "bracket",
+        "stop_loss": {"stop_price": str(round(stop_price, 2))},
+    }
+    if take_profit_price is not None:
+        body["take_profit"] = {"limit_price": str(round(take_profit_price, 2))}
+
+    async with aiohttp.ClientSession() as s:
+        async with s.post(
+            f"{_base(live)}/v2/orders",
+            headers=_headers(api_key, api_secret),
+            json=body,
+            ssl=_ssl_ctx(),
+        ) as r:
+            r.raise_for_status()
+            return await r.json()
+
+
 async def close_position(api_key: str, api_secret: str, symbol: str, live: bool = False) -> dict:
     async with aiohttp.ClientSession() as s:
         async with s.delete(
@@ -230,3 +272,66 @@ async def cancel_order(api_key: str, api_secret: str, order_id: str, live: bool 
                 return {"status": "cancelled"}
             r.raise_for_status()
             return await r.json()
+
+
+async def submit_bracket_stop_order(
+    api_key: str,
+    api_secret: str,
+    symbol: str,
+    notional: float,
+    side: str,
+    stop_price: float,
+    take_profit_price: float | None = None,
+    entry_price: float | None = None,  # unused; notional order handles sizing
+    live: bool = False,
+) -> dict:
+    """
+    Place a notional market entry order with an attached stop-loss (and optional
+    take-profit) so the position is protected immediately after fill.
+
+    Alpaca bracket orders: the parent is a market order; the stop and
+    take-profit legs are submitted as OCO children and are auto-cancelled when
+    either leg fills.
+
+    Args:
+        stop_price: Hard stop price (loss side). Required.
+        take_profit_price: Optional target price (profit side).
+        notional: Dollar amount for the entry leg (fractional shares supported).
+    """
+    legs: list[dict] = [{"type": "stop", "stop_price": str(round(stop_price, 2))}]
+    if take_profit_price is not None:
+        legs.append({"type": "limit", "limit_price": str(round(take_profit_price, 2))})
+
+    body: dict[str, Any] = {
+        "symbol": symbol.upper(),
+        "notional": str(round(notional, 2)),
+        "side": side.lower(),
+        "type": "market",
+        "time_in_force": "day",
+        "order_class": "bracket" if take_profit_price else "oto",
+        "stop_loss": {"stop_price": str(round(stop_price, 2))},
+    }
+    if take_profit_price is not None:
+        body["take_profit"] = {"limit_price": str(round(take_profit_price, 2))}
+
+    async with aiohttp.ClientSession() as s:
+        async with s.post(
+            f"{_base(live)}/v2/orders",
+            headers=_headers(api_key, api_secret),
+            json=body,
+            ssl=_ssl_ctx(),
+        ) as r:
+            r.raise_for_status()
+            return await r.json()
+
+
+async def get_portfolio_value(api_key: str, api_secret: str, live: bool = False) -> float:
+    """Return current portfolio equity (cash + unrealised P&L) in dollars."""
+    account = await get_account(api_key, api_secret, live=live)
+    return float(account.get("equity") or account.get("portfolio_value") or 0.0)
+
+
+async def get_unrealized_pl(api_key: str, api_secret: str, live: bool = False) -> float:
+    """Return aggregate unrealised P&L across all open positions in dollars."""
+    account = await get_account(api_key, api_secret, live=live)
+    return float(account.get("unrealized_pl") or 0.0)

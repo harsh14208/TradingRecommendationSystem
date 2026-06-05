@@ -787,6 +787,11 @@ async def _maybe_auto_execute_for_signal(sig: dict, signal_id, db) -> None:
     if not _market_hours_ok():
         return
 
+    db_settings = await _load_db_settings()
+    if db_settings.get("execution_paused"):
+        log.info("_maybe_auto_execute: broker auto-execution paused (kill switch active)")
+        return
+
     # Load eligible users in a fresh session so we don't dirty the delivery session.
     try:
         async with AsyncSessionLocal() as exec_db:

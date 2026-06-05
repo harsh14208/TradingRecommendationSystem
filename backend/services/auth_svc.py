@@ -161,5 +161,6 @@ def user_to_dict(u: User) -> dict:
         "auto_execute": getattr(u, "auto_execute", False),
         "auto_execute_min_conf": getattr(u, "auto_execute_min_conf", None),
         "auto_execute_broker": getattr(u, "auto_execute_broker", None),
+        "auto_execute_qty_dollars": getattr(u, "auto_execute_qty_dollars", None),
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }

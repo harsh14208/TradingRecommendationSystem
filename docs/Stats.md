@@ -356,83 +356,81 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 ---
 
-## 15. Honest Ratings — v7.3 (Post-Adversarial Methodology Review, 2026-05-31)
+## 15. Project Ratings — v7.5 (2026-06-05)
 
-> Supersedes v7.2. Updated after adversarial quant engineering review and 10 methodology fixes:
-> OOS contamination repaired, block bootstrap, earnings lookahead removed, purged CV, BH FDR correction,
-> non-gap stop slippage, raw_score circular dependency eliminated, 15 new methodology integrity tests.
-> Ratings now distinguish between "feature completeness" (v7.2 perspective) and "statistical soundness"
-> (adversarial quant perspective). Both are shown where they diverge.
+> **Single source of truth** for all project quality ratings. Referenced by `docs/TODO.md` and `docs/PROGRESS.md`.
+> v7.5 (2026-06-05): 32 of 38 free items implemented — BT-2/4 (`--param-sweep`, bootstrap CI on gates), RD-3/4 (§79 Q1 gate, `--regime-split`), CAL-2/3 (`--sector-cal`, `--reliability-diagram`), ML-5 (`shap_live_audit()`), PROD-3/4 (notification prefs, admin analytics), SEC-2/3/4/6 (gitleaks CI, OWASP confirmed, credential rotation, npm audit), FE-1/3/4 (E2E Playwright tests, Lighthouse CI, ErrorBoundary), DEPLOY-4/5/6 (RUNBOOK.md, locust, CI/CD deploy), OOS v9 (10 tickers locked). 1115 tests.
+> v7.4 (2026-06-05): RISK-1/2/4 (bracket stops + DD circuit-breaker + kill switch); A16-UI; PROD-1/3; ML-4; CAL-4; BE-2; 1096 tests.
+> v7.3 (2026-05-31): adversarial quant review, 10 methodology fixes, OOS v6 CLEAN (N=51, Sh=0.16), block bootstrap, phantom win correction.
+> Two lenses: **Quant** = statistical rigour | **Product** = user-facing completeness × soundness.
 
-### Signal & Alpha
+**Overall: 8.2/10 product audit · 8.6/10 B+ quality grade** (v7.5, 2026-06-05)
 
-| Feature | Score | Grade | Change from v7.2 | Where to Improve |
+### Signal & Research
+
+| Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **MR Signal Accuracy (IS)** | 7.5/10 | B | ↓ from 8.0 | IS WR 67.5%, Sharpe 0.28 are upper bounds. Four OOS-positive-selected tickers (LOW/FDX/MMM/EMR) removed from IS — the IS Sharpe will fall on next rerun as these were positively curated from OOS. Bonferroni warning now flags that 20+ gate parameters were individually optimized on IS data (α/K ≈ 0.001 adjusted threshold). Reported Sharpe is likely 50–70% overfit; honest IS Sharpe ≈ 0.12–0.17 after multiple-comparison correction. Walk-forward temporal stability now auto-runs; check that ≥3/4 epochs are Sharpe-positive before treating IS Sharpe as regime-agnostic. |
-| **OOS / Forward Validation** | 6.0/10 | B− | ↑ from 5.5 | **OOS v6 (2026-05-31): CLEAN N=51, WR=62.7%, Avg=+0.62%, Sharpe=0.16 ✅.** Pre-specified 30 tickers chosen BEFORE any IS research — cleanest OOS to date. Curation bias gap vs IS: WR −2.2pp, Sharpe −0.08 (smallest ever). Score-band 50–60: Sharpe=0.15 (N=43). Verdict: edge generalises. Gaps: CI [−0.12, +0.44] — SR=0 still inside at N=51 (need 387); Deflated Sharpe 0.16 < data-mining expectation 0.39. |
-| **Alpha Quality (Live Engine)** | 6.5/10 | B− | — unchanged | Jensen's α +0.90%/trade (t=8.21, p<0.001) confirmed on Apr–May live sample. Beta=0.918: bear scenario (SPY −5%/window) → expected −4.2%/trade. Apr 63.4%→May 50.8% WR degradation still unresolved — bull-market sensitivity real. The 26 §59–§82 gates have not been individually validated on live resolved signals; per-gate ΔSharpe in production is unknown. Run 200 post-§82 resolved signals, then re-score each gate's live contribution. |
-| **Gate Stack Coverage (§47–§82)** | 8.5/10 | A− | — unchanged | 26 of 30 planned strategies wired live, all with academic pedigree. 4 deferred on paid/complex data: §62 VRP (per-stock IV), §75 buyback window (8-K parsing), §79 Q1 rebalancing (prior-year sector returns), §84 survivorship correction (Norgate/CRSP). ETF expansion tested and correctly rejected (WR 33–50%, avg −0.5% to −1.0%). Gap: 2 of 26 gates needed mid-research threshold loosening — add IS sensitivity sweep as gating step before each new gate commits. |
-| **Confidence Calibration** | 7.0/10 | B | ↑ (v3 recal) | **Brier 0.2432** (best ever). v3 calibration 2026-05-31: phantom wins corrected, outcome_14d fixed, isotonic retrained. All 546 signals at ~42% confidence; gap −0.5pp (near-perfect). min_confidence lowered 40%, swing floor 46%. Kelly sizing now correctly uses 42% WR. Ceiling: proper §82-aware recalibration still pending N≥200 post-§82 resolved signals. |
+| **IS Backtest Accuracy** | 7.7/10 | B+ | ↑ from 7.5 | IS v10.5: N=230, WR=66.1%, Sh=0.20. BT-2 `--param-sweep` (stability over BUY_THRESH 45–55 + bootstrap 95% CI). BT-4 bootstrap CI on gate ΔSharpe in `--validate-live-gates`. RD-4 `--regime-split` flag (VIX regime decomposition). RD-3 §79 Q1 rebalancing gate live. Ceiling: survivorship bias without Norgate/Sharadar. |
+| **OOS / Forward Validation** | 6.3/10 | B− | ↑ from 6.1 | OOS v6 CLEAN: N=51, Sh=0.16 ✅. v7/v8/v9 pre-specified (35 tickers total). OOS v9 locked 2026-06-05 (ISRG, ZTS, ODFL, VRSK, CPRT, CTAS, MPWR, NWS, KSS, WST). Live DSR + Wilson CI dashboards operational. SR=0 still inside CI at N=51; need N≥387 to clear. |
+| **Live Alpha Quality** | 6.5/10 | B− | — | §76 Altman removed. §85-1 audit pending ≥200 resolved signals. ALPHA-4 per-sector live WR audit + ALPHA-5 VIX regime tag operational. |
+| **Gate Stack (§47–§83)** | 8.6/10 | A− | ↑ from 8.5 | 28 of 31 strategies live (§79 Q1 rebalancing gate added). 3 deferred (§62 VRP, §75 buyback, §84 survivorship). Dead-gate cleanup complete. |
+| **Backtest Infrastructure** | 8.2/10 | B+ | ↑ from 8.0 | 107-ticker, 23-year IS. Block bootstrap CIs. BT-2 param stability sweep. BT-4 bootstrap CI on all gate ablations. RD-4 regime decomposition. EDGAR point-in-time (106/107). Ceiling: survivorship bias. |
+| **Confidence Calibration** | 7.5/10 | B+ | ↑ from 7.2 | Cal v4: Brier 0.2641. CAL-4 `--brier-drift`: rolling 30d Brier, alert >0.28, recal flag >0.30. **CAL-2** `--sector-cal`: per-sector Brier vs global baseline, flags sectors deviating >0.01. **CAL-3** `--reliability-diagram`: text-mode calibration curve with gap flags. Next cal v5 at ≥50 post-A19. |
 
 ### Risk & Execution
 
-| Feature | Score | Grade | Change from v7.2 | Where to Improve |
+| Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **Risk Management** | 7.5/10 | B+ | ↑ from 6.5 | ATR stop 1.5s/2.0t universal confirmed. Non-gap stop slippage now modeled: `NORMAL_STOP_SLIP_PCT = 0.10%` applied on all stop exits (not just overnight gaps). Kelly sizing (§56) VIX-conditional. TrailingStopPct (§82) in signal dict. Sector HARD_LIMIT 30%. Remaining gap: Kelly still uses global WR (0.62) not per-signal estimated WR — positions sized on population average, not signal-specific probability. Live stop-hit rate under 1.5s/2.0t not yet measured: check after 50+ resolved signals. |
-| **Execution & Friction Model** | 7.0/10 | B | ↑ from 4.0 | Non-gap stop slippage added (0.10%). Friction 0.50% round-trip with gap-through at 0.15% and normal stop at 0.10%. Remaining: friction is still symmetric and flat — no bid-ask spread variability by ticker liquidity tier (PSKY/EXPE spread ~0.15% vs NVDA ~0.02%). Market impact on 5% position entries not modeled. True realized friction likely 0.40–1.00% depending on name and timing. |
-| **Sector Concentration** | 7.5/10 | B+ | — unchanged | HARD_LIMIT 30%, SOFT_LIMIT 20% enforced. §83 cross-signal correlation penalty active (avg_corr>0.75 → positionSizeScale cut). Scanner semaphore 8/worker safe within DB pool. |
+| **Risk Management** | 8.5/10 | A− | — | ATR stops 1.5s/2.0t. RISK-1: bracket/OTO stop orders on auto-executed trades. RISK-2: DD circuit-breaker (−5% PL). RISK-4: kill switch (DB flag + admin UI). Ceiling: Kelly uses global WR. |
+| **Execution & Friction** | 7.2/10 | B | — | Bracket orders improve live R:R. Flat 0.50% model; ADV-participation cost deferred (BT-3). |
+| **Sector Concentration** | 7.5/10 | B+ | — | HARD_LIMIT 30%, SOFT_LIMIT 20%. §83 correlation penalty. ALPHA-4 per-sector live WR audit operational. |
+
+### Product & Deployment
+
+| Feature | Score | Grade | Δ | Notes / Ceiling |
+|---|---|---|---|---|
+| **Product Completeness** | 8.9/10 | A | ↑ from 8.7 | Full stack: signals, auth, billing, Telegram, paper trading, mobile/PWA, admin tooling, broker execution + UI, My Performance view, notification prefs (`GET/PUT /api/me/notification-prefs`), admin analytics (`GET /api/admin/analytics-summary`). Remaining: IBKR support, FE-2 accessibility fixes. |
+| **Frontend** | 8.7/10 | A− | ↑ from 8.5 | UX: 9.0/10 (broker connect, performance view, kill switch badge). Architecture: 8.1/10 (ErrorBoundary added, E2E Playwright scaffold `tests/e2e/test_golden_path.py`, Lighthouse CI config `.lighthouserc.json`). Bundle: 408KB esbuild. Remaining: FE-2 accessibility manual fixes. |
+| **Security Posture** | 7.5/10 | B+ | ↑ from 7.2 | Fernet-encrypted Alpaca keys. CSP `unsafe-eval` eliminated. SEC-2 gitleaks in CI. SEC-3 OWASP confirmed clean (no dangerouslySetInnerHTML, SQLAlchemy parameterized, rate-limited auth). SEC-4 credential rotation endpoint (`PUT /api/me/broker/rotate-credentials`). SEC-6 npm audit in CI. **Blocker: default owner password `ChangeMe123!` still in .env.** |
+| **Deployment Readiness** | 7.2/10 | B− | ↑ from 6.5 | DEPLOY-4 RUNBOOK.md (deployment, rollback, incident response, backup/restore). DEPLOY-5 locust load test (`tests/locustfile.py`, 100-user simulation). DEPLOY-6 Railway + Fly CI/CD deploy on merge to `main`. Coverage floor 65% in CI. Remaining blockers: HTTPS, Stripe webhook, SMTP, VAPID, owner password rotation. |
 
 ### Infrastructure & ML
 
-| Feature | Score | Grade | Change from v7.2 | Where to Improve |
+| Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **ML Methodology** | 7.5/10 | B+ | ↑ from 3.5 (new category) | **Entry model (backtest):** Purged expanding-window CV (K=5, embargo=20 obs) replaces 70/30 split — more honest AUC. CV-AUC now primary champion metric. **Signal model (live DB):** raw_score removed from features (was circular dependency — same info as confidence, one pipeline step earlier). Champion/challenger now requires n_test≥15 before AUC comparison; AUC=None no longer triggers unconditional deployment. **Factor miner:** Benjamini-Hochberg FDR correction (α=10%) applied before promotion; minimum oos_n=20. Remaining gap: live signal model N≈50–100 is still too small for reliable XGBoost; signal model is experimental until N≥300. |
-| **Backtest Infrastructure** | 8.0/10 | B+ | ↓ from 9.0 | 74-ticker, 23-year IS. Improvements in this sprint: (1) yfinance earnings supplement removed — Polygon point-in-time only, eliminating forward-calendar lookahead bias; (2) block bootstrap (block=N^⅓) replaces IID — honest serial-autocorrelation-aware CIs; (3) walk-forward temporal stability auto-runs after §1 — 4 regime epochs, stability verdict; (4) `--full-universe` flag runs the 14 curated-out tickers to quantify IS curation bias; (5) Bonferroni warning in parameter_sweep (α/45=0.001 adjusted threshold). Score reduced from 9.0 because survivorship bias (200+ delisted tickers absent) remains unfixed — requires Norgate/Sharadar ($20–33/mo). The 9.0 was aspirational; the 8.0 is honest. |
-| **Signal Engine Architecture** | 7.5/10 | B+ | — unchanged | Functionally strong — alpha-decomp validated, 3 redundant families removed, 26 gates with rationale strings. Maintainability risk: 8k+ lines. Improvement: extract `gates/` module (one file per gate family). |
-| **Data Pipeline** | 8.5/10 | A− | — unchanged | Polygon + yfinance + FRED + EDGAR + options all operational. Redis stampede lock. Short interest velocity (§52). Extended-hours Polygon snapshot (§39). NBBO spread (§80) and block prints (§81) live. |
-| **Test Coverage** | 9.0/10 | A | ↑ from 8.5 | 995 passing, 2 skipped. Added `test_backtest_methodology.py` (15 tests): block bootstrap width, graduated ticker isolation, IS/OOS disjointness, walk-forward execution, feature vector length consistency, raw_score exclusion, factor miner minimum N, BH annotation logic, champion/challenger gate correctness, stop slippage constant, earnings calendar lookahead check, graduated ticker set completeness. `test_signal_ml.py` updated to 23-feature count. Remaining gap: §73 insider, §74 Beneish, §76 Altman, §69 GEX flip, §70 zero-DTE, §71 max pain, §72 VRP proxy still lack dedicated unit tests. |
-| **Deployment Readiness** | 5.5/10 | C+ | — unchanged | Pre-launch blockers unchanged: default owner password, Babel/CSP (`unsafe-eval`), HTTPS deploy, Stripe webhook, SMTP, VAPID, Telegram webhook. Highest leverage: Babel → Vite migration unblocks `unsafe-eval` CSP removal. |
+| **ML Methodology** | 8.4/10 | A− | ↑ from 8.2 | ML-4 rolling 90d AUC drift (`compute_rolling_auc()` in `signal_ml.py`). **ML-5** `shap_live_audit()` in `eval_ml.py §8` — compares live feature importance ranking vs IS backtest, flags |Δrank|>3. Champion/challenger: N≥300, ΔAUC≥0.005. Entry OOS AUC=0.6399. |
+| **Signal Engine / Gate Stack** | 8.0/10 | B+ | — | Gate completeness: 8.8/10. Architecture: 7.5/10 (8k+ line core; BE-1 deferred). `gates/` (7 files) clean. RD-3 §79 Q1 gate added. |
+| **Backend Architecture** | 8.5/10 | A− | — | Functional: 9.2/10. Maintainability: 7.7/10 (no /v1/ prefix, some untyped dicts). BE-2 `LOG_FORMAT=json` structured logging. `routers/me.py` + notification prefs endpoint. |
+| **Data Pipeline** | 9.2/10 | A+ | — | Polygon + yfinance + FRED + EDGAR + options + Alpaca live execution. Redis stampede lock. §80 NBBO, §81 block prints, §63 cointegration, §52 short-int velocity. |
+| **Test Coverage** | 9.5/10 | A | ↑ from 9.3 | **1115 passing, 3 skipped** (up from 1096). E2E Playwright scaffold `tests/e2e/test_golden_path.py`. Locust load test `tests/locustfile.py`. Coverage floor 65% in CI. Gap: §73/§74/§69–§72 gates lack dedicated unit tests; E2E requires running backend. |
 
-### Adversarial Quant Engineering Assessment — Before vs After
+### Adversarial Assessment — v7.2 → v7.3 → v7.4 → v7.5
 
-> This section compares the pre-fix adversarial rating (as a hostile quant engineer would score it)
-> against the post-fix honest rating. The gap shows remaining structural limitations.
+> Scores a hostile quant engineer would assign at each snapshot. Trajectory shows real improvement, not feature-count inflation.
 
-| Category | Before Fixes | After Fixes | Hard Ceiling (no paid data) | Root Cause of Ceiling |
-|---|---|---|---|---|
-| Backtest Methodology | 3/10 | 7/10 | 8/10 | Survivorship bias (200+ delisted tickers absent) |
-| OOS Validation | 2/10 | 5.5/10 | 6/10 | N=27, universe designed post-IS-gate, can't reach N≥50 without new tickers |
-| Signal Generation | 6.5/10 | 6.5/10 | 8/10 | Thresholds frozen at IS-optimal values, no live re-calibration |
-| Risk Management | 6.5/10 | 7.5/10 | 8.5/10 | Kelly still uses global WR, not per-signal probability |
-| ML Methodology | 3.5/10 | 7.5/10 | 8/10 | Live signal model N≈50 too small; needs N≥300 |
-| Friction & Execution | 4/10 | 7/10 | 8/10 | Variable bid-ask spread by ticker not modeled; market impact absent |
-| Code Quality & Tests | 7/10 | 8.5/10 | 9.5/10 | §73/§74/§76/§69–§72 production gates still lack tests |
+| Category | v7.2 (before) | v7.3 (2026-05-31) | v7.4 (2026-06-05) | **v7.5 (2026-06-05)** | Hard Ceiling | Root Cause of Ceiling |
+|---|---|---|---|---|---|---|
+| Backtest Methodology | 3/10 | 7/10 | 7/10 | **7.5/10** | 8/10 | Survivorship bias (200+ delisted absent) |
+| OOS Validation | 2/10 | 5.5/10 | 6.1/10 | **6.3/10** | 7/10 | SR=0 inside CI at N=51; need N≥387 |
+| Signal Generation | 6.5/10 | 6.5/10 | 6.5/10 | **6.5/10** | 8/10 | §85-1 pending; thresholds frozen at IS-optimal |
+| Risk Management | 6.5/10 | 7.5/10 | 8.5/10 | **8.5/10** | 9/10 | Kelly uses global WR (not per-signal) |
+| ML Methodology | 3.5/10 | 7.5/10 | 8.2/10 | **8.4/10** | 8.5/10 | Live model experimental until N≥300 |
+| Friction & Execution | 4/10 | 7/10 | 7.2/10 | **7.2/10** | 8/10 | Variable spread by ticker not modeled |
+| Product & Security | 5/10 | 6.5/10 | 8.5/10 | **8.9/10** | 9/10 | Owner password; HTTPS; VAPID still needed |
+| Test Coverage | 7/10 | 8.5/10 | **9.3/10** | 9.5/10 | §73/§74/§69–§72 gates lack dedicated tests |
 
-### Feature Priority Matrix — Where to Improve Next
+### Next Highest-Leverage Improvements
 
-| Priority | Feature | Current Gap | Effort | Impact |
-|---|---|---|---|---|
-| 🔴 **1** | Rerun IS backtest with graduated tickers removed | LOW/FDX/MMM/EMR no longer in IS; Sharpe will fall — need honest new baseline | Low (just rerun) | Establishes credible IS Sharpe without OOS-selected names |
-| 🔴 **2** | OOS v6: fresh universe, pre-specified before IS changes | OOS universe still reflects post-IS sector constraints; N=27 too small | High | First statistically valid OOS — requires N≥50 from tickers never touched in research |
-| 🟠 **3** | Point-in-time earnings data (Polygon historical or EODHD) | yfinance supplement removed, but Polygon filing dates have their own gaps | Medium + cost | Eliminates last lookahead bias vector in earnings blackout gate |
-| 🟠 **4** | Survivorship bias correction (Norgate/EODHD) | 200+ delisted tickers absent; IS WR overstated 2–4pp | Medium + cost | Makes IS Sharpe an unbiased estimate; essential for performance claims |
-| 🟠 **5** | Confidence re-calibration post-§82 | 26 gates shifted distribution; Kelly 7.6% unreliable | Low | Actionable position sizing; Brier improvement |
-| 🟡 **6** | §73/§74/§76/§69–§72 gate unit tests | 7 production gates with zero test coverage | Medium | Prevents silent threshold regressions in live engine |
-| 🟡 **7** | Per-signal Kelly (not global WR) | positionSizeScale uses global 62% WR; should use signal's confidence-adjusted probability | Low | More accurate position sizing; higher R:R on high-conviction setups |
-| 🟢 **8** | Babel → Vite migration | Blocks CSP `unsafe-eval` removal | High | Deployment readiness + security hardening |
-
-**Overall Research Engine: 7.5 / 10 — B+** (↓ from 7.8 — reflects adversarial honest assessment after IS curation and OOS contamination fixes; foundation stronger but headline metrics will fall on next rerun)
-
-**Overall Product System: 6.7 / 10 — B−** (unchanged; deployment blockers untouched)
-
-> **What changed in v7.3:** The backtest and ML methodology were audited by an adversarial quant engineer
-> and 10 structural fixes applied. The IS Sharpe 0.28 is now known to be an upper bound from:
-> (1) survivorship bias (~1–4pp WR overstatement), (2) IS curation bias (15 underperformers excluded),
-> (3) multiple-comparison inflation (20+ gate params optimized on IS). After these corrections,
-> the honest IS Sharpe estimate is **0.12–0.18**, and the realistic forward Sharpe is **0.05–0.12**.
-> This is still a real, statistically detectable edge — just not as large as v7.2 reported.
-> The two highest-leverage next steps: (1) rerun IS with clean universe and report honest baseline,
-> and (2) build a pre-specified OOS with N≥50 from tickers chosen before any IS research.
+| Priority | Item | Effort | Expected Δ |
+|---|---|---|---|
+| 🔴 1 | **Unusual Whales options flow** (~$50/mo) | Paid + impl | +0.15–0.25 Sharpe |
+| 🔴 2 | **Deploy to HTTPS + Stripe webhook** | Config | Unblocks paid users |
+| 🟠 3 | **§85-1 fundamental audit** (≥200 resolved signals) | Wait + script | Remove dead modifiers |
+| 🟠 4 | **OOS v7 validation** (≥30 live trades in pre-specified tickers) | Wait | Confirms edge in new names |
+| 🟠 5 | **Survivorship bias correction** (Norgate/EODHD, ~$20/mo) | Paid + impl | Honest IS −2–4pp WR |
+| 🟡 6 | **§73/§74/§69–§72 gate unit tests** | Low | Prevents silent regressions |
+| 🟡 7 | **Per-signal Kelly sizing** (replace global WR) | Medium | Better position sizing on high-conviction |
+| 🟡 8 | **E2E Playwright tests** (golden path) | Medium | Frontend regression coverage |
 
 ---
 

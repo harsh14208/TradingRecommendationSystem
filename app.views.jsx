@@ -393,6 +393,121 @@ function HistoryView({ open, onClose, online }) {
   );
 }
 
+/* ─── My Performance overlay ──────────────────────────────────────────────── */
+function MyPerformanceView({ open, onClose }) {
+  const [data,    setData]    = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    apiFetch("/api/me/performance?limit=100")
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [open]);
+
+  const fmtRet = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+  const retColor = v => v == null ? "var(--text-faint)" : v >= 0 ? "var(--up)" : "var(--down)";
+
+  const statCard = (label, value, sub) => (
+    <div style={{ background:"var(--bg-2)", borderRadius:8, padding:"12px 16px", minWidth:100 }}>
+      <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:4 }}>{label}</div>
+      <div style={{ fontSize:20, fontWeight:700, color:"var(--text)", fontFamily:"var(--font-mono)" }}>{value ?? "—"}</div>
+      {sub && <div style={{ fontSize:10, color:"var(--text-faint)", marginTop:2 }}>{sub}</div>}
+    </div>
+  );
+
+  const stats = data?.stats;
+  const recent = data?.recent || [];
+
+  return (
+    <div className={`overlay ${open ? "open" : ""}`}>
+      <div className="overlay-head">
+        <div>
+          <div className="crumb">ACCOUNT / PERFORMANCE</div>
+          <h2>My signal performance</h2>
+        </div>
+        <button className="close-btn" onClick={onClose}>×</button>
+      </div>
+
+      <div style={{ padding:"20px 24px", overflowY:"auto", flex:1 }}>
+        {loading ? (
+          <div style={{ color:"var(--text-faint)", fontSize:13, textAlign:"center", paddingTop:40 }}>Loading…</div>
+        ) : !data ? (
+          <div style={{ color:"var(--text-faint)", fontSize:13, textAlign:"center", paddingTop:40 }}>No data available</div>
+        ) : (
+          <>
+            {/* Stats row */}
+            <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:24 }}>
+              {statCard("Delivered", stats.delivered, "signals sent to you")}
+              {statCard("Resolved", stats.resolved, `${stats.pending} pending`)}
+              {statCard("Win rate", stats.win_rate != null ? `${stats.win_rate}%` : null, `${stats.wins}W / ${stats.losses}L`)}
+              {statCard("Avg return", stats.avg_return != null ? fmtRet(stats.avg_return) : null, "per trade")}
+              {stats.sharpe != null && statCard("Sharpe", stats.sharpe, "annualised est.")}
+            </div>
+
+            {/* Signal list */}
+            {recent.length === 0 ? (
+              <div style={{ color:"var(--text-faint)", fontSize:13, textAlign:"center", paddingTop:20 }}>
+                No signals have been delivered to your account yet.
+              </div>
+            ) : (
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                  <thead>
+                    <tr style={{ borderBottom:"1px solid var(--line)", color:"var(--text-faint)", fontFamily:"var(--font-mono)", fontSize:10 }}>
+                      <th style={{ textAlign:"left", padding:"6px 8px" }}>Date</th>
+                      <th style={{ textAlign:"left", padding:"6px 8px" }}>Ticker</th>
+                      <th style={{ textAlign:"left", padding:"6px 8px" }}>Action</th>
+                      <th style={{ textAlign:"right", padding:"6px 8px" }}>Conf</th>
+                      <th style={{ textAlign:"right", padding:"6px 8px" }}>Price</th>
+                      <th style={{ textAlign:"right", padding:"6px 8px" }}>Return</th>
+                      <th style={{ textAlign:"left", padding:"6px 8px" }}>Exit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recent.map(r => {
+                      const exitCfg = { target:["TARGET","var(--up)"], stop:["STOP","var(--down)"], time:["TIME","var(--warn)"], pending:["OPEN","var(--text-faint)"] };
+                      const [exitLbl, exitCol] = (r.exit_type && exitCfg[r.exit_type]) || ["—","var(--text-faint)"];
+                      const isWin = r.outcome_pct > 0;
+                      const isLoss = r.outcome_pct != null && r.outcome_pct <= 0;
+                      return (
+                        <tr key={r.id} style={{ borderBottom:"1px solid color-mix(in oklch, var(--line) 50%, transparent)" }}>
+                          <td style={{ padding:"8px 8px", color:"var(--text-faint)", fontFamily:"var(--font-mono)", fontSize:11 }}>
+                            {r.sent_at ? r.sent_at.slice(0,10) : (r.created_at ? r.created_at.slice(0,10) : "—")}
+                          </td>
+                          <td style={{ padding:"8px 8px", fontWeight:700 }}>{r.ticker}</td>
+                          <td style={{ padding:"8px 8px" }}>
+                            <span style={{ fontSize:10, fontWeight:700, fontFamily:"var(--font-mono)", color: r.action === "BUY" ? "var(--up)" : "var(--down)" }}>
+                              {r.action}
+                            </span>
+                          </td>
+                          <td style={{ padding:"8px 8px", textAlign:"right", fontFamily:"var(--font-mono)", color:"var(--text-faint)", fontSize:11 }}>{r.confidence?.toFixed(0)}%</td>
+                          <td style={{ padding:"8px 8px", textAlign:"right", fontFamily:"var(--font-mono)", fontSize:11 }}>${r.price?.toFixed(2)}</td>
+                          <td style={{ padding:"8px 8px", textAlign:"right", fontFamily:"var(--font-mono)", fontWeight:600,
+                            color: r.outcome_pct == null ? "var(--text-faint)" : retColor(r.outcome_pct) }}>
+                            {fmtRet(r.outcome_pct)}
+                          </td>
+                          <td style={{ padding:"8px 8px" }}>
+                            {r.exit_type ? (
+                              <span style={{ fontSize:10, fontFamily:"var(--font-mono)", fontWeight:700, padding:"2px 5px", borderRadius:3,
+                                color:exitCol, background:`color-mix(in oklch,${exitCol} 12%,transparent)` }}>{exitLbl}</span>
+                            ) : <span style={{ color:"var(--text-faint)", fontSize:11 }}>—</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Backtest overlay ──────────────────────────────────────────────────────── */
 // btCache / onBtCache: parent-supplied cache so results survive close/reopen.
 // Cache TTL is 10 minutes — avoids 8 expensive GROUP BY queries on every open.

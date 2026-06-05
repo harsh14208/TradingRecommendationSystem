@@ -798,6 +798,10 @@ function App() {
             {(currentUser.subscription_tier||"FREE").toUpperCase()}{currentUser.is_owner?" ★":""}
           </span>
         </div>
+        <div className={`nav-item ${nav==="performance"?"active":""}`} onClick={() => setNav("performance")}>
+          <Icon name="trending-up" size={15}/>
+          <span>My Performance</span>
+        </div>
         {(!hasTierAccess(currentUser.subscription_tier,"basic",currentUser.is_owner)) && (
           <div className="nav-item" onClick={() => setPricingOpen(true)} style={{ color:"var(--accent)" }}>
             <Icon name="lock" size={15}/>
@@ -1479,6 +1483,7 @@ function App() {
         <CalendarView open={nav==="calendar"} onClose={() => setNav("feed")}/>
         <PaperView open={nav==="paper"} onClose={() => setNav("feed")} online={online}/>
         <HistoryView open={nav==="history"} onClose={() => setNav("feed")} online={online}/>
+        <MyPerformanceView open={nav==="performance"} onClose={() => setNav("feed")}/>
         <AlertsView open={nav==="alerts"} onClose={() => setNav("feed")}/>
         <ScreenerView open={nav==="screener"} onClose={() => setNav("feed")}/>
         <BacktestView open={nav==="backtest"} onClose={() => setNav("feed")} online={online}
@@ -1550,4 +1555,49 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+/* ─── FE-4: Error boundary — catches unhandled render errors ─────────────── */
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error("[ErrorBoundary]", error, info.componentStack);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          display:"flex", flexDirection:"column", alignItems:"center",
+          justifyContent:"center", minHeight:"100vh", gap:"1rem",
+          background:"#0f172a", color:"#f1f5f9", fontFamily:"monospace",
+          padding:"2rem", textAlign:"center",
+        }}>
+          <div style={{fontSize:"2rem"}}>⚠</div>
+          <div style={{fontSize:"1.2rem", fontWeight:600}}>Something went wrong</div>
+          <div style={{color:"#94a3b8", maxWidth:"480px", fontSize:"0.875rem"}}>
+            {this.state.error?.message || "An unexpected error occurred."}
+          </div>
+          <button
+            onClick={() => { this.setState({ hasError:false, error:null }); window.location.reload(); }}
+            style={{
+              marginTop:"1rem", padding:"0.5rem 1.5rem",
+              background:"#10b981", color:"#fff", border:"none",
+              borderRadius:"6px", cursor:"pointer", fontSize:"0.9rem",
+            }}
+          >Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <ErrorBoundary>
+    <App/>
+  </ErrorBoundary>
+);

@@ -19,11 +19,34 @@ try:
 except Exception:
     pass
 
+import json as _json
+
+
+class _StructuredFormatter(logging.Formatter):
+    """BE-2: Emit JSON log lines when LOG_FORMAT=json (set in production env)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        return _json.dumps(payload)
+
+
+_LOG_FORMAT = os.environ.get("LOG_FORMAT", "text").lower()
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
     datefmt="%H:%M:%S",
 )
+if _LOG_FORMAT == "json":
+    _json_fmt = _StructuredFormatter()
+    for _h in logging.root.handlers:
+        _h.setFormatter(_json_fmt)
 # Silence noisy third-party loggers
 logging.getLogger("yfinance").setLevel(logging.WARNING)
 logging.getLogger("peewee").setLevel(logging.WARNING)
@@ -53,6 +76,7 @@ from models import User
 from routers.accuracy import router as accuracy_router
 from routers.admin import router as admin_router
 from routers.broker import router as broker_router
+from routers.me import router as me_router
 from routers.auth import router as auth_router
 from routers.billing import router as billing_router
 from routers.delivery_router import router as delivery_router
@@ -1437,6 +1461,7 @@ app.include_router(billing_router)
 app.include_router(public_router)
 app.include_router(telegram_webhook_router)
 app.include_router(signals_router)
+app.include_router(me_router)
 app.include_router(quotes_router)
 app.include_router(sources_router)
 app.include_router(settings_router)

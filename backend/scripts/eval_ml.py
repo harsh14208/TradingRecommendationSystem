@@ -29,7 +29,7 @@ _MODEL_FILE = _DATA_DIR / "signal_ml_model.json"
 _FEATURE_FILE = _DATA_DIR / "signal_ml_features.json"
 
 
-def _load_data():
+def _load_data(limit: int | None = None):
     import asyncio
 
     async def _fetch():
@@ -38,33 +38,34 @@ def _load_data():
         from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
-            rows = (
-                await db.execute(
-                    select(
-                        Signal.action,
-                        Signal.confidence,
-                        Signal.sentiment,
-                        Signal.sources,
-                        Signal.rationale,
-                        Signal.outcome_pct,
-                        Signal.style,
-                        Signal.session,
-                        Signal.rr,
-                        Signal.entry,
-                        Signal.stop,
-                        Signal.target,
-                        Signal.price,
-                        Signal.created_at,
-                        Signal.change_pct,
-                        Signal.days_to_earnings,
-                        Signal.sector_etf,
-                        Signal.rs_vs_sector,
-                    )
-                    .where(Signal.outcome_pct.isnot(None))
-                    .where(Signal.action.in_(["BUY", "SELL"]))
-                    .order_by(Signal.created_at)
+            stmt = (
+                select(
+                    Signal.action,
+                    Signal.confidence,
+                    Signal.sentiment,
+                    Signal.sources,
+                    Signal.rationale,
+                    Signal.outcome_pct,
+                    Signal.style,
+                    Signal.session,
+                    Signal.rr,
+                    Signal.entry,
+                    Signal.stop,
+                    Signal.target,
+                    Signal.price,
+                    Signal.created_at,
+                    Signal.change_pct,
+                    Signal.days_to_earnings,
+                    Signal.sector_etf,
+                    Signal.rs_vs_sector,
                 )
-            ).all()
+                .where(Signal.outcome_pct.isnot(None))
+                .where(Signal.action.in_(["BUY", "SELL"]))
+                .order_by(Signal.created_at)
+            )
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            rows = (await db.execute(stmt)).all()
         return [
             {
                 "action": r.action,
@@ -219,6 +220,84 @@ def shap_audit(rows, model):
         print(f"**Near-zero SHAP features** (mean |SHAP| < {zero_thresh}) — consider dropping:")
         for f in noise_feats:
             print(f"  - `{f}`")
+    print()
+
+
+def shap_live_audit(last_n: int = 200) -> None:
+    """
+    ML-5: §8 SHAP Live Audit — compare live prediction feature importance vs IS backtest.
+
+    Loads the last `last_n` resolved signals, computes SHAP values, ranks features by
+    mean |SHAP|, and flags any feature whose live rank deviates >3 positions from the
+    IS backtest SHAP ranking (distribution shift signal).
+
+    Run: python scripts/eval_ml.py --shap-live-audit [--last-n 200]
+    """
+    print("\n## §8  SHAP Live Audit — Feature Importance Drift (ML-5)\n")
+    print("> Compares live SHAP ranking vs IS backtest ranking.")
+    print("> ⚠ = feature rank shifted >3 positions — distribution shift suspected.\n")
+
+    try:
+        import numpy as np
+        import shap
+        from services.signal_ml import _FEATURE_NAMES, _extract_features, get_model
+    except ImportError as exc:
+        print(f"§8 skipped: {exc}")
+        return
+
+    model = get_model()
+    if model is None:
+        print("§8 skipped: no trained model found.")
+        return
+
+    # Load live resolved signals
+    live_rows = _load_data(limit=last_n)
+    if not live_rows:
+        print("§8 skipped: no live resolved signals found.")
+        return
+
+    X_live = np.array([_extract_features(r) for r in live_rows], dtype=float)
+    explainer = shap.TreeExplainer(model)
+    shap_live = explainer.shap_values(X_live)
+    mean_abs_live = np.abs(shap_live).mean(axis=0)
+
+    # IS backtest SHAP ranking from eval_ml §7 run on full training set
+    rows_is = _load_data()
+    X_is = np.array([_extract_features(r) for r in rows_is], dtype=float)
+    shap_is = explainer.shap_values(X_is)
+    mean_abs_is = np.abs(shap_is).mean(axis=0)
+
+    # Rank both
+    live_ranked = sorted(enumerate(_FEATURE_NAMES), key=lambda x: -mean_abs_live[x[0]])
+    is_ranked = sorted(enumerate(_FEATURE_NAMES), key=lambda x: -mean_abs_is[x[0]])
+
+    live_rank = {feat: rank for rank, (_, feat) in enumerate(live_ranked, 1)}
+    is_rank = {feat: rank for rank, (_, feat) in enumerate(is_ranked, 1)}
+
+    print(f"  {'Feature':<30} {'IS Rank':>8}  {'Live Rank':>9}  {'Δ Rank':>7}  Flag")
+    print(f"  {'─' * 30} {'─' * 8}  {'─' * 9}  {'─' * 7}  {'─' * 15}")
+
+    flagged = []
+    for feat in _FEATURE_NAMES:
+        ir = is_rank.get(feat, 99)
+        lr = live_rank.get(feat, 99)
+        delta = lr - ir
+        flag = "⚠ DRIFT" if abs(delta) > 3 else ""
+        if flag:
+            flagged.append((feat, ir, lr, delta))
+        bar = ("↑" if delta < 0 else "↓") * min(abs(delta), 8) if delta != 0 else "="
+        print(f"  {feat:<30} {ir:>8}  {lr:>9}  {delta:>+7}  {flag}{bar}")
+
+    print()
+    if flagged:
+        print(f"  ⚠  {len(flagged)} features with rank shift >3 positions:")
+        for feat, ir, lr, delta in sorted(flagged, key=lambda x: -abs(x[3])):
+            print(f"     {feat}: IS #{ir} → Live #{lr} ({delta:+d}) — check for distribution shift")
+        print()
+        print("  Actions: (a) Verify feature extraction pipeline unchanged.")
+        print("           (b) If shift is persistent, consider retraining or feature engineering.")
+    else:
+        print("  ✅ All feature ranks stable (no shift >3 positions). Model is distributing similarly to IS.")
     print()
 
 
@@ -470,6 +549,85 @@ def main():
             print("> ℹ Calibration/lift unavailable — run `python scripts/train_backtest_ml.py`")
             print("> to regenerate and save eval data to `data/backtest_ml_eval.json`.\n")
 
+    # ── §9  ML-4: Rolling 90-day live AUC drift monitor ──────────────────────
+    print("## §9  ML-4: Rolling 90-day live AUC drift monitor\n")
+    print("> Champion model AUC on rolling 90-day live window.")
+    print("> WARNING threshold: AUC < 0.58 | CRITICAL (auto-flag retraining): AUC < 0.55\n")
+
+    try:
+        import asyncio as _asyncio
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+        async def _fetch_rolling_live():
+            cutoff = _dt.now(_tz.utc).replace(tzinfo=None) - _td(days=90)
+            from database import AsyncSessionLocal
+            from models import Signal
+            from sqlalchemy import select as _sel
+
+            async with AsyncSessionLocal() as _db:
+                rows = (
+                    (
+                        await _db.execute(
+                            _sel(Signal).where(
+                                Signal.outcome_pct.isnot(None),
+                                Signal.confidence.isnot(None),
+                                Signal.created_at >= cutoff,
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            return rows
+
+        _live_rows = _asyncio.run(_fetch_rolling_live())
+        _n_live = len(_live_rows)
+
+        if _n_live < 20:
+            print(f"  ⚠  Only {_n_live} live resolved signals in past 90d — need ≥20 for AUC estimate.\n")
+        else:
+            from sklearn.metrics import roc_auc_score as _roc_auc
+
+            _y_true = [1 if (r.outcome_pct or 0) > 0 else 0 for r in _live_rows]
+            _y_score = [(r.confidence or 50.0) / 100.0 for r in _live_rows]
+            _auc = _roc_auc(_y_true, _y_score)
+            _AUC_WARN = 0.58
+            _AUC_CRIT = 0.55
+            _flag = ""
+            if _auc < _AUC_CRIT:
+                _flag = "  🔴 CRITICAL — auto-flag for retraining"
+                import logging as _log
+
+                _log.getLogger("eval_ml").critical(
+                    "ML-4: rolling live AUC %.4f < %.2f — retraining required", _auc, _AUC_CRIT
+                )
+            elif _auc < _AUC_WARN:
+                _flag = "  ⚠  WARNING — monitor closely"
+                import logging as _log
+
+                _log.getLogger("eval_ml").warning(
+                    "ML-4: rolling live AUC %.4f < %.2f — degradation detected", _auc, _AUC_WARN
+                )
+            else:
+                _flag = "  ✅ Healthy"
+            print(f"  Rolling 90d N      : {_n_live}")
+            print(f"  Rolling 90d AUC    : {_auc:.4f}{_flag}")
+            print()
+    except Exception as _e:
+        print(f"  ⚠  ML-4 check skipped — {_e}\n")
+
 
 if __name__ == "__main__":
-    main()
+    import argparse as _ap
+
+    _parser = _ap.ArgumentParser(description="XGBoost model evaluation — Signal.Trade")
+    _parser.add_argument("--shap-live-audit", action="store_true", help="ML-5: §8 SHAP live vs IS rank comparison")
+    _parser.add_argument(
+        "--last-n", type=int, default=200, help="Number of recent signals for live SHAP audit (default: 200)"
+    )
+    _args = _parser.parse_args()
+
+    if _args.shap_live_audit:
+        shap_live_audit(last_n=_args.last_n)
+    else:
+        main()

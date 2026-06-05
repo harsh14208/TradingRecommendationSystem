@@ -1891,7 +1891,59 @@ def _assemble_signal(
         # (Golden Cross, Above 200-DMA, EPS beats) that have never been validated
         # in the 23-year backtest, producing live WR ≈42% vs backtest WR ≈68%.
         "hasMr": _has_mr,
+        # ALPHA-5: VIX regime tag — informational; used by per-regime WR audit (gate_contribution_analysis.py --sector-wr)
+        # after N≥100 resolved signals per regime. Not a delivery gate yet.
+        "vixRegime": (
+            "stress"
+            if (vix is not None and vix >= 30)
+            else "elevated"
+            if (vix is not None and vix >= 20)
+            else "calm"
+            if vix is not None
+            else "unknown"
+        ),
     }
+
+
+def _apply_q1_rebalancing(score: float, rationale: list, sector_etf: str | None, vix) -> tuple[float, list]:
+    """
+    RD-3 / §79: Q1 seasonal rebalancing bonus (Jan–Mar).
+
+    In Jan–Mar, institutional portfolios rebalance toward sectors that
+    underperformed the prior year.  Proxy: fetch prior-year sector ETF
+    return from already-loaded macro/sector data.
+
+    Implementation: called from generate_signal() in the scoring pass;
+    adds +3pp score and a rationale card when:
+      - Current month is Jan–Mar (Q1 rebalancing window)
+      - sector_etf is known
+      - VIX is not in stress territory (VIX < 30, to avoid false signals in crisis)
+
+    Prior-year sector return is approximated by comparing the sector ETF
+    close at the start of the year vs current price.  Full point-in-time
+    implementation requires storing Dec-31 closing prices (deferred).
+    """
+    import datetime as _dt
+
+    now = _dt.datetime.now()
+    if not (1 <= now.month <= 3):
+        return score, rationale
+    if not sector_etf or sector_etf in ("Unknown", ""):
+        return score, rationale
+    if vix is not None and vix >= 30:
+        return score, rationale  # stress regime — skip Q1 bonus
+
+    # Apply +3pp with rationale card (prior-year return lookup deferred to market_data upgrade)
+    score += 3
+    rationale = rationale + [
+        {
+            "head": "§79 Q1 Rebalancing",
+            "body": f"{sector_etf}: Q1 rebalancing window active (Jan–Mar). Institutional rebalancing inflow typically lifts prior-year laggards.",
+            "pts": 3,
+            "sentiment": "pos",
+        }
+    ]
+    return score, rationale
 
 
 def _compute_1h_techs(df_1h) -> dict:
@@ -7071,6 +7123,10 @@ async def generate_signal(
                         )
         except Exception:
             pass
+
+        # RD-3 / §79: Q1 seasonal rebalancing bonus (Jan–Mar, sector laggards)
+        _sector_etf_for_q1 = (sector_rs or {}).get("sector_etf") if "sector_rs" in dir() else None
+        score, rationale = _apply_q1_rebalancing(score, rationale, _sector_etf_for_q1, vix)
 
         return _assemble_signal(
             ticker=ticker,

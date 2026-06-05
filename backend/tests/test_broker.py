@@ -270,6 +270,116 @@ async def test_place_notional_order_uses_live_url():
     assert LIVE_BASE in url
 
 
+# ── alpaca_rest: bracket order ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_place_bracket_order_sends_bracket_body():
+    from services.alpaca_rest import place_bracket_order
+
+    session = _mock_aiohttp_session(json_return={"id": "b1", "status": "accepted"})
+    with patch("aiohttp.ClientSession", return_value=session):
+        result = await place_bracket_order(
+            "KEY", "SECRET", "AAPL", qty=0.5, side="buy", stop_price=170.0, take_profit_price=195.0, live=False
+        )
+
+    assert result["id"] == "b1"
+    call_kwargs = session.post.call_args
+    body = call_kwargs[1].get("json") or call_kwargs.kwargs.get("json", {})
+    assert body["order_class"] == "bracket"
+    assert body["stop_loss"]["stop_price"] == "170.0"
+    assert body["take_profit"]["limit_price"] == "195.0"
+    assert body["qty"] == "0.5"
+    assert "notional" not in body
+
+
+@pytest.mark.asyncio
+async def test_submit_bracket_stop_order_sends_correct_body():
+    from services.alpaca_rest import submit_bracket_stop_order
+
+    session = _mock_aiohttp_session(json_return={"id": "b2", "status": "accepted"})
+    with patch("aiohttp.ClientSession", return_value=session):
+        result = await submit_bracket_stop_order(
+            "KEY",
+            "SECRET",
+            "NVDA",
+            notional=100.0,
+            side="buy",
+            stop_price=185.0,
+            take_profit_price=210.0,
+            entry_price=200.0,
+            live=False,
+        )
+
+    assert result["id"] == "b2"
+    call_kwargs = session.post.call_args
+    body = call_kwargs[1].get("json") or call_kwargs.kwargs.get("json", {})
+    assert body["order_class"] == "bracket"
+    assert body["stop_loss"]["stop_price"] == "185.0"
+    assert body["take_profit"]["limit_price"] == "210.0"
+    assert body["notional"] == "100.0"
+
+
+@pytest.mark.asyncio
+async def test_submit_bracket_stop_order_oto_when_no_take_profit():
+    from services.alpaca_rest import submit_bracket_stop_order
+
+    session = _mock_aiohttp_session(json_return={"id": "n1", "status": "accepted"})
+    with patch("aiohttp.ClientSession", return_value=session):
+        result = await submit_bracket_stop_order(
+            "KEY", "SECRET", "AAPL", notional=100.0, side="buy", stop_price=170.0, entry_price=None, live=False
+        )
+    assert result["id"] == "n1"
+    call_kwargs = session.post.call_args
+    body = call_kwargs[1].get("json") or call_kwargs.kwargs.get("json", {})
+    assert body["order_class"] == "oto"
+    assert "take_profit" not in body
+
+
+# ── broker_svc: RISK-2 portfolio drawdown ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_check_portfolio_drawdown_blocks_when_dd_exceeds_threshold():
+    from services.broker_svc import check_portfolio_drawdown
+
+    user = _make_user()
+    bad_account = {"equity": "10000", "unrealized_pl": "-600"}  # −6% DD > −5% threshold
+
+    with patch("services.alpaca_rest.get_account", new_callable=AsyncMock, return_value=bad_account):
+        blocked = await check_portfolio_drawdown(user, "KEY", "SECRET", live=False)
+    assert blocked is True
+
+
+@pytest.mark.asyncio
+async def test_check_portfolio_drawdown_allows_when_within_threshold():
+    from services.broker_svc import check_portfolio_drawdown
+
+    user = _make_user()
+    ok_account = {"equity": "10000", "unrealized_pl": "-400"}  # −4% DD < −5% threshold
+
+    with patch("services.alpaca_rest.get_account", new_callable=AsyncMock, return_value=ok_account):
+        blocked = await check_portfolio_drawdown(user, "KEY", "SECRET", live=False)
+    assert blocked is False
+
+
+@pytest.mark.asyncio
+async def test_execute_signal_skips_when_portfolio_dd_exceeded():
+    from services.broker_svc import encrypt_credential, execute_signal_for_user
+
+    user = _make_user(
+        alpaca_key_enc=encrypt_credential("KEY"),
+        alpaca_secret_enc=encrypt_credential("SECRET"),
+        alpaca_account_type="paper",
+    )
+    db = AsyncMock()
+
+    with patch("services.broker_svc.check_portfolio_drawdown", new_callable=AsyncMock, return_value=True):
+        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY"}, None, db)
+
+    db.add.assert_not_called()
+
+
 # ── routers/broker.py ─────────────────────────────────────────────────────────
 
 
@@ -386,3 +496,73 @@ def test_auto_execute_settings_all_none_valid():
     assert body.enabled is None
     assert body.min_conf is None
     assert body.qty_dollars is None
+
+
+# ── Kill switch ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_toggle_pauses_execution():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from routers.admin import execution_kill_switch
+
+    owner = MagicMock()
+    owner.id = 1
+    owner.is_owner = True
+
+    # Simulate AppSettings row with execution_paused=False
+    row = MagicMock()
+    row.data = {"execution_paused": False}
+
+    db = AsyncMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none = MagicMock(return_value=row)
+    db.execute = AsyncMock(return_value=execute_result)
+    db.commit = AsyncMock()
+
+    result = await execution_kill_switch(owner=owner, db=db)
+    assert result["execution_paused"] is True
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_toggle_resumes_execution():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from routers.admin import execution_kill_switch
+
+    owner = MagicMock()
+    owner.id = 1
+    owner.is_owner = True
+
+    row = MagicMock()
+    row.data = {"execution_paused": True}
+
+    db = AsyncMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none = MagicMock(return_value=row)
+    db.execute = AsyncMock(return_value=execute_result)
+    db.commit = AsyncMock()
+
+    result = await execution_kill_switch(owner=owner, db=db)
+    assert result["execution_paused"] is False
+
+
+@pytest.mark.asyncio
+async def test_scanner_skips_execution_when_kill_switch_active():
+    from unittest.mock import AsyncMock, patch
+
+    # Patch _load_db_settings to return paused=True and _market_hours_ok to True
+    with (
+        patch("services.scanner._market_hours_ok", return_value=True),
+        patch("services.scanner._load_db_settings", new_callable=AsyncMock, return_value={"execution_paused": True}),
+    ):
+        from services.scanner import _maybe_auto_execute_for_signal
+
+        sig = {"action": "BUY", "ticker": "AAPL", "confidence": 80}
+        db = AsyncMock()
+
+        await _maybe_auto_execute_for_signal(sig, 1, db)
+
+        # Should return early — no DB execute call for users
+        db.execute.assert_not_called()

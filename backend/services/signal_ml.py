@@ -1337,3 +1337,76 @@ def blend_confidence(
         ratio = max(0.75, min(1.25, ratio * meta_scale))
 
     return round(min(_MAX_CONFIDENCE, base_conf * ratio), 1)
+
+
+# ── ML-4: Rolling AUC drift monitor ──────────────────────────────────────────
+
+
+def compute_rolling_auc(window_days: int = 90) -> dict:
+    """
+    ML-4: Compute champion model AUC on a rolling window of live resolved signals.
+
+    Uses confidence as the model score and outcome_pct>0 as the positive label.
+    Runs synchronously so it can be called from scripts or health-check endpoints.
+
+    Returns dict: {auc, n, window_days, status} where status ∈ {ok, warn, degrade, insufficient_n, no_db}.
+    Logs a WARNING when AUC dips below the warn threshold.
+    """
+    import os
+    import sqlite3
+    from datetime import datetime, timedelta
+
+    AUC_WARN = 0.58
+    AUC_DEGRADE = 0.55
+
+    db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "trading.db")
+    if not os.path.exists(db_path):
+        return {"auc": None, "n": 0, "window_days": window_days, "status": "no_db"}
+
+    cutoff = (datetime.now() - timedelta(days=window_days)).isoformat()
+    try:
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT confidence, outcome_pct FROM signals "
+            "WHERE outcome_pct IS NOT NULL AND confidence IS NOT NULL "
+            "AND created_at >= ? ORDER BY created_at DESC",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+    except Exception as exc:
+        return {"auc": None, "n": 0, "window_days": window_days, "status": f"db_error: {exc}"}
+
+    if len(rows) < 20:
+        return {"auc": None, "n": len(rows), "window_days": window_days, "status": "insufficient_n"}
+
+    # ROC-AUC via trapezoidal rule (Mann-Whitney U form)
+    scores = [(float(r[0]) / 100.0, 1 if float(r[1]) > 0 else 0) for r in rows]
+    scores.sort(key=lambda x: -x[0])
+    pos = sum(y for _, y in scores)
+    neg = len(scores) - pos
+    if pos == 0 or neg == 0:
+        return {"auc": None, "n": len(scores), "window_days": window_days, "status": "no_variance"}
+
+    tp, fp, auc_val, prev_fp = 0, 0, 0.0, 0
+    for _, y in scores:
+        if y == 1:
+            tp += 1
+        else:
+            fp += 1
+            auc_val += tp * (fp - prev_fp)
+            prev_fp = fp
+    auc_val /= pos * neg
+
+    status = "ok" if auc_val >= AUC_WARN else ("warn" if auc_val >= AUC_DEGRADE else "degrade")
+    if status in ("warn", "degrade"):
+        import logging
+
+        logging.getLogger("signal_ml").warning(
+            "ML-4 AUC drift: rolling %dd AUC=%.4f [%s] (warn<%.2f, degrade<%.2f)",
+            window_days,
+            auc_val,
+            status,
+            AUC_WARN,
+            AUC_DEGRADE,
+        )
+    return {"auc": round(auc_val, 4), "n": len(scores), "window_days": window_days, "status": status}

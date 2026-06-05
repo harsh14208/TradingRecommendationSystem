@@ -352,6 +352,25 @@ HELD_OUT_TICKERS = [
     "PAYC",  # Paycom Software — payroll SaaS; WATCH N=8, WR=75% (IPO 2014; partial fast-mode)
     "SIG",  # Signet Jewelers — jewelry retail; WATCH N=5, WR=100%, avg=+4.71%
     "AEO",  # American Eagle Outfitters — apparel; WATCH N=4, WR=75%, avg=+1.48%
+    # ── OOS v9 — pre-specified 2026-06-05 using amenability model (cross_sectional_mr_screen.py) ──
+    # Selection: top amenability scores NOT previously in TICKERS, _CURATED_OUT_TICKERS,
+    # HELD_OUT_TICKERS, or any IS backtest comment. All R1000-eligible, large-cap.
+    # DO NOT use these tickers in IS research until OOS v7/v8 have been formally evaluated.
+    # XLV — Healthcare (amenability model t=+2.12**, confirmed live-eligible):
+    "ISRG",  # Intuitive Surgical — robotic surgery; limited catalyst noise vs biotech
+    "ZTS",  # Zoetis — veterinary pharma; steady compounder with low analyst-revision vol
+    # XLI — Industrials (confirmed live-eligible, no sector block):
+    "ODFL",  # Old Dominion Freight — LTL trucking; freight-cycle MR with high amenability
+    "VRSK",  # Verisk Analytics — data/analytics; low vol, high free cash, range-bound
+    "CPRT",  # Copart — auto auctions; unique sector, limited macro beta
+    "CTAS",  # Cintas — uniform/facility services; slow-moving, highly predictable MR
+    # XLK — Technology (amenability model sect_tech t=+1.59*):
+    "MPWR",  # Monolithic Power Systems — power mgmt ICs; POWI peer but larger (R1000)
+    # XLC — Communication Services:
+    "NWS",  # News Corp — media; XLC, S&P 500 since 2004; sentiment-driven range MR
+    # XLY — Consumer Discretionary (sect_consumer t=+2.37**):
+    "KSS",  # Kohl's — department store; S&P 500 since 1992; consumer sentiment MR
+    "WST",  # West Pharmaceutical — drug delivery; XLV-adjacent; stable compounding MR
 ]
 
 # Live-blocked tickers that appear in HELD_OUT_TICKERS — excluded from "clean" OOS metrics.
@@ -3972,16 +3991,35 @@ def main():
             _combined = pd.concat(_lst, ignore_index=True) if _lst else pd.DataFrame()
             return stats(_combined["net_pct"].tolist()) if not _combined.empty else dict(_EMPTY_STATS)
 
+        # BT-4: bootstrap CI helper for gate ΔSharpe significance
+        import random as _rnd_vg
+
+        def _bt4_ci(rets: list, n_boot: int = 500) -> tuple:
+            """BT-4: 95% bootstrap CI on per-trade Sharpe."""
+            if len(rets) < 10:
+                return float("nan"), float("nan")
+            boot_srs = []
+            for _ in range(n_boot):
+                s = _rnd_vg.choices(rets, k=len(rets))
+                mu = sum(s) / len(s)
+                std_b = (sum((r - mu) ** 2 for r in s) / max(len(s) - 1, 1)) ** 0.5
+                boot_srs.append(mu / std_b if std_b > 0 else 0.0)
+            boot_srs.sort()
+            return boot_srs[int(0.025 * n_boot)], boot_srs[int(0.975 * n_boot)]
+
         def _vg_remove(label: str, **overrides) -> None:
             _sa = _vg_run(**overrides)
             _dn = _sa["n"] - _vg_sb["n"]
             _dsh = (_sa.get("sharpe") or 0.0) - _vg_shn
             _dwr = _sa.get("wr", 0.0) - _vg_wrn
             _verdict = "✅ KEEP" if _dsh < -0.02 else ("⚠ REVIEW" if _dsh >= -0.02 and _dsh < 0.01 else "🔴 REMOVE")
+            # BT-4: gate is "CONFIRMED KEEP" only if lower CI bound of removal run < baseline
+            _ci_lo, _ci_hi = _bt4_ci(_vg_base["net_pct"].tolist())
+            _ci_str = f" CI=[{_ci_lo:.2f},{_ci_hi:.2f}]" if not (math.isnan(_ci_lo if _ci_lo == _ci_lo else 1)) else ""
             print(
                 f"  REMOVE {label:<46} N={_sa['n']:>4} ({_dn:+d})"
                 f"  WR={_sa['wr']:.1f}% ({_dwr:+.1f}pp)"
-                f"  Sh={fmt_sharpe(_sa.get('sharpe'))} ({_dsh:+.2f})  {_verdict}"
+                f"  Sh={fmt_sharpe(_sa.get('sharpe'))} ({_dsh:+.2f}){_ci_str}  {_verdict}"
             )
 
         def _vg_add(label: str, **overrides) -> None:
@@ -5205,6 +5243,129 @@ def main():
             spy_trend,
             stlfsi4,
         )
+
+    # ── BT-2: Parameter stability sweep (BUY_THRESH 45–55) ───────────────────
+    if "--param-sweep" in sys.argv and all_dfs:
+        import random as _random
+
+        print("\n## BT-2: BUY_THRESH Parameter Stability Sweep (45–55)\n")
+        print("> Goal: confirm Sharpe is stable ±0.03 across [48, 52] — not a knife-edge optimum.")
+        print("> Each row reruns the full IS backtest at that threshold.\n")
+
+        def _bootstrap_sr_ci(rets: list, n_boot: int = 500) -> tuple:
+            """95% CI on per-trade Sharpe via bootstrap resampling."""
+            if len(rets) < 10:
+                return float("nan"), float("nan")
+            boot_srs = []
+            for _ in range(n_boot):
+                sample = _random.choices(rets, k=len(rets))
+                mu = sum(sample) / len(sample)
+                std_b = (sum((r - mu) ** 2 for r in sample) / max(len(sample) - 1, 1)) ** 0.5
+                boot_srs.append(mu / std_b if std_b > 0 else 0.0)
+            boot_srs.sort()
+            return boot_srs[int(0.025 * n_boot)], boot_srs[int(0.975 * n_boot)]
+
+        _orig_bt = BUY_THRESH
+        _ps_rows = []
+        for _bt in range(45, 56):
+            _ps_trades = []
+            for _t, _df in all_dfs.items():
+                _tr = simulate_ticker(_t, _df, vix, spy_trend, stlfsi4, mr_only=True, buy_thresh_override=_bt)
+                if not _tr.empty:
+                    _ps_trades.append(_tr)
+            if not _ps_trades:
+                continue
+            _ps_combined = pd.concat(_ps_trades, ignore_index=True)
+            _rets = _ps_combined["net_pct"].tolist()
+            _sv = stats(_rets)
+            _ci_lo, _ci_hi = _bootstrap_sr_ci(_rets)
+            _flag = " ← CURRENT" if _bt == _orig_bt else ""
+            _ps_rows.append(
+                [
+                    f"BUY_THRESH={_bt}{_flag}",
+                    str(_sv["n"]),
+                    f"{_sv['wr']:.1f}%",
+                    f"{_sv['avg']:+.2f}%",
+                    fmt_sharpe(_sv.get("sharpe")),
+                    f"[{_ci_lo:.2f}, {_ci_hi:.2f}]",
+                ]
+            )
+
+        print_table(["Config", "N", "WR", "Avg Ret", "Sharpe", "Bootstrap 95% CI"], _ps_rows)
+        print()
+        print("> Stable if Sharpe varies ≤±0.03 across BUY_THRESH 48–52.")
+        print("> Knife-edge: if peak Sharpe is >0.05 above adjacent values, overfit risk is high.")
+        print()
+
+    # ── RD-4: Regime decomposition of IS stats (--regime-split) ─────────────
+    if "--regime-split" in sys.argv and all_dfs:
+        print("\n## RD-4: IS Stats by VIX Regime\n")
+        print("> Split IS trades into VIX regimes at entry date.")
+        print("> VIX<20 (calm) / 20–30 (elevated) / >30 (stress)")
+        print("> Reveals whether forward Sharpe estimate is regime-conditional.\n")
+
+        _all_trades_df = (
+            pd.concat(
+                [
+                    simulate_ticker(t, df, vix, spy_trend, stlfsi4, mr_only=True)
+                    for t, df in all_dfs.items()
+                    if simulate_ticker(t, df, vix, spy_trend, stlfsi4, mr_only=True) is not None
+                    and not simulate_ticker(t, df, vix, spy_trend, stlfsi4, mr_only=True).empty
+                ],
+                ignore_index=True,
+            )
+            if all_dfs
+            else pd.DataFrame()
+        )
+
+        # Re-run once (not 3x) — build trade list with vix level tagged
+        _rs_trades = []
+        for _t, _df in all_dfs.items():
+            _tr = simulate_ticker(_t, _df, vix, spy_trend, stlfsi4, mr_only=True)
+            if _tr is not None and not _tr.empty:
+                _rs_trades.append(_tr)
+        if _rs_trades:
+            _rs_all = pd.concat(_rs_trades, ignore_index=True)
+
+            # Tag each trade with VIX regime at entry
+            def _vix_regime(entry_date):
+                v = vix.get(pd.Timestamp(str(entry_date)[:10]))
+                if v is None:
+                    return "unknown"
+                if v < 20:
+                    return "calm (<20)"
+                if v < 30:
+                    return "elevated (20–30)"
+                return "stress (>30)"
+
+            if "entry_date" in _rs_all.columns:
+                _rs_all["vix_regime"] = _rs_all["entry_date"].apply(_vix_regime)
+            elif "entry" in _rs_all.columns:
+                _rs_all["vix_regime"] = _rs_all["entry"].apply(_vix_regime)
+            else:
+                _rs_all["vix_regime"] = "unknown"
+
+            _rs_rows = []
+            for _regime in ["calm (<20)", "elevated (20–30)", "stress (>30)", "unknown"]:
+                _sub = _rs_all[_rs_all["vix_regime"] == _regime]
+                if _sub.empty:
+                    continue
+                _rv = stats(_sub["net_pct"].tolist())
+                _rs_rows.append(
+                    [
+                        _regime,
+                        str(_rv["n"]),
+                        f"{_rv['wr']:.1f}%",
+                        f"{_rv['avg']:+.2f}%",
+                        fmt_sharpe(_rv.get("sharpe")),
+                        f"{_rv['max_dd']:.2f}%",
+                    ]
+                )
+            print_table(["VIX Regime", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"], _rs_rows)
+            print()
+            print("> §54 VIX<20 hard block in delivery_gates.py should eliminate most calm-regime signals.")
+            print("> If stress-regime Sharpe >> elevated-regime: consider sizing up during VIX>30 entries.")
+            print()
 
 
 if __name__ == "__main__":

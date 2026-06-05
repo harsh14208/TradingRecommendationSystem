@@ -7,6 +7,8 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   const [regen,         setRegen]         = useState(false);
   const [setupStatus,   setSetupStatus]   = useState(null);
   const [adminStats,    setAdminStats]    = useState(null);
+  const [killSwitch,    setKillSwitch]    = useState(null);
+  const [killSwitching, setKillSwitching] = useState(false);
   const [usersExpanded, setUsersExpanded] = useState(false);
   const [usersList,     setUsersList]     = useState([]);
   const [minConf,       setMinConf]       = useState(user?.min_confidence_override ?? "");
@@ -23,8 +25,17 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   const [autoExec,      setAutoExec]      = useState(user?.auto_execute ?? false);
   const [autoExecConf,  setAutoExecConf]  = useState(user?.auto_execute_min_conf ?? "");
   const [autoExecBroker,setAutoExecBroker]= useState(user?.auto_execute_broker ?? "");
+  const [autoExecQty,   setAutoExecQty]   = useState(user?.auto_execute_qty_dollars ?? "");
   const [autoExecSaving,setAutoExecSaving]= useState(false);
   const [autoExecMsg,   setAutoExecMsg]   = useState("");
+  const [brokerStatus,    setBrokerStatus]    = useState(null);
+  const [brokerLoading,   setBrokerLoading]   = useState(false);
+  const [showBrokerForm,  setShowBrokerForm]  = useState(false);
+  const [brokerKey,       setBrokerKey]       = useState("");
+  const [brokerSecret,    setBrokerSecret]    = useState("");
+  const [brokerAcctType,  setBrokerAcctType]  = useState("paper");
+  const [brokerConnecting,setBrokerConnecting]= useState(false);
+  const [brokerConnMsg,   setBrokerConnMsg]   = useState("");
 
   useEffect(() => {
     if (open && user) {
@@ -36,11 +47,23 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
       setAutoExec(user.auto_execute ?? false);
       setAutoExecConf(user.auto_execute_min_conf ?? "");
       setAutoExecBroker(user.auto_execute_broker ?? "");
+      setAutoExecQty(user.auto_execute_qty_dollars ?? "");
       setAutoExecMsg("");
+      setBrokerStatus(null);
+      setBrokerLoading(false);
+      setShowBrokerForm(false);
+      setBrokerKey("");
+      setBrokerSecret("");
+      setBrokerConnMsg("");
+      if (user.is_owner || (user.subscription_tier === "pro" && user.subscription_status === "active")) {
+        setBrokerLoading(true);
+        authFetch("/api/me/broker/status").then(r => r.json()).then(d => { setBrokerStatus(d); }).catch(() => {}).finally(() => setBrokerLoading(false));
+      }
       if (user.is_owner) {
         authFetch("/api/admin/setup-status").then(r => r.json()).then(setSetupStatus).catch(() => {});
         apiFetch("/api/admin/stats").then(d => { if (d) setAdminStats(d); }).catch(() => {});
         apiFetch("/api/admin/weekly-digest/status").then(d => { if (d) setDigestStatus(d); }).catch(() => {});
+        apiFetch("/api/admin/execution-kill-switch").then(d => { if (d) setKillSwitch(d.execution_paused); }).catch(() => {});
       }
       apiFetch("/api/auth/referral").then(d => { if (d) setReferral(d); }).catch(() => {});
       apiFetch("/api/billing/status").then(d => { if (d) setBillingStatus(d); }).catch(() => {});
@@ -128,10 +151,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
     setAutoExecSaving(true);
     setAutoExecMsg("");
     try {
-      const body = {
-        auto_execute: autoExec,
-        auto_execute_broker: autoExecBroker || "",
-      };
+      const body = { enabled: autoExec };
       if (autoExecConf !== "") {
         const v = Number(autoExecConf);
         if (isNaN(v) || v < 50 || v > 100) {
@@ -139,12 +159,21 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
           setAutoExecSaving(false);
           return;
         }
-        body.auto_execute_min_conf = v;
+        body.min_conf = v;
       }
-      const res = await authFetch("/api/auth/me", { method:"PATCH", body: JSON.stringify(body) });
+      if (autoExecQty !== "") {
+        const q = Number(autoExecQty);
+        if (isNaN(q) || q < 1) {
+          setAutoExecMsg("Notional must be ≥ $1");
+          setAutoExecSaving(false);
+          return;
+        }
+        body.qty_dollars = q;
+      }
+      const res = await authFetch("/api/me/broker/settings", { method:"PATCH", body: JSON.stringify(body) });
       if (!res.ok) throw new Error("Save failed");
       const d = await res.json();
-      setUser(d);
+      setAutoExec(d.auto_execute);
       setAutoExecMsg("Saved ✓");
       setTimeout(() => setAutoExecMsg(""), 2000);
     } catch {
@@ -152,6 +181,41 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
     } finally {
       setAutoExecSaving(false);
     }
+  };
+
+  const connectBroker = async () => {
+    if (!brokerKey.trim() || !brokerSecret.trim()) { setBrokerConnMsg("API key and secret are required"); return; }
+    setBrokerConnecting(true);
+    setBrokerConnMsg("");
+    try {
+      const res = await authFetch("/api/me/broker/connect", {
+        method:"POST",
+        body: JSON.stringify({ broker:"alpaca", account_type: brokerAcctType, api_key: brokerKey.trim(), api_secret: brokerSecret.trim() }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setBrokerConnMsg(d.detail || "Connection failed — check your credentials");
+        return;
+      }
+      const d = await res.json();
+      setBrokerStatus(d);
+      setShowBrokerForm(false);
+      setBrokerKey("");
+      setBrokerSecret("");
+    } catch {
+      setBrokerConnMsg("Network error — try again");
+    } finally {
+      setBrokerConnecting(false);
+    }
+  };
+
+  const disconnectBroker = async () => {
+    if (!confirm("Disconnect your broker? Auto-execution will be disabled.")) return;
+    try {
+      await authFetch("/api/me/broker/disconnect", { method:"DELETE" });
+      setBrokerStatus({ connected: false });
+      setAutoExec(false);
+    } catch { /* ignore */ }
   };
 
   if (!open || !user) return null;
@@ -334,9 +398,31 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
               ))}
               {setupStatus.all_critical_ok && <div style={{ fontSize:11, color:"var(--up)" }}>✓ All critical config set</div>}
             </div>}
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:8 }}>
               <button className="btn ghost" style={{ fontSize:11 }} onClick={registerWebhook}>Register TG Webhook</button>
               <button className="btn ghost" style={{ fontSize:11 }} onClick={loadUsers}>Load Users</button>
+            </div>
+            {/* Kill switch */}
+            <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", borderRadius:6, marginBottom:8,
+              background: killSwitch ? "rgba(239,68,68,0.1)" : "rgba(16,185,129,0.08)",
+              border: `1px solid ${killSwitch ? "rgba(239,68,68,0.3)" : "rgba(16,185,129,0.2)"}` }}>
+              <span style={{ fontSize:11, fontFamily:"var(--font-mono)", flex:1, color: killSwitch ? "var(--down)" : "var(--up)" }}>
+                {killSwitch ? "⚠ Auto-execution PAUSED" : "● Auto-execution ACTIVE"}
+              </span>
+              <button onClick={async () => {
+                setKillSwitching(true);
+                try {
+                  const r = await authFetch("/api/admin/execution-kill-switch", { method:"POST" });
+                  const d = await r.json();
+                  setKillSwitch(d.execution_paused);
+                } catch { /* ignore */ } finally { setKillSwitching(false); }
+              }} disabled={killSwitching}
+              style={{ fontSize:11, padding:"4px 10px", borderRadius:5, border:"1px solid", cursor:"pointer", fontWeight:600,
+                background: killSwitch ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.12)",
+                color: killSwitch ? "var(--up)" : "var(--down)",
+                borderColor: killSwitch ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.25)" }}>
+                {killSwitching ? "…" : killSwitch ? "Resume" : "Pause"}
+              </button>
             </div>
             {webhookMsg && (
               <div style={{ fontSize:11, color: webhookMsg.startsWith("✓") ? "var(--up)" : "var(--down)", marginTop:6, fontFamily:"var(--font-mono)" }}>
@@ -403,53 +489,115 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
         <div style={{ marginBottom:20 }}>
           <div style={{ fontSize:10, fontWeight:600, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"var(--font-mono)", marginBottom:12, paddingBottom:8, borderBottom:"1px solid var(--line)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
             <span>Autonomous Execution</span>
-            <span style={{ fontSize:9, color:"var(--warn)", fontWeight:400 }}>Beta · Alpaca/IBKR setup required</span>
+            <span style={{ fontSize:9, color:"#7c3aed", fontWeight:600, fontFamily:"var(--font-mono)" }}>PRO</span>
           </div>
-          <div style={{ fontSize:11, color:"var(--text-faint)", marginBottom:10, lineHeight:1.55 }}>
-            When enabled, high-confidence signals are automatically submitted to your connected broker as market orders. Requires broker API credentials configured server-side.
-          </div>
-          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
-            <button
-              onClick={() => setAutoExec(v => !v)}
-              style={{ width:36, height:20, borderRadius:10, border:"none", cursor:"pointer", position:"relative",
-                background: autoExec ? "var(--accent)" : "var(--bg-3)", transition:"background 0.2s" }}>
-              <span style={{ position:"absolute", top:2, left: autoExec ? 18 : 2, width:16, height:16, borderRadius:"50%", background:"#fff", transition:"left 0.2s" }}/>
-            </button>
-            <span style={{ fontSize:12, color: autoExec ? "var(--text)" : "var(--text-faint)" }}>
-              {autoExec ? "Auto-execute enabled" : "Auto-execute disabled"}
-            </span>
-          </div>
-          {autoExec && (
-            <div style={{ display:"flex", flexDirection:"column", gap:8, paddingLeft:0 }}>
-              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                <input
-                  type="number" min="50" max="100" placeholder="75"
-                  value={autoExecConf}
-                  onChange={e => setAutoExecConf(e.target.value)}
-                  style={{ ...inp, width:72 }}
-                />
-                <span style={{ fontSize:11, color:"var(--text-faint)" }}>% min confidence</span>
-              </div>
-              <select
-                value={autoExecBroker}
-                onChange={e => setAutoExecBroker(e.target.value)}
-                style={{ ...inp, width:"100%", appearance:"none" }}>
-                <option value="">Select broker…</option>
-                <option value="alpaca">Alpaca</option>
-                <option value="ibkr">IBKR (Interactive Brokers)</option>
-              </select>
+
+          {!user.is_owner && !(tier === "pro" && user.subscription_status === "active") ? (
+            <div style={{ fontSize:11, color:"var(--text-faint)", lineHeight:1.6 }}>
+              Auto-execution requires a Pro subscription.{" "}
+              <button onClick={onUpgrade} style={{ background:"none", border:"none", color:"#7c3aed", cursor:"pointer", fontSize:11, fontWeight:600, padding:0 }}>Upgrade →</button>
             </div>
+          ) : (
+            <>
+              {/* Broker connection */}
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", letterSpacing:"0.08em", marginBottom:8 }}>BROKER CONNECTION</div>
+                {brokerLoading ? (
+                  <div style={{ fontSize:11, color:"var(--text-faint)" }}>Loading…</div>
+                ) : brokerStatus?.connected ? (
+                  <div>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                      <span style={{ fontSize:11, color:"var(--up)", fontFamily:"var(--font-mono)" }}>●</span>
+                      <span style={{ fontSize:11, color:"var(--text)" }}>Alpaca {brokerStatus.account_type}</span>
+                    </div>
+                    {brokerStatus.account && (
+                      <div style={{ fontSize:11, color:"var(--text-dim)", fontFamily:"var(--font-mono)", marginBottom:10, padding:"8px 10px", background:"var(--bg-2)", borderRadius:6, lineHeight:1.5 }}>
+                        <div>{brokerStatus.account.status}</div>
+                        <div>Equity: ${Number(brokerStatus.account.equity || 0).toLocaleString(undefined, {maximumFractionDigits:2})}</div>
+                        <div>Buying power: ${Number(brokerStatus.account.buying_power || 0).toLocaleString(undefined, {maximumFractionDigits:2})}</div>
+                      </div>
+                    )}
+                    <button onClick={disconnectBroker} style={{ fontSize:11, padding:"5px 14px", background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.25)", borderRadius:6, color:"var(--down)", cursor:"pointer" }}>
+                      Disconnect
+                    </button>
+                  </div>
+                ) : showBrokerForm ? (
+                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                    <div style={{ display:"flex", gap:6 }}>
+                      {["paper","live"].map(t => (
+                        <button key={t} onClick={() => setBrokerAcctType(t)} style={{ flex:1, padding:"6px 0", fontSize:11, borderRadius:6, border:"1px solid", cursor:"pointer",
+                          background: brokerAcctType===t ? (t==="live" ? "#7c3aed" : "var(--accent)") : "var(--bg-2)",
+                          borderColor: brokerAcctType===t ? (t==="live" ? "#7c3aed" : "var(--accent)") : "var(--line)",
+                          color: brokerAcctType===t ? (t==="live" ? "#fff" : "#000") : "var(--text)", fontWeight:600 }}>
+                          {t.charAt(0).toUpperCase()+t.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                    {brokerAcctType === "live" && (
+                      <div style={{ fontSize:10, color:"var(--warn)", fontFamily:"var(--font-mono)", padding:"6px 10px", background:"rgba(245,158,11,0.08)", borderRadius:6 }}>
+                        Live mode places real orders with real money. Use paper mode to test first.
+                      </div>
+                    )}
+                    <input type="text" placeholder="API Key (PKXXXXX…)" value={brokerKey} onChange={e => setBrokerKey(e.target.value)} style={inp} autoComplete="off" spellCheck={false}/>
+                    <input type="password" placeholder="API Secret" value={brokerSecret} onChange={e => setBrokerSecret(e.target.value)} style={inp} autoComplete="new-password"/>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button className="btn ghost" style={{ fontSize:11, flex:1 }} onClick={() => { setShowBrokerForm(false); setBrokerConnMsg(""); }}>Cancel</button>
+                      <button onClick={connectBroker} disabled={brokerConnecting} style={{ flex:1, fontSize:11, padding:"7px 0", borderRadius:6, border:"none", background:"var(--accent)", color:"#000", fontWeight:600, cursor:"pointer" }}>
+                        {brokerConnecting ? "Connecting…" : "Connect"}
+                      </button>
+                    </div>
+                    {brokerConnMsg && <div style={{ fontSize:10, fontFamily:"var(--font-mono)", color: brokerConnMsg.startsWith("✓") ? "var(--up)" : "var(--down)" }}>{brokerConnMsg}</div>}
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize:11, color:"var(--text-faint)", marginBottom:8, lineHeight:1.55 }}>
+                      Connect your Alpaca account to auto-execute signals. Credentials are Fernet-encrypted and never leave your server.
+                    </div>
+                    <button className="btn ghost" style={{ fontSize:11 }} onClick={() => setShowBrokerForm(true)}>Connect Alpaca…</button>
+                  </div>
+                )}
+              </div>
+
+              {/* Execution settings — only shown when connected */}
+              {brokerStatus?.connected && (
+                <div>
+                  <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", letterSpacing:"0.08em", marginBottom:8 }}>EXECUTION SETTINGS</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                    <button onClick={() => setAutoExec(v => !v)}
+                      style={{ width:36, height:20, borderRadius:10, border:"none", cursor:"pointer", position:"relative", background: autoExec ? "var(--accent)" : "var(--bg-3)", transition:"background 0.2s" }}>
+                      <span style={{ position:"absolute", top:2, left: autoExec ? 18 : 2, width:16, height:16, borderRadius:"50%", background:"#fff", transition:"left 0.2s" }}/>
+                    </button>
+                    <span style={{ fontSize:12, color: autoExec ? "var(--text)" : "var(--text-faint)" }}>
+                      {autoExec ? "Auto-execute enabled" : "Auto-execute disabled"}
+                    </span>
+                  </div>
+                  {autoExec && (
+                    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                        <input type="number" min="50" max="100" placeholder="75" value={autoExecConf} onChange={e => setAutoExecConf(e.target.value)} style={{ ...inp, width:72 }}/>
+                        <span style={{ fontSize:11, color:"var(--text-faint)" }}>% min confidence</span>
+                      </div>
+                      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                        <span style={{ fontSize:12, color:"var(--text-faint)" }}>$</span>
+                        <input type="number" min="1" placeholder="100" value={autoExecQty} onChange={e => setAutoExecQty(e.target.value)} style={{ ...inp, width:90 }}/>
+                        <span style={{ fontSize:11, color:"var(--text-faint)" }}>notional per signal</span>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:10 }}>
+                    <button className="btn ghost" style={{ fontSize:11 }} onClick={saveAutoExec} disabled={autoExecSaving}>
+                      {autoExecSaving ? "Saving…" : "Save Settings"}
+                    </button>
+                    {autoExecMsg && (
+                      <span style={{ fontSize:11, color: autoExecMsg.startsWith("Saved") ? "var(--up)" : "var(--down)", fontFamily:"var(--font-mono)" }}>
+                        {autoExecMsg}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
-          <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:10 }}>
-            <button className="btn ghost" style={{ fontSize:11 }} onClick={saveAutoExec} disabled={autoExecSaving}>
-              {autoExecSaving ? "Saving…" : "Save"}
-            </button>
-            {autoExecMsg && (
-              <span style={{ fontSize:11, color: autoExecMsg.startsWith("Saved") ? "var(--up)" : "var(--down)", fontFamily:"var(--font-mono)" }}>
-                {autoExecMsg}
-              </span>
-            )}
-          </div>
         </div>
 
         {/* Referral */}

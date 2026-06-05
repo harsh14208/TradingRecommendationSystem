@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from config import TIER_PRICES_CENTS, get_settings
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
-from models import PerformanceSnapshot, Signal, SignalDelivery, User
+from models import AppSettings, PerformanceSnapshot, Signal, SignalDelivery, User
 from services.auth_svc import get_current_user
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -510,6 +510,174 @@ async def diff_snapshots_endpoint(
         "after": {"id": b.id, "tag": b.tag, "created_at": b.created_at.isoformat() if b.created_at else None},
         "delta": delta,
         "flagged_metrics": flagged,
+    }
+
+
+@router.post("/execution-kill-switch")
+async def execution_kill_switch(
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Toggle the broker auto-execution kill switch.
+
+    When paused=True, scanner._maybe_auto_execute_for_signal() skips all
+    orders without error. Use during circuit breaker events, broker API
+    outages, or flash crash conditions.
+    Returns the new state.
+    """
+    row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+    if not row:
+        row = AppSettings(id=1, data={})
+        db.add(row)
+    data = dict(row.data or {})
+    data["execution_paused"] = not data.get("execution_paused", False)
+    row.data = data
+    await db.commit()
+    log.info("kill_switch: execution_paused set to %s by owner=%d", data["execution_paused"], owner.id)
+    return {"execution_paused": data["execution_paused"]}
+
+
+@router.get("/execution-kill-switch")
+async def get_kill_switch_status(
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current state of the broker auto-execution kill switch."""
+    row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+    paused = bool(row and row.data and row.data.get("execution_paused"))
+    return {"execution_paused": paused}
+
+
+import math as _math
+
+
+def _wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score 95% CI for a proportion. Returns (lower_pct, upper_pct)."""
+    if n == 0:
+        return 0.0, 100.0
+    p = wins / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    margin = z * _math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return round(max(0.0, centre - margin) * 100, 1), round(min(1.0, centre + margin) * 100, 1)
+
+
+@router.get("/live-wr-stats")
+async def live_wr_stats(
+    days: int = 90,
+    db: AsyncSession = Depends(get_db),
+    owner: User = Depends(_require_owner),
+):
+    """
+    OOS-5: Live WR tracking with Wilson 95% CI bands.
+
+    Returns overall and rolling-window WR with confidence intervals.
+    Flag is raised when the lower CI bound drops below 55%.
+    """
+    from datetime import timezone as _tz
+
+    cutoff = datetime.now(_tz.utc).replace(tzinfo=None) - timedelta(days=days)
+
+    all_resolved = (
+        (await db.execute(select(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.is_sent == True)))
+        .scalars()
+        .all()
+    )
+    recent = [s for s in all_resolved if s.created_at and s.created_at >= cutoff]
+
+    def _stats(sigs):
+        n = len(sigs)
+        wins = sum(1 for s in sigs if (s.outcome_pct or 0) > 0)
+        wr = round(wins / n * 100, 1) if n else None
+        lo, hi = _wilson_ci(wins, n) if n else (None, None)
+        avg_ret = round(sum(s.outcome_pct for s in sigs if s.outcome_pct) / n, 3) if n else None
+        return {"n": n, "wins": wins, "wr_pct": wr, "ci_lo": lo, "ci_hi": hi, "avg_ret_pct": avg_ret}
+
+    overall = _stats(all_resolved)
+    rolling = _stats(recent)
+
+    ci_lo = rolling.get("ci_lo")
+    flag = ci_lo is not None and ci_lo < 55.0 and rolling["n"] >= 20
+
+    return {
+        "overall": overall,
+        f"rolling_{days}d": rolling,
+        "flag": flag,
+        "flag_reason": f"Rolling lower CI {ci_lo:.1f}% < 55% floor (N={rolling['n']})" if flag else None,
+    }
+
+
+@router.get("/analytics-summary")
+async def analytics_summary(
+    db: AsyncSession = Depends(get_db),
+    owner: User = Depends(_require_owner),
+):
+    """
+    PROD-4: Admin analytics dashboard summary.
+
+    Returns daily/weekly signal volume, tier breakdown, live WR, MRR estimate,
+    and calibration Brier score — all from the local DB.
+    """
+    from datetime import timezone as _tz
+
+    now = datetime.now(_tz.utc).replace(tzinfo=None)
+    day_ago = now - timedelta(days=1)
+    week_ago = now - timedelta(days=7)
+
+    # Signal counts
+    all_signals = (await db.execute(select(Signal))).scalars().all()
+    signals_today = [s for s in all_signals if s.created_at and s.created_at >= day_ago]
+    signals_week = [s for s in all_signals if s.created_at and s.created_at >= week_ago]
+    delivered_week = [s for s in signals_week if s.is_sent]
+    resolved = [s for s in all_signals if s.outcome_pct is not None]
+    wins = [s for s in resolved if (s.outcome_pct or 0) > 0]
+
+    # User tier breakdown
+    all_users = (await db.execute(select(User).where(User.is_active == True))).scalars().all()
+    tier_counts: dict[str, int] = {}
+    for u in all_users:
+        tier = u.subscription_tier or "free"
+        tier_counts[tier] = tier_counts.get(tier, 0) + 1
+    active_paid = sum(1 for u in all_users if u.subscription_status == "active")
+
+    # MRR estimate
+    try:
+        _prices = {"basic": 29, "pro": 79, "elite": 149}
+        mrr = sum(_prices.get(u.subscription_tier or "", 0) for u in all_users if u.subscription_status == "active")
+    except Exception:
+        mrr = None
+
+    # Calibration Brier score
+    brier = None
+    if resolved:
+        total_sq = sum(
+            ((s.confidence or 50.0) / 100.0 - (1.0 if (s.outcome_pct or 0) > 0 else 0.0)) ** 2
+            for s in resolved
+            if s.confidence is not None
+        )
+        brier = round(total_sq / len(resolved), 4)
+
+    lo, hi = _wilson_ci(len(wins), len(resolved)) if resolved else (None, None)
+
+    return {
+        "signals": {
+            "today": len(signals_today),
+            "this_week": len(signals_week),
+            "delivered_this_week": len(delivered_week),
+            "delivery_rate_pct": round(len(delivered_week) / len(signals_week) * 100, 1) if signals_week else None,
+            "total_resolved": len(resolved),
+            "live_wr_pct": round(len(wins) / len(resolved) * 100, 1) if resolved else None,
+            "live_wr_ci": [lo, hi],
+            "avg_ret_pct": round(sum(s.outcome_pct for s in resolved) / len(resolved), 3) if resolved else None,
+        },
+        "users": {
+            "total_active": len(all_users),
+            "paid": active_paid,
+            "tiers": tier_counts,
+        },
+        "revenue": {"mrr_usd": mrr},
+        "calibration": {"brier": brier, "v4_baseline": 0.2641},
     }
 
 

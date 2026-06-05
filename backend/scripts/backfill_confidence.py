@@ -258,6 +258,163 @@ def _chunks(lst: list, n: int):
         yield lst[i : i + n]
 
 
+# ── CAL-2: Per-sector calibration analysis ───────────────────────────────────
+
+_SECTOR_ETF_MAP = {
+    "XLK": "Technology",
+    "XLF": "Financials",
+    "XLV": "Healthcare",
+    "XLY": "Consumer Disc.",
+    "XLC": "Communication",
+    "XLI": "Industrials",
+    "XLE": "Energy",
+    "XLB": "Materials",
+    "XLRE": "Real Estate",
+    "XLP": "Consumer Staples",
+    "XLU": "Utilities",
+}
+
+
+async def per_sector_calibration() -> None:
+    """
+    CAL-2: Compute per-sector Brier score vs global Brier.
+
+    If any sector's Brier exceeds the global baseline by >0.01,
+    sector-conditional calibration curves should be deployed.
+    """
+    db_gen = get_db()
+    db = await db_gen.__anext__()
+    try:
+        from models import Signal
+        from sqlalchemy import select as _sel
+
+        rows = list(
+            (await db.execute(_sel(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.confidence.isnot(None))))
+            .scalars()
+            .all()
+        )
+    finally:
+        await db.close()
+
+    if not rows:
+        print("No resolved signals found.")
+        return
+
+    total = len(rows)
+    global_brier = sum(((s.confidence / 100.0) - (1.0 if (s.outcome_pct or 0) > 0 else 0.0)) ** 2 for s in rows) / total
+
+    def _sector(sig):
+        for card in sig.rationale or []:
+            head = card.get("head", "")
+            for etf in _SECTOR_ETF_MAP:
+                if etf in head:
+                    return etf
+        return "Unknown"
+
+    from collections import defaultdict
+
+    buckets: dict = defaultdict(list)
+    for s in rows:
+        buckets[_sector(s)].append(s)
+
+    print(f"\n{'─' * 72}")
+    print("  CAL-2: Per-Sector Brier Score Analysis")
+    print(f"  Global Brier: {global_brier:.4f}  (cal v4 baseline: 0.2641)")
+    print(f"  Total N: {total}")
+    print(f"{'─' * 72}\n")
+    print(f"  {'Sector':<22} {'ETF':>5}  {'N':>5}  {'Brier':>7}  {'ΔBrier':>8}  Verdict")
+    print(f"  {'─' * 22} {'─' * 5}  {'─' * 5}  {'─' * 7}  {'─' * 8}  {'─' * 20}")
+
+    needs_sector_cal = False
+    for etf, sigs in sorted(buckets.items(), key=lambda x: -len(x[1])):
+        n = len(sigs)
+        if n < 10:
+            continue
+        brier = sum(((s.confidence / 100.0) - (1.0 if (s.outcome_pct or 0) > 0 else 0.0)) ** 2 for s in sigs) / n
+        delta = brier - global_brier
+        verdict = "✅ OK" if abs(delta) < 0.01 else ("⚠ WATCH" if abs(delta) < 0.02 else "❌ DEPLOY SECTOR CAL")
+        if abs(delta) >= 0.01:
+            needs_sector_cal = True
+        sector_name = _SECTOR_ETF_MAP.get(etf, etf)
+        print(f"  {sector_name:<22} {etf:>5}  {n:>5}  {brier:>7.4f}  {delta:>+8.4f}  {verdict}")
+
+    print(f"\n  {'Global (all)':<22} {'—':>5}  {total:>5}  {global_brier:>7.4f}  {'—':>8}")
+    print()
+    if needs_sector_cal:
+        print("  ❌ At least one sector deviates >0.01 Brier — deploy sector-conditional calibration.")
+        print("     Add 'sector' grouping to backfill() and fit separate isotonic curves per ETF.")
+    else:
+        print("  ✅ All sectors within ±0.01 of global Brier — global calibration is sufficient.")
+    print(f"{'─' * 72}\n")
+
+
+# ── CAL-3: Reliability diagram (calibration curve) ───────────────────────────
+
+
+async def reliability_diagram() -> None:
+    """
+    CAL-3: Print a text-mode reliability diagram (calibration curve).
+
+    Bins resolved signals by confidence, shows actual WR per bin.
+    Ideal: points on the diagonal (predicted_conf ≈ actual_WR).
+    """
+    db_gen = get_db()
+    db = await db_gen.__anext__()
+    try:
+        from models import Signal
+        from sqlalchemy import select as _sel
+
+        rows = list(
+            (await db.execute(_sel(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.confidence.isnot(None))))
+            .scalars()
+            .all()
+        )
+    finally:
+        await db.close()
+
+    if not rows:
+        print("No resolved signals.")
+        return
+
+    bins = [
+        (0, 40),
+        (40, 45),
+        (45, 50),
+        (50, 55),
+        (55, 60),
+        (60, 65),
+        (65, 70),
+        (70, 75),
+        (75, 80),
+        (80, 100),
+    ]
+
+    print(f"\n{'─' * 72}")
+    print("  CAL-3: Reliability Diagram (Calibration Curve)")
+    print("  Ideal: actual WR ≈ predicted confidence → points on diagonal.")
+    print(f"{'─' * 72}\n")
+    print(f"  {'Conf Bin':<12} {'N':>5}  {'Pred Conf':>10}  {'Actual WR':>10}  {'Gap':>7}  Bar")
+    print(f"  {'─' * 12} {'─' * 5}  {'─' * 10}  {'─' * 10}  {'─' * 7}  {'─' * 20}")
+
+    for lo, hi in bins:
+        bucket = [s for s in rows if lo <= (s.confidence or 0) < hi]
+        n = len(bucket)
+        if n < 3:
+            continue
+        pred_conf = sum(s.confidence for s in bucket) / n
+        actual_wr = sum(1 for s in bucket if (s.outcome_pct or 0) > 0) / n * 100
+        gap = actual_wr - pred_conf
+        flag = "✅" if abs(gap) < 5 else ("⚠ " if abs(gap) < 10 else "❌")
+        # ASCII bar chart showing deviation
+        bar_len = min(20, max(0, int(abs(gap) / 2)))
+        bar = ("←" if gap < 0 else "→") * bar_len
+        print(f"  {lo:>3}–{hi:<3}%      {n:>5}  {pred_conf:>9.1f}%  {actual_wr:>9.1f}%  {gap:>+6.1f}%  {flag}{bar}")
+
+    print()
+    print("  ✅ Gap < 5pp  |  ⚠ Gap 5–10pp  |  ❌ Gap > 10pp → recalibration needed")
+    print(f"{'─' * 72}\n")
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -268,9 +425,15 @@ if __name__ == "__main__":
         "--min-delta", type=float, default=0.5, help="Minimum |Δconfidence| in pp to update (default: 0.5)"
     )
     parser.add_argument("--force", action="store_true", help="Skip N≥200 readiness guard (testing only)")
+    parser.add_argument("--sector-cal", action="store_true", help="CAL-2: per-sector Brier analysis")
+    parser.add_argument("--reliability-diagram", action="store_true", help="CAL-3: text-mode calibration curve")
     args = parser.parse_args()
 
-    if args.check:
+    if args.sector_cal:
+        asyncio.run(per_sector_calibration())
+    elif args.reliability_diagram:
+        asyncio.run(reliability_diagram())
+    elif args.check:
         asyncio.run(check_readiness())
     else:
         asyncio.run(backfill(apply=args.apply, min_delta=args.min_delta, force=args.force))
