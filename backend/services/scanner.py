@@ -772,6 +772,66 @@ async def _maybe_paper_trade(
         log.info(f" ✗ {ticker} {action} failed: {e}")
 
 
+async def _maybe_auto_execute_for_signal(sig: dict, signal_id, db) -> None:
+    """
+    Auto-execute a signal for every Pro user with auto_execute=True and
+    a connected Alpaca account.
+
+    Called once per new/unsent signal from _deliver_scan_signals. Never
+    raises — any per-user error is logged and skipped.
+    """
+    action = sig.get("action")
+    if action not in ("BUY", "SELL"):
+        return
+
+    if not _market_hours_ok():
+        return
+
+    # Load eligible users in a fresh session so we don't dirty the delivery session.
+    try:
+        async with AsyncSessionLocal() as exec_db:
+            from sqlalchemy import select as _sel
+
+            candidates = (
+                (
+                    await exec_db.execute(
+                        _sel(User).where(
+                            User.auto_execute == True,
+                            User.auto_execute_broker == "alpaca",
+                            User.alpaca_key_enc.isnot(None),
+                            User.is_active == True,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            if not candidates:
+                return
+
+            conf = float(sig.get("confidence") or 0)
+
+            from services.broker_svc import execute_signal_for_user
+
+            for user in candidates:
+                # Require Pro/owner subscription
+                if not user.is_owner and not (
+                    user.subscription_status == "active" and TIERS.index(user.subscription_tier) >= TIERS.index("pro")
+                ):
+                    continue
+
+                min_conf = user.auto_execute_min_conf or 75.0
+                if conf < min_conf:
+                    continue
+
+                await execute_signal_for_user(user, sig, signal_id, exec_db)
+
+            await exec_db.commit()
+    except Exception as e:
+        log.warning("_maybe_auto_execute_for_signal: unexpected error: %s", e)
+
+
 async def _alert_telegram(text: str):
     """Send a plain alert message via Telegram (best-effort, never raises)."""
     try:
@@ -1388,6 +1448,7 @@ async def _deliver_scan_signals(
                     sig, merged, settings, db, label, force_resend=force, scan_started_at=scan_cycle_started_at
                 )
                 await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+                await _maybe_auto_execute_for_signal(sig, merged.id, db)
 
             await db.commit()
     elif db_settings.get("auto_paper_trade"):

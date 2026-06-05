@@ -170,6 +170,8 @@ TIER_FEATURES = {
         "sector_heatmap",
         "backtest_simulate",
         "weekly_digest",
+        "auto_execute",
+        "broker_orders",
     },
 }
 

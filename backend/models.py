@@ -133,6 +133,11 @@ class User(Base):
     auto_execute = Column(Boolean, default=False, nullable=False, server_default="0")
     auto_execute_min_conf = Column(Float, nullable=True)  # None = use 75.0
     auto_execute_broker = Column(String(50), nullable=True)  # "alpaca" | "ibkr" | None
+    auto_execute_qty_dollars = Column(Float, nullable=True)  # None = use 100.0
+    # Broker credentials (Fernet-encrypted at rest)
+    alpaca_key_enc = Column(Text, nullable=True)
+    alpaca_secret_enc = Column(Text, nullable=True)
+    alpaca_account_type = Column(String(10), nullable=True)  # "paper" | "live"
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())
     last_seen_at = Column(DateTime, nullable=True)
@@ -218,6 +223,24 @@ class SignalAlert(Base):
     min_confidence = Column(Float, nullable=False)  # 0–100
     action_filter = Column(String(10), default="any")  # "BUY", "SELL", or "any"
     is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class BrokerOrder(Base):
+    """Auto-executed order placed on behalf of a user via their connected broker."""
+
+    __tablename__ = "broker_orders"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    broker = Column(String(20), nullable=False)  # "alpaca"
+    account_type = Column(String(10), nullable=False)  # "paper" | "live"
+    alpaca_order_id = Column(String(50), nullable=True)
+    symbol = Column(String(10), nullable=False, index=True)
+    notional = Column(Float, nullable=False)  # dollar amount ordered
+    side = Column(String(10), nullable=False)  # "buy" | "sell"
+    status = Column(String(20), nullable=False, default="submitted")  # submitted | filled | rejected | error
+    error_msg = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 

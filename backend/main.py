@@ -52,6 +52,7 @@ from database import init_db
 from models import User
 from routers.accuracy import router as accuracy_router
 from routers.admin import router as admin_router
+from routers.broker import router as broker_router
 from routers.auth import router as auth_router
 from routers.billing import router as billing_router
 from routers.delivery_router import router as delivery_router
@@ -1447,6 +1448,7 @@ app.include_router(price_alerts_router)
 app.include_router(signal_alerts_router)
 app.include_router(ws_router)
 app.include_router(screener_router)
+app.include_router(broker_router)
 
 
 # ── Health check (fast — no external calls, just DB ping) ────────────────────────

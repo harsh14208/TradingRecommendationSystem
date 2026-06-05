@@ -1,7 +1,6 @@
 """
-Async client for Alpaca Markets paper trading REST API.
-Same ALPACA_API_KEY / ALPACA_API_SECRET used for the tick stream work here too.
-Paper base URL is separate from the live/data URL.
+Async client for Alpaca Markets REST API.
+Supports both paper (PAPER_BASE) and live (LIVE_BASE) accounts.
 
 Includes slippage protection: if the current price has moved more than
 SLIPPAGE_THRESHOLD ($0.05) from the signal price within SLIPPAGE_WINDOW_MS (100ms),
@@ -16,10 +15,15 @@ import aiohttp
 import certifi
 
 PAPER_BASE = "https://paper-api.alpaca.markets"
+LIVE_BASE = "https://api.alpaca.markets"
 
 # Slippage protection configuration
 SLIPPAGE_THRESHOLD = 0.05  # $0.05 max price movement
 SLIPPAGE_WINDOW_MS = 100  # 100ms lookback window
+
+
+def _base(live: bool) -> str:
+    return LIVE_BASE if live else PAPER_BASE
 
 
 def _headers(api_key: str, api_secret: str) -> dict:
@@ -35,10 +39,10 @@ def _ssl_ctx() -> ssl.SSLContext:
     return ctx
 
 
-async def get_account(api_key: str, api_secret: str) -> dict:
+async def get_account(api_key: str, api_secret: str, live: bool = False) -> dict:
     async with aiohttp.ClientSession() as s:
         async with s.get(
-            f"{PAPER_BASE}/v2/account",
+            f"{_base(live)}/v2/account",
             headers=_headers(api_key, api_secret),
             ssl=_ssl_ctx(),
         ) as r:
@@ -46,10 +50,10 @@ async def get_account(api_key: str, api_secret: str) -> dict:
             return await r.json()
 
 
-async def get_positions(api_key: str, api_secret: str) -> list:
+async def get_positions(api_key: str, api_secret: str, live: bool = False) -> list:
     async with aiohttp.ClientSession() as s:
         async with s.get(
-            f"{PAPER_BASE}/v2/positions",
+            f"{_base(live)}/v2/positions",
             headers=_headers(api_key, api_secret),
             ssl=_ssl_ctx(),
         ) as r:
@@ -57,10 +61,10 @@ async def get_positions(api_key: str, api_secret: str) -> list:
             return await r.json()
 
 
-async def get_orders(api_key: str, api_secret: str, status: str = "all", limit: int = 50) -> list:
+async def get_orders(api_key: str, api_secret: str, status: str = "all", limit: int = 50, live: bool = False) -> list:
     async with aiohttp.ClientSession() as s:
         async with s.get(
-            f"{PAPER_BASE}/v2/orders",
+            f"{_base(live)}/v2/orders",
             headers=_headers(api_key, api_secret),
             params={"status": status, "limit": limit, "direction": "desc"},
             ssl=_ssl_ctx(),
@@ -123,13 +127,15 @@ async def place_order(
     limit_price: float | None = None,
     time_in_force: str = "day",
     signal_price: float | None = None,  # For slippage protection
+    live: bool = False,
 ) -> dict:
     """
-    Place an order with optional slippage protection.
+    Place a share-quantity order with optional slippage protection.
 
     Args:
         signal_price: If provided, check slippage against this price before ordering.
                      If price has moved > $0.05 within 100ms, order is rejected.
+        live: If True, use the live trading endpoint instead of paper.
     """
     # Slippage check
     if signal_price is not None:
@@ -157,7 +163,7 @@ async def place_order(
         body["limit_price"] = str(round(limit_price, 2))
     async with aiohttp.ClientSession() as s:
         async with s.post(
-            f"{PAPER_BASE}/v2/orders",
+            f"{_base(live)}/v2/orders",
             headers=_headers(api_key, api_secret),
             json=body,
             ssl=_ssl_ctx(),
@@ -166,10 +172,44 @@ async def place_order(
             return await r.json()
 
 
-async def close_position(api_key: str, api_secret: str, symbol: str) -> dict:
+async def place_notional_order(
+    api_key: str,
+    api_secret: str,
+    symbol: str,
+    notional: float,
+    side: str,
+    time_in_force: str = "day",
+    live: bool = False,
+) -> dict:
+    """
+    Place a dollar-notional fractional-share market order.
+
+    Alpaca supports fractional shares via notional ordering — the exchange
+    receives a dollar amount and fills fractional shares at market price.
+    Minimum notional is $1. time_in_force must be "day" for fractional orders.
+    """
+    body: dict[str, Any] = {
+        "symbol": symbol.upper(),
+        "notional": str(round(notional, 2)),
+        "side": side.lower(),
+        "type": "market",
+        "time_in_force": "day",  # fractional orders require "day"
+    }
+    async with aiohttp.ClientSession() as s:
+        async with s.post(
+            f"{_base(live)}/v2/orders",
+            headers=_headers(api_key, api_secret),
+            json=body,
+            ssl=_ssl_ctx(),
+        ) as r:
+            r.raise_for_status()
+            return await r.json()
+
+
+async def close_position(api_key: str, api_secret: str, symbol: str, live: bool = False) -> dict:
     async with aiohttp.ClientSession() as s:
         async with s.delete(
-            f"{PAPER_BASE}/v2/positions/{symbol.upper()}",
+            f"{_base(live)}/v2/positions/{symbol.upper()}",
             headers=_headers(api_key, api_secret),
             ssl=_ssl_ctx(),
         ) as r:
@@ -179,10 +219,10 @@ async def close_position(api_key: str, api_secret: str, symbol: str) -> dict:
             return await r.json()
 
 
-async def cancel_order(api_key: str, api_secret: str, order_id: str) -> dict:
+async def cancel_order(api_key: str, api_secret: str, order_id: str, live: bool = False) -> dict:
     async with aiohttp.ClientSession() as s:
         async with s.delete(
-            f"{PAPER_BASE}/v2/orders/{order_id}",
+            f"{_base(live)}/v2/orders/{order_id}",
             headers=_headers(api_key, api_secret),
             ssl=_ssl_ctx(),
         ) as r:

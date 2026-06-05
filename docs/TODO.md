@@ -27,9 +27,9 @@
 
 ---
 
-## End-to-End System Audit — v10.2 (2026-06-01, L9 fix, §85-1 audit ready, ATR research reverted)
+## End-to-End System Audit — v10.5 (2026-06-03, gate validation + EDGAR Tier-3 + §76 Altman removed)
 
-> Updated from v10.1. v10.2 (2026-06-01): ATR≤70 gate REVERTED from live (N halves, ann.Sharpe 0.95→0.78 — N reduction dominates, research finding only); L9 HMM bear dampener removed (bear WR=72%>baseline, was cutting best trades; transition dampener 0.85× kept, MaxDD 0.86→0.73 confirmed); atrPctRank added to signal dict; §85-1 audit script ready (--section85 flag, needs ≥200 resolved signals); 1086 tests pass.
+> Updated from v10.2. v10.3–v10.5 (2026-06-02/03): Dead gate removal (§59/§60/§61/§67/§64/§68/§78/TRIN/AD); --validate-live-gates flag; SIGNAL_VALIDATION.md created; §63 cointegration added to backtest scoring; EDGAR point-in-time validation (backtest_edgar.py); §76 Altman Z-Score removed from gates/fundamentals.py (74% false-positive rate on IS universe); 1054 tests pass.
 > Rating scale: completeness × soundness.
 
 ### Overall Rating
@@ -37,24 +37,24 @@
 | Area | Rating | Δ | Notes |
 |---|---:|---|---|
 | Product completeness | 8.0/10 | — | Signal product, auth, billing, Telegram, paper trading, mobile/PWA, admin tooling all present. |
-| Trading/research depth | 8.7/10 | ↑ from 8.5 | L9 bear fix. L7+L8 IS eff. Sh=0.37. Forward 0.18–0.25. ATR≤70 research: +0.05 IS Sh but N halves → ann.Sh drops 0.95→0.78 (not deployed live). Technical ceiling IS~0.40 confirmed. |
-| Backtest methodology | 8.2/10 | — | Quality gate sweep, §18 conflict analysis, amenability model r=0.355. Ceiling: survivorship bias. |
-| OOS validation | 6.2/10 | — | OOS v6 CLEAN Sh=0.16 ✅. v7+v8 pre-specified (15 tickers). Need ~300 more trades. |
-| Signal alpha quality | 5.7/10 | ↑ from 5.5 | L7+L8 IS eff. Sh=0.37. §85-1 audit ready (needs ≥200 resolved signals). ATR≤70 research-only. |
-| Risk management | 8.2/10 | ↑ from 8.0 | L9 bear fix: no longer sizing down best (highest-VIX) trades. atrPctRank in signal dict for future use. |
+| Trading/research depth | 8.8/10 | ↑ from 8.7 | Gate validation (--validate-live-gates); EDGAR Tier-3 validation; §76 Altman removed (reduces IS/live gap). IS v10.5: N=230, Sh=0.20. |
+| Backtest methodology | 8.3/10 | ↑ from 8.2 | SIGNAL_VALIDATION.md created (41 gates classified). §63 cointegration added. EDGAR point-in-time (106/107 tickers cached). |
+| OOS validation | 6.2/10 | — | OOS v6 CLEAN Sh=0.16 ✅. v7+v8 pre-specified (15 tickers). Need ≥30 live trades in those names. |
+| Signal alpha quality | 6.2/10 | ↑ from 5.7 | §76 Altman removed (was penalising 74% of signals). §85-1 still pending ≥200 resolved signals. EDGAR §50/§73 confirmed neutral. |
+| Risk management | 8.2/10 | — | Unchanged. |
 | Calibration quality | 8.0/10 | — | Cal v4: Brier 0.2641. Next recal after ≥50 post-A19 resolved signals. |
-| ML methodology | 8.0/10 | — | Entry model OOS AUC 0.6399 unchanged. quality_score L8 +0.06 Sharpe validated. |
-| Backend architecture | 7.2/10 | ↑ from 7.0 | delivery_gates.py ATR gate + atrPctRank field. gate_contribution_analysis.py §85-1 mode. 1086 tests. |
+| ML methodology | 8.0/10 | — | Entry model OOS AUC 0.6399 unchanged. Needs N≥300 live for deployment. |
+| Backend architecture | 7.3/10 | ↑ from 7.2 | gates/statistical.py now §63-only (§59/§60/§61 scoring removed). 1054 tests. |
 | Frontend architecture | 7.0/10 | — | A8 complete. |
 | Security posture | 7.0/10 | — | CSP `unsafe-eval` eliminated. **Default owner password still in .env ⚠ — critical pre-launch.** |
-| Testing/CI | 9.5/10 | — | 1086 passing (47 new since v10.0). |
+| Testing/CI | 9.5/10 | — | 1054 passing (3 skipped). |
 | Deployment readiness | 6.2/10 | — | HTTPS, Stripe webhook, SMTP, Telegram channel, VAPID all still needed. |
 
-**Overall project rating: 7.6/10** (↑ from 7.5 — L9 fixed, §85-1 audit ready, ATR research finding documented)
+**Overall project rating: 7.7/10** (↑ from 7.6 — §76 Altman removed, EDGAR validation complete, gate validation infrastructure added)
 
-> **Key honest assessment (v10.2):** IS base Sh=0.31. L7+L8 sizing: IS eff. Sh=0.37. OOS v6 Sh=0.16.
-> Forward: 0.18–0.25. ATR≤70: +0.05 IS Sh but ann.Sh drops (N halves) — research finding only, not live.
-> Next: §85-1 fundamental modifier audit at ≥200 resolved live signals.
+> **Key honest assessment (v10.5):** IS base Sh=0.20 (N=230, v10.5 with §63 coint). OOS v6 CLEAN Sh=0.16.
+> Forward: 0.13–0.18. §76 Altman removal likely reduces IS/live WR gap (was penalising 74% of signals).
+> Next: §85-1 audit at ≥200 resolved signals; OOS v7 when ≥30 live trades in healthcare/consumer/exchange names.
 > To reach forward 0.50: external alpha data required (options flow, order flow).
 
 ---
@@ -74,10 +74,11 @@
 
 ### §85 Fundamental Score-Modifier Live Audit
 
-> Piotroski (§50), Beneish (§74), Altman (§76), and EDGAR insider clustering (§73) are score adjustments in the live engine only — they do NOT run in the IS backtest (`backtest_technicals.py` is technical-only). IS Sh=0.29 already excludes them. The IS/live WR gap (70.5% → 42.5%) may be partly driven by these modifiers misfiring on a 5–10 day horizon. The only way to audit them is on live resolved signals.
+> **§76 Altman removed 2026-06-03** from `gates/fundamentals.py` via EDGAR point-in-time validation: 74% false-positive rate (structural reasons, not distress). Remaining modifiers: §50 Piotroski, §74 Beneish, §73 Insider, §51 Forward PE, §52 SI velocity, §58 EPS revision.
 
-- [x] **§85-1. Script ready** — `python scripts/gate_contribution_analysis.py --section85 --after 2026-06-01`. Segments by Piotroski/PE/ShortInt/Insider/Beneish/Altman/EPS-Revision. KEEP/WATCH/REMOVE verdicts at N≥30. **Pending live data:** needs ≥200 resolved signals. Run when ready; remove any modifier with ΔWR < −1pp + N≥30.
-- [ ] **§85-2. Audit EDGAR MD&A sentiment contribution** — `edgar.py` MD&A NLP is annual 10-K data applied to a 5-day trade. Tag live signals that received an MD&A score adjustment and compute ΔWR. If no improvement, disable. Low priority until §85-1 data is available (depends on A5 being tracked).
+- [x] **§85-1. Script ready** — `python scripts/gate_contribution_analysis.py --section85 --after 2026-06-01`. Segments by Piotroski/PE/ShortInt/Insider/Beneish/EPS-Revision (Altman removed). KEEP/WATCH/REMOVE verdicts at N≥30. **Pending live data:** needs ≥200 resolved signals. Run when ready; remove any modifier with ΔWR < −1pp + N≥30.
+- [x] **§85-A. §76 Altman removed (EDGAR backtest validation)** — ✅ 2026-06-03. `scripts/backtest_edgar.py` confirmed: 74% of IS tickers always below Z'<1.23 (structural). Standalone: N 230→79, Sh −0.03. Recalibrated Z'<0: ΔSh=0.00. Removed from `gates/fundamentals.py`.
+- [ ] **§85-2. Audit EDGAR MD&A sentiment contribution** — `edgar.py` MD&A NLP is annual 10-K data applied to a 5-day trade. Tag live signals that received an MD&A score adjustment and compute ΔWR. If no improvement, disable. Low priority until §85-1 data is available.
 
 ### Alpha Research (§45–§46, active)
 
@@ -109,11 +110,11 @@ All implemented. See CLAUDE.md for constants and gate details.
 
 All implemented. See CLAUDE.md for constants and gate details.
 
-- [x] §59 OU halflife — `compute_ou_halflife()` in `technicals.py`; `OU_HALFLIFE_MAX=25d`
-- [x] §60 Hurst exponent — `compute_hurst()` in `technicals.py`; `HURST_TREND_CEIL=0.80`
-- [x] §61 Idiosyncratic volatility — implemented in `signal_engine.py`
+- [x] §59 OU halflife — hard-block gate restored to backtest (OU_HALFLIFE_MAX=25d); scoring modifier removed from `gates/statistical.py` (2026-06-02: confirmed dead as scorer; restored as hard block after v10.4 regression)
+- [x] §60 Hurst exponent — same as §59; hard-block in backtest (HURST_TREND_CEIL=0.80); scoring modifier removed from `gates/statistical.py`
+- [x] §61 Idiosyncratic volatility — **removed** from both backtest and `gates/statistical.py` (dead gate: ΔSh=0.00, ΔN=0 — 2026-06-02)
 - [ ] §62 VRP per-stock — ⏳ needs per-stock IV history (Polygon Options upgrade)
-- [x] §63 Sector cointegration — `compute_cointegration_zscore()` in `technicals.py`
+- [x] §63 Sector cointegration — `compute_cointegration_zscore()` in `technicals.py`; **now also in backtest scoring** (rolling 252d coint_z column, +4/+2/−2 pts — 2026-06-03)
 - [x] §64 Yield curve slope — `macro.py` fetch; `signal_engine.py` gate
 - [x] §65 TRIN — `fetch_trin()` in `macro.py`; `signal_engine.py` gate
 - [x] §66 AD breadth — `fetch_ad_breadth()` in `macro.py`; Zweig thrust gate
@@ -126,7 +127,7 @@ All implemented. See CLAUDE.md for constants and gate details.
 - [x] §73 Insider BUY clustering — `edgar.py` unique_buyers; `signal_engine.py` gate
 - [x] §74 Beneish M-Score — `compute_beneish_mscore()` in `fundamentals.py`
 - [ ] §75 Active share buyback window — ⏳ EDGAR 8-K parsing complexity
-- [x] §76 Altman Z-Score — `compute_altman_zscore()` in `fundamentals.py`
+- [x] §76 Altman Z-Score — **REMOVED from `gates/fundamentals.py`** (2026-06-03, EDGAR validation: 74% false-positive rate on IS universe — structural, not distress). `compute_altman_zscore()` in `fundamentals.py` still computes the value; gate no longer fires.
 - [x] §77 Tax-loss window — implemented in `signal_engine.py`
 - [x] §78 Sep/Oct seasonality — threshold adjustment in `delivery_gates.py`
 - [ ] §79 Q1 rebalancing — ⏳ needs prior-year sector return stored at Dec-31
@@ -156,7 +157,7 @@ All implemented. See CLAUDE.md for constants and gate details.
 ### Pillar 4 — Execution
 
 - [ ] **Telegram broadcast channel** — Enable `TELEGRAM_BROADCAST_CHANNEL_ID` before marketing push. Required at >50 subscribers.
-- [ ] **OAuth broker execution (live trading)** — OAuth flow for Alpaca Live or IBKR Web API. Auto-execute high-confidence signals. (Toggle + DB model done; broker OAuth + order submission pending.)
+- [x] **OAuth broker execution (live trading)** — ✅ 2026-06-05. Per-user Alpaca credentials (Fernet-encrypted). `routers/broker.py`: connect/status/disconnect/orders/settings. `services/broker_svc.py`: encryption + `execute_signal_for_user()`. `alpaca_rest.py`: live base URL + notional orders. `scanner._maybe_auto_execute_for_signal()`: Pro-gated per-user hook in delivery loop. Migration `a3f7c9d12e45`: `users` + `broker_orders` table. 27 new tests.
 
 ---
 
@@ -204,6 +205,17 @@ All implemented. See CLAUDE.md for constants and gate details.
 
 - [x] **A18. Friction sensitivity sweep** — ✅ 2026-06-01: `--friction` flag sweeps 0.25%–1.25% round-trip, reports N/WR/Avg/Sharpe/ΔSharpe per level, flags Sh<0.20 tipping point. ADV-participation cost model noted in output as requiring intraday ADV data not in backtest. Run: `python scripts/backtest_technicals.py --friction`.
 - [x] **A8. Babel → esbuild migration** — Complete 2026-05-31 via esbuild (not Vite). Bundles: app 408KB, site 53KB, mobile 50KB. `'unsafe-eval'` eliminated from CSP. See item 15a.
+- [x] **A20. Gate validation infrastructure** — ✅ 2026-06-02: `--validate-live-gates` flag added to backtest. Ablates all testable gates in IS, measures ΔSharpe. Results: §57 Thursday ✅ KEEP (−0.09 Sh), §59/§60 ⚠ REVIEW, all others ΔSh≈0. Creates `docs/SIGNAL_VALIDATION.md` tracking 41 live gates.
+- [x] **A21. EDGAR Tier-3 backtest validation** — ✅ 2026-06-03: `scripts/backtest_edgar.py` downloads point-in-time SEC EDGAR data for 106/107 IS tickers. Results: §50 Piotroski ΔSh=0.00 (neutral), §73 Insider ΔSh=0.00 (neutral), §76 Altman ΔSh=−0.03 (harmful). §50+§76 apparent +0.12 Sh = BUY_THRESH=55 equivalent (OOS rejected: Sh 0.42→0.00). Cache saved to `data/edgar_fundamentals.pkl`.
+- [x] **A22. §76 Altman removed from live engine** — ✅ 2026-06-03: Removed from `gates/fundamentals.py`. Was applying −15 pts to 74% of live signals (structural false positives). Tests updated (1054 passing).
+- [x] **A23. §63 Sector cointegration added to IS backtest** — ✅ 2026-06-03: Rolling 252-day Engle-Granger Z-score computed post-Pool for each ticker vs its sector ETF. Added to `compute_scores()` and `score_row()` (+4/+2/−2 pts). Ablated in `--validate-live-gates`. ΔSharpe pending next full IS run.
+
+### 🟠 Pending (data-gated — needs resolved live signals)
+
+- [ ] **A24. §85-1 Fundamental modifier audit** — Run `python scripts/gate_contribution_analysis.py --section85 --after 2026-06-01` when ≥200 resolved post-A19 signals available (~6-8 weeks). Remove any modifier with ΔWR < −1pp at N≥30. Primary suspects: §50 Piotroski (wrong horizon), §74 Beneish (accounting focus, not 10d), §73 Insider (48h EDGAR lag).
+- [ ] **A25. Calibration v5** — Run `python scripts/backfill_confidence.py --force --apply` when ≥50 post-A19 resolved signals available (~2-3 weeks). Current cal v4 used pre-A19 data only.
+- [ ] **A26. OOS v7/v8 validation** — Run `python scripts/backtest_technicals.py --oos` when ≥30 live trades exist in the pre-specified OOS tickers (SYK/RMD/IDXX/ZBH, RL/DECK/POOL, NDAQ/CBOE/BR, LNC/AMG/PAYC/SIG/AEO). Healthcare/consumer/exchange-operator focus. If pass, promote to IS → N grows.
+- [ ] **A27. ML model deployment** — Run `POST /api/ml/train` when N≥300 live resolved signals. Entry model at OOS AUC=0.6399 already built; waiting on data. Champion/challenger framework wired; just needs the signal count.
 
 ### ⏳ Deferred (needs paid data or infrastructure)
 
@@ -213,7 +225,7 @@ All implemented. See CLAUDE.md for constants and gate details.
 - [ ] **A13. §84 Survivorship bias correction** — Purchase EODHD (~$20/mo) or Norgate ($33/mo) for delisted tickers. Expected: IS WR drops 2–4pp, Sharpe −0.02 to −0.05 (makes backtest honest).
 - [ ] **A14. §83 cross-signal correlation** — Already implemented. Needs live validation: track `avg_corr` at entry for 200 signals and confirm sized-down entries don't underperform.
 - [ ] **A15. Sector-specific XGBoost retraining** — Unblock XLF/XLP/XLU. Requires ≥200 resolved signals per sector.
-- [ ] **A16. Broker OAuth + order execution** — Alpaca Live or IBKR Web API OAuth + order submission. Toggle and DB model already done.
+- [x] **A16. Broker OAuth + order execution** — ✅ 2026-06-05. See Pillar 4 entry above for full details.
 
 ---
 
@@ -222,10 +234,10 @@ All implemented. See CLAUDE.md for constants and gate details.
 | Issue | Severity | Status |
 |---|---|---|
 | **Default owner password in source** | Critical | ❌ Must change before first paid signup |
-| **§59–§82 gates — unit tests** | Resolved | ✅ §73/§74/§76 added (24 new tests in `test_gates_737476.py`); §69–§72 covered in `test_gates_5982.py`. 1039 passing (4 skipped). |
+| **§59–§82 gates — unit tests** | Resolved | ✅ §73/§74/§76 tests updated (§76 now confirms no Altman cards). 1054 passing (3 skipped). |
 | **OOS v6 CLEAN N=51, Sharpe=0.16** | Resolved | ✅ Pre-specified 30 new tickers (2026-05-31). Curation bias gap −0.08 (smallest ever). Edge generalises. |
 | **XLF/XLP/XLU blocked** | High | 🔄 Requires sector-specific XGBoost retraining |
-| **Autonomous execution** | High | 🔄 Toggle + DB model done; broker OAuth + order submission pending |
+| **Autonomous execution** | High | ✅ Broker execution complete (2026-06-05). Per-user Alpaca credentials + notional orders wired into scan delivery loop. |
 | **Monolithic signal_engine.py (8k+ lines)** | Medium | 🔄 Delivery gates + scanner decomposed. Full engine decomposition deferred — see A7 |
 | **Score double-counting: Piotroski/FCF/Insider** | Resolved | ✅ Fixed 2026-06-01. Piotroski removed from worker (canonical: apply_quality_screens). FCF removed from engine body (canonical: fundamentals_worker). Insider base score removed from engine body (canonical: institutional_worker). Confidence penalty kept in engine (reads accumulated score). |
 | **Calibration v3 applied** | Resolved | ✅ Brier 0.2432, gap −0.5pp. True §82-aware cal needs N≥200 post-§82 resolved (~29wk). |
