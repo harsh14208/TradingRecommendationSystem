@@ -146,50 +146,31 @@ def test_beneish_none_no_change():
     assert new_score == 50.0
 
 
-# ─── §76 Altman Z-Score ────────────────────────────────────────────────────
+# ─── §76 Altman Z-Score — REMOVED 2026-06-03 ────────────────────────────────
+# EDGAR validation showed 79/106 IS tickers (74%) permanently below Z'<1.23.
+# The gate was penalising ~80% of live signals by -15 pts due to structural
+# reasons (financial sector leverage model, tech goodwill/intangibles).
+# Original Altman (1968) was calibrated on manufacturing companies only.
 
 
-def test_altman_distress_zone_penalises_15pp():
-    new_score, cards, sources = _quality_screens(altman_z=1.0)
-    assert new_score == 35.0, f"Z-Score 1.0 < 1.81 → −15pp; got {new_score}"
-    assert any("Distress" in c["head"] or "Z-Score" in c["head"] for c in cards)
-    assert "Fundamentals" in sources
-
-
-def test_altman_just_below_distress_boundary_penalises():
-    new_score, _, _ = _quality_screens(altman_z=1.80)
-    assert new_score == 35.0, "Z-Score 1.80 < 1.81 is distress zone"
-
-
-def test_altman_exactly_at_distress_boundary_is_grey():
-    # Z < 1.81 = distress; 1.81 itself → grey zone [1.81, 2.67)
-    new_score, cards, _ = _quality_screens(altman_z=1.81)
-    assert new_score == 46.0, "Z-Score exactly 1.81 → grey zone −4pp"
-    assert any("Grey" in c["head"] for c in cards)
-
-
-def test_altman_grey_zone_penalises_4pp():
-    new_score, cards, sources = _quality_screens(altman_z=2.0)
-    assert new_score == 46.0, f"Z-Score 2.0 in grey [1.81, 2.67) → −4pp; got {new_score}"
-    assert any("Grey" in c["head"] for c in cards)
-    assert "Fundamentals" in sources
-
-
-def test_altman_just_below_safe_boundary_is_grey():
-    new_score, cards, _ = _quality_screens(altman_z=2.66)
-    assert new_score == 46.0
+def test_altman_removed_no_penalty_any_value():
+    """§76 Altman removed — no score change for any Z value."""
+    for z in [0.5, 1.0, 1.5, 1.80, 1.81, 2.0, 2.66, 2.67, 3.0]:
+        new_score, cards, _ = _quality_screens(altman_z=z)
+        assert new_score == 50.0, f"§76 removed — expected 50.0 for Z={z}; got {new_score}"
+        assert not any("Altman" in c.get("head", "") for c in cards), (
+            f"§76 removed — no Altman cards expected for Z={z}"
+        )
 
 
 def test_altman_safe_zone_no_change():
     new_score, cards, _ = _quality_screens(altman_z=3.0)
-    assert new_score == 50.0, "Z-Score 3.0 ≥ 2.67 is safe zone"
-    assert not any("Z-Score" in c["head"] for c in cards)
+    assert new_score == 50.0, "§76 removed — safe zone no change"
 
 
 def test_altman_skipped_for_lev_etf():
     new_score, cards, _ = _quality_screens(altman_z=0.5, is_lev_etf=True)
-    assert new_score == 50.0, "Leveraged ETF should skip Altman gate"
-    assert not any("Z-Score" in c["head"] for c in cards)
+    assert new_score == 50.0, "§76 removed — ETF no change"
 
 
 def test_altman_none_no_change():
@@ -201,19 +182,19 @@ def test_altman_none_no_change():
 
 
 def test_beneish_and_altman_both_fire_penalties_stack():
-    # Both gates should fire and penalties should accumulate
+    """§76 Altman removed — only Beneish fires; Altman no longer stacks."""
     new_score, cards, _ = _quality_screens(beneish_m=-1.0, altman_z=1.5)
-    assert new_score == 23.0, f"Beneish −12 + Altman −15 = −27pp; got {new_score - 50.0}"
+    assert new_score == 38.0, f"§76 removed: only Beneish −12pp; got {new_score - 50.0}"
     beneish_cards = [c for c in cards if "Beneish" in c["head"]]
-    altman_cards = [c for c in cards if "Z-Score" in c["head"] or "Distress" in c["head"]]
-    assert beneish_cards, "Beneish card missing"
-    assert altman_cards, "Altman card missing"
+    altman_cards = [c for c in cards if "Z-Score" in c["head"] or "Distress" in c["head"] or "Altman" in c["head"]]
+    assert beneish_cards, "Beneish card should still fire"
+    assert not altman_cards, f"§76 removed — no Altman cards expected; got: {altman_cards}"
 
 
 def test_insider_clustering_and_altman_distress_partially_offset():
-    # +8 from insider cluster, −15 from Altman distress → net −7
+    """§76 Altman removed — insider clustering acts alone."""
     base = 50.0
     new_score, _, _ = apply_insider_clustering(base, {"unique_buyers": 3}, False)
     assert new_score == 58.0
     final_score, _, _ = _quality_screens(new_score, altman_z=1.0)
-    assert final_score == 43.0, f"58 − 15 = 43; got {final_score}"
+    assert final_score == 58.0, f"§76 removed: +8 insider only, no Altman penalty; got {final_score}"

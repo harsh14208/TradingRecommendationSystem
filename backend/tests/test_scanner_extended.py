@@ -56,6 +56,7 @@ def _sig(action="BUY", ticker="AAPL", confidence=75.0, price=150.0, entry=148.0,
         # swing alpha −1.028%/trade; single non-TA source insufficient).
         sources=["Technical", "Macro", "Options"],
         rationale=[],
+        hasMr=True,  # MR gate required for BUY delivery (2026-06-02 fix)
     )
     base.update(extra)
     return base

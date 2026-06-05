@@ -29,10 +29,18 @@ cd backend && python scripts/backtest_technicals.py --forecast-sizing # Carver F
 cd backend && python scripts/backtest_technicals.py --portfolio        # concurrent portfolio CAGR+MaxDD
 cd backend && python scripts/backtest_technicals.py --walk-forward     # BUY_THRESH OOS re-select (WF avg 0.455)
 cd backend && python scripts/backtest_technicals.py --inv2             # VIX<20 gate ablation (2022-present epoch)
-cd backend && python scripts/backtest_technicals.py --inv5             # dead gate ablation (§59/§60/§61/§78)
+cd backend && python scripts/backtest_technicals.py --inv5             # legacy ablation flag (§59/§60/§61/§78 removed 2026-06-02; use --validate-live-gates instead)
 # §Inv-B quality_score tier analysis runs automatically in every IS backtest (no flag needed)
 # §Inv-C L8 quality_score-weighted sizing validation runs automatically after §Inv-B
 cd backend && python scripts/backtest_technicals.py --quality-sweep  # 14-config entry quality gate sweep
+cd backend && python scripts/backtest_technicals.py --validate-live-gates  # ablate all testable live engine gates (~15 min); skips IS stats for speed; results in docs/SIGNAL_VALIDATION.md
+
+# Tier-3 signal validation
+cd backend && python scripts/backtest_edgar.py           # EDGAR: §50 Piotroski, §73 Insider (~10 min first run, §76 Altman removed); cached to data/edgar_fundamentals.pkl
+cd backend && python scripts/backtest_edgar.py --cached  # use cached EDGAR data (~3 min)
+cd backend && python scripts/backtest_edgar.py --ticker NVDA  # debug single ticker
+# §63 Sector cointegration runs automatically in every IS backtest (no flag needed)
+# --validate-live-gates now includes §63 cointegration ablation in the REMOVE section
 
 # Gate contribution + §85-1 fundamental modifier audit
 cd backend && python scripts/gate_contribution_analysis.py                        # A5: all gates, full report
@@ -100,27 +108,24 @@ backend/
 | `HOLD_DAYS` | 10 | `backtest_technicals.py` |
 | `FRICTION` | 0.5% round-trip | `backtest_technicals.py` |
 | MR gate | BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75% | `signal_engine.py` (RSI removed §40) |
-| Stop swing (ATR) | 1.5s/2.0t universal | `atr_levels()` / `_levels()` (§17: +0.03 Sharpe, +5.6pp WR vs 1.0s) |
-| Stop ADX>35 (ATR) | 1.0s/3.0t | `backtest_technicals.py:atr_levels()` (trend — tight stop, wide target) |
-| OSC weight | 1.0 | `signal_engine.py:3777` (was 0.3 §40; restored §45 — 0.3 only valid on 24-ticker subset) |
-| MR weight | 0.7 | `signal_alpha_decomposition.py:314` (was 0.5, §40) |
+| Stop swing (ATR) | 1.5s/2.0t universal | `atr_levels()` / `_levels()` (§17: +0.03 Sharpe, +5.6pp WR vs 1.0s; ADX>35 branch removed from backtest to match live) |
+| OSC weight | 1.0 | `signal_engine.py:3170` — (osc_capped ± mr_capped) × 0.85; each family capped ±18 within combined bucket. Backtest uses separate OSC ±25×1.0 and MR ±18×1.0 (technical-only calibration — live engine has 50+ extra families that raise scores, so cap values differ). |
+| MR weight | 1.0 (backtest) / 0.85 (live combined) | `backtest_technicals.py` (separate MR family) vs `signal_engine.py:3170` (combined stretched-price bucket with OSC) |
 | Sector HARD_LIMIT | 30% | `signal_engine.py` (was 50%, tightened §43) |
 | Sector SOFT_LIMIT | 20% | `signal_engine.py` (was 30%, tightened §43) |
 | Scanner semaphore | 8 per worker | `signal_engine.py:scan_all()` (was 15, §43 DB pool fix) |
 | Swing floor | **46%** confidence | `delivery_gates.py:STYLE_CONF_FLOORS` (recalibrated 70→46 post phantom-win correction 2026-05-31) |
 | min_confidence | **40%** | `config.py` (recalibrated 57→40 — honest scale after phantom-win correction) |
 | BLOCKED_TICKERS | LRCX/MRVL/AMAT/KLAC/STT/MTB/**APH** | `delivery_gates.py` (APH added 2026-05-31: N=4, 0% WR, −8.70%) |
-| §61 IDIO_VOL_MAX | **999.0** (disabled) | `backtest_technicals.py` (dead gate: Inv5 ablation +3N +0.01Sh) |
-| §78 SEP/OCT_SCORE_FLOOR | **0** (disabled) | `backtest_technicals.py` (dead at 100-ticker scale: Inv5 +11N −0.01Sh) |
 | §77 Tax-Loss | **−4pp penalty** | `gates/calendar.py` (inverted: live WR 31% near 52-wk low, was +4pp) |
 | §75 Buyback boost | **disabled** | `signal_engine.py` (live WR 33.8%, −8.7pp drag) |
-| positionSizeScale | L1×…×L8 (L9 bear removed) | `signal_engine.py` (L7=raw-score Kelly ±15% +0.03Sh; L8=quality_score ≥43→1.30×/35–43→1.0×/<35→0.75× +0.06Sh; L9 bear dampener removed — bear WR=72%>baseline, was cutting best trades) |
+| positionSizeScale | L1×…×L8 (L9 bear removed) | `signal_engine.py` (L4=(conf−40)/14+0.5 clamped [0.5,1.5]; L7=raw-score Kelly ±15% +0.03Sh; L8=quality_score ≥43→1.30×/35–43→1.0×/<35→0.75× +0.06Sh; L9 bear dampener removed — bear WR=72%>baseline) |
 | ATR≤70 research finding | Backtest-only (not live gate) | IS sweep: +0.05 Sharpe but N 197→98 (−50%). Ann.Sharpe DROPS: 0.95→0.78 (N reduction dominates). Keep for research reference; do not apply as live delivery gate. |
 | Entry model OOS AUC | 0.6399 (champion) | `data/backtest_ml_features.json` (14 tech features, 23yr IS) |
 | Entry model CV-AUC | 0.6188 ± 0.1261 | purged expanding-window CV (K=5, embargo=20d) |
 | Min N for live model deploy | 300 | `signal_ml.py:_MIN_LIVE_N_FOR_DEPLOYMENT` (Hanley-McNeil CI justification) |
 | Min AUC delta to deploy | 0.005 | `signal_ml.py:_MIN_AUC_DELTA_TO_DEPLOY` |
-| Dual model blend | 50% entry + 50% live → ×[0.75, 1.25] | `signal_ml.py:blend_confidence()` |
+| Dual model blend | ratio = avg(model_probs) / (base_conf/100 × 0.85), clamped [0.75, 1.25]; final = base_conf × ratio | `signal_ml.py:blend_confidence()` |
 
 ## CI
 
@@ -133,25 +138,27 @@ Steps: install deps → syntax check → import smoke → pytest → accuracy ga
 
 `ruff.toml` sets `target-version = "py311"` — run `ruff check` locally to catch these before push.
 
-## Research baseline (§59–§83 complete as of 2026-06-01)
+## Research baseline (§59–§83 + gate validation + EDGAR Tier-3 as of 2026-06-03)
 
-All §47–§83 implemented. **v10.2 (2026-06-01):** ATR≤70 gate research finding REVERTED from live delivery (N halves 197→98, ann.Sharpe drops 0.95→0.78 — N reduction dominates; backtest-only); L9 HMM bear dampener removed (bear WR=72%>baseline, was cutting best trades; transition dampener 0.85× kept); atrPctRank added to signal dict; §85-1 script ready; 1086 tests. **v10.1:** L8 quality_score recalibrated (43/35, +0.06Sh); L7+L8 combined IS eff. Sh=0.37; quality gate sweep; AI-theme screened (all FAIL); R2000 screener; OOS v7+v8 pre-specified. Backtest canon:
+All §47–§83 implemented. **v10.5 (2026-06-03):** §63 sector cointegration added to IS backtest scoring (rolling 252d Engle-Granger coint_z); §76 Altman removed from live engine (74% false-positive rate); dead gate cleanup complete; IS N=230, Sh=0.20. **v10.3 (2026-06-02, math-audit fixes):** ADX>35 ATR branch removed; Hurst window 63→64 bars; portfolio ann.Sharpe denominators fixed. **v10.2/v10.1:** ATR≤70 REVERTED, L9 removed, L8 quality_score recalibrated. Backtest canon (v10.5, 2026-06-03):
 
 | Universe | N | WR | Avg Ret | Sharpe | MC P5 | 95% CI |
 |---|---|---|---|---|---|---|
-| **IS (v10.0, 107 tickers, 2026-06-01)** | **188** | **70.7%** | **+1.12%** | **0.31** | **0.20** ✅ | **[0.17, 0.46] ✅** |
-| IS L7+L8 combined sizing (§Inv2+§Inv-C, 2026-06-01) | 188 | 73.8% | +1.26% | **0.37** | — | — |
-| IS L7 score-weighted only (§Inv2) | 188 | 72.2% | +1.18% | 0.34 | — | — |
-| IS L8 quality_score-weighted only (§Inv-C, corrected) | 188 | 73.8% | +1.26% | 0.37 | — | — |
-| IS quality High tier (top tercile quality_score ≥43) | 63 | 81.0% | +1.60% | **0.51** | — | — |
-| IS quality Low tier (bottom tercile quality_score <35) | 62 | 62.9% | +0.71% | 0.17 | — | — |
-| IS ATR≤70 gate only (§quality-sweep, 2026-06-01) | 98 | 73.5% | +1.09% | 0.32 | — | — |
-| **IS sector-filtered (live-equivalent, 2 XLP removed: KO/PG)** | **185** | **71.4%** | **+1.18%** | **0.33** | — | — |
-| **OOS v6 CLEAN (pre-specified 2026-05-31, 41 tickers ex-blocked)** | **51** | **62.7%** | **+0.62%** | **0.16** | ⚠ | **[−0.12, +0.44] ⚠** |
-| OOS v6 ALL (48 tickers incl. regional banks) | 61 | 54.1% | −0.10% | −0.02 | ⛔ | — |
-| OOS amenability top-15 CLEAN (r=0.355 validated 2026-06-01) | 17 | 70.6% | +1.64% | 0.36 | — | — |
-| IS (v9.0, 100 tickers — prior canon, dead gates removed 2026-05-31) | 173 | 70.5% | +1.06% | 0.29 | 0.16 | [0.13, 0.44] |
-| IS (v6.4, 100 tickers — prior canon before dead gate removal) | 157 | 70.7% | +1.04% | 0.29 | 0.16 | [0.13, 0.44] |
+| **IS (v10.5, 107 tickers, 2026-06-03 — §63 coint + dead gate cleanup)** | **230** | **66.1%** | — | **0.20** | — | — |
+| IS (v10.4, 107 tickers, 2026-06-02 — dead gates removed, §59/§60 not yet restored) | 241 | 65.6% | — | 0.19 | — | — |
+| **IS (v10.3, 107 tickers, 2026-06-02)** | **217** | **68.2%** | **+0.88%** | **0.24** | **0.14** ✅ | **[0.11, 0.38] ✅** |
+| IS L7+L8 combined sizing (§Inv2+§Inv-C, v10.3) | 217 | 70.1% | +0.96% | **0.28** | — | — |
+| IS L7 score-weighted only (§Inv2, v10.3) | 217 | 69.4% | +0.92% | 0.26 | — | — |
+| IS L8 quality_score-weighted only (§Inv-C, v10.3) | 217 | 70.1% | +0.96% | 0.28 | — | — |
+| IS quality High tier (top tercile quality_score ≥44, v10.3) | 72 | 75.0% | +1.06% | **0.33** | — | — |
+| IS quality Low tier (bottom tercile quality_score <37, v10.3) | 72 | 61.1% | +0.44% | 0.11 | — | — |
+| **IS sector-filtered (live-equivalent, KO/PG removed, v10.3)** | **212** | **68.9%** | **+0.93%** | **0.26** | — | — |
+| **OOS CLEAN (63 tickers ex-blocked, v10.3)** | **87** | **64.4%** | **+0.61%** | **0.15** | ⚠ | **[−0.06, +0.37] ⚠** |
+| OOS ALL (63 tickers incl. blocked, v10.3) | 102 | 58.8% | +0.19% | 0.05 | ⚠ | [−0.15, +0.24] |
+| Curation gap (IS − OOS CLEAN Sharpe, v10.3) | — | — | — | **0.09** ✅ | — | — |
+| IS (v10.0, 107 tickers, 2026-06-01 — pre-ATR-fix) | 188 | 70.7% | +1.12% | 0.31 | 0.20 | [0.17, 0.46] |
+| OOS v6 CLEAN (pre-v10.3, 41 tickers ex-blocked) | 51 | 62.7% | +0.62% | 0.16 | ⚠ | [−0.12, +0.44] |
+| IS (v9.0, 100 tickers — dead gates removed 2026-05-31) | 173 | 70.5% | +1.06% | 0.29 | 0.16 | [0.13, 0.44] |
 | IS (§46 pre-agenda baseline) | 126 | 60.3% | +0.68% | 0.18 | 0.04 | — |
 
 **IS v10.1 (2026-06-01):** L8 quality_score sizing calibrated to IS p67/p33 (thresholds 43/35). §Inv-C: L8 alone +0.06 Sharpe (Sh 0.31→0.37, N=188, WR 70.7%→73.8%). L7+L8 combined: IS effective Sharpe ≈ **0.37** (zero N reduction). Quality gate sweep: ATR≤70 gives +0.05 IS Sharpe but N drops 50% → ann.Sharpe FALLS; not deployed as live gate. AI-theme tickers (AAOI, COHR, LITE, MXL, SIMO) — all FAIL (momentum stocks incompatible with 10d MR VIX gate). R2000 screened (1/440 PASS = 0.2% vs R1000 1.6% — large-cap quality essential). OOS v7+v8 pre-specified (15 total tickers).
@@ -164,7 +171,7 @@ All §47–§83 implemented. **v10.2 (2026-06-01):** ATR≤70 gate research find
 
 **OOS v6 (2026-05-31):** CLEAN N=51, Sharpe=0.16, curation gap −0.08 (smallest ever ✅). SR=0 still inside CI at N=51.
 
-**§QuantEngine decomposition (2026-05-31):** Beta hedge strips IS Sharpe 0.29→0.12 (pure MR alpha). Phantom wins corrected (88 signals + 112 outcome_14d) → live WR 42.5%, live Sharpe 1.32. Calibration v4 (2026-06-01): Brier 0.2641, 18,656 signals updated avg −1pp, all signals now <55% confidence (min_confidence=40%). Cal v3 val-Brier was 0.2432; v4 uses pre-A19 data — next recal after ≥50 post-A19 resolved signals. Portfolio CAGR +1.1%/yr; concurrent MaxDD −7.06%. **Honest forward Sharpe: 0.18–0.25** (revised up from 0.12–0.16: L7+L8 sizing adds +0.09 IS Sharpe; applying 55% OOS haircut: 0.40×0.55=0.22 midpoint). Technical gate ceiling confirmed: pure OHLCV+macro path tops out at IS ~0.40 without external alpha data.
+**§QuantEngine decomposition (2026-05-31):** Beta hedge strips IS Sharpe 0.29→0.12 (pure MR alpha). Phantom wins corrected (88 signals + 112 outcome_14d) → live WR 42.5%, live Sharpe 1.32. Calibration v4 (2026-06-01): Brier 0.2641, 18,656 signals updated avg −1pp, all signals now <55% confidence (min_confidence=40%). Cal v3 val-Brier was 0.2432; v4 uses pre-A19 data — next recal after ≥50 post-A19 resolved signals. Portfolio CAGR +1.1%/yr; concurrent MaxDD −7.06%. **Honest forward Sharpe: 0.13–0.18** (v10.5 IS baseline N=230, Sh=0.20; with L7+L8 sizing ~0.26; applying 55% OOS haircut: midpoint 0.14. Technical gate ceiling confirmed: pure OHLCV+macro path tops out at IS ~0.28 without external alpha data. v10.4 lesson: individual gate ablation ΔSh≈0 does not mean zero combined effect — §59/§60 restored after v10.4 regression showed 24 marginal trades hurt aggregate WR).
 
 **Russell 1000 screener + §31 validation (2026-06-01):** MCO added (N=3, WR=66.7%, XLF live-eligible). HAL added (N=2, WR=100%, XLE research-only). PASS (fast mode, 2006-2016): GOOGL (Alphabet duplicate of GOOG — skip), AMP (already in IS — skip). No new IS additions from fast screen. Healthcare now moved to _MR_SECTORS (was _RESEARCH_ONLY_SECTORS) in screener — cross-sectional model confirmed t=+2.12**. OOS v7 pre-specified 2026-06-01 (see below).
 
@@ -173,11 +180,23 @@ All §47–§83 implemented. **v10.2 (2026-06-01):** ATR≤70 gate research find
 **OOS v8 pre-specified (2026-06-01, Russell 2000 screener):** 5 tickers from R2000 fast-mode screen. R2000 pass rate: 1/440 (0.2%) vs R1000 1.6% — confirms large-cap quality essential for 10d MR. LNC (PASS: N=11, WR=73%, Sh=0.76); AMG, PAYC, SIG, AEO (WATCH: WR≥75%, N=4-8). Excluded data artifacts: BILL/FND (IPO post-2016), GAP (ticker ambiguity). Total HELD_OUT_TICKERS: 63.
 
 **Gate changes (2026-05-31):**
-- `IDIO_VOL_MAX = 999.0` (§61 disabled — dead gate: +3N, +0.01Sh when removed)
-- `SEP_SCORE_FLOOR = OCT_SCORE_FLOOR = 0` (§78 disabled — dead at 100-ticker scale)
 - §77 Tax-Loss: inverted from +4pp boost → −4pp penalty (live WR 31% near 52-wk low)
 - §75 Buyback: score boost removed (live WR 33.8%, −8.7pp drag)
-- `OU_HALFLIFE_MAX = 25d`, `HURST_TREND_CEIL = 0.80` (unchanged)
+
+**Gate removals (2026-06-02, --validate-live-gates validation):**
+- §59 OU halflife scoring modifier — removed from `gates/statistical.py` (dead as scoring gate; hard block RESTORED to backtest 2026-06-03 — see below)
+- §60 Hurst ceiling scoring modifier — removed from `gates/statistical.py` (same; hard block RESTORED to backtest 2026-06-03)
+- **§76 Altman Z-Score — removed from `gates/fundamentals.py` (2026-06-03)**. EDGAR validation: 79/106 IS tickers (74%) permanently below Z'<1.23 — structural reasons (financial sector leverage model, tech goodwill/intangibles, Altman calibrated on 1968 manufacturing only). Was penalising ~80% of signals by -15 pts. The apparent +0.12 Sh gain in §50+§76 backtest combo was equivalent to raising BUY_THRESH from 50→55 (Altman's false positives accidentally create a quality filter, not genuine distress detection). Removed.
+- §61 Idio vol hard block — removed from backtest and `gates/statistical.py` (ΔSh=0.00, +0N — dead)
+- §78 Sep/Oct score floor — removed from backtest (ΔSh=0.00, +0N — dead at 100-ticker scale)
+- §47 VIX3M hard block (Gate 27) — rejected before live deploy (ΔSh=−0.08, −50N — harmful)
+- §67 FOMC day block — removed from backtest (ΔSh=0.00, +4N); kept in `delivery_gates.py` for live
+- §64+§68 T10Y sector penalties — removed from backtest (ΔSh=0.00, +1N); kept in `signal_engine.py` for live
+- TRIN/AD breadth fetch calls — removed (^TRIN/^NYAD 404 from yfinance, data never populated)
+
+**Gate restorations (2026-06-03):**
+- §59 OU halflife hard block (>25d) — restored to backtest (v10.4 regression: removing all dead gates together added 24 marginal trades, dropped IS Sh 0.24→0.19; individual ΔSh≈0 misleading at combined level)
+- §60 Hurst ceiling hard block (>0.80) — restored to backtest (same rationale)
 
 **§47–§58 implementation summary:**
 - §47: VIX term structure backwardation — already in `macro.py` (VIX/VIX3M ratio, +7/-4)
@@ -201,10 +220,10 @@ See `docs/Stats.md` §47–§52 for full per-strategy results. Monte Carlo MR-On
 
 | Status | Group | Sections | Notes |
 |---|---|---|---|
-| ✅ | Statistical/Quant | §59 OU halflife, §60 Hurst, §61 idio vol | `technicals.py` compute; `signal_engine.py` gate |
+| 🗑️ | Statistical/Quant | §59 OU halflife, §60 Hurst, §61 idio vol | **Removed 2026-06-02** as hard-block gates (ΔSh=0.00 each). `technicals.py` still computes values for quality_score/L8 sizing. `gates/statistical.py` now only has §63. |
 | ⏳ | Statistical/Quant | §62 VRP | Needs options per-stock IV |
 | ✅ | Statistical/Quant | §63 sector cointegration | `compute_cointegration_zscore()` in `technicals.py`; Z<−2.0→+4pp; ETF histories injected from watchlist prefetch |
-| ✅ | Macro extensions | §64 yield curve, §65 TRIN, §66 AD breadth, §67 FOMC, §68 T10Y rate | `macro.py` fetch; `_assemble_signal()` / `delivery_gates.py` gate |
+| ✅ live / 🗑️ backtest | Macro extensions | §64 yield curve, §65 TRIN, §66 AD breadth, §67 FOMC, §68 T10Y rate | Live: `macro.py` fetch; `_assemble_signal()` / `delivery_gates.py`. **Backtest: §64/§65/§66/§67/§68 removed 2026-06-02** (ΔSh=0.00; TRIN/^NYAD fetch 404; §64/§67/§68 +1/+4/+1 N with no Sharpe gain). |
 | ✅ | Options pack | §69 GEX flip, §70 zero-DTE, §71 max pain, §72 VRP proxy | `options.py` compute + `score_options()` |
 | ✅ | Fundamental quality | §73 insider clustering, §74 Beneish, §76 Altman | `edgar.py` / `fundamentals.py` compute; `signal_engine.py` gate |
 | ⏳ | Fundamental quality | §75 buyback window | EDGAR 8-K parsing complexity |

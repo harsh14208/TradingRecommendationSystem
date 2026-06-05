@@ -119,6 +119,15 @@ async def check_delivery_gates(
     if action not in ("BUY", "SELL"):
         return f"action={action} not BUY/SELL", sig_dict
 
+    # ── MR gate — hard block for BUY signals without a mean-reversion setup ──
+    # Root-cause fix for live WR 42% vs backtest WR 68% gap (audit 2026-06-02).
+    # The 23-year backtest validates ONLY MR entries (RSI<42, BB%B<0.22, IBS<0.15,
+    # VWAP%<-0.75%). Signals on uptrending stocks (Golden Cross, EPS beats,
+    # analyst consensus) have no backtest validation and drag live WR to ~42%.
+    # Enforcing has_mr here aligns live delivery with the backtest entry filter.
+    if action == "BUY" and not sig_dict.get("hasMr", False):
+        return "no MR setup — RSI/BB%B/IBS/VWAP% oversold condition required for BUY delivery", sig_dict
+
     # ── Ticker-adaptive confidence floor (checked before global floor) ─────────
     # High-win tickers (≥75% historical WR) get a relaxed 52% floor instead of
     # the global min_confidence, so quality tickers aren't killed by a high global

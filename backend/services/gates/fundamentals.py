@@ -227,41 +227,16 @@ def apply_quality_screens(
                 }
             )
 
-    # ── §76 Altman Z-Score — Financial Distress Screen ───────────────────────
-    altman_z = fundamentals.get("altman_z")
-    if altman_z is not None and not is_lev_etf:
-        new_sources.add("Fundamentals")
-        if altman_z < 1.81:
-            score -= 15
-            cards.append(
-                {
-                    "src": "Fundamentals",
-                    "head": f"Altman Z-Score {altman_z:.2f} — Financial Distress Zone",
-                    "body": (
-                        f"Altman Z-Score of {altman_z:.2f} is in the distress zone (< 1.81). "
-                        "Altman (1968): Z < 1.81 correctly predicted 94% of bankruptcies "
-                        "within 2 years. Mean-reversion entries on distress stocks fail "
-                        "catastrophically — the dip is structural, not a temporary dislocation."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"Z-Score={altman_z:.2f} (<1.81 = distress)",
-                }
-            )
-        elif altman_z < 2.67:
-            score -= 4
-            cards.append(
-                {
-                    "src": "Fundamentals",
-                    "head": f"Altman Z-Score {altman_z:.2f} — Grey Zone",
-                    "body": (
-                        f"Altman Z-Score of {altman_z:.2f} falls in the grey zone (1.81–2.67). "
-                        "Financial health is uncertain — elevated distress risk not fully "
-                        "priced into the equity."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"Z-Score={altman_z:.2f} (1.81-2.67 = grey zone)",
-                }
-            )
+    # §76 Altman Z-Score — REMOVED 2026-06-03
+    # EDGAR validation showed 79/106 IS tickers (74%) are permanently below Z'<1.23
+    # (the distress threshold) due to structural reasons unrelated to bankruptcy:
+    #   - Financial companies (banks): high leverage is business model, not distress
+    #   - Tech companies: high goodwill/intangibles deflate book equity
+    #   - Service/retail: asset-light models have low fixed assets vs liabilities
+    # The formula (Altman 1968) was calibrated on manufacturing companies.
+    # Applying it to the IS universe was penalising ~80% of signals by -15 pts,
+    # contributing to the IS/live WR gap. Removed after backtest_edgar.py confirmed
+    # standalone Altman hurts IS Sharpe: N 230→79, Sh 0.20→0.16 (-0.03).
 
     # ── §51 Forward PE Value Trap Filter ─────────────────────────────────────
     fwd_pe = info.get("forward_pe")

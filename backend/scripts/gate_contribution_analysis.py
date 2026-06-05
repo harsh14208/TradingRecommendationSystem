@@ -86,12 +86,16 @@ def _win(outcome_pct: float | None) -> bool | None:
 
 
 async def _run(min_n: int, after_date: datetime | None) -> None:
-    async with get_db() as db:
+    db_gen = get_db()
+    db = await db_gen.__anext__()
+    try:
         stmt = select(Signal).where(Signal.outcome_pct.isnot(None))
         if after_date:
             stmt = stmt.where(Signal.created_at >= after_date)
         result = await db.execute(stmt)
         signals: list[Signal] = list(result.scalars().all())
+    finally:
+        await db.close()
 
     if not signals:
         print("No resolved signals found.")
@@ -160,12 +164,16 @@ async def _run_section85(after_date: datetime | None) -> None:
     """§85-1: Fundamental modifier audit — segment by each modifier, compare WR vs baseline.
     Remove any modifier with ΔWR < −1pp and N≥30 (adds noise without IS backtest validation).
     """
-    async with get_db() as db:
+    db_gen = get_db()
+    db = await db_gen.__anext__()
+    try:
         stmt = select(Signal).where(Signal.outcome_pct.isnot(None))
         if after_date:
             stmt = stmt.where(Signal.created_at >= after_date)
         result = await db.execute(stmt)
         signals: list[Signal] = list(result.scalars().all())
+    finally:
+        await db.close()
 
     total = len(signals)
     if not total:

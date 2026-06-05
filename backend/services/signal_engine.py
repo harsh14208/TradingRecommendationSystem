@@ -1737,7 +1737,7 @@ def _assemble_signal(
 
     # ── L8 quality_score — IS-validated MR trade quality composite ───────────
     # Formula: 40%×(score−50)/30 + 35%×OU_speed + 25%×Hurst_MR  → [0, 100]
-    # IS tier spread: High(≥60) Sh=0.49 vs Low(<30) Sh=0.17 (v10.0, 2026-06-01).
+    # Thresholds recalibrated to IS p67/p33: High(≥43) Sh=0.51 | Mid(35–43) Sh=0.31 | Low(<35) Sh=0.17
     # All three inputs are already in tech dict — zero extra API cost.
     _ou_hl_qs = float(tech.get("ou_halflife") or 12.5)
     _hurst_qs = float(tech.get("hurst") or 0.65)
@@ -1792,15 +1792,16 @@ def _assemble_signal(
             # L1 portfolio_size_scale — sector concentration + PCA cross-sector (§43/§83)
             # L2 VIX-regime overlay   — fear 1.15×/panic 1.10×/calm 0.75× (§56)
             # L3 vol-targeting        — 0.25/ticker_vol_ann clamped [0.5,2.0]
-            # L4 conviction sizing    — (conf-57)/10+0.5 clamped [0.5,1.5]
+            # L4 conviction sizing    — (conf-40)/14+0.5 clamped [0.5,1.5]
+            #    conf=40→0.5×  conf=47→1.0×  conf=54+→1.5× (anchored to min_confidence=40)
             # L5 gate-quality boost   — Inv3: Hurst+20.6pp, Piotroski+13.1pp, IVR+10.1pp
             #    fires only for BUY; caps at 1.5× total; rewards best-predictor gates
             # L6 regime dampener      — calm bull (VIX<18 + bull trend) reduces MR sizing 0.8×
             #    AI-momentum regimes produce shallow bounces; Inv2+temporal: current regime weak
             # L7 raw-score Kelly      — §18/§12a: score-proportional sizing (±15%).
             #    score=50→0.85×  score=65→1.0×  score=80→1.15×
-            # L8 quality_score tier   — IS Sh spread 0.49 (high) vs 0.17 (low), v10.0 2026-06-01
-            #    high(≥60)→1.30× mid(30–60)→1.0× low(<30)→0.75×; zero N impact (all trades pass)
+            # L8 quality_score tier   — IS Sh spread High(≥43) 0.51 vs Low(<35) 0.17, v10.1 2026-06-01
+            #    high(≥43)→1.30× mid(35–43)→1.0× low(<35)→0.75×; zero N impact (all trades pass)
             # L9 HMM regime sizing    — macro_regime.py 2-state Baum-Welch leads VIX by 1-3d
             #    IS ablation: bull 1.10× never fires on MR entries (low-VIX = no MR triggers)
             #    bear(≥80%)→0.70× transition/trans_risk>20%→0.85× bull→1.0× (no amplification)
@@ -1884,6 +1885,12 @@ def _assemble_signal(
         "hmmRegime": _hmm_regime_label or None,
         # ATR%rank — delivery_gates uses this for ATR≤70 quality gate (trend-dominant regime check)
         "atrPctRank": round(float(tech.get("atr_pct_rank") or 50), 1),
+        # MR setup flag — delivery_gates enforces this as a hard BUY gate.
+        # True = at least one of: RSI<42, BB%B<0.22, IBS<0.15, VWAP%<-0.75%.
+        # Without this flag the live engine issues BUYs on uptrending stocks
+        # (Golden Cross, Above 200-DMA, EPS beats) that have never been validated
+        # in the 23-year backtest, producing live WR ≈42% vs backtest WR ≈68%.
+        "hasMr": _has_mr,
     }
 
 

@@ -22,6 +22,7 @@ def _sig(**kwargs):
         "entry": 100.0,
         "target": 110.0,
         "daysToEarnings": 30,
+        "hasMr": True,  # MR gate required for BUY delivery (2026-06-02 fix)
     }
     base.update(kwargs)
     return base
@@ -49,6 +50,32 @@ async def test_gate_passes_clean_signal():
 
     db = await _db_no_sector_count()
     reason, _ = await check_delivery_gates(_sig(), db, _Settings())
+    assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_gate_blocks_buy_without_mr_setup():
+    """BUY signals without a MR condition (hasMr=False) must be blocked.
+
+    Root-cause fix for live WR 42% vs backtest WR 68% gap: the backtest only
+    validates MR entries (oversold RSI/BB%B/IBS/VWAP%); non-MR BUYs on
+    uptrending stocks have no backtest validation and drag live WR down.
+    """
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(_sig(hasMr=False), db, _Settings())
+    assert reason is not None
+    assert "MR setup" in reason or "no MR" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_gate_passes_buy_with_mr_setup():
+    """BUY signals with hasMr=True pass the MR gate."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(_sig(hasMr=True), db, _Settings())
     assert reason is None
 
 

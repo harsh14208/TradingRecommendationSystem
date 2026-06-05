@@ -75,6 +75,7 @@ def _sig(**kwargs):
         "target": 110.0,
         "daysToEarnings": 30,
         "rationale": [],
+        "hasMr": True,  # MR gate required for BUY delivery (2026-06-02 fix)
     }
     base.update(kwargs)
     return base
@@ -969,31 +970,18 @@ async def test_beneish_m_score_gate():
 
 @pytest.mark.asyncio
 async def test_altman_z_score_gate():
-    """§76 Altman Z — distress (<1.81, -15), grey zone (1.81–2.67, -4), safe (>2.67, no card)."""
-    # (a) distress zone Z=1.5 → Distress Zone card
-    res_dist = await _gen_signal_mocked(fundamentals={"altman_z": 1.5})
-    if res_dist is not None:
-        heads = [r["head"] for r in res_dist.get("rationale", [])]
-        assert any("Altman" in h for h in heads), f"Expected Altman distress card for Z=1.5; got: {heads}"
-        z_cards = [r for r in res_dist.get("rationale", []) if "Altman" in r.get("head", "")]
-        assert any("Distress Zone" in r["head"] for r in z_cards), (
-            f"Z=1.5 must produce 'Distress Zone' card; got: {[r['head'] for r in z_cards]}"
-        )
+    """§76 Altman Z removed 2026-06-03 — confirms no Altman cards at any Z value.
 
-    # (b) grey zone Z=2.2 → Grey Zone card
-    res_grey = await _gen_signal_mocked(fundamentals={"altman_z": 2.2})
-    if res_grey is not None:
-        heads_grey = [r["head"] for r in res_grey.get("rationale", [])]
-        assert any("Altman" in h for h in heads_grey), f"Expected Altman grey card for Z=2.2; got: {heads_grey}"
-        z_grey = [r for r in res_grey.get("rationale", []) if "Altman" in r.get("head", "")]
-        assert any("Grey Zone" in r["head"] for r in z_grey), (
-            f"Z=2.2 must produce 'Grey Zone' card; got: {[r['head'] for r in z_grey]}"
-        )
-
-    # (c) safe zone Z=3.5 → no Altman card
-    res_safe = await _gen_signal_mocked(fundamentals={"altman_z": 3.5})
-    if res_safe is not None:
-        heads_safe = [r["head"] for r in res_safe.get("rationale", [])]
-        assert not any("Altman" in h for h in heads_safe), (
-            f"Z=3.5 (safe zone) must not fire Altman card; got: {heads_safe}"
-        )
+    EDGAR validation: 79/106 IS tickers always below Z'<1.23 due to structural
+    reasons (financial sector leverage model, tech goodwill/intangibles). The gate
+    was penalising ~80% of signals by -15 pts — a primary driver of the IS/live
+    WR gap. Removed from gates/fundamentals.py.
+    """
+    # All Z values should now produce zero Altman cards
+    for z_val in [0.5, 1.5, 2.2, 3.5]:
+        res = await _gen_signal_mocked(fundamentals={"altman_z": z_val})
+        if res is not None:
+            heads = [r["head"] for r in res.get("rationale", [])]
+            assert not any("Altman" in h for h in heads), (
+                f"§76 Altman removed — no Altman cards expected for Z={z_val}; got: {heads}"
+            )
