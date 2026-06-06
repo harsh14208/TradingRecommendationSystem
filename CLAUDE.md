@@ -86,14 +86,19 @@ backend/
   config.py            # Pydantic settings (loads .env)
   routers/             # HTTP endpoints (signals, quotes, auth, billing, …)
   services/
-    signal_engine.py   # Core scoring — _assemble_signal()
+    signal_engine.py   # Orchestration — generate_signal() + scan_all(); re-exports engines/ helpers
+    engines/           # BE-1 decomposition (helpers ← assembler ← signal_engine)
+      helpers.py       #   leaf constants + _levels/_score_to_action/_current_session/_make_plain_english
+      assembler.py     #   _assemble_signal() — risk gates, calibration, final signal dict
+    signal_workers.py  # *_worker async tasks (news/fundamentals/options/institutional/sentiment)
+    signal_scoring.py  # technical family scorers (oscillators/macd/ema/obv-adx/MAs)
     signal_ml.py       # XGBoost champion/challenger gate
     scanner.py         # Async market scanner loop
     market_data.py     # OHLCV cache (Redis → in-memory fallback)
     polygon_client.py  # Polygon REST + extended-hours snapshot
     delivery_gates.py  # Sector/session/volatility filters
     macro.py           # VIX, STLFSI4, SPY trend
-  tests/               # pytest suite (~1086 tests)
+  tests/               # pytest suite (~1636 tests)
   scripts/
     backtest_technicals.py  # 23-year MR backtest + OOS validation
     train_backtest_ml.py    # Train entry model on IS backtest outcomes

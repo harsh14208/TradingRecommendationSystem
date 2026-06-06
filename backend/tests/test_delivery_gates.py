@@ -54,6 +54,17 @@ async def test_gate_passes_clean_signal():
 
 
 @pytest.mark.asyncio
+async def test_gate_blocks_xli_sector():
+    """ACT-1: XLI blocked at delivery — live WR 36.1% (N=36, WR<50% at N≥30)."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(_sig(sectorEtf="XLI"), db, _Settings())
+    assert reason is not None
+    assert "XLI" in reason
+
+
+@pytest.mark.asyncio
 async def test_gate_blocks_buy_without_mr_setup():
     """BUY signals without a MR condition (hasMr=False) must be blocked.
 
@@ -67,6 +78,27 @@ async def test_gate_blocks_buy_without_mr_setup():
     reason, _ = await check_delivery_gates(_sig(hasMr=False), db, _Settings())
     assert reason is not None
     assert "MR setup" in reason or "no MR" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_gate_buy_missing_hasmr_key_blocked_then_restored():
+    """ACT-4c: a reconstructed dict missing the hasMr key (the pre-fix EOD batch
+    path) blocks every BUY as "no MR setup". Restoring hasMr from extra_data
+    (the fix) lets a genuine MR BUY through."""
+    from services.delivery_gates import check_delivery_gates
+
+    # Simulate the EOD reconstruction: build the dict WITHOUT a hasMr key.
+    eod_sig = _sig()
+    del eod_sig["hasMr"]
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(eod_sig, db, _Settings())
+    assert reason is not None and "MR" in reason  # blocked (hasMr defaults False)
+
+    # Now restore hasMr from persisted extra_data — gate passes.
+    eod_sig["hasMr"] = True
+    db = await _db_no_sector_count()
+    reason, _ = await check_delivery_gates(eod_sig, db, _Settings())
+    assert reason is None
 
 
 @pytest.mark.asyncio
@@ -239,7 +271,7 @@ async def test_gate_blocks_sector_concentration():
     mock_session.execute = AsyncMock(return_value=mock_adb_result)
 
     with patch("database.AsyncSessionLocal", return_value=mock_session):
-        reason, _ = await check_delivery_gates(_sig(sectorEtf="XLI"), db, _Settings())
+        reason, _ = await check_delivery_gates(_sig(sectorEtf="XLK"), db, _Settings())
 
     assert reason is not None
     assert "24h" in reason

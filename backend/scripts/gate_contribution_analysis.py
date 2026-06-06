@@ -107,7 +107,10 @@ async def _run(min_n: int, after_date: datetime | None) -> None:
     db_gen = get_db()
     db = await db_gen.__anext__()
     try:
-        stmt = select(Signal).where(Signal.outcome_pct.isnot(None))
+        # is_sent filter: live audits must mirror the delivered track record
+        # (matches /live-wr-stats). validate_predictions only resolves delivered
+        # signals today, so this is currently a no-op guard against future drift.
+        stmt = select(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.is_sent == True)
         if after_date:
             stmt = stmt.where(Signal.created_at >= after_date)
         result = await db.execute(stmt)
@@ -185,7 +188,10 @@ async def _run_section85(after_date: datetime | None) -> None:
     db_gen = get_db()
     db = await db_gen.__anext__()
     try:
-        stmt = select(Signal).where(Signal.outcome_pct.isnot(None))
+        # is_sent filter: live audits must mirror the delivered track record
+        # (matches /live-wr-stats). validate_predictions only resolves delivered
+        # signals today, so this is currently a no-op guard against future drift.
+        stmt = select(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.is_sent == True)
         if after_date:
             stmt = stmt.where(Signal.created_at >= after_date)
         result = await db.execute(stmt)
@@ -272,7 +278,16 @@ _SECTOR_ETF_MAP = {
 
 
 def _extract_sector(signal: Signal) -> str:
-    """Extract sector ETF code from signal rationale or extra_data."""
+    """Extract sector ETF code from the signal.
+
+    ACT-2: read the Signal.sector_etf column first — it is populated at
+    signal-creation time and is authoritative. Only ~57% of signals carry an
+    ETF code in their rationale heads, so rationale parsing alone tagged 43%
+    of signals "Unknown". Order: column → rationale head → extra_data.
+    """
+    col_sector = getattr(signal, "sector_etf", None)
+    if col_sector:
+        return col_sector
     rationale = signal.rationale or []
     for card in rationale:
         head = card.get("head", "")
@@ -289,7 +304,10 @@ async def _run_sector_wr(after_date: datetime | None, min_n: int) -> None:
     db_gen = get_db()
     db = await db_gen.__anext__()
     try:
-        stmt = select(Signal).where(Signal.outcome_pct.isnot(None))
+        # is_sent filter: live audits must mirror the delivered track record
+        # (matches /live-wr-stats). validate_predictions only resolves delivered
+        # signals today, so this is currently a no-op guard against future drift.
+        stmt = select(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.is_sent == True)
         if after_date:
             stmt = stmt.where(Signal.created_at >= after_date)
         result = await db.execute(stmt)
@@ -371,7 +389,10 @@ async def _run_live_dsr(after_date: datetime | None) -> None:
     db_gen = get_db()
     db = await db_gen.__anext__()
     try:
-        stmt = select(Signal).where(Signal.outcome_pct.isnot(None))
+        # is_sent filter: live audits must mirror the delivered track record
+        # (matches /live-wr-stats). validate_predictions only resolves delivered
+        # signals today, so this is currently a no-op guard against future drift.
+        stmt = select(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.is_sent == True)
         if after_date:
             stmt = stmt.where(Signal.created_at >= after_date)
         result = await db.execute(stmt)
@@ -452,7 +473,10 @@ async def _run_brier_drift(after_date: datetime | None, window_days: int = 30) -
     db_gen = get_db()
     db = await db_gen.__anext__()
     try:
-        stmt = select(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.confidence.isnot(None))
+        # is_sent filter: live audits must mirror the delivered track record
+        # (matches /live-wr-stats). validate_predictions only resolves delivered
+        # signals today, so this is currently a no-op guard against future drift.
+        stmt = select(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.is_sent == True).where(Signal.confidence.isnot(None))
         if after_date:
             stmt = stmt.where(Signal.created_at >= after_date)
         result = await db.execute(stmt)

@@ -68,7 +68,10 @@ STYLE_CONF_FLOORS: dict[str, float] = {
 
 # Sectors with empirical PF < 0.40x blocked until per-sector models retrained.
 # XLF 0.32x, XLP 0.35x, XLU insufficient data.
-BLOCKED_SECTORS: frozenset[str] = frozenset({"XLF", "XLP", "XLU"})
+# ACT-1 (2026-06-06): XLI added — live WR 36.1% (N=36, N≥30 with WR<50%) per
+#   gate_contribution_analysis.py --sector-wr. Supersedes §31-5 (XLI live-eligible):
+#   IS treated XLI stocks as eligible but live MR edge did not materialise.
+BLOCKED_SECTORS: frozenset[str] = frozenset({"XLF", "XLP", "XLU", "XLI"})
 
 # Tickers that don't exhibit 10-day price-level MR behavior:
 #  - Semi equipment (LRCX, MRVL, AMAT, KLAC): continuation cycle, multi-quarter

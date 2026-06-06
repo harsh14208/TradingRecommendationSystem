@@ -1,0 +1,52 @@
+[run]
+source = .
+omit =
+    tests/*
+    venv/*
+    scripts/*
+    alembic/*
+    */__pycache__/*
+    */site-packages/*
+
+    # Application startup / lifespan (not business logic)
+    main.py
+
+    # Standalone maintenance script (like scripts/)
+    validate_predictions.py
+
+    # Background daemons and worker infrastructure
+    services/scanner.py
+    services/stop_monitor.py
+    services/worker_bus.py
+    services/signal_workers.py
+    services/alpaca_ws.py
+
+    # Web scraper / ML model services (require live resources)
+    services/news_scraper.py
+    services/local_llm.py
+    services/vector_store.py
+
+    # External data-feed only services (require paid API keys)
+    services/aaii.py
+    services/benzinga_news.py
+    services/cot.py
+    services/quiverquant.py
+    services/supply_chain.py
+    services/google_trends.py
+    services/social.py
+    services/eightk_events.py
+    services/polygon_reference.py
+    services/polygon_related.py
+
+    # WebSocket transport (integration-test territory)
+    routers/websocket_router.py
+
+    # Documentation files
+    docs/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    pass

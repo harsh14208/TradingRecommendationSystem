@@ -12,9 +12,13 @@ def test_database_imports_without_asyncpg(monkeypatch):
     # Ensure we use SQLite even if CI has DATABASE_URL configured.
     monkeypatch.setenv("DATABASE_URL", "")
 
-    # Reload module fresh.
-    sys.modules.pop("database", None)
-    sys.modules.pop("backend.database", None)
+    # Use monkeypatch.setitem so pytest restores original module after the test,
+    # preventing get_db function-identity contamination in other tests.
+    original = sys.modules.get("database")
+    if original is not None:
+        monkeypatch.setitem(sys.modules, "database", original)
+    monkeypatch.delitem(sys.modules, "database", raising=False)
+    monkeypatch.delitem(sys.modules, "backend.database", raising=False)
 
     # The project uses absolute imports like `from database import ...`
     # when PYTHONPATH includes backend/.

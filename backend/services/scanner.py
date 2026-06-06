@@ -127,6 +127,18 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
     )
     ticker_rules: dict[int, SignalAlert] = {a.user_id: a for a in _alert_rows}
 
+    # PROD-3: per-user notification prefs (saved by routers/me.py in AppSettings).
+    # Key format mirrors me.py:_user_pref_key. We filter ONLY users who explicitly
+    # saved prefs — the defaults are opinionated (actions=["BUY"], score_min=50), so
+    # applying them to users who never configured prefs would silently stop all
+    # SELL / low-score delivery. stored=None ⇒ no PROD-3 filtering (legacy behavior).
+    _app_row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+    _app_data = _app_row.data if (_app_row is not None and isinstance(_app_row.data, dict)) else {}
+
+    def _user_prefs(uid: int) -> dict | None:
+        _p = _app_data.get(f"user_{uid}_notification_prefs")
+        return _p if isinstance(_p, dict) else None
+
     message_text = format_signal(sig_dict)
     url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
     any_success = False
@@ -141,6 +153,11 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
                 log.info(
                     f" [fanout] skipped user={user.id} — chat {user.telegram_chat_id} already received this signal"
                 )
+                continue
+            # PROD-3: telegram master toggle — applies even to ticker-rule matches.
+            _prefs = _user_prefs(user.id)
+            if _prefs is not None and _prefs.get("telegram") is False:
+                log.info(f" [fanout] user={user.id} telegram notifications disabled — skipped")
                 continue
             # Per-ticker signal alert rules override the global confidence threshold.
             # If the user has an active rule for this ticker, apply it; otherwise
@@ -158,7 +175,29 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
                     )
                     continue
             else:
-                user_min = user.min_confidence_override if user.min_confidence_override is not None else global_min_conf
+                # PROD-3: apply explicit per-user sector / score / action filters.
+                if _prefs is not None:
+                    _secs = _prefs.get("sectors") or []
+                    if _secs and sig_dict.get("sectorEtf") not in _secs:
+                        log.info(
+                            f" [fanout] user={user.id} sector {sig_dict.get('sectorEtf')} not in {_secs} — skipped"
+                        )
+                        continue
+                    _smin = _prefs.get("score_min")
+                    if _smin is not None and (sig_dict.get("raw_score") or 0) < _smin:
+                        log.info(f" [fanout] user={user.id} raw_score < score_min {_smin} — skipped")
+                        continue
+                    _acts = _prefs.get("actions") or []
+                    if _acts and sig_dict.get("action") not in _acts:
+                        log.info(f" [fanout] user={user.id} action {sig_dict.get('action')} not in {_acts} — skipped")
+                        continue
+                # Confidence: prefs.min_conf > user column override > global default.
+                if _prefs is not None and _prefs.get("min_conf") is not None:
+                    user_min = _prefs["min_conf"]
+                elif user.min_confidence_override is not None:
+                    user_min = user.min_confidence_override
+                else:
+                    user_min = global_min_conf
                 if sig_dict.get("confidence", 0) < user_min:
                     log.info(
                         f" [fanout] user={user.id} threshold {user_min:.0f}% > conf {sig_dict['confidence']:.0f}% — skipped"
@@ -508,6 +547,17 @@ async def _push_web_notifications(sig_dict: dict, db) -> None:
         subs = (await db.execute(select(PushSubscription))).scalars().all()
         if not subs:
             return
+        # PROD-3: honor the per-user push toggle. Only users who explicitly saved
+        # prefs with push=False are skipped (defaults are never applied). Granular
+        # sector/score/action filters are enforced on the Telegram fanout path;
+        # push only gates the on/off toggle here.
+        _app_row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+        _app_data = _app_row.data if (_app_row is not None and isinstance(_app_row.data, dict)) else {}
+
+        def _push_disabled(uid: int) -> bool:
+            _p = _app_data.get(f"user_{uid}_notification_prefs")
+            return isinstance(_p, dict) and _p.get("push") is False
+
         emoji = "🟢" if sig_dict["action"] == "BUY" else "🔴"
         push_payload = {
             "title": f"{emoji} {sig_dict['action']} {sig_dict['ticker']} — {sig_dict['confidence']:.0f}% conf",
@@ -518,10 +568,14 @@ async def _push_web_notifications(sig_dict: dict, db) -> None:
             "tag": f"signal-{sig_dict['ticker']}-{sig_dict['action']}",
             "url": "/",
         }
+        sent = 0
         for sub in subs:
+            if _push_disabled(sub.user_id):
+                continue
             sub_info = {"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}}
             await asyncio.to_thread(send_web_push, sub_info, push_payload)
-        log.info(f"[push] Web push sent to {len(subs)} subscriber(s) for {sig_dict['ticker']}")
+            sent += 1
+        log.info(f"[push] Web push sent to {sent} subscriber(s) for {sig_dict['ticker']}")
     except Exception as e:
         log.warning(f"[push] Web push failed: {e}")
 
@@ -1315,6 +1369,15 @@ async def _persist_scan_signals(
 
     async with AsyncSessionLocal() as db:
         for sig in signals:
+            # ACT-4c: persist BUY-gate inputs that have no dedicated column, so
+            # eod_batch_send() can rebuild a sig_dict that the delivery gates
+            # evaluate identically to the real-time path.
+            _gate_extra = {
+                "hasMr": sig.get("hasMr"),
+                "vix": sig.get("vix"),
+                "crossAssetHeadwinds": sig.get("crossAssetHeadwinds"),
+                "daysToExDiv": sig.get("daysToExDiv"),
+            }
             result = await db.execute(
                 select(Signal)
                 .where(Signal.ticker == sig["ticker"])
@@ -1345,6 +1408,7 @@ async def _persist_scan_signals(
                     existing.sector_etf = sig.get("sectorEtf")
                     existing.rs_vs_sector = sig.get("rsVsSector")
                     existing.style = sig.get("style", existing.style)
+                    existing.extra_data = _gate_extra
                     if not existing.is_sent:
                         refreshed_unsent.append((sig, existing, False))
                     continue
@@ -1412,6 +1476,7 @@ async def _persist_scan_signals(
                 sector_etf=sig.get("sectorEtf"),
                 rs_vs_sector=sig.get("rsVsSector"),
                 expires_at=_expires,
+                extra_data=_gate_extra,
             )
             db.add(row)
             new_signals.append((sig, row, force_resend))
@@ -1524,6 +1589,14 @@ async def eod_batch_send() -> None:
                 "sectorEtf": row.sector_etf,
                 "daysToEarnings": row.days_to_earnings,
             }
+            # ACT-4c: restore BUY-gate inputs persisted at creation so the EOD
+            # path evaluates §54/§55/ex-div and the MR-setup requirement the same
+            # as real-time delivery. Pre-migration rows have extra_data=None →
+            # hasMr stays absent and the BUY is conservatively blocked (unchanged).
+            _extra = row.extra_data or {}
+            for _k in ("hasMr", "vix", "crossAssetHeadwinds", "daysToExDiv"):
+                if _extra.get(_k) is not None:
+                    sig_dict[_k] = _extra[_k]
             merged = await db.merge(row)
             await _maybe_send(
                 sig_dict,

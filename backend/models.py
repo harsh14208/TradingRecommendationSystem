@@ -22,6 +22,10 @@ class Signal(Base):
     style = Column(String(20), default="swing")
     sources = Column(JSON, default=list)
     rationale = Column(JSON, default=list)
+    # Delivery-gate inputs not otherwise persisted as columns. Read by
+    # eod_batch_send() so the EOD delivery path evaluates the same BUY gates as
+    # the real-time path (ACT-4c: hasMr/vix/crossAssetHeadwinds/daysToExDiv).
+    extra_data = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True)
     is_sent = Column(Boolean, default=False)
     is_skipped = Column(Boolean, default=False)

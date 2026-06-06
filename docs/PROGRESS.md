@@ -23,10 +23,12 @@
 | Confidence gap | +11.0pp overconfident (raw) |
 | XGBoost training samples | 529 |
 
-## 🏅 Quality Ratings — v7.4 (2026-06-05)
+## 🏅 Quality Ratings — v7.6 (2026-06-06)
 
 > Ratings maintained in **[`docs/Stats.md §15`](Stats.md)** — single source of truth.
-> **Overall: 8.0/10 product audit · 8.4/10 B+ quality grade** (v7.4, 2026-06-05).
+> **Overall: 8.3/10 product audit · 8.7/10 B+ quality grade** (v7.6, 2026-06-06).
+> v7.6: BE-1 partial (signal_engine.py 7421→5848, `services/engines/`), ACT-4 EOD-batch delivery fix (`extra_data` column), DPC-1 notification prefs enforced, ACT-1 XLI block, ACT-2 sector audit fix. 1636 tests.
+> v7.5: 32/38 free items (BT/RD/CAL/ML/PROD/SEC/FE/DEPLOY + OOS v9). 1115 tests.
 > v7.4: RISK-1/2/4 (bracket stops + DD circuit-breaker + kill switch), A16-UI, PROD-1/3, ML-4, CAL-4, BE-2. 1096 tests.
 
 ---

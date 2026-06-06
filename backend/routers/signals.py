@@ -171,6 +171,19 @@ async def send_signal(
     if sig.action not in ("BUY", "SELL"):
         raise HTTPException(400, "Only BUY and SELL signals can be sent via Telegram.")
 
+    # ACT-4(a): enforce BLOCKED_TICKERS on manual sends too — the scanner/EOD
+    # delivery path gates these via check_delivery_gates, but this owner-triggered
+    # endpoint previously bypassed it, letting known-no-edge tickers (e.g. STT/MTB/
+    # AMAT/KLAC/APH) pollute the delivered win-rate denominator.
+    from services.delivery_gates import BLOCKED_TICKERS
+
+    if sig.ticker in BLOCKED_TICKERS:
+        raise HTTPException(
+            400,
+            f"{sig.ticker} is on the blocked-ticker list (no confirmed mean-reversion edge) "
+            "and cannot be sent.",
+        )
+
     # Determine the target chat_id for this user
     chat_id = user.telegram_chat_id
 

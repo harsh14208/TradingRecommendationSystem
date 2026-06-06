@@ -22,12 +22,20 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _add_column_if_missing(table: str, col: sa.Column) -> None:
+    """Add column only if it doesn't already exist (SQLite has no IF NOT EXISTS)."""
+    bind = op.get_bind()
+    cols = {r[1] for r in bind.execute(sa.text(f"PRAGMA table_info({table})"))}
+    if col.name not in cols:
+        op.add_column(table, col)
+
+
 def upgrade() -> None:
     """Upgrade schema."""
-    op.add_column("performance_snapshots", sa.Column("alpha", sa.Float(), nullable=True))
-    op.add_column("users", sa.Column("auto_execute", sa.Boolean(), server_default="0", nullable=False))
-    op.add_column("users", sa.Column("auto_execute_min_conf", sa.Float(), nullable=True))
-    op.add_column("users", sa.Column("auto_execute_broker", sa.String(length=50), nullable=True))
+    _add_column_if_missing("performance_snapshots", sa.Column("alpha", sa.Float(), nullable=True))
+    _add_column_if_missing("users", sa.Column("auto_execute", sa.Boolean(), server_default="0", nullable=False))
+    _add_column_if_missing("users", sa.Column("auto_execute_min_conf", sa.Float(), nullable=True))
+    _add_column_if_missing("users", sa.Column("auto_execute_broker", sa.String(length=50), nullable=True))
 
 
 def downgrade() -> None:

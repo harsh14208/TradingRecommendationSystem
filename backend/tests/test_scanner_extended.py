@@ -555,3 +555,53 @@ class TestFanoutToSubscribers:
         # post should have been called exactly once despite two eligible users
         assert mock_session.post.call_count == 1
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_notification_prefs_enforced(self):
+        """PROD-3: a user who saved telegram=False receives no fanout delivery."""
+        settings_ok = types.SimpleNamespace(telegram_bot_token="bot:TOKEN", min_confidence=55.0)
+
+        user = MagicMock()
+        user.id = 1
+        user.is_owner = False
+        user.subscription_status = "active"
+        user.subscription_tier = "basic"
+        user.telegram_chat_id = "CHAT_1"
+        user.min_confidence_override = None
+
+        # AppSettings row whose data disables telegram for user 1.
+        app_row = MagicMock()
+        app_row.data = {"user_1_notification_prefs": {"telegram": False}}
+
+        call_count = [0]
+
+        async def _execute(_stmt):
+            call_count[0] += 1
+            result = MagicMock()
+            if call_count[0] == 1:  # eligible users
+                result.scalars.return_value.all.return_value = [user]
+            elif call_count[0] == 4:  # AppSettings (users → delivered → SignalAlert → AppSettings)
+                result.scalar_one_or_none.return_value = app_row
+            else:  # delivered + ticker rules
+                result.scalars.return_value.all.return_value = []
+            return result
+
+        db = AsyncMock()
+        db.execute = _execute
+        db.add = MagicMock()
+        db.flush = AsyncMock()
+
+        mock_session = AsyncMock()
+        mock_session.post = AsyncMock()
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("services.scanner.get_settings", return_value=settings_ok):
+            with patch("services.scanner.format_signal", return_value="msg"):
+                with patch("aiohttp.ClientSession", return_value=mock_ctx):
+                    with patch("services.scanner.asyncio.create_task"):
+                        result = await scanner._fanout_to_subscribers(_sig(), _db_row(id=10), db)
+
+        assert mock_session.post.call_count == 0
+        assert result is False

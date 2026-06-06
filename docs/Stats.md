@@ -356,15 +356,16 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 ---
 
-## 15. Project Ratings — v7.5 (2026-06-05)
+## 15. Project Ratings — v7.6 (2026-06-06)
 
 > **Single source of truth** for all project quality ratings. Referenced by `docs/TODO.md` and `docs/PROGRESS.md`.
+> v7.6 (2026-06-06): delivery-path correctness sweep + engine decomposition. **BE-1 (partial):** `signal_engine.py` 7421→5848 lines; extracted `services/engines/` (`helpers.py` leaf constants + `_levels`/`_score_to_action`/`_current_session`/`_make_plain_english`; `assembler.py` `_assemble_signal`, 1.3k lines), clean import DAG (helpers ← assembler ← signal_engine). **ACT-4 (delivery-path bugs):** EOD-batch BUYs were silently blocked (`sig_dict` rebuilt from DB row dropped `hasMr`/`vix`/`crossAssetHeadwinds`/`daysToExDiv` → every post-close MR BUY no-op'd as "no MR setup") — fixed via new `signals.extra_data` JSON column (migration `b4e8d2f6a91c`); owner-triggered `POST /signals/{id}/send` now enforces BLOCKED_TICKERS. **DPC-1:** notification prefs (PROD-3) were stored but never read — now enforced in `_fanout_to_subscribers`/`_push_web_notifications`. **ACT-1:** XLI added to BLOCKED_SECTORS (live WR 36.1%, N=36). **ACT-2:** sector audit reads `Signal.sector_etf` first (eliminates 43% "Unknown"). 1636 tests passing (3 skipped; 13 E2E need playwright + running backend).
 > v7.5 (2026-06-05): 32 of 38 free items implemented — BT-2/4 (`--param-sweep`, bootstrap CI on gates), RD-3/4 (§79 Q1 gate, `--regime-split`), CAL-2/3 (`--sector-cal`, `--reliability-diagram`), ML-5 (`shap_live_audit()`), PROD-3/4 (notification prefs, admin analytics), SEC-2/3/4/6 (gitleaks CI, OWASP confirmed, credential rotation, npm audit), FE-1/3/4 (E2E Playwright tests, Lighthouse CI, ErrorBoundary), DEPLOY-4/5/6 (RUNBOOK.md, locust, CI/CD deploy), OOS v9 (10 tickers locked). 1115 tests.
 > v7.4 (2026-06-05): RISK-1/2/4 (bracket stops + DD circuit-breaker + kill switch); A16-UI; PROD-1/3; ML-4; CAL-4; BE-2; 1096 tests.
 > v7.3 (2026-05-31): adversarial quant review, 10 methodology fixes, OOS v6 CLEAN (N=51, Sh=0.16), block bootstrap, phantom win correction.
 > Two lenses: **Quant** = statistical rigour | **Product** = user-facing completeness × soundness.
 
-**Overall: 8.2/10 product audit · 8.6/10 B+ quality grade** (v7.5, 2026-06-05)
+**Overall: 8.3/10 product audit · 8.7/10 B+ quality grade** (v7.6, 2026-06-06)
 
 ### Signal & Research
 
@@ -372,7 +373,7 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 |---|---|---|---|---|
 | **IS Backtest Accuracy** | 7.7/10 | B+ | ↑ from 7.5 | IS v10.5: N=230, WR=66.1%, Sh=0.20. BT-2 `--param-sweep` (stability over BUY_THRESH 45–55 + bootstrap 95% CI). BT-4 bootstrap CI on gate ΔSharpe in `--validate-live-gates`. RD-4 `--regime-split` flag (VIX regime decomposition). RD-3 §79 Q1 rebalancing gate live. Ceiling: survivorship bias without Norgate/Sharadar. |
 | **OOS / Forward Validation** | 6.3/10 | B− | ↑ from 6.1 | OOS v6 CLEAN: N=51, Sh=0.16 ✅. v7/v8/v9 pre-specified (35 tickers total). OOS v9 locked 2026-06-05 (ISRG, ZTS, ODFL, VRSK, CPRT, CTAS, MPWR, NWS, KSS, WST). Live DSR + Wilson CI dashboards operational. SR=0 still inside CI at N=51; need N≥387 to clear. |
-| **Live Alpha Quality** | 6.5/10 | B− | — | §76 Altman removed. §85-1 audit pending ≥200 resolved signals. ALPHA-4 per-sector live WR audit + ALPHA-5 VIX regime tag operational. |
+| **Live Alpha Quality** | 6.7/10 | B− | ↑ from 6.5 | **ACT-4: EOD-batch silent-block bug fixed** — post-close MR BUYs were never delivered (`hasMr` defaulted False on DB-row rebuild); `extra_data` column now restores gate inputs so EOD evaluates the same gates as real-time. BLOCKED_TICKERS enforcement traced end-to-end + owner-send bypass closed; delivered WR denominator confirmed genuine (not a population artifact). §76 Altman removed. §85-1 audit pending ≥200 resolved signals. |
 | **Gate Stack (§47–§83)** | 8.6/10 | A− | ↑ from 8.5 | 28 of 31 strategies live (§79 Q1 rebalancing gate added). 3 deferred (§62 VRP, §75 buyback, §84 survivorship). Dead-gate cleanup complete. |
 | **Backtest Infrastructure** | 8.2/10 | B+ | ↑ from 8.0 | 107-ticker, 23-year IS. Block bootstrap CIs. BT-2 param stability sweep. BT-4 bootstrap CI on all gate ablations. RD-4 regime decomposition. EDGAR point-in-time (106/107). Ceiling: survivorship bias. |
 | **Confidence Calibration** | 7.5/10 | B+ | ↑ from 7.2 | Cal v4: Brier 0.2641. CAL-4 `--brier-drift`: rolling 30d Brier, alert >0.28, recal flag >0.30. **CAL-2** `--sector-cal`: per-sector Brier vs global baseline, flags sectors deviating >0.01. **CAL-3** `--reliability-diagram`: text-mode calibration curve with gap flags. Next cal v5 at ≥50 post-A19. |
@@ -383,13 +384,13 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 |---|---|---|---|---|
 | **Risk Management** | 8.5/10 | A− | — | ATR stops 1.5s/2.0t. RISK-1: bracket/OTO stop orders on auto-executed trades. RISK-2: DD circuit-breaker (−5% PL). RISK-4: kill switch (DB flag + admin UI). Ceiling: Kelly uses global WR. |
 | **Execution & Friction** | 7.2/10 | B | — | Bracket orders improve live R:R. Flat 0.50% model; ADV-participation cost deferred (BT-3). |
-| **Sector Concentration** | 7.5/10 | B+ | — | HARD_LIMIT 30%, SOFT_LIMIT 20%. §83 correlation penalty. ALPHA-4 per-sector live WR audit operational. |
+| **Sector Concentration** | 7.6/10 | B+ | ↑ from 7.5 | HARD_LIMIT 30%, SOFT_LIMIT 20%. §83 correlation penalty. ACT-1: XLI added to BLOCKED_SECTORS (live WR 36.1%, N=36) — BLOCKED_SECTORS now {XLF, XLP, XLU, XLI}. ALPHA-4 per-sector live WR audit operational. |
 
 ### Product & Deployment
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **Product Completeness** | 8.9/10 | A | ↑ from 8.7 | Full stack: signals, auth, billing, Telegram, paper trading, mobile/PWA, admin tooling, broker execution + UI, My Performance view, notification prefs (`GET/PUT /api/me/notification-prefs`), admin analytics (`GET /api/admin/analytics-summary`). Remaining: IBKR support, FE-2 accessibility fixes. |
+| **Product Completeness** | 9.0/10 | A | ↑ from 8.9 | Full stack: signals, auth, billing, Telegram, paper trading, mobile/PWA, admin tooling, broker execution + UI, My Performance view, admin analytics (`GET /api/admin/analytics-summary`). **DPC-1: notification prefs now enforced** (`GET/PUT /api/me/notification-prefs` were stored but never read — Telegram master toggle + sector/score_min/actions/min_conf filters and push toggle now applied; unconfigured users unaffected). Remaining: IBKR support, FE-2 accessibility fixes. |
 | **Frontend** | 8.7/10 | A− | ↑ from 8.5 | UX: 9.0/10 (broker connect, performance view, kill switch badge). Architecture: 8.1/10 (ErrorBoundary added, E2E Playwright scaffold `tests/e2e/test_golden_path.py`, Lighthouse CI config `.lighthouserc.json`). Bundle: 408KB esbuild. Remaining: FE-2 accessibility manual fixes. |
 | **Security Posture** | 7.5/10 | B+ | ↑ from 7.2 | Fernet-encrypted Alpaca keys. CSP `unsafe-eval` eliminated. SEC-2 gitleaks in CI. SEC-3 OWASP confirmed clean (no dangerouslySetInnerHTML, SQLAlchemy parameterized, rate-limited auth). SEC-4 credential rotation endpoint (`PUT /api/me/broker/rotate-credentials`). SEC-6 npm audit in CI. **Blocker: default owner password `ChangeMe123!` still in .env.** |
 | **Deployment Readiness** | 7.2/10 | B− | ↑ from 6.5 | DEPLOY-4 RUNBOOK.md (deployment, rollback, incident response, backup/restore). DEPLOY-5 locust load test (`tests/locustfile.py`, 100-user simulation). DEPLOY-6 Railway + Fly CI/CD deploy on merge to `main`. Coverage floor 65% in CI. Remaining blockers: HTTPS, Stripe webhook, SMTP, VAPID, owner password rotation. |
@@ -399,25 +400,25 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
 | **ML Methodology** | 8.4/10 | A− | ↑ from 8.2 | ML-4 rolling 90d AUC drift (`compute_rolling_auc()` in `signal_ml.py`). **ML-5** `shap_live_audit()` in `eval_ml.py §8` — compares live feature importance ranking vs IS backtest, flags |Δrank|>3. Champion/challenger: N≥300, ΔAUC≥0.005. Entry OOS AUC=0.6399. |
-| **Signal Engine / Gate Stack** | 8.0/10 | B+ | — | Gate completeness: 8.8/10. Architecture: 7.5/10 (8k+ line core; BE-1 deferred). `gates/` (7 files) clean. RD-3 §79 Q1 gate added. |
-| **Backend Architecture** | 8.5/10 | A− | — | Functional: 9.2/10. Maintainability: 7.7/10 (no /v1/ prefix, some untyped dicts). BE-2 `LOG_FORMAT=json` structured logging. `routers/me.py` + notification prefs endpoint. |
+| **Signal Engine / Gate Stack** | 8.2/10 | B+ | ↑ from 8.0 | Gate completeness: 8.8/10. **Architecture: 7.9/10 (↑ from 7.5)** — BE-1 partial: `signal_engine.py` 7421→5848 lines; `services/engines/` extracted (`helpers.py` + `assembler.py`), clean DAG, all symbols re-exported for back-compat. Remaining: ~5.2k-line `generate_signal()` scorer (threads shared mutable state across 60+ sections; needs scoring-context object, deferred as higher-risk). `gates/` (7 files) clean. RD-3 §79 Q1 gate added. |
+| **Backend Architecture** | 8.6/10 | A− | ↑ from 8.5 | Functional: 9.2/10. **Maintainability: 7.9/10 (↑ from 7.7)** — engine decomposition (`services/engines/`); BE-2 `LOG_FORMAT=json` structured logging; `routers/me.py` + enforced notification prefs. DPC-2 reconstruction-class audit confirmed EOD batch was the only row→dict→gate path (now fixed). Remaining: no /v1/ prefix, some untyped dicts. |
 | **Data Pipeline** | 9.2/10 | A+ | — | Polygon + yfinance + FRED + EDGAR + options + Alpaca live execution. Redis stampede lock. §80 NBBO, §81 block prints, §63 cointegration, §52 short-int velocity. |
-| **Test Coverage** | 9.5/10 | A | ↑ from 9.3 | **1115 passing, 3 skipped** (up from 1096). E2E Playwright scaffold `tests/e2e/test_golden_path.py`. Locust load test `tests/locustfile.py`. Coverage floor 65% in CI. Gap: §73/§74/§69–§72 gates lack dedicated unit tests; E2E requires running backend. |
+| **Test Coverage** | 9.6/10 | A | ↑ from 9.5 | **1636 passing, 3 skipped** (up from 1115; new per-router/per-service unit suites + delivery-path regression tests). E2E Playwright scaffold `tests/e2e/test_golden_path.py` (13 tests need `playwright install` + running backend). Locust load test `tests/locustfile.py`. Coverage floor 65% in CI. Gap: §73/§74/§69–§72 gates lack dedicated unit tests. |
 
-### Adversarial Assessment — v7.2 → v7.3 → v7.4 → v7.5
+### Adversarial Assessment — v7.2 → v7.3 → v7.4 → v7.5 → v7.6
 
 > Scores a hostile quant engineer would assign at each snapshot. Trajectory shows real improvement, not feature-count inflation.
 
-| Category | v7.2 (before) | v7.3 (2026-05-31) | v7.4 (2026-06-05) | **v7.5 (2026-06-05)** | Hard Ceiling | Root Cause of Ceiling |
-|---|---|---|---|---|---|---|
-| Backtest Methodology | 3/10 | 7/10 | 7/10 | **7.5/10** | 8/10 | Survivorship bias (200+ delisted absent) |
-| OOS Validation | 2/10 | 5.5/10 | 6.1/10 | **6.3/10** | 7/10 | SR=0 inside CI at N=51; need N≥387 |
-| Signal Generation | 6.5/10 | 6.5/10 | 6.5/10 | **6.5/10** | 8/10 | §85-1 pending; thresholds frozen at IS-optimal |
-| Risk Management | 6.5/10 | 7.5/10 | 8.5/10 | **8.5/10** | 9/10 | Kelly uses global WR (not per-signal) |
-| ML Methodology | 3.5/10 | 7.5/10 | 8.2/10 | **8.4/10** | 8.5/10 | Live model experimental until N≥300 |
-| Friction & Execution | 4/10 | 7/10 | 7.2/10 | **7.2/10** | 8/10 | Variable spread by ticker not modeled |
-| Product & Security | 5/10 | 6.5/10 | 8.5/10 | **8.9/10** | 9/10 | Owner password; HTTPS; VAPID still needed |
-| Test Coverage | 7/10 | 8.5/10 | **9.3/10** | 9.5/10 | §73/§74/§69–§72 gates lack dedicated tests |
+| Category | v7.2 | v7.3 | v7.4 | v7.5 | **v7.6 (2026-06-06)** | Hard Ceiling | Root Cause of Ceiling |
+|---|---|---|---|---|---|---|---|
+| Backtest Methodology | 3/10 | 7/10 | 7/10 | 7.5/10 | **7.5/10** | 8/10 | Survivorship bias (200+ delisted absent) |
+| OOS Validation | 2/10 | 5.5/10 | 6.1/10 | 6.3/10 | **6.3/10** | 7/10 | SR=0 inside CI at N=51; need N≥387 |
+| Signal Generation | 6.5/10 | 6.5/10 | 6.5/10 | 6.5/10 | **6.8/10** | 8/10 | EOD-batch delivery bug fixed (post-close BUYs now delivered); §85-1 still pending |
+| Risk Management | 6.5/10 | 7.5/10 | 8.5/10 | 8.5/10 | **8.5/10** | 9/10 | Kelly uses global WR (not per-signal) |
+| ML Methodology | 3.5/10 | 7.5/10 | 8.2/10 | 8.4/10 | **8.4/10** | 8.5/10 | Live model experimental until N≥300 |
+| Friction & Execution | 4/10 | 7/10 | 7.2/10 | 7.2/10 | **7.2/10** | 8/10 | Variable spread by ticker not modeled |
+| Product & Security | 5/10 | 6.5/10 | 8.5/10 | 8.9/10 | **9.0/10** | 9/10 | Owner password; HTTPS; VAPID still needed |
+| Test Coverage | 7/10 | 8.5/10 | 9.3/10 | 9.5/10 | **9.6/10** | — | §73/§74/§69–§72 gates lack dedicated tests |
 
 ### Next Highest-Leverage Improvements
 

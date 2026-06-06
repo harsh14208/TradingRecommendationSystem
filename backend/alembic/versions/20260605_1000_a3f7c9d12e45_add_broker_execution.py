@@ -33,7 +33,7 @@ def upgrade() -> None:
         sa.Column("side", sa.String(10), nullable=False),
         sa.Column("status", sa.String(20), nullable=False, server_default="submitted"),
         sa.Column("error_msg", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.ForeignKeyConstraint(["signal_id"], ["signals.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
