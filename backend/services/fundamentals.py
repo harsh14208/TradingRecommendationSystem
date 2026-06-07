@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
 
 from services.market_data import _retry, _session
+from services.redis_cache import cache_get, cache_set
 
 _executor = ThreadPoolExecutor(max_workers=2)
 _fund_cache: dict[str, tuple[dict, float]] = {}
@@ -473,4 +474,13 @@ def _fetch_fundamentals(ticker: str) -> dict:
 
 
 async def get_fundamentals(ticker: str) -> dict:
-    return await asyncio.get_running_loop().run_in_executor(_executor, _fetch_fundamentals, ticker)
+    t = ticker.upper()
+    cache_key = f"fundamentals:{t}"
+    redis_cached = await cache_get(cache_key)
+    if redis_cached is not None:
+        return redis_cached
+
+    res = await asyncio.get_running_loop().run_in_executor(_executor, _fetch_fundamentals, t)
+    if res:
+        await cache_set(cache_key, res, ttl=86400)
+    return res

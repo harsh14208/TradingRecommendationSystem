@@ -60,13 +60,13 @@ function Logo({ size = 13 }) {
 function Nav({ go, page }) {
   return (
     <nav className="nav">
-      <a onClick={() => go("home")} style={{ cursor:"pointer", textDecoration:"none" }}><Logo/></a>
+      <a onClick={() => go("home")} style={{ cursor:"pointer", textDecoration:"none" }} role="button" tabIndex={0}><Logo/></a>
       <div className="nav-links">
-        <a onClick={() => go("home")}      className={page==="home"?"on":""}>Features</a>
-        <a onClick={() => go("track")}     className={page==="track"?"on":""}>Track record</a>
-        <a onClick={() => go("docs")}      className={page==="docs"?"on":""} style={{ cursor:"pointer" }}>Docs</a>
-        <a onClick={() => go("telegram")}  className={page==="telegram"?"on":""}>Telegram</a>
-        <a style={{ cursor:"pointer" }} onClick={() => { go("home"); setTimeout(() => document.getElementById("pricing")?.scrollIntoView({ behavior:"smooth" }), 80); }}>Pricing</a>
+        <a onClick={() => go("home")}      className={page==="home"?"on":""} role="button" tabIndex={0}>Features</a>
+        <a onClick={() => go("track")}     className={page==="track"?"on":""} role="button" tabIndex={0}>Track record</a>
+        <a onClick={() => go("docs")}      className={page==="docs"?"on":""} style={{ cursor:"pointer" }} role="button" tabIndex={0}>Docs</a>
+        <a onClick={() => go("telegram")}  className={page==="telegram"?"on":""} role="button" tabIndex={0}>Telegram</a>
+        <a style={{ cursor:"pointer" }} onClick={() => { go("home"); setTimeout(() => document.getElementById("pricing")?.scrollIntoView({ behavior:"smooth" }), 80); }} role="button" tabIndex={0}>Pricing</a>
       </div>
       <div className="nav-cta">
         <span className="nav-status">ENGINE LIVE · 164 TICKERS · 60s CYCLE</span>
@@ -212,7 +212,7 @@ function Flow() {
             <h4>{s.t}</h4>
             <p>{s.d}</p>
             {i < steps.length - 1 && (
-              <svg className="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+              <svg aria-hidden="true" className="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
             )}
           </div>
         ))}
@@ -372,22 +372,22 @@ function Footer({ go }) {
         </div>
         <div className="foot-col">
           <h5>Product</h5>
-          <a onClick={() => go("home")}>Features</a>
-          <a onClick={() => go("home")}>Pricing</a>
-          <a onClick={() => go("track")}>Track record</a>
-          <a onClick={() => go("changelog")}>Changelog</a>
+          <a onClick={() => go("home")} role="button" tabIndex={0}>Features</a>
+          <a onClick={() => go("home")} role="button" tabIndex={0}>Pricing</a>
+          <a onClick={() => go("track")} role="button" tabIndex={0}>Track record</a>
+          <a onClick={() => go("changelog")} role="button" tabIndex={0}>Changelog</a>
         </div>
         <div className="foot-col">
           <h5>Resources</h5>
-          <a onClick={() => go("docs")}>Documentation</a>
-          <a onClick={() => go("telegram")}>Telegram setup</a>
-          <a onClick={() => go("status")}>Status page</a>
+          <a onClick={() => go("docs")} role="button" tabIndex={0}>Documentation</a>
+          <a onClick={() => go("telegram")} role="button" tabIndex={0}>Telegram setup</a>
+          <a onClick={() => go("status")} role="button" tabIndex={0}>Status page</a>
         </div>
         <div className="foot-col">
           <h5>Legal</h5>
-          <a onClick={() => go("terms")}>Terms of service</a>
-          <a onClick={() => go("privacy")}>Privacy policy</a>
-          <a onClick={() => go("risk")}>Risk disclosure</a>
+          <a onClick={() => go("terms")} role="button" tabIndex={0}>Terms of service</a>
+          <a onClick={() => go("privacy")} role="button" tabIndex={0}>Privacy policy</a>
+          <a onClick={() => go("risk")} role="button" tabIndex={0}>Risk disclosure</a>
           <a href="/app">Open dashboard</a>
         </div>
       </footer>
@@ -463,11 +463,11 @@ function AuthPage({ kind, go }) {
         <div className="auth-divider"><span>or</span></div>
         <div className="auth-foot">
           {isSignup ? "Already have an account? " : "New here? "}
-          <a className="auth-link" onClick={() => go(isSignup ? "login" : "signup")}>{isSignup ? "Sign in" : "Start free"}</a>
+          <a className="auth-link" onClick={() => go(isSignup ? "login" : "signup")} role="button" tabIndex={0}>{isSignup ? "Sign in" : "Start free"}</a>
         </div>
         {isSignup && (
           <div className="auth-tos">
-            By continuing you agree to our <a onClick={() => go("terms")}>Terms</a>, <a onClick={() => go("privacy")}>Privacy</a> and <a onClick={() => go("risk")}>Risk Disclosure</a>.<br/>
+            By continuing you agree to our <a onClick={() => go("terms")} role="button" tabIndex={0}>Terms</a>, <a onClick={() => go("privacy")} role="button" tabIndex={0}>Privacy</a> and <a onClick={() => go("risk")} role="button" tabIndex={0}>Risk Disclosure</a>.<br/>
             ⚠️ Not financial advice · Educational tool only.
           </div>
         )}

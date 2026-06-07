@@ -304,15 +304,15 @@ function DCArtboardFrame({ sectionId, artboard, label, order, onRename, onReorde
     <div ref={ref} data-dc-slot={id} style={{ position:'relative', flexShrink:0 }}>
       <div className="dc-labelrow" style={{ position:'absolute', bottom:'100%', left:-4, marginBottom:4, color:DC.label }}>
         <div className="dc-grip" onPointerDown={onGripDown} title="Drag to reorder">
-          <svg width="9" height="13" viewBox="0 0 9 13" fill="currentColor"><circle cx="2" cy="2" r="1.1"/><circle cx="7" cy="2" r="1.1"/><circle cx="2" cy="6.5" r="1.1"/><circle cx="7" cy="6.5" r="1.1"/><circle cx="2" cy="11" r="1.1"/><circle cx="7" cy="11" r="1.1"/></svg>
+          <svg aria-hidden="true" width="9" height="13" viewBox="0 0 9 13" fill="currentColor"><circle cx="2" cy="2" r="1.1"/><circle cx="7" cy="2" r="1.1"/><circle cx="2" cy="6.5" r="1.1"/><circle cx="7" cy="6.5" r="1.1"/><circle cx="2" cy="11" r="1.1"/><circle cx="7" cy="11" r="1.1"/></svg>
         </div>
-        <div className="dc-labeltext" onClick={onFocus} title="Click to focus">
+        <div className="dc-labeltext" onClick={onFocus} title="Click to focus" role="button" tabIndex={0}>
           <DCEditable value={label} onChange={onRename} onClick={e => e.stopPropagation()}
             style={{ fontSize:15, fontWeight:500, color:DC.label, lineHeight:1 }}/>
         </div>
       </div>
       <button className="dc-expand" onClick={onFocus} onPointerDown={e => e.stopPropagation()} title="Focus">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M7 1h4v4M5 11H1V7M11 1L7.5 4.5M1 11l3.5-3.5"/></svg>
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M7 1h4v4M5 11H1V7M11 1L7.5 4.5M1 11l3.5-3.5"/></svg>
       </button>
       <div className="dc-card" style={{ borderRadius:2, boxShadow:'0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06)', overflow:'hidden', width, height, background:'#fff', ...style }}>
         {children || <div style={{ height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:'#bbb', fontSize:13 }}>{id}</div>}
@@ -365,18 +365,18 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
   const Arrow = ({ dir, onClick }) => (
     <button onClick={e => { e.stopPropagation(); onClick(); }}
       style={{ position:'absolute', top:'50%', [dir]:28, transform:'translateY(-50%)', border:'none', background:'rgba(255,255,255,.08)', color:'rgba(255,255,255,.9)', width:44, height:44, borderRadius:22, fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d={dir === 'left' ? 'M11 3L5 9l6 6' : 'M7 3l6 6-6 6'}/></svg>
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d={dir === 'left' ? 'M11 3L5 9l6 6' : 'M7 3l6 6-6 6'}/></svg>
     </button>
   );
   return ReactDOM.createPortal(
     <div onClick={() => ctx.setFocus(null)} onWheel={e => e.preventDefault()}
-      style={{ position:'fixed', inset:0, zIndex:100, background:'rgba(24,20,16,.6)', backdropFilter:'blur(14px)', fontFamily:DC.font, color:'#fff' }}>
-      <div onClick={e => e.stopPropagation()} style={{ position:'absolute', top:0, left:0, right:0, height:72, display:'flex', alignItems:'flex-start', padding:'16px 20px 0', gap:16 }}>
+      style={{ position:'fixed', inset:0, zIndex:100, background:'rgba(24,20,16,.6)', backdropFilter:'blur(14px)', fontFamily:DC.font, color:'#fff' }} role="button" tabIndex={0}>
+      <div onClick={e => e.stopPropagation()} style={{ position:'absolute', top:0, left:0, right:0, height:72, display:'flex', alignItems:'flex-start', padding:'16px 20px 0', gap:16 }} role="button" tabIndex={0}>
         <div style={{ position:'relative' }}>
           <button onClick={() => setDd(o => !o)} style={{ border:'none', background:'transparent', color:'#fff', cursor:'pointer', padding:'6px 8px', borderRadius:6, textAlign:'left', fontFamily:'inherit' }}>
             <span style={{ display:'flex', alignItems:'center', gap:8 }}>
               <span style={{ fontSize:18, fontWeight:600, letterSpacing:-0.3 }}>{meta.title}</span>
-              <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" style={{ opacity:.7 }}><path d="M2 4l3.5 3.5L9 4"/></svg>
+              <svg aria-hidden="true" width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" style={{ opacity:.7 }}><path d="M2 4l3.5 3.5L9 4"/></svg>
             </span>
             {meta.subtitle && <span style={{ display:'block', fontSize:13, opacity:.6, fontWeight:400, marginTop:2 }}>{meta.subtitle}</span>}
           </button>
@@ -395,19 +395,19 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
         <button onClick={() => ctx.setFocus(null)} style={{ border:'none', background:'transparent', color:'rgba(255,255,255,.7)', width:32, height:32, borderRadius:16, fontSize:20, cursor:'pointer', lineHeight:1 }}>×</button>
       </div>
       <div style={{ position:'absolute', top:64, bottom:56, left:100, right:100, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16 }}>
-        <div onClick={e => e.stopPropagation()} style={{ width: width * scale, height: height * scale, position:'relative' }}>
+        <div onClick={e => e.stopPropagation()} style={{ width: width * scale, height: height * scale, position:'relative' }} role="button" tabIndex={0}>
           <div style={{ width, height, transform:`scale(${scale})`, transformOrigin:'top left', background:'#fff', borderRadius:2, overflow:'hidden', boxShadow:'0 20px 80px rgba(0,0,0,.4)' }}>
             {children || <div style={{ height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:'#bbb' }}>{aid}</div>}
           </div>
         </div>
-        <div onClick={e => e.stopPropagation()} style={{ fontSize:14, fontWeight:500, opacity:.85, textAlign:'center' }}>
+        <div onClick={e => e.stopPropagation()} style={{ fontSize:14, fontWeight:500, opacity:.85, textAlign:'center' }} role="button" tabIndex={0}>
           {(sec.labels || {})[aid] ?? artboard.props.label}
           <span style={{ opacity:.5, marginLeft:10 }}>{idx + 1} / {peers.length}</span>
         </div>
       </div>
       <Arrow dir="left" onClick={() => go(-1)}/>
       <Arrow dir="right" onClick={() => go(1)}/>
-      <div onClick={e => e.stopPropagation()} style={{ position:'absolute', bottom:20, left:'50%', transform:'translateX(-50%)', display:'flex', gap:8 }}>
+      <div onClick={e => e.stopPropagation()} style={{ position:'absolute', bottom:20, left:'50%', transform:'translateX(-50%)', display:'flex', gap:8 }} role="button" tabIndex={0}>
         {peers.map((p, i) => (
           <button key={p} onClick={() => ctx.setFocus(`${sectionId}/${p}`)}
             style={{ border:'none', padding:0, cursor:'pointer', width:6, height:6, borderRadius:3, background: i === idx ? '#fff' : 'rgba(255,255,255,.3)' }}/>

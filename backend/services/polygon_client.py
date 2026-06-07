@@ -256,6 +256,10 @@ async def get_polygon_infos_batch(tickers: list[str], concurrency: int = 20) -> 
     return out
 
 
+_weekly_cache: dict[str, tuple[pd.DataFrame, float]] = {}
+_WEEKLY_TTL = 43200  # 12 hours
+
+
 async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame | None:
     """
     Fetch the last `weeks` weekly OHLCV bars from Polygon.io.
@@ -263,6 +267,12 @@ async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame 
     choppy markets that look bullish on daily but not on weekly timeframe.
     Returns DataFrame with columns Open/High/Low/Close/Volume, or None on error.
     """
+    t = ticker.upper()
+    now = time.monotonic()
+    cached, ts = _weekly_cache.get(t, (None, 0.0))
+    if cached is not None and now - ts < _WEEKLY_TTL:
+        return cached.copy()
+
     api_key = _get_api_key()
     if not api_key:
         return None
@@ -293,7 +303,9 @@ async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame 
                 df.loc[:, "Datetime"] = pd.to_datetime(df["t"], unit="ms", utc=True)
                 df.set_index("Datetime", inplace=True)
                 df.rename(columns={"o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"}, inplace=True)
-                return df[["Open", "High", "Low", "Close", "Volume"]].tail(weeks)
+                df_out = df[["Open", "High", "Low", "Close", "Volume"]].tail(weeks)
+                _weekly_cache[t] = (df_out, time.monotonic())
+                return df_out.copy()
     except Exception as e:
         log.warning(f"[polygon] weekly bars {ticker}: {e}")
         return None

@@ -71,7 +71,21 @@ async def verify_alpaca_connection(key: str, secret: str, live: bool) -> dict:
     return account
 
 
-async def check_portfolio_drawdown(user, key: str, secret: str, live: bool) -> bool:
+async def verify_ibkr_connection(key: str, secret: str, live: bool) -> dict:
+    """
+    Verify IBKR credentials by calling get_account.
+    """
+    from services import ibkr_rest
+
+    try:
+        account = await ibkr_rest.get_account(key, secret, live=live)
+    except Exception as e:
+        raise ValueError(f"Could not connect to IBKR: {e}") from e
+
+    return account
+
+
+async def check_portfolio_drawdown(user, key: str, secret: str, live: bool, broker: str = "alpaca") -> bool:
     """
     RISK-2: Portfolio drawdown circuit-breaker.
 
@@ -79,10 +93,13 @@ async def check_portfolio_drawdown(user, key: str, secret: str, live: bool) -> b
     Logs a WARNING and fires a Telegram admin alert on first breach.
     Returns False (allow execution) if below threshold or on any error.
     """
-    from services import alpaca_rest
+    if broker == "ibkr":
+        from services import ibkr_rest as broker_rest
+    else:
+        from services import alpaca_rest as broker_rest
 
     try:
-        account = await alpaca_rest.get_account(key, secret, live=live)
+        account = await broker_rest.get_account(key, secret, live=live)
         equity = float(account.get("equity") or 1.0)
         unreal_pl = float(account.get("unrealized_pl") or 0.0)
         if equity <= 0:
@@ -120,7 +137,7 @@ async def execute_signal_for_user(
 ) -> None:
     """
     Auto-execute one signal for a user that has auto_execute=True and valid
-    Alpaca credentials.
+    broker credentials.
 
     - Checks portfolio drawdown before executing (RISK-2).
     - Places a notional market order for `auto_execute_qty_dollars` (default $100).
@@ -142,15 +159,16 @@ async def execute_signal_for_user(
         return
 
     live = user.alpaca_account_type == "live"
+    broker_type = user.auto_execute_broker or "alpaca"
 
     # RISK-2: Portfolio drawdown circuit-breaker
-    if await check_portfolio_drawdown(user, key, secret, live):
+    if await check_portfolio_drawdown(user, key, secret, live, broker=broker_type):
         return
 
     base_notional = user.auto_execute_qty_dollars or 100.0
     scale = float(sig.get("positionSizeScale") or 1.0)
     notional = round(base_notional * scale, 2)
-    notional = max(notional, 1.0)  # Alpaca minimum
+    notional = max(notional, 1.0)  # minimum
 
     ticker = sig.get("ticker", "")
     action = sig.get("action", "")
@@ -159,12 +177,15 @@ async def execute_signal_for_user(
 
     side = "buy" if action == "BUY" else "sell"
 
-    from services import alpaca_rest
+    if broker_type == "ibkr":
+        from services import ibkr_rest as client_rest
+    else:
+        from services import alpaca_rest as client_rest
 
     order_record = BrokerOrder(
         signal_id=signal_id,
         user_id=user.id,
-        broker="alpaca",
+        broker=broker_type,
         account_type=user.alpaca_account_type or "paper",
         symbol=ticker,
         notional=notional,
@@ -179,7 +200,7 @@ async def execute_signal_for_user(
         entry_price = sig.get("entry") or sig.get("price")
 
         if stop_price and float(stop_price) > 0:
-            result = await alpaca_rest.submit_bracket_stop_order(
+            result = await client_rest.submit_bracket_stop_order(
                 key,
                 secret,
                 symbol=ticker,
@@ -191,26 +212,37 @@ async def execute_signal_for_user(
                 live=live,
             )
         else:
-            result = await alpaca_rest.place_notional_order(
-                key,
-                secret,
-                symbol=ticker,
-                notional=notional,
-                side=side,
-                live=live,
-            )
+            if broker_type == "ibkr":
+                result = await client_rest.place_notional_order(
+                    key,
+                    secret,
+                    symbol=ticker,
+                    notional=notional,
+                    side=side,
+                    live=live,
+                    entry_price=float(entry_price) if entry_price else None,
+                )
+            else:
+                result = await client_rest.place_notional_order(
+                    key,
+                    secret,
+                    symbol=ticker,
+                    notional=notional,
+                    side=side,
+                    live=live,
+                )
 
-        alpaca_id = result.get("id", "")
-        order_record.alpaca_order_id = alpaca_id
+        order_id = result.get("id") or result.get("orderId") or result.get("alpaca_order_id") or ""
+        order_record.alpaca_order_id = order_id
         order_record.status = result.get("status", "submitted")
         log.info(
-            "broker_svc: user=%d %s %s $%.2f stop=%.2f → alpaca_id=%s status=%s",
+            "broker_svc: user=%d %s %s $%.2f stop=%.2f → order_id=%s status=%s",
             user.id,
             side.upper(),
             ticker,
             notional,
             float(stop_price) if stop_price else 0.0,
-            alpaca_id,
+            order_id,
             order_record.status,
         )
     except Exception as e:

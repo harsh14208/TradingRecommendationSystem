@@ -16,7 +16,7 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
     return prev.length >= 1 ? [...prev, conf] : null;
   }, [allSignals, s.ticker, s.action, s.id, conf]);
   return (
-    <div className={`signal${active?" active":""}${expanded?" expanded":""}${suppressed?" suppressed":""}`} onClick={onToggle}>
+    <div className={`signal${active?" active":""}${expanded?" expanded":""}${suppressed?" suppressed":""}`} onClick={onToggle} role="button" tabIndex={0}>
       <div className="signal-row-inner">
         <div className={`signal-dot ${s.action}`}/>
         <div className="signal-body">
@@ -116,7 +116,7 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
             const d = miniConf.map((v,i) => `${i===0?"M":"L"}${xs(i).toFixed(1)} ${ys(v).toFixed(1)}`).join(" ");
             const rising = miniConf[miniConf.length-1] >= miniConf[0];
             return (
-              <svg viewBox={`0 0 ${W} ${H}`} style={{ width:W, height:H, flexShrink:0 }}
+              <svg aria-hidden="true" viewBox={`0 0 ${W} ${H}`} style={{ width:W, height:H, flexShrink:0 }}
                 title={`Confidence trend: ${miniConf.map(c=>c.toFixed(0)).join(" → ")}%`}>
                 <path d={d} stroke={rising?"var(--up)":"var(--down)"} strokeWidth="1.2" fill="none" strokeLinecap="round"/>
               </svg>
@@ -126,13 +126,13 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
             {fmtETTime(s.ts).replace(" ET", "")}
           </span>
           <span className="chev">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
         </div>
       </div>
 
       {expanded && (
-        <div className="signal-expand" onClick={e => e.stopPropagation()}>
+        <div className="signal-expand" onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
           <div className="se-row">
             <div>
               <div className="se-price mono">${fmt(s.price)}</div>
@@ -194,8 +194,8 @@ function TelegramPane({ log, online, onOpenAccount }) {
         </div>
       </div>
       <div className="del-tabs">
-        <div className={`del-tab ${view==="log"?"active":""}`} onClick={() => setView("log")}>Send log</div>
-        <div className={`del-tab ${view==="info"?"active":""}`} onClick={() => setView("info")}>Setup</div>
+        <div className={`del-tab ${view==="log"?"active":""}`} onClick={() => setView("log")} role="button" tabIndex={0}>Send log</div>
+        <div className={`del-tab ${view==="info"?"active":""}`} onClick={() => setView("info")} role="button" tabIndex={0}>Setup</div>
       </div>
 
       {view === "log" ? (
@@ -232,7 +232,7 @@ function TelegramPane({ log, online, onOpenAccount }) {
             </ul>
           </div>
           <a href="#" onClick={e => { e.preventDefault(); onOpenAccount?.(); }}
-            style={{ fontSize:12, color:"var(--accent)", cursor:"pointer" }}>
+            style={{ fontSize:12, color:"var(--accent)", cursor:"pointer" }} role="button" tabIndex={0}>
             Open Account Settings →
           </a>
         </div>

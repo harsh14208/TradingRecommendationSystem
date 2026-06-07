@@ -20,7 +20,7 @@ function SourcesView({ open, onClose, sources, toggle }) {
                 <h3>{s.name}</h3>
                 <div className="desc">{s.description}</div>
               </div>
-              <div className={`toggle ${s.is_on?"on":""}`} onClick={() => toggle(s.id)}/>
+              <div className={`toggle ${s.is_on?"on":""}`} onClick={() => toggle(s.id)} role="button" tabIndex={0}/>
             </div>
             <Sparkline ticker={s.id} up={s.is_on}/>
             <div className="stats">
@@ -103,7 +103,7 @@ function RulesView({ open, onClose, aggr, style, days, startTime, endTime, setTw
         <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.14em", color:"var(--text-faint)", fontFamily:"var(--font-mono)", marginBottom:10 }}>Trading style</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
           {["intraday","swing","position"].map(s => (
-            <div key={s} className="src-card" onClick={() => setTweak({ style:s })} style={{ cursor:"pointer", borderColor:style===s?"var(--accent)":"var(--line)", background:style===s?"rgba(16,185,129,0.08)":"var(--bg-card)" }}>
+            <div key={s} className="src-card" onClick={() => setTweak({ style:s })} style={{ cursor:"pointer", borderColor:style===s?"var(--accent)":"var(--line)", background:style===s?"rgba(16,185,129,0.08)":"var(--bg-card)" }} role="button" tabIndex={0}>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                 <span className={`style-badge ${s}`}>{s}</span>
                 {style === s && <span style={{ marginLeft:"auto", fontSize:10, color:"var(--accent)", fontFamily:"var(--font-mono)" }}>✓ ACTIVE</span>}
@@ -169,7 +169,7 @@ function RulesView({ open, onClose, aggr, style, days, startTime, endTime, setTw
         </div>
 
         <div className="src-card" style={{ gap:6, cursor:"pointer" }}
-          onClick={() => setBlockEarnings(v => !v)}>
+          onClick={() => setBlockEarnings(v => !v)} role="button" tabIndex={0}>
           <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>Block Pre-Earnings</div>
           <div className="mono" style={{ fontSize:20, fontWeight:600, color: blockEarnings ? "var(--accent)" : "var(--text-faint)" }}>
             {blockEarnings ? "ON" : "OFF"}
@@ -963,7 +963,7 @@ function CalibrationChart({ data }) {
 
   return (
     <div style={{ overflowX:"auto" }}>
-      <svg width={W} height={H} style={{ background:"var(--bg-2)", borderRadius:8, border:"1px solid var(--line)", display:"block" }}>
+      <svg aria-hidden="true" width={W} height={H} style={{ background:"var(--bg-2)", borderRadius:8, border:"1px solid var(--line)", display:"block" }}>
         {[40,50,60,70,80,90,100].map(v => (
           <g key={v}>
             <line x1={PAD} y1={yPct(v)} x2={W-PAD} y2={yPct(v)} stroke="var(--line)" strokeWidth={0.5}/>

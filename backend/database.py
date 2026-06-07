@@ -122,6 +122,10 @@ async def init_db():
             ("signals", "ALTER TABLE signals ADD COLUMN expires_at DATETIME"),
             # performance_snapshots table
             ("performance_snapshots", "ALTER TABLE performance_snapshots ADD COLUMN alpha REAL"),
+            # indexes for created_at
+            ("signals", "CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at)"),
+            ("send_log", "CREATE INDEX IF NOT EXISTS idx_send_log_created_at ON send_log(created_at)"),
+            ("broker_orders", "CREATE INDEX IF NOT EXISTS idx_broker_orders_created_at ON broker_orders(created_at)"),
         ]
         for _tbl, sql in _migrations:
             try:

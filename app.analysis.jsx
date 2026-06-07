@@ -415,7 +415,7 @@ function SimulatedReturnsPanel({ signal, onClose }) {
           <div style={{ fontSize:9, fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--text-faint)", marginBottom:6 }}>
             Portfolio value across {simTrades} signals
           </div>
-          <svg viewBox={`0 0 ${CW} ${CH}`} style={{ width:"100%", height:90, display:"block" }} preserveAspectRatio="none">
+          <svg aria-hidden="true" viewBox={`0 0 ${CW} ${CH}`} style={{ width:"100%", height:90, display:"block" }} preserveAspectRatio="none">
             <defs>
               <linearGradient id="sim-eq-grad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={lineColor} stopOpacity="0.3"/>
@@ -719,7 +719,7 @@ function MarketOverviewView({ open, onClose, online }) {
     const segColors = ["#ef4444", "#f97316", "#f59e0b", "#84cc16", "#10b981"];
     return (
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
-        <svg viewBox="0 0 200 110" width="160" height="88" style={{ overflow:"visible" }}>
+        <svg aria-hidden="true" viewBox="0 0 200 110" width="160" height="88" style={{ overflow:"visible" }}>
           {segColors.map((c, i) => (
             <path key={i} d={arc(pts[i], pts[i+1])} fill="none" stroke={c} strokeWidth="14" strokeLinecap="butt" opacity="0.75"/>
           ))}
@@ -1295,7 +1295,7 @@ function SectorView({ open, onClose, online }) {
                       borderRadius:8, padding:"12px 14px", cursor:"pointer", position:"relative",
                       transition:"opacity 0.12s, transform 0.12s" }}
                     onMouseEnter={e => { e.currentTarget.style.opacity="0.85"; e.currentTarget.style.transform="scale(1.02)"; }}
-                    onMouseLeave={e => { e.currentTarget.style.opacity="1"; e.currentTarget.style.transform="scale(1)"; }}>
+                    onMouseLeave={e => { e.currentTarget.style.opacity="1"; e.currentTarget.style.transform="scale(1)"; }} role="button" tabIndex={0}>
                     <div style={{ fontFamily:"var(--font-mono)", fontSize:12, fontWeight:700, color:"var(--text)" }}>{s.etf}</div>
                     <div style={{ fontSize:10, color:"var(--text-faint)", marginTop:2 }}>{SECTOR_NAMES[s.etf] || s.etf}</div>
                     <div style={{ fontFamily:"var(--font-mono)", fontSize:18, fontWeight:700, color:tileTextColor(v), marginTop:6, lineHeight:1 }}>
@@ -1735,8 +1735,8 @@ function DemoTour({ open, onClose }) {
   useEffect(() => { if (open) setStep(0); }, [open]);
   if (!open) return null;
   return (
-    <div className="hk-backdrop" onClick={onClose}>
-      <div className="tour-modal" onClick={e => e.stopPropagation()}>
+    <div className="hk-backdrop" onClick={onClose} role="button" tabIndex={0}>
+      <div className="tour-modal" onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
         <div className="tour-progress">
           {steps.map((_, i) => <span key={i} className={`tp-dot ${i === step ? "on" : i < step ? "done" : ""}`}/>)}
         </div>
@@ -1767,8 +1767,8 @@ function HotkeyHelp({ open, onClose, onTour }) {
   ];
   if (!open) return null;
   return (
-    <div className="hk-backdrop" onClick={onClose}>
-      <div className="hk-modal" onClick={e => e.stopPropagation()}>
+    <div className="hk-backdrop" onClick={onClose} role="button" tabIndex={0}>
+      <div className="hk-modal" onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
         <div className="hk-head">
           <span className="crumb">SHORTCUTS</span>
           <h3>Keyboard cheat sheet</h3>
@@ -1826,7 +1826,7 @@ function ConfidenceTrend({ ticker, current }) {
   return (
     <div className="ct-wrap" title={`Confidence trend · ${label} · ${trend === "up" ? "rising" : trend === "down" ? "fading" : "steady"}`}>
       <span className="ct-lbl mono">{history ? `${pts.length}` : "30"} SCANS</span>
-      <svg viewBox={`0 0 ${W} ${H}`} className="ct-svg" preserveAspectRatio="none">
+      <svg aria-hidden="true" viewBox={`0 0 ${W} ${H}`} className="ct-svg" preserveAspectRatio="none">
         <path d={path} fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         <circle cx={W} cy={H - ((last - min) / range) * H} r="2.5" fill="var(--accent)"/>
       </svg>

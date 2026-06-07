@@ -50,7 +50,7 @@
 ### §59–§83 Research — Remaining
 
 - [ ] §62 VRP per-stock — ⏳ needs per-stock IV history (Polygon Options upgrade)
-- [ ] §75 Active share buyback window — ⏳ EDGAR 8-K parsing complexity
+- [x] §75 Active share buyback window — ✅ 2026-06-06 (RD-2). Parsing EDGAR 8-K filings for active repurchase announcements. Lives in services/edgar.py.
 - [x] §79 Q1 rebalancing — ✅ 2026-06-05 (RD-3). +3pp in Jan–Mar when sector ETF returned <−5% prior year. Lives in `_assemble_signal()` in `signal_engine.py`.
 - [ ] §84 Survivorship bias correction — ⏳ needs Norgate/Sharadar point-in-time data (~$20–33/mo)
 
@@ -237,7 +237,7 @@
 
 #### 🆓 Free
 
-- [ ] **RD-2.** §75 Buyback window — Parse EDGAR 8-K filings (free, public) for active repurchase announcements. Active buyback + oversold MR = institutional support for price recovery → +5pp.
+- [x] **RD-2.** §75 Buyback window — ✅ 2026-06-06. Parse EDGAR 8-K filings (free, public) for active repurchase announcements. Active buyback + oversold MR = institutional support for price recovery → +5pp.
 - [x] **RD-3.** §79 Q1 rebalancing gate — ✅ 2026-06-05. Added to `signal_engine.py` `_assemble_signal()`. In Jan–Mar, fetches prior-year sector ETF return via `get_ohlcv_cached`; if sector returned <−5% last year, adds +3pp (institutional rebalancing flow).
 - [x] **RD-4.** Regime decomposition of IS stats — ✅ 2026-06-05. `--regime-split` flag added to `backtest_technicals.py`. Tags each IS trade with VIX regime at entry (calm/elevated/stress), prints WR/AvgRet/Sharpe/MaxDD per regime.
 
@@ -252,7 +252,7 @@
 #### 🆓 Free (all items)
 
 - [x] **PROD-1.** User signal performance dashboard — ✅ 2026-06-05. `routers/me.py`: `GET /api/me/performance` returns per-user delivery history + stats (win rate, avg return, Sharpe). `MyPerformanceView` in `app.views.jsx`: stats row + signal table with exit badges. Nav item "My Performance" added to app sidebar. 6 tests in `test_me.py`.
-- [ ] **PROD-2.** Multi-broker support (IBKR) — Interactive Brokers as second broker option (larger Pro user base). `routers/broker.py`: add `broker_type` field. `services/ibkr_rest.py`: IBKR Client Portal API (no OAuth needed, API key only). Share `execute_signal_for_user()` interface.
+- [x] **PROD-2.** Multi-broker support (IBKR) — ✅ 2026-06-06. Interactive Brokers Client Portal REST API integrated. Lives in services/ibkr_rest.py.
 - [x] **PROD-3.** Signal notification preferences — ✅ 2026-06-05. `GET/PUT /api/me/notification-prefs` added to `routers/me.py`. Stores per-user prefs (telegram/push/email toggles, min_conf, sector filter, score_min, actions) in `AppSettings` JSON. No schema migration needed.
 - [x] **PROD-4.** Admin analytics dashboard — ✅ 2026-06-05. `GET /api/admin/analytics-summary` returns daily/weekly signal volume, delivery rate, tier breakdown, live WR + Wilson CI, MRR estimate, Brier score.
 
@@ -285,7 +285,7 @@
 ### ⏳ Deferred (needs paid data or infrastructure)
 
 - [ ] **A9. §62 VRP per-stock** — Needs per-stock 52-week IV history. Revisit if Polygon Options tier upgrades.
-- [ ] **A11. §75 Buyback window** — Requires EDGAR 8-K parsing for repurchase announcements.
+- [x] **A11. §75 Buyback window** — ✅ Done 2026-06-06.
 - [ ] **A12. §79 Q1 rebalancing gate** — Needs prior-year sector ETF return stored at Dec-31.
 - [ ] **A13. §84 Survivorship bias correction** — Purchase EODHD (~$20/mo) or Norgate ($33/mo) for delisted tickers. Expected: IS WR drops 2–4pp, Sharpe −0.02 to −0.05 (makes backtest honest).
 - [ ] **A14. §83 cross-signal correlation** — Already implemented. Needs live validation: track `avg_corr` at entry for 200 signals and confirm sized-down entries don't underperform.

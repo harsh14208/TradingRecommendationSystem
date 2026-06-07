@@ -4,6 +4,7 @@ Uses the bulk endpoint and filters by ticker — the per-ticker endpoint returns
 Bulk data is cached 4 hours; per-ticker results are cached 24 hours.
 """
 
+import asyncio
 import logging
 import ssl
 import time
@@ -17,6 +18,7 @@ import certifi
 _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 _ticker_cache: dict[str, tuple[dict, float]] = {}
 _bulk_cache: dict = {"data": None, "ts": 0.0}
+_bulk_lock = asyncio.Lock()
 
 TICKER_TTL = 86400  # 24h per ticker
 BULK_TTL = 14400  # 4h for the bulk fetch
@@ -29,20 +31,24 @@ async def _fetch_bulk() -> list:
     now = time.time()
     if _bulk_cache["data"] is not None and now - _bulk_cache["ts"] < BULK_TTL:
         return _bulk_cache["data"]
-    try:
-        connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
-        async with aiohttp.ClientSession(connector=connector, headers=_HDRS) as s:
-            async with s.get(_URL, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                if r.status != 200:
-                    return _bulk_cache["data"] or []
-                data = await r.json(content_type=None)
-        if isinstance(data, list):
-            _bulk_cache["data"] = data
-            _bulk_cache["ts"] = now
-            return data
-    except Exception as e:
-        log.warning(f"[congress] bulk fetch: {e}")
-    return _bulk_cache["data"] or []
+    async with _bulk_lock:
+        now = time.time()
+        if _bulk_cache["data"] is not None and now - _bulk_cache["ts"] < BULK_TTL:
+            return _bulk_cache["data"]
+        try:
+            connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
+            async with aiohttp.ClientSession(connector=connector, headers=_HDRS) as s:
+                async with s.get(_URL, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                    if r.status != 200:
+                        return _bulk_cache["data"] or []
+                    data = await r.json(content_type=None)
+            if isinstance(data, list):
+                _bulk_cache["data"] = data
+                _bulk_cache["ts"] = now
+                return data
+        except Exception as e:
+            log.warning(f"[congress] bulk fetch: {e}")
+        return _bulk_cache["data"] or []
 
 
 async def get_congress_signal(ticker: str) -> dict:

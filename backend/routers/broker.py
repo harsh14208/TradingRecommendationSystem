@@ -26,7 +26,7 @@ log = logging.getLogger("broker_router")
 router = APIRouter(prefix="/api/me/broker", tags=["broker"])
 
 _VALID_ACCOUNT_TYPES = frozenset({"paper", "live"})
-_VALID_BROKERS = frozenset({"alpaca"})
+_VALID_BROKERS = frozenset({"alpaca", "ibkr"})
 
 
 def _require_pro(user: User) -> None:
@@ -44,7 +44,7 @@ class BrokerConnectIn(BaseModel):
     broker: str = "alpaca"
     account_type: str  # "paper" | "live"
     api_key: str
-    api_secret: str
+    api_secret: str = ""
 
     @field_validator("broker")
     @classmethod
@@ -60,11 +60,16 @@ class BrokerConnectIn(BaseModel):
             raise ValueError(f"account_type must be one of {sorted(_VALID_ACCOUNT_TYPES)}")
         return v
 
-    @field_validator("api_key", "api_secret")
+    @field_validator("api_key")
     @classmethod
-    def _non_empty(cls, v: str) -> str:
+    def _api_key_non_empty(cls, v: str) -> str:
         if not v.strip():
-            raise ValueError("must not be empty")
+            raise ValueError("api_key must not be empty")
+        return v.strip()
+
+    @field_validator("api_secret")
+    @classmethod
+    def _api_secret_non_empty(cls, v: str) -> str:
         return v.strip()
 
 
@@ -96,10 +101,10 @@ async def broker_status(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return broker connection status and Alpaca account summary if connected."""
+    """Return broker connection status and account summary if connected."""
     _require_pro(user)
 
-    if not user.alpaca_key_enc or not user.alpaca_secret_enc:
+    if not user.alpaca_key_enc:
         return {
             "connected": False,
             "broker": user.auto_execute_broker,
@@ -109,20 +114,29 @@ async def broker_status(
             "qty_dollars": user.auto_execute_qty_dollars or 100.0,
         }
 
-    from services.broker_svc import decrypt_credential, verify_alpaca_connection
+    from services.broker_svc import decrypt_credential
 
     key = decrypt_credential(user.alpaca_key_enc)
-    secret = decrypt_credential(user.alpaca_secret_enc)
+    secret = decrypt_credential(user.alpaca_secret_enc) if user.alpaca_secret_enc else ""
     live = user.alpaca_account_type == "live"
+    broker_type = user.auto_execute_broker or "alpaca"
 
-    if not key or not secret:
+    if not key:
         return {"connected": False, "error": "Credential decryption failed — please reconnect"}
 
     try:
-        account = await verify_alpaca_connection(key, secret, live)
+        if broker_type == "ibkr":
+            from services.broker_svc import verify_ibkr_connection
+
+            account = await verify_ibkr_connection(key, secret, live)
+        else:
+            from services.broker_svc import verify_alpaca_connection
+
+            account = await verify_alpaca_connection(key, secret, live)
+
         return {
             "connected": True,
-            "broker": user.auto_execute_broker or "alpaca",
+            "broker": broker_type,
             "account_type": user.alpaca_account_type,
             "auto_execute": user.auto_execute,
             "min_conf": user.auto_execute_min_conf or 75.0,
@@ -146,30 +160,37 @@ async def broker_connect(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Verify and save Alpaca API credentials.
-
-    Credentials are verified by calling /v2/account before being encrypted
-    and stored. Returns the Alpaca account summary on success.
+    Verify and save broker API credentials.
     """
     _require_pro(user)
 
-    from services.broker_svc import encrypt_credential, verify_alpaca_connection
+    if body.broker == "alpaca" and not body.api_secret:
+        raise HTTPException(status_code=422, detail="api_secret is required for Alpaca")
+
+    from services.broker_svc import encrypt_credential
 
     live = body.account_type == "live"
     try:
-        account = await verify_alpaca_connection(body.api_key, body.api_secret, live)
+        if body.broker == "ibkr":
+            from services.broker_svc import verify_ibkr_connection
+
+            account = await verify_ibkr_connection(body.api_key, body.api_secret, live)
+        else:
+            from services.broker_svc import verify_alpaca_connection
+
+            account = await verify_alpaca_connection(body.api_key, body.api_secret, live)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
     merged = await db.merge(user)
     merged.alpaca_key_enc = encrypt_credential(body.api_key)
-    merged.alpaca_secret_enc = encrypt_credential(body.api_secret)
+    merged.alpaca_secret_enc = encrypt_credential(body.api_secret) if body.api_secret else None
     merged.alpaca_account_type = body.account_type
     merged.auto_execute_broker = body.broker
     await db.commit()
     await db.refresh(merged)
 
-    log.info("broker_connect: user=%d connected alpaca/%s", user.id, body.account_type)
+    log.info("broker_connect: user=%d connected %s/%s", user.id, body.broker, body.account_type)
 
     return {
         "connected": True,
@@ -238,7 +259,7 @@ async def rotate_alpaca_credentials(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    SEC-4: Rotate Alpaca API credentials without disconnecting.
+    SEC-4: Rotate broker API credentials without disconnecting.
 
     New credentials are verified before saving; old credentials are invalidated
     immediately on success. Use this instead of disconnect+connect when rotating
@@ -249,21 +270,32 @@ async def rotate_alpaca_credentials(
     if not user.alpaca_key_enc:
         raise HTTPException(status_code=422, detail="No existing broker connection — use /connect instead")
 
-    from services.broker_svc import encrypt_credential, verify_alpaca_connection
+    if body.broker == "alpaca" and not body.api_secret:
+        raise HTTPException(status_code=422, detail="api_secret is required for Alpaca")
+
+    from services.broker_svc import encrypt_credential
 
     live = body.account_type == "live"
     try:
-        account = await verify_alpaca_connection(body.api_key, body.api_secret, live)
+        if body.broker == "ibkr":
+            from services.broker_svc import verify_ibkr_connection
+
+            account = await verify_ibkr_connection(body.api_key, body.api_secret, live)
+        else:
+            from services.broker_svc import verify_alpaca_connection
+
+            account = await verify_alpaca_connection(body.api_key, body.api_secret, live)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
     merged = await db.merge(user)
     merged.alpaca_key_enc = encrypt_credential(body.api_key)
-    merged.alpaca_secret_enc = encrypt_credential(body.api_secret)
+    merged.alpaca_secret_enc = encrypt_credential(body.api_secret) if body.api_secret else None
     merged.alpaca_account_type = body.account_type
+    merged.auto_execute_broker = body.broker
     await db.commit()
 
-    log.info("SEC-4: Alpaca credentials rotated for user=%d broker=%s/%s", user.id, body.broker, body.account_type)
+    log.info("SEC-4: Credentials rotated for user=%d broker=%s/%s", user.id, body.broker, body.account_type)
     return {
         "rotated": True,
         "broker": body.broker,

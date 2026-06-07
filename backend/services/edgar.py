@@ -4,12 +4,15 @@ Uses EDGAR's free public JSON API — no API key required.
 Required by EDGAR ToS: always send a descriptive User-Agent.
 """
 
+import asyncio
 import logging
 import ssl
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import Optional
+
+from services.redis_cache import cache_get, cache_set
 
 log = logging.getLogger("signal.trade.edgar")
 
@@ -59,26 +62,32 @@ _activity_cache: dict[str, tuple[dict, float]] = {}
 CACHE_TTL = 3600  # 1 hour
 
 
+_cik_map_lock = asyncio.Lock()
+
+
 async def _ensure_cik_map() -> None:
     """Lazy-load the full ticker→CIK map from EDGAR (one 3 MB download, cached forever)."""
     global _cik_map_ts
     if _cik_map_ts > 0:
         return
-    try:
-        connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
-        async with aiohttp.ClientSession(connector=connector) as s:
-            async with s.get(
-                "https://www.sec.gov/files/company_tickers.json",
-                headers=HEADERS,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as r:
-                if r.status == 200:
-                    data = await r.json(content_type=None)
-                    for entry in data.values():
-                        _cik_map[entry["ticker"]] = str(entry["cik_str"]).zfill(10)
-                    _cik_map_ts = time.time()
-    except Exception as e:
-        log.warning(f"[edgar] tickers.json fetch failed: {e}")
+    async with _cik_map_lock:
+        if _cik_map_ts > 0:
+            return
+        try:
+            connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
+            async with aiohttp.ClientSession(connector=connector) as s:
+                async with s.get(
+                    "https://www.sec.gov/files/company_tickers.json",
+                    headers=HEADERS,
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        for entry in data.values():
+                            _cik_map[entry["ticker"]] = str(entry["cik_str"]).zfill(10)
+                        _cik_map_ts = time.time()
+        except Exception as e:
+            log.warning(f"[edgar] tickers.json fetch failed: {e}")
 
 
 async def _get_cik(ticker: str) -> Optional[str]:
@@ -130,11 +139,17 @@ def _parse_form4(xml_text: str) -> tuple[int, int, float, float]:
 
 
 async def get_insider_activity(ticker: str, days: int = 30) -> Optional[dict]:
-    cached = _activity_cache.get(ticker)
+    ticker_upper = ticker.upper()
+    cache_key = f"edgar:insider_activity:{ticker_upper}:{days}"
+    redis_cached = await cache_get(cache_key)
+    if redis_cached is not None:
+        return redis_cached
+
+    cached = _activity_cache.get(ticker_upper)
     if cached and time.time() - cached[1] < CACHE_TTL:
         return cached[0]
 
-    cik = await _get_cik(ticker)
+    cik = await _get_cik(ticker_upper)
     if not cik:
         return None
 
@@ -182,7 +197,8 @@ async def get_insider_activity(ticker: str, days: int = 30) -> Optional[dict]:
                     continue
 
             if not form4s:
-                _activity_cache[ticker] = (empty, time.time())
+                await cache_set(cache_key, empty, ttl=3600)
+                _activity_cache[ticker_upper] = (empty, time.time())
                 return empty
 
             # ── Parse up to 5 most recent Form 4 XML docs ──────────────
@@ -223,11 +239,12 @@ async def get_insider_activity(ticker: str, days: int = 30) -> Optional[dict]:
                 "filings": len(form4s),
                 "unique_buyers": len(_buyer_accs),
             }
-            _activity_cache[ticker] = (result, time.time())
+            await cache_set(cache_key, result, ttl=3600)
+            _activity_cache[ticker_upper] = (result, time.time())
             return result
 
     except Exception as e:
-        log.warning(f"[edgar] {ticker}: {e}")
+        log.warning(f"[edgar] {ticker_upper}: {e}")
         return None
 
 
@@ -444,3 +461,101 @@ async def get_mda_delta(ticker: str) -> dict:
         log.warning(f"[edgar mda_delta] {ticker}: {e}")
         _mda_cache[ticker] = ({}, time.time())
         return {}
+
+
+_buyback_cache: dict[str, tuple[bool, float]] = {}
+_BUYBACK_CACHE_TTL = 3600  # 1 hour
+
+
+async def has_active_buyback(ticker: str, days: int = 90) -> bool:
+    """
+    Check if the company has filed an 8-K disclosing a share buyback / repurchase
+    program within the last `days` (default 90).
+    """
+    ticker_upper = ticker.upper()
+    cached = _buyback_cache.get(ticker_upper)
+    if cached and time.time() - cached[1] < _BUYBACK_CACHE_TTL:
+        return cached[0]
+
+    cik = await _get_cik(ticker_upper)
+    if not cik:
+        _buyback_cache[ticker_upper] = (False, time.time())
+        return False
+
+    try:
+        connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+            async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status != 200:
+                    _buyback_cache[ticker_upper] = (False, time.time())
+                    return False
+                subs = await r.json(content_type=None)
+
+            recent = subs.get("filings", {}).get("recent", {})
+            forms = recent.get("form", [])
+            dates = recent.get("filingDate", [])
+            accessions = recent.get("accessionNumber", [])
+            pri_docs = recent.get("primaryDocument", [])
+            items_list = recent.get("items", [])
+
+            cutoff = datetime.now() - timedelta(days=days)
+            recent_8ks = []
+            for i, form in enumerate(forms):
+                if form != "8-K":
+                    continue
+                try:
+                    filing_date = datetime.strptime(dates[i], "%Y-%m-%d")
+                    if filing_date >= cutoff:
+                        items_str = str(items_list[i]) if i < len(items_list) else ""
+                        recent_8ks.append(
+                            {
+                                "acc": accessions[i].replace("-", ""),
+                                "doc": pri_docs[i],
+                                "items": items_str,
+                            }
+                        )
+                except (ValueError, IndexError):
+                    continue
+
+            if not recent_8ks:
+                _buyback_cache[ticker_upper] = (False, time.time())
+                return False
+
+            buyback_keywords = [
+                "share repurchase",
+                "stock repurchase",
+                "share buyback",
+                "stock buyback",
+                "repurchase program",
+                "buyback program",
+                "repurchase of up to",
+                "buyback of up to",
+            ]
+
+            for filing in recent_8ks[:5]:
+                if "8.01" not in filing["items"] and "7.01" not in filing["items"] and "1.01" not in filing["items"]:
+                    continue
+
+                cik_int = int(cik)
+                doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{filing['acc']}/{filing['doc']}"
+                try:
+                    async with session.get(doc_url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                        if r.status != 200:
+                            continue
+                        html_text = (await r.text()).lower()
+                        if any(kw in html_text for kw in buyback_keywords):
+                            log.info(
+                                f"[edgar] Found active buyback announcement in 8-K for {ticker_upper} filed on {filing['acc']}"
+                            )
+                            _buyback_cache[ticker_upper] = (True, time.time())
+                            return True
+                except Exception as e:
+                    log.debug(f"[edgar] failed to parse 8-K doc for {ticker_upper}: {e}")
+                    continue
+
+    except Exception as e:
+        log.warning(f"[edgar] buyback check failed for {ticker_upper}: {e}")
+
+    _buyback_cache[ticker_upper] = (False, time.time())
+    return False

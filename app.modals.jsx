@@ -224,8 +224,8 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   const inp = { background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:6, padding:"8px 12px", fontSize:12, color:"var(--text)", outline:"none", fontFamily:"var(--font-mono)", width:"100%", boxSizing:"border-box" };
 
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9998, background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }} onClick={onClose}>
-      <div className="account-drawer" style={{ width:"min(380px, 92vw)", height:"100vh", background:"var(--bg-1)", borderLeft:"1px solid var(--line)", padding:"24px 28px", overflowY:"auto", display:"flex", flexDirection:"column", gap:0 }} onClick={e => e.stopPropagation()}>
+    <div style={{ position:"fixed", inset:0, zIndex:9998, background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }} onClick={onClose} role="button" tabIndex={0}>
+      <div className="account-drawer" style={{ width:"min(380px, 92vw)", height:"100vh", background:"var(--bg-1)", borderLeft:"1px solid var(--line)", padding:"24px 28px", overflowY:"auto", display:"flex", flexDirection:"column", gap:0 }} onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:24 }}>
           <div style={{ fontWeight:700, fontSize:16 }}>Account</div>
           <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--text-faint)", fontSize:20 }}>×</button>
@@ -718,8 +718,8 @@ function PriceAlertModal({ open, onClose, ticker, currentPrice }) {
   };
 
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,0.64)", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={onClose}>
-      <div style={{ width:"100%", maxWidth:380, background:"var(--bg-1)", border:"1px solid var(--line)", borderRadius:10, padding:"22px 24px", boxShadow:"0 20px 70px rgba(0,0,0,0.45)" }} onClick={e => e.stopPropagation()}>
+    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,0.64)", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={onClose} role="button" tabIndex={0}>
+      <div style={{ width:"100%", maxWidth:380, background:"var(--bg-1)", border:"1px solid var(--line)", borderRadius:10, padding:"22px 24px", boxShadow:"0 20px 70px rgba(0,0,0,0.45)" }} onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:18 }}>
           <div style={{ width:34, height:34, borderRadius:8, background:"var(--bg-2)", display:"grid", placeItems:"center", color:"var(--accent)" }}>
             <Icon name="bell" size={16}/>
@@ -1020,7 +1020,7 @@ function TweaksPanel({ open, onClose, state, set }) {
   ];
   return (
     <div className={`tweaks ${open?"open":""}`}>
-      <h4>Tweaks <span className="cl" onClick={onClose}><Icon name="x" size={14}/></span></h4>
+      <h4>Tweaks <span className="cl" onClick={onClose} role="button" tabIndex={0}><Icon name="x" size={14}/></span></h4>
       <div className="tweak-row">
         <span className="l">Theme</span>
         <div className="seg">
@@ -1032,7 +1032,7 @@ function TweaksPanel({ open, onClose, state, set }) {
         <span className="l">Accent</span>
         <div className="swatches">
           {accents.map(([c,n]) => (
-            <div key={c} title={n} className={`swatch ${state.accent===c?"on":""}`} style={{ background:c }} onClick={() => set({ accent:c })}/>
+            <div key={c} title={n} className={`swatch ${state.accent===c?"on":""}`} style={{ background:c }} onClick={() => set({ accent:c })} role="button" tabIndex={0}/>
           ))}
         </div>
       </div>
@@ -1245,8 +1245,8 @@ function AlertsView({ open, onClose }) {
   const selS = { ...inputS };
 
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose}>
-      <div style={{ maxWidth:640, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()}>
+    <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose} role="button" tabIndex={0}>
+      <div style={{ maxWidth:640, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
           <button onClick={onClose} style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:20, lineHeight:1, padding:0 }}>←</button>
           <h2 style={{ fontSize:18, fontWeight:700, margin:0 }}>Per-Ticker Alert Rules</h2>
@@ -1469,8 +1469,8 @@ function ScreenerView({ open, onClose }) {
     fontSize:12, color:"var(--text)", outline:"none", fontFamily:"var(--font-mono)" };
 
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose}>
-      <div style={{ maxWidth:740, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()}>
+    <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose} role="button" tabIndex={0}>
+      <div style={{ maxWidth:740, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
           <button onClick={onClose} style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:20, lineHeight:1, padding:0 }}>←</button>
           <h2 style={{ fontSize:18, fontWeight:700, margin:0 }}>Custom Screener</h2>

@@ -29,6 +29,7 @@ import aiohttp
 import certifi
 
 from services.news import score_sentiment
+from services.redis_cache import cache_get, cache_set
 
 # Shared SSL context using certifi's CA bundle — required on macOS/Python 3.14
 # where the system cert store is not automatically available to aiohttp.
@@ -359,6 +360,9 @@ def _playwright_finviz_sync(url: str) -> str:
         return ""
 
 
+_playwright_sem = asyncio.Semaphore(1)
+
+
 async def _playwright_finviz(ticker: str, url: str) -> list[dict]:
     """
     Playwright chromium scraper for Finviz — runs in a worker thread so
@@ -371,24 +375,25 @@ async def _playwright_finviz(ticker: str, url: str) -> list[dict]:
         log.debug("[finviz] playwright not installed — skipping JS fallback")
         return []
 
-    try:
-        # Run synchronous Playwright in a thread — keeps event loop free.
-        # 30s total wall-clock budget; the sync function itself has a 25s page timeout.
-        html = await asyncio.wait_for(
-            asyncio.to_thread(_playwright_finviz_sync, url),
-            timeout=30.0,
-        )
-        if not html:
+    async with _playwright_sem:
+        try:
+            # Run synchronous Playwright in a thread — keeps event loop free.
+            # 30s total wall-clock budget; the sync function itself has a 25s page timeout.
+            html = await asyncio.wait_for(
+                asyncio.to_thread(_playwright_finviz_sync, url),
+                timeout=30.0,
+            )
+            if not html:
+                return []
+            items = _parse_finviz_html(html)
+            log.debug(f"[finviz playwright] {ticker}: {len(items)} items (threaded)")
+            return items
+        except asyncio.TimeoutError:
+            log.debug(f"[finviz playwright] {ticker}: timed out after 30s")
             return []
-        items = _parse_finviz_html(html)
-        log.debug(f"[finviz playwright] {ticker}: {len(items)} items (threaded)")
-        return items
-    except asyncio.TimeoutError:
-        log.debug(f"[finviz playwright] {ticker}: timed out after 30s")
-        return []
-    except Exception as e:
-        log.debug(f"[finviz playwright] {ticker}: {e}")
-        return []
+        except Exception as e:
+            log.debug(f"[finviz playwright] {ticker}: {e}")
+            return []
 
 
 # ── Merge + deduplication ─────────────────────────────────────────────────────
@@ -422,21 +427,29 @@ async def get_scraped_news(ticker: str, company: str = "", days: int = 7) -> lis
     Fetch news from Benzinga RSS, Reuters (via Google News RSS), and Finviz
     concurrently. Returns a merged, deduplicated list sorted newest-first.
 
-    Cached for 20 minutes per ticker. Safe to call on every scan cycle —
+    Cached for 10 minutes per ticker. Safe to call on every scan cycle —
     the three sources together take < 2s under normal network conditions.
     """
-    cache_key = ticker.upper()
-    cached = _CACHE.get(cache_key)
+    ticker_upper = ticker.upper()
+    cache_key = f"news_scraper:{ticker_upper}:{days}"
+
+    # Layer 1: Redis cache
+    redis_cached = await cache_get(cache_key)
+    if redis_cached is not None:
+        return redis_cached
+
+    # Layer 2: Memory cache
+    cached = _CACHE.get(ticker_upper)
     if cached and time.time() - cached[1] < _TTL:
         return cached[0]
 
     connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
     async with aiohttp.ClientSession(headers=_HEADERS, connector=connector) as session:
         yahoo, sa, reuters, finviz = await asyncio.gather(
-            _fetch_yahoo_finance(ticker, session),
-            _fetch_seeking_alpha(ticker, session),
-            _fetch_reuters(ticker, company or ticker, session),
-            _fetch_finviz(ticker),
+            _fetch_yahoo_finance(ticker_upper, session),
+            _fetch_seeking_alpha(ticker_upper, session),
+            _fetch_reuters(ticker_upper, company or ticker_upper, session),
+            _fetch_finviz(ticker_upper),
             return_exceptions=True,
         )
 
@@ -446,10 +459,13 @@ async def get_scraped_news(ticker: str, company: str = "", days: int = 7) -> lis
     finviz = finviz if isinstance(finviz, list) else []
 
     result = _merge_dedupe([yahoo, sa, reuters, finviz])
-    _CACHE[cache_key] = (result, time.time())
+
+    # Save to both layers
+    await cache_set(cache_key, result, ttl=_TTL)
+    _CACHE[ticker_upper] = (result, time.time())
 
     log.info(
-        f"[news_scraper] {ticker}: {len(result)} merged items "
+        f"[news_scraper] {ticker_upper}: {len(result)} merged items "
         f"(yahoo={len(yahoo)}, seekingalpha={len(sa)}, reuters={len(reuters)}, finviz={len(finviz)})"
     )
     return result

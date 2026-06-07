@@ -610,7 +610,7 @@ function App() {
           SIGNAL.TRADE
           <span className="faint mono" style={{ fontWeight:400, marginLeft:8, fontSize:10 }}>v5.2</span>
         </div>
-        <div className="search" onClick={() => searchRef.current?.focus()} style={{ cursor:"text" }}>
+        <div className="search" onClick={() => searchRef.current?.focus()} style={{ cursor:"text" }} role="button" tabIndex={0}>
           <Icon name="search" size={12}/>
           <input
             ref={searchRef}
@@ -665,7 +665,7 @@ function App() {
             {etClock} {etAbbr}
           </span>
           <button className="iconbtn" onClick={() => setTweak({ density: tweakState.density === "compact" ? "comfortable" : "compact" })} title={`Density · ${tweakState.density} (⌘\\)`}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>{tweakState.density==="compact"&&<><line x1="3" y1="9" x2="21" y2="9" opacity="0.4"/><line x1="3" y1="15" x2="21" y2="15" opacity="0.4"/></>}</svg>
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>{tweakState.density==="compact"&&<><line x1="3" y1="9" x2="21" y2="9" opacity="0.4"/><line x1="3" y1="15" x2="21" y2="15" opacity="0.4"/></>}</svg>
           </button>
           <button className="iconbtn" onClick={() => setHkOpen(true)} title="Keyboard shortcuts (?)">
             <span style={{ fontFamily:"var(--font-mono)", fontSize:11, fontWeight:600 }}>?</span>
@@ -689,7 +689,7 @@ function App() {
               background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.25)",
               borderRadius:5, color:"var(--down)", fontFamily:"var(--font-mono)", fontSize:10,
               fontWeight:600, letterSpacing:"0.06em", cursor:"pointer", whiteSpace:"nowrap" }}>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
               <polyline points="16 17 21 12 16 7"/>
               <line x1="21" y1="12" x2="9" y2="12"/>
@@ -714,68 +714,68 @@ function App() {
       {/* ── Sidebar ── */}
       <div className="sidebar">
         <div className="nav-label">Workspace</div>
-        <div className={`nav-item ${nav==="feed"?"active":""}`} onClick={() => setNav("feed")}>
+        <div className={`nav-item ${nav==="feed"?"active":""}`} onClick={() => setNav("feed")} role="button" tabIndex={0}>
           <Icon name="feed" size={15}/>
           <span>Live signals</span>
           <span className="dot-live"/>
           <span className="count">{filteredSignals.length}</span>
         </div>
-        <div className={`nav-item ${nav==="history"?"active":""}`} onClick={() => setNav("history")}>
+        <div className={`nav-item ${nav==="history"?"active":""}`} onClick={() => setNav("history")} role="button" tabIndex={0}>
           <Icon name="history" size={15}/>
           <span>History</span>
         </div>
-        <div className={`nav-item ${nav==="backtest"?"active":""}`} onClick={() => setNav("backtest")}>
+        <div className={`nav-item ${nav==="backtest"?"active":""}`} onClick={() => setNav("backtest")} role="button" tabIndex={0}>
           <Icon name="chart" size={15}/>
           <span>Backtest</span>
         </div>
 
-        <div className={`nav-item ${nav==="watchlist"?"active":""}`} onClick={() => setNav("watchlist")}>
+        <div className={`nav-item ${nav==="watchlist"?"active":""}`} onClick={() => setNav("watchlist")} role="button" tabIndex={0}>
           <Icon name="star" size={15}/>
           <span>Watchlist</span>
           <span className="count">{/* filled on load */}</span>
         </div>
-        <div className={`nav-item ${nav==="paper"?"active":""}`} onClick={() => setNav("paper")}>
+        <div className={`nav-item ${nav==="paper"?"active":""}`} onClick={() => setNav("paper")} role="button" tabIndex={0}>
           <Icon name="chart" size={15}/>
           <span>Paper Portfolio</span>
         </div>
 
         <div className="nav-label">Market</div>
-        <div className={`nav-item ${nav==="overview"?"active":""}`} onClick={() => setNav("overview")}>
+        <div className={`nav-item ${nav==="overview"?"active":""}`} onClick={() => setNav("overview")} role="button" tabIndex={0}>
           <Icon name="chart" size={15}/>
           <span>Market overview</span>
         </div>
-        <div className={`nav-item ${nav==="sectors"?"active":""}`} onClick={() => setNav("sectors")}>
+        <div className={`nav-item ${nav==="sectors"?"active":""}`} onClick={() => setNav("sectors")} role="button" tabIndex={0}>
           <Icon name="sectors" size={15}/>
           <span>Sector heatmap</span>
         </div>
-        <div className={`nav-item ${nav==="calendar"?"active":""}`} onClick={() => setNav("calendar")}>
+        <div className={`nav-item ${nav==="calendar"?"active":""}`} onClick={() => setNav("calendar")} role="button" tabIndex={0}>
           <Icon name="clock" size={15}/>
           <span>Economic calendar</span>
         </div>
 
         <div className="nav-label">Configure</div>
-        <div className={`nav-item ${nav==="sources"?"active":""}`} onClick={() => setNav("sources")}>
+        <div className={`nav-item ${nav==="sources"?"active":""}`} onClick={() => setNav("sources")} role="button" tabIndex={0}>
           <Icon name="plug" size={15}/>
           <span>Sources</span>
           <span className="count">{(sources||[]).filter(s => s.is_on).length}/{(sources||[]).length}</span>
         </div>
-        <div className={`nav-item ${nav==="rules"?"active":""}`} onClick={() => setNav("rules")}>
+        <div className={`nav-item ${nav==="rules"?"active":""}`} onClick={() => setNav("rules")} role="button" tabIndex={0}>
           <Icon name="rules" size={15}/>
           <span>Rules &amp; filters</span>
         </div>
-        <div className={`nav-item ${nav==="alerts"?"active":""}`} onClick={() => setNav("alerts")}>
+        <div className={`nav-item ${nav==="alerts"?"active":""}`} onClick={() => setNav("alerts")} role="button" tabIndex={0}>
           <Icon name="bell" size={15}/>
           <span>Alert rules</span>
           {/* per-ticker alert count badge rendered when rules exist */}
         </div>
-        <div className={`nav-item ${nav==="screener"?"active":""}`} onClick={() => setNav("screener")}>
+        <div className={`nav-item ${nav==="screener"?"active":""}`} onClick={() => setNav("screener")} role="button" tabIndex={0}>
           <Icon name="filter" size={15}/>
           <span>Screener</span>
         </div>
         <div className="nav-item" style={{ gap:6, cursor:"default" }}>
           <Icon name="slider" size={15}/>
           <span style={{ flex:1 }}>Threshold</span>
-          <div style={{ display:"flex", alignItems:"center", gap:4 }} onClick={e => e.stopPropagation()}>
+          <div style={{ display:"flex", alignItems:"center", gap:4 }} onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
             <button
               onClick={() => setTweak({ customConf: Math.max(0, threshold - 5) })}
               style={{ width:18, height:18, border:"1px solid var(--line)", borderRadius:3,
@@ -791,19 +791,19 @@ function App() {
         </div>
 
         <div className="nav-label">Account</div>
-        <div className="nav-item" onClick={() => setAccountOpen(true)}>
+        <div className="nav-item" onClick={() => setAccountOpen(true)} role="button" tabIndex={0}>
           <Icon name="user" size={15}/>
           <span>{currentUser.full_name || currentUser.email?.split("@")[0] || "Account"}</span>
           <span style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700, color:TIER_COLORS[currentUser.subscription_tier], background:TIER_COLORS[currentUser.subscription_tier]+"22", padding:"2px 6px", borderRadius:10 }}>
             {(currentUser.subscription_tier||"FREE").toUpperCase()}{currentUser.is_owner?" ★":""}
           </span>
         </div>
-        <div className={`nav-item ${nav==="performance"?"active":""}`} onClick={() => setNav("performance")}>
+        <div className={`nav-item ${nav==="performance"?"active":""}`} onClick={() => setNav("performance")} role="button" tabIndex={0}>
           <Icon name="trending-up" size={15}/>
           <span>My Performance</span>
         </div>
         {(!hasTierAccess(currentUser.subscription_tier,"basic",currentUser.is_owner)) && (
-          <div className="nav-item" onClick={() => setPricingOpen(true)} style={{ color:"var(--accent)" }}>
+          <div className="nav-item" onClick={() => setPricingOpen(true)} style={{ color:"var(--accent)" }} role="button" tabIndex={0}>
             <Icon name="lock" size={15}/>
             <span>Upgrade plan</span>
           </div>
@@ -890,7 +890,7 @@ function App() {
             <span className="sep"/>
             <span className="chip">Today · {filteredSignals.length}</span>
             {!whatsNewSeen && signals.length > 0 && (
-              <span className="whats-new" onClick={() => setWhatsNewSeen(true)} title="Click to dismiss">
+              <span className="whats-new" onClick={() => setWhatsNewSeen(true)} title="Click to dismiss" role="button" tabIndex={0}>
                 <span className="wn-pulse"/>
                 <strong>{signals.length} live</strong>
                 <span className="faint">· click to dismiss</span>
@@ -932,7 +932,7 @@ function App() {
                 <span key={d} className={`day ${tweakState.days?.includes(d)?"on":""}`} onClick={() => {
                   const cur = tweakState.days || [];
                   setTweak({ days: cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d] });
-                }}>{d[0]}</span>
+                }} role="button" tabIndex={0}>{d[0]}</span>
               ))}
             </span>
           </div>
@@ -1155,7 +1155,7 @@ function App() {
                     <div className="tabs" style={{ marginLeft:"auto" }}>
                       {["1D","5D","1M","3M","1Y"].map(t => (
                         <span key={t} className={`tab ${t===chartPeriod?"active":""}`}
-                          onClick={() => setChartPeriod(t)} style={{ cursor:"pointer" }}>{t}</span>
+                          onClick={() => setChartPeriod(t)} style={{ cursor:"pointer" }} role="button" tabIndex={0}>{t}</span>
                       ))}
                     </div>
                   </div>
@@ -1326,7 +1326,7 @@ function App() {
                   </span>
                   <div className="tabs" style={{ marginLeft:"auto" }}>
                     {["1D","5D","1M","3M","1Y"].map(t => (
-                      <span key={t} className={`tab ${t===chartPeriod?"active":""}`} onClick={() => setChartPeriod(t)} style={{ cursor:"pointer" }}>{t}</span>
+                      <span key={t} className={`tab ${t===chartPeriod?"active":""}`} onClick={() => setChartPeriod(t)} style={{ cursor:"pointer" }} role="button" tabIndex={0}>{t}</span>
                     ))}
                   </div>
                 </div>
@@ -1503,7 +1503,7 @@ function App() {
           ["watchlist","eye","Watchlist"],
           ["overview","globe","Market"],
         ].map(([id, icon, label]) => (
-          <div key={id} className={`mobile-nav-item${nav===id?" active":""}`} onClick={() => setNav(id)}>
+          <div key={id} className={`mobile-nav-item${nav===id?" active":""}`} onClick={() => setNav(id)} role="button" tabIndex={0}>
             <Icon name={icon} size={18}/>
             <span>{label}</span>
           </div>
@@ -1535,7 +1535,7 @@ function App() {
 
       {/* ── Disclaimer footer ── */}
       <div style={{ gridColumn:"1/-1", background:"var(--bg-1)", borderTop:"1px solid var(--line)", padding:"5px 20px", display:"flex", alignItems:"center", gap:10, fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
+        <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
           <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
           <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
         </svg>

@@ -34,7 +34,7 @@ const Icon = ({ name, size = 16 }) => {
     filter:  <><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></>,
   };
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       {paths[name]}
     </svg>
   );
@@ -97,7 +97,7 @@ function Tip({ term, children, iconOnly = false }) {
         onMouseLeave={hide}
         style={{ display:"inline-flex", alignItems:"center", gap:2, cursor:"help" }}>
         {!iconOnly && (children ?? term)}
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+        <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
           style={{ color:"rgba(255,255,255,0.35)", flexShrink:0, marginTop:1 }}>
           <circle cx="12" cy="12" r="10"/>
@@ -134,7 +134,7 @@ function InfoPop({ title, children }) {
   const portal = open && pos && ReactDOM.createPortal(
     <>
       <div onClick={() => setOpen(false)}
-        style={{ position:"fixed", inset:0, zIndex:99997, background:"transparent" }}/>
+        style={{ position:"fixed", inset:0, zIndex:99997, background:"transparent" }} role="button" tabIndex={0}/>
       <div style={{
         position:"fixed", left:pos.x,
         top:       pos.above ? undefined : pos.y,
@@ -144,7 +144,7 @@ function InfoPop({ title, children }) {
         borderRadius:10, padding:"14px 18px", fontSize:12,
         color:"#e2e8f0", lineHeight:1.7, zIndex:99998,
         boxShadow:"0 12px 48px rgba(0,0,0,0.7)",
-      }} onClick={e => e.stopPropagation()}>
+      }} onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
         <strong style={{ color:"#10b981", display:"block", marginBottom:8,
           textTransform:"uppercase", letterSpacing:"0.08em", fontSize:10 }}>
           {title}
@@ -476,7 +476,7 @@ function Chart({ signal, style, period = "3M" }) {
           opacity: loading ? 0.2 : 1, transition:"opacity 0.2s",
           cursor: drawMode ? "crosshair" : "default",
         }}
-      />
+       role="button" tabIndex={0}/>
     </div>
   );
 }
@@ -658,7 +658,7 @@ function Sparkline({ ticker, up }) {
   const realUp = realPts ? realPts[realPts.length - 1] >= realPts[0] : up;
   const color = realUp ? "var(--up)" : "var(--down)";
   return (
-    <svg className="sparkline" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+    <svg aria-hidden="true" className="sparkline" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
       <path d={`M 0 ${h} ${pts.map((v,i) => `L ${xs(i)} ${ys(v)}`).join(" ")} L ${w} ${h} Z`} fill={color} opacity="0.15"/>
       <path d={`M ${xs(0)} ${ys(pts[0])} ${pts.map((v,i) => `L ${xs(i)} ${ys(v)}`).join(" ")}`} stroke={color} strokeWidth="1.2" fill="none"/>
     </svg>
@@ -676,7 +676,7 @@ function PathSparkline({ path }) {
   const color = up ? "var(--up)" : "var(--down)";
   const d = `M ${xs(0)} ${ys(path[0])} ` + path.map((v, i) => `L ${xs(i)} ${ys(v)}`).join(" ");
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", height: "100%", display: "block" }}>
+    <svg aria-hidden="true" viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", height: "100%", display: "block" }}>
       <path d={d} stroke={color} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
       <circle cx={xs(path.length - 1)} cy={ys(path[path.length - 1])} r="2" fill={color} />
       {hi > 0 && lo < 0 && (

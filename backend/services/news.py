@@ -4,6 +4,8 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
+from services.redis_cache import cache_get, cache_set
+
 _executor = ThreadPoolExecutor(max_workers=2)
 _cache: dict[str, tuple[list, float]] = {}
 _rec_cache: dict[str, tuple[dict, float]] = {}
@@ -212,11 +214,26 @@ def _fetch_analyst_recs(ticker: str) -> dict:
 
 
 async def get_analyst_recs(ticker: str) -> dict:
-    return await asyncio.get_running_loop().run_in_executor(_executor, _fetch_analyst_recs, ticker)
+    t = ticker.upper()
+    cache_key = f"news:analyst_recs:{t}"
+    redis_cached = await cache_get(cache_key)
+    if redis_cached is not None:
+        return redis_cached
+
+    res = await asyncio.get_running_loop().run_in_executor(_executor, _fetch_analyst_recs, t)
+    if res:
+        await cache_set(cache_key, res, ttl=3600)
+    return res
 
 
 async def get_company_news(ticker: str, days: int = 7) -> list[dict]:
-    raw = await asyncio.get_running_loop().run_in_executor(_executor, _fetch_news, ticker, days)
+    t = ticker.upper()
+    cache_key = f"news:company_news:{t}:{days}"
+    redis_cached = await cache_get(cache_key)
+    if redis_cached is not None:
+        return redis_cached
+
+    raw = await asyncio.get_running_loop().run_in_executor(_executor, _fetch_news, t, days)
 
     items = []
     for item in raw[:6]:
@@ -234,4 +251,6 @@ async def get_company_news(ticker: str, days: int = 7) -> list[dict]:
                 "url": item.get("url", ""),
             }
         )
+    if items:
+        await cache_set(cache_key, items, ttl=900)
     return items

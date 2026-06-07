@@ -856,7 +856,7 @@ async def _maybe_auto_execute_for_signal(sig: dict, signal_id, db) -> None:
                     await exec_db.execute(
                         _sel(User).where(
                             User.auto_execute == True,
-                            User.auto_execute_broker == "alpaca",
+                            User.auto_execute_broker.in_(["alpaca", "ibkr"]),
                             User.alpaca_key_enc.isnot(None),
                             User.is_active == True,
                         )

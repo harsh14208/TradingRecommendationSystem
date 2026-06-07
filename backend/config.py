@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     # Polygon (optional, but .env may contain POLYGON_API_KEY)
     polygon_api_key: str = ""
 
+    # Interactive Brokers Client Portal API Gateway Base URL
+    ibkr_base_url: str = "https://localhost:5000/v1/api"
+
     # ── Event-Driven Worker Bus ───────────────────────────────────────────────
     # When set, WorkerBus uses Redis Streams instead of asyncio.Queue.
     # Enables cross-process worker distribution (separate news/fundamentals containers).

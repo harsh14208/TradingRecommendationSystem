@@ -37,7 +37,7 @@ function Sparkline({ data, color }) {
   const w = 60, h = 24;
   const pts = data.map((v, i) => `${(i/(data.length-1))*w},${h-((v-min)/range)*h}`).join(" ");
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ width:60, height:24 }}>
+    <svg aria-hidden="true" width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ width:60, height:24 }}>
       <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
@@ -61,7 +61,7 @@ const MIcon = ({ name, size = 22 }) => {
     plug:     <><path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0V8z"/><path d="M12 18v4"/></>,
   };
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       {paths[name]}
     </svg>
   );
@@ -72,9 +72,9 @@ function MStatusBar({ time = "9:41" }) {
     <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 22px 0", fontFamily:"var(--mono)", fontSize:13, fontWeight:600 }}>
       <span>{time}</span>
       <span style={{ display:"inline-flex", gap:6, alignItems:"center" }}>
-        <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="0.5"/><rect x="4" y="5" width="3" height="6" rx="0.5"/><rect x="8" y="3" width="3" height="8" rx="0.5"/><rect x="12" y="0" width="3" height="11" rx="0.5"/></svg>
-        <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2C5 2 2.5 3 1 5l1.5 1.5C3.5 5 5.5 4 8 4s4.5 1 5.5 2.5L15 5C13.5 3 11 2 8 2zm0 3.5C6.5 5.5 5 6 4 7l1.5 1.5C6 8 7 7.5 8 7.5s2 .5 2.5 1L12 7c-1-1-2.5-1.5-4-1.5zm0 3.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>
-        <svg width="24" height="11" viewBox="0 0 24 11" fill="none"><rect x="0.5" y="0.5" width="20" height="10" rx="2" stroke="currentColor"/><rect x="2" y="2" width="17" height="7" rx="1" fill="currentColor"/><rect x="21" y="3.5" width="1.5" height="4" rx="0.5" fill="currentColor"/></svg>
+        <svg aria-hidden="true" width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="0.5"/><rect x="4" y="5" width="3" height="6" rx="0.5"/><rect x="8" y="3" width="3" height="8" rx="0.5"/><rect x="12" y="0" width="3" height="11" rx="0.5"/></svg>
+        <svg aria-hidden="true" width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2C5 2 2.5 3 1 5l1.5 1.5C3.5 5 5.5 4 8 4s4.5 1 5.5 2.5L15 5C13.5 3 11 2 8 2zm0 3.5C6.5 5.5 5 6 4 7l1.5 1.5C6 8 7 7.5 8 7.5s2 .5 2.5 1L12 7c-1-1-2.5-1.5-4-1.5zm0 3.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>
+        <svg aria-hidden="true" width="24" height="11" viewBox="0 0 24 11" fill="none"><rect x="0.5" y="0.5" width="20" height="10" rx="2" stroke="currentColor"/><rect x="2" y="2" width="17" height="7" rx="1" fill="currentColor"/><rect x="21" y="3.5" width="1.5" height="4" rx="0.5" fill="currentColor"/></svg>
       </span>
     </div>
   );
@@ -91,7 +91,7 @@ function MTabBar({ active, setTab }) {
   return (
     <div className="m-tabs">
       {tabs.map(t => (
-        <div key={t.k} className={`m-tab ${active===t.k?"on":""}`} onClick={() => setTab(t.k)}>
+        <div key={t.k} className={`m-tab ${active===t.k?"on":""}`} onClick={() => setTab(t.k)} role="button" tabIndex={0}>
           <MIcon name={t.i} size={22}/>
           <span>{t.l}</span>
         </div>
@@ -134,14 +134,14 @@ function FeedScreen({ signals, onSelect }) {
       </div>
       <div className="m-style-strip">
         {[["all","ALL"],["buy","BUY ONLY"],["high","≥70% CONF"]].map(([k,l]) => (
-          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)}>{l}</span>
+          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} role="button" tabIndex={0}>{l}</span>
         ))}
       </div>
       <div className="m-feed">
         {items.map((s, i) => {
           const c = toCard(s);
           return (
-            <div key={i} className={`m-card ${c.action}`} onClick={() => onSelect && onSelect(c)}>
+            <div key={i} className={`m-card ${c.action}`} onClick={() => onSelect && onSelect(c)} role="button" tabIndex={0}>
               <div className="m-card-top">
                 <span className={`m-verb ${c.action}`}>{c.action}</span>
                 <span className="m-tk">{c.tk}</span>
@@ -183,7 +183,7 @@ function DetailScreen({ signal, onBack, onSend }) {
     <>
       <MStatusBar/>
       <div className="m-top">
-        <span className="ico" onClick={onBack} style={{ cursor:"pointer" }}><MIcon name="chevl" size={18}/></span>
+        <span className="ico" onClick={onBack} style={{ cursor:"pointer" }} role="button" tabIndex={0}><MIcon name="chevl" size={18}/></span>
         <span className="brand" style={{ marginLeft:0 }}>{s.tk}</span>
         <span style={{ marginLeft:"auto" }} className="ico"><MIcon name="bell" size={18}/></span>
       </div>
@@ -555,7 +555,7 @@ function WatchlistScreen({ tickers = WATCH_MOCK }) {
       </div>
       <div style={{ padding:"0 16px 12px", display:"flex", gap:6, overflowX:"auto" }}>
         {[["all","ALL · "+tickers.length],["signals","SIGNALS"],["alerts","ALERTS"]].map(([k,l]) => (
-          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)}>{l}</span>
+          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} role="button" tabIndex={0}>{l}</span>
         ))}
       </div>
       <div style={{ flex:1, overflowY:"auto" }}>
@@ -607,7 +607,7 @@ function NotifScreen({ notifs = NOTIFS_MOCK }) {
       </div>
       <div style={{ padding:"0 16px 12px", display:"flex", gap:6, overflowX:"auto" }}>
         {[["all","ALL · "+notifs.length],["buy","SIGNALS"],["fill","FILLS"],["alert","ALERTS"]].map(([k,l]) => (
-          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)}>{l}</span>
+          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} role="button" tabIndex={0}>{l}</span>
         ))}
       </div>
       <div style={{ flex:1, overflowY:"auto" }}>
@@ -644,7 +644,7 @@ function PaywallScreen({ onClose }) {
     <>
       <MStatusBar/>
       <div className="m-top">
-        {onClose && <span className="ico" onClick={onClose}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><polyline points="15 6 9 12 15 18"/></svg></span>}
+        {onClose && <span className="ico" onClick={onClose} role="button" tabIndex={0}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><polyline points="15 6 9 12 15 18"/></svg></span>}
         <span style={{ fontFamily:"var(--mono)", fontSize:11, letterSpacing:"0.15em", color:"var(--text-dim)", marginLeft: onClose ? 0 : "auto" }}>UPGRADE</span>
       </div>
       <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 20px" }}>

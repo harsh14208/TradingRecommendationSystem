@@ -177,6 +177,18 @@ async def _fetch_ticker_data(
     Fetch all per-ticker data concurrently.
     Returns a _TickerData namedtuple or None if df is invalid.
     """
+    is_leveraged = ticker in _LEVERAGED_ETFS
+
+    async def _dummy_dict(*args, **kwargs):
+        return {}
+
+    f_insider = _dummy_dict if is_leveraged else get_insider_activity
+    f_analyst = _dummy_dict if is_leveraged else get_analyst_recs
+    f_earnings_cal = _dummy_dict if is_leveraged else get_earnings_calendar
+    f_earnings_surp = _dummy_dict if is_leveraged else get_earnings_surprise
+    f_fundamentals = _dummy_dict if is_leveraged else get_fundamentals
+    f_congress = _dummy_dict if is_leveraged else get_congress_signal
+
     if prefetched_df is not None:
         df = prefetched_df
         info = prefetched_info or {}
@@ -198,15 +210,15 @@ async def _fetch_ticker_data(
         _raw = await asyncio.gather(
             get_company_news(ticker, days=7),
             get_scraped_news(ticker, (prefetched_info or {}).get("company", ticker), days=7),
-            get_insider_activity(ticker, days=30),
-            get_analyst_recs(ticker),
-            get_earnings_calendar(ticker),
-            get_earnings_surprise(ticker),
+            f_insider(ticker, days=30),
+            f_analyst(ticker),
+            f_earnings_cal(ticker),
+            f_earnings_surp(ticker),
             get_options_flow(ticker),
-            get_fundamentals(ticker),
+            f_fundamentals(ticker),
             get_social_sentiment(ticker),
             get_google_trends(ticker),
-            get_congress_signal(ticker),
+            f_congress(ticker),
             get_history(ticker, period="5d", interval="1h"),
             get_extended_hours_data(ticker),
             return_exceptions=True,
@@ -262,15 +274,15 @@ async def _fetch_ticker_data(
             get_info(ticker),
             get_company_news(ticker, days=7),
             get_scraped_news(ticker, "", days=7),
-            get_insider_activity(ticker, days=30),
-            get_analyst_recs(ticker),
-            get_earnings_calendar(ticker),
-            get_earnings_surprise(ticker),
+            f_insider(ticker, days=30),
+            f_analyst(ticker),
+            f_earnings_cal(ticker),
+            f_earnings_surp(ticker),
             get_options_flow(ticker),
-            get_fundamentals(ticker),
+            f_fundamentals(ticker),
             get_social_sentiment(ticker),
             get_google_trends(ticker),
-            get_congress_signal(ticker),
+            f_congress(ticker),
             get_history(ticker, period="5d", interval="1h"),
             get_extended_hours_data(ticker),
             return_exceptions=True,
@@ -4339,6 +4351,28 @@ async def generate_signal(
                         "meta": f"Yield gap: {yield_gap:.1f}pp",
                     }
                 )
+
+        # ── §75 EDGAR 8-K Buyback Window ──────────────────────────────────────
+        try:
+            from services.edgar import has_active_buyback
+
+            if await has_active_buyback(ticker, days=90):
+                sources.add("Fundamentals")
+                score += 5
+                rationale.append(
+                    {
+                        "src": "Fundamentals",
+                        "head": "Active Share Repurchase Program (§75)",
+                        "body": (
+                            "Company announced an active share repurchase program within the last 90 days via Form 8-K. "
+                            "Shows strong institutional support and capital allocation alignment at oversold levels."
+                        ),
+                        "sentiment": "pos",
+                        "meta": "sec_buyback_8k=True score_delta=+5",
+                    }
+                )
+        except Exception as e:
+            log.debug("[engine] %s EDGAR 8-K buyback check failed: %s", ticker, e)
 
         # ── Buyback Yield — DISABLED 2026-05-31 ──────────────────────────────
         # Live-data audit (Inv 3, 546 resolved): signals with active buyback card

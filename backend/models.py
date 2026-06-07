@@ -29,7 +29,7 @@ class Signal(Base):
     is_active = Column(Boolean, default=True)
     is_sent = Column(Boolean, default=False)
     is_skipped = Column(Boolean, default=False)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now(), index=True)
     sent_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)  # user journal notes
     reviewed = Column(Boolean, default=False, nullable=False, server_default="0")
@@ -68,7 +68,7 @@ class SendLog(Base):
     time = Column(String(8))
     status = Column(String(10))
     message = Column(Text)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now(), index=True)
 
 
 class AppSettings(Base):
@@ -245,7 +245,7 @@ class BrokerOrder(Base):
     side = Column(String(10), nullable=False)  # "buy" | "sell"
     status = Column(String(20), nullable=False, default="submitted")  # submitted | filled | rejected | error
     error_msg = Column(Text, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now(), index=True)
 
 
 class PerformanceSnapshot(Base):
