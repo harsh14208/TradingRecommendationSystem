@@ -356,16 +356,21 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 ---
 
-## 15. Project Ratings — v7.6 (2026-06-06)
+## 15. Project Ratings — v7.7 (2026-06-06)
 
 > **Single source of truth** for all project quality ratings. Referenced by `docs/TODO.md` and `docs/PROGRESS.md`.
+> v7.7 (2026-06-06): three changes since v7.6 —
+> **(1) IBKR broker integration:** new `services/ibkr_rest.py` (+389 lines, 8 tests) + `broker_svc.py`/`routers/broker.py` "ibkr" paths (verify/connect/execute, optional api_secret for bearer-token auth) + frontend broker-connect UI. Second auto-execution broker alongside Alpaca — closes the v7.6 "Remaining: IBKR support" gap.
+> **(2) §75 buyback window now live (RD-2):** `has_active_buyback()` in `edgar.py` parses EDGAR 8-K filings for active share-repurchase announcements (90-day window, 1 h cache). Gate stack now 29 of 31 strategies live.
+> **(3) HTTP latency pass:** new `services/http_client.py` — `get_ssl_context()` builds the certifi TLS context once (was `ssl.create_default_context(cafile=certifi.where())` per call: ~4.6 ms of *synchronous* event-loop-blocking CPU ×~40 sites, which serialised the `asyncio.gather` fan-outs in `generate_signal`); `shared_session()` is a per-event-loop pooled `aiohttp.ClientSession` (keep-alive + DNS cache + TLS resumption) closed in the app lifespan. Adopted across 20 data-service modules / 36 call sites. Per-call SSL rebuild no longer stalls the loop; connection reuse now applies to Polygon + the full data-worker fan-out, so those fetches run truly concurrently.
+> 1646 tests passing (3 skipped); ruff clean.
 > v7.6 (2026-06-06): delivery-path correctness sweep + engine decomposition. **BE-1 (partial):** `signal_engine.py` 7421→5848 lines; extracted `services/engines/` (`helpers.py` leaf constants + `_levels`/`_score_to_action`/`_current_session`/`_make_plain_english`; `assembler.py` `_assemble_signal`, 1.3k lines), clean import DAG (helpers ← assembler ← signal_engine). **ACT-4 (delivery-path bugs):** EOD-batch BUYs were silently blocked (`sig_dict` rebuilt from DB row dropped `hasMr`/`vix`/`crossAssetHeadwinds`/`daysToExDiv` → every post-close MR BUY no-op'd as "no MR setup") — fixed via new `signals.extra_data` JSON column (migration `b4e8d2f6a91c`); owner-triggered `POST /signals/{id}/send` now enforces BLOCKED_TICKERS. **DPC-1:** notification prefs (PROD-3) were stored but never read — now enforced in `_fanout_to_subscribers`/`_push_web_notifications`. **ACT-1:** XLI added to BLOCKED_SECTORS (live WR 36.1%, N=36). **ACT-2:** sector audit reads `Signal.sector_etf` first (eliminates 43% "Unknown"). 1636 tests passing (3 skipped; 13 E2E need playwright + running backend).
 > v7.5 (2026-06-05): 32 of 38 free items implemented — BT-2/4 (`--param-sweep`, bootstrap CI on gates), RD-3/4 (§79 Q1 gate, `--regime-split`), CAL-2/3 (`--sector-cal`, `--reliability-diagram`), ML-5 (`shap_live_audit()`), PROD-3/4 (notification prefs, admin analytics), SEC-2/3/4/6 (gitleaks CI, OWASP confirmed, credential rotation, npm audit), FE-1/3/4 (E2E Playwright tests, Lighthouse CI, ErrorBoundary), DEPLOY-4/5/6 (RUNBOOK.md, locust, CI/CD deploy), OOS v9 (10 tickers locked). 1115 tests.
 > v7.4 (2026-06-05): RISK-1/2/4 (bracket stops + DD circuit-breaker + kill switch); A16-UI; PROD-1/3; ML-4; CAL-4; BE-2; 1096 tests.
 > v7.3 (2026-05-31): adversarial quant review, 10 methodology fixes, OOS v6 CLEAN (N=51, Sh=0.16), block bootstrap, phantom win correction.
 > Two lenses: **Quant** = statistical rigour | **Product** = user-facing completeness × soundness.
 
-**Overall: 8.3/10 product audit · 8.7/10 B+ quality grade** (v7.6, 2026-06-06)
+**Overall: 8.4/10 product audit · 8.8/10 B+ quality grade** (v7.7, 2026-06-06)
 
 ### Signal & Research
 
@@ -374,7 +379,7 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 | **IS Backtest Accuracy** | 7.7/10 | B+ | ↑ from 7.5 | IS v10.5: N=230, WR=66.1%, Sh=0.20. BT-2 `--param-sweep` (stability over BUY_THRESH 45–55 + bootstrap 95% CI). BT-4 bootstrap CI on gate ΔSharpe in `--validate-live-gates`. RD-4 `--regime-split` flag (VIX regime decomposition). RD-3 §79 Q1 rebalancing gate live. Ceiling: survivorship bias without Norgate/Sharadar. |
 | **OOS / Forward Validation** | 6.3/10 | B− | ↑ from 6.1 | OOS v6 CLEAN: N=51, Sh=0.16 ✅. v7/v8/v9 pre-specified (35 tickers total). OOS v9 locked 2026-06-05 (ISRG, ZTS, ODFL, VRSK, CPRT, CTAS, MPWR, NWS, KSS, WST). Live DSR + Wilson CI dashboards operational. SR=0 still inside CI at N=51; need N≥387 to clear. |
 | **Live Alpha Quality** | 6.7/10 | B− | ↑ from 6.5 | **ACT-4: EOD-batch silent-block bug fixed** — post-close MR BUYs were never delivered (`hasMr` defaulted False on DB-row rebuild); `extra_data` column now restores gate inputs so EOD evaluates the same gates as real-time. BLOCKED_TICKERS enforcement traced end-to-end + owner-send bypass closed; delivered WR denominator confirmed genuine (not a population artifact). §76 Altman removed. §85-1 audit pending ≥200 resolved signals. |
-| **Gate Stack (§47–§83)** | 8.6/10 | A− | ↑ from 8.5 | 28 of 31 strategies live (§79 Q1 rebalancing gate added). 3 deferred (§62 VRP, §75 buyback, §84 survivorship). Dead-gate cleanup complete. |
+| **Gate Stack (§47–§83)** | 8.7/10 | A− | ↑ from 8.6 | **29 of 31 strategies live** — §75 buyback window added (RD-2: `has_active_buyback()` parses EDGAR 8-K repurchase filings). 2 deferred (§62 VRP, §84 survivorship). Dead-gate cleanup complete. |
 | **Backtest Infrastructure** | 8.2/10 | B+ | ↑ from 8.0 | 107-ticker, 23-year IS. Block bootstrap CIs. BT-2 param stability sweep. BT-4 bootstrap CI on all gate ablations. RD-4 regime decomposition. EDGAR point-in-time (106/107). Ceiling: survivorship bias. |
 | **Confidence Calibration** | 7.5/10 | B+ | ↑ from 7.2 | Cal v4: Brier 0.2641. CAL-4 `--brier-drift`: rolling 30d Brier, alert >0.28, recal flag >0.30. **CAL-2** `--sector-cal`: per-sector Brier vs global baseline, flags sectors deviating >0.01. **CAL-3** `--reliability-diagram`: text-mode calibration curve with gap flags. Next cal v5 at ≥50 post-A19. |
 
@@ -383,14 +388,14 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
 | **Risk Management** | 8.5/10 | A− | — | ATR stops 1.5s/2.0t. RISK-1: bracket/OTO stop orders on auto-executed trades. RISK-2: DD circuit-breaker (−5% PL). RISK-4: kill switch (DB flag + admin UI). Ceiling: Kelly uses global WR. |
-| **Execution & Friction** | 7.2/10 | B | — | Bracket orders improve live R:R. Flat 0.50% model; ADV-participation cost deferred (BT-3). |
+| **Execution & Friction** | 7.2/10 | B | — | Bracket orders improve live R:R. **Dual-broker auto-execution (Alpaca + IBKR REST).** Flat 0.50% friction model; ADV-participation cost deferred (BT-3). |
 | **Sector Concentration** | 7.6/10 | B+ | ↑ from 7.5 | HARD_LIMIT 30%, SOFT_LIMIT 20%. §83 correlation penalty. ACT-1: XLI added to BLOCKED_SECTORS (live WR 36.1%, N=36) — BLOCKED_SECTORS now {XLF, XLP, XLU, XLI}. ALPHA-4 per-sector live WR audit operational. |
 
 ### Product & Deployment
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **Product Completeness** | 9.0/10 | A | ↑ from 8.9 | Full stack: signals, auth, billing, Telegram, paper trading, mobile/PWA, admin tooling, broker execution + UI, My Performance view, admin analytics (`GET /api/admin/analytics-summary`). **DPC-1: notification prefs now enforced** (`GET/PUT /api/me/notification-prefs` were stored but never read — Telegram master toggle + sector/score_min/actions/min_conf filters and push toggle now applied; unconfigured users unaffected). Remaining: IBKR support, FE-2 accessibility fixes. |
+| **Product Completeness** | 9.1/10 | A | ↑ from 9.0 | Full stack: signals, auth, billing, Telegram, paper trading, mobile/PWA, admin tooling, My Performance view, admin analytics (`GET /api/admin/analytics-summary`). **v7.7: IBKR broker integration** — `services/ibkr_rest.py` + broker connect/execute paths + frontend UI; second auto-execution broker alongside Alpaca (verify/connect/execute, bearer-token auth). DPC-1: notification prefs enforced (Telegram master toggle + sector/score_min/actions/min_conf + push). Remaining: FE-2 accessibility fixes. |
 | **Frontend** | 8.7/10 | A− | ↑ from 8.5 | UX: 9.0/10 (broker connect, performance view, kill switch badge). Architecture: 8.1/10 (ErrorBoundary added, E2E Playwright scaffold `tests/e2e/test_golden_path.py`, Lighthouse CI config `.lighthouserc.json`). Bundle: 408KB esbuild. Remaining: FE-2 accessibility manual fixes. |
 | **Security Posture** | 7.5/10 | B+ | ↑ from 7.2 | Fernet-encrypted Alpaca keys. CSP `unsafe-eval` eliminated. SEC-2 gitleaks in CI. SEC-3 OWASP confirmed clean (no dangerouslySetInnerHTML, SQLAlchemy parameterized, rate-limited auth). SEC-4 credential rotation endpoint (`PUT /api/me/broker/rotate-credentials`). SEC-6 npm audit in CI. **Blocker: default owner password `ChangeMe123!` still in .env.** |
 | **Deployment Readiness** | 7.2/10 | B− | ↑ from 6.5 | DEPLOY-4 RUNBOOK.md (deployment, rollback, incident response, backup/restore). DEPLOY-5 locust load test (`tests/locustfile.py`, 100-user simulation). DEPLOY-6 Railway + Fly CI/CD deploy on merge to `main`. Coverage floor 65% in CI. Remaining blockers: HTTPS, Stripe webhook, SMTP, VAPID, owner password rotation. |
@@ -401,11 +406,13 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 |---|---|---|---|---|
 | **ML Methodology** | 8.4/10 | A− | ↑ from 8.2 | ML-4 rolling 90d AUC drift (`compute_rolling_auc()` in `signal_ml.py`). **ML-5** `shap_live_audit()` in `eval_ml.py §8` — compares live feature importance ranking vs IS backtest, flags |Δrank|>3. Champion/challenger: N≥300, ΔAUC≥0.005. Entry OOS AUC=0.6399. |
 | **Signal Engine / Gate Stack** | 8.2/10 | B+ | ↑ from 8.0 | Gate completeness: 8.8/10. **Architecture: 7.9/10 (↑ from 7.5)** — BE-1 partial: `signal_engine.py` 7421→5848 lines; `services/engines/` extracted (`helpers.py` + `assembler.py`), clean DAG, all symbols re-exported for back-compat. Remaining: ~5.2k-line `generate_signal()` scorer (threads shared mutable state across 60+ sections; needs scoring-context object, deferred as higher-risk). `gates/` (7 files) clean. RD-3 §79 Q1 gate added. |
-| **Backend Architecture** | 8.6/10 | A− | ↑ from 8.5 | Functional: 9.2/10. **Maintainability: 7.9/10 (↑ from 7.7)** — engine decomposition (`services/engines/`); BE-2 `LOG_FORMAT=json` structured logging; `routers/me.py` + enforced notification prefs. DPC-2 reconstruction-class audit confirmed EOD batch was the only row→dict→gate path (now fixed). Remaining: no /v1/ prefix, some untyped dicts. |
-| **Data Pipeline** | 9.2/10 | A+ | — | Polygon + yfinance + FRED + EDGAR + options + Alpaca live execution. Redis stampede lock. §80 NBBO, §81 block prints, §63 cointegration, §52 short-int velocity. |
-| **Test Coverage** | 9.6/10 | A | ↑ from 9.5 | **1636 passing, 3 skipped** (up from 1115; new per-router/per-service unit suites + delivery-path regression tests). E2E Playwright scaffold `tests/e2e/test_golden_path.py` (13 tests need `playwright install` + running backend). Locust load test `tests/locustfile.py`. Coverage floor 65% in CI. Gap: §73/§74/§69–§72 gates lack dedicated unit tests. |
+| **Backend Architecture** | 8.7/10 | A− | ↑ from 8.6 | Functional: 9.2/10. **Maintainability: 8.1/10 (↑ from 7.9)** — engine decomposition (`services/engines/`); BE-2 `LOG_FORMAT=json` structured logging; `routers/me.py` + enforced notification prefs. **v7.7: `services/http_client.py` centralises outbound HTTP** — eliminated ~40 duplicated per-call `ssl.create_default_context(...)` + `aiohttp.ClientSession()` blocks (DRY + latency); shared session closed in app lifespan. DPC-2 reconstruction-class audit confirmed EOD batch was the only row→dict→gate path (now fixed). Remaining: no /v1/ prefix, some untyped dicts. |
+| **Data Pipeline** | 9.3/10 | A+ | ↑ from 9.2 | Polygon + yfinance + FRED + EDGAR + options + **Alpaca & IBKR live execution**. Redis stampede lock. §80 NBBO, §81 block prints, §63 cointegration, §52 short-int velocity, §75 EDGAR 8-K buyback parsing. **v7.7: pooled aiohttp sessions (`shared_session()`) + cached TLS context across 20 data-service modules** — connection reuse (keep-alive/DNS/TLS resumption) on Polygon + the worker fan-out, and the per-call SSL rebuild no longer blocks the event loop, so `generate_signal`'s `asyncio.gather` fetches run truly concurrently. |
+| **Test Coverage** | 9.6/10 | A | — | **1646 passing, 3 skipped** (up from 1115; new per-router/per-service unit suites + delivery-path regression tests). E2E Playwright scaffold `tests/e2e/test_golden_path.py` (13 tests need `playwright install` + running backend). Locust load test `tests/locustfile.py`. Coverage floor 65% in CI. Gap: §73/§74/§69–§72 gates lack dedicated unit tests. |
 
 ### Adversarial Assessment — v7.2 → v7.3 → v7.4 → v7.5 → v7.6
+
+> v7.7 (IBKR broker + §75 buyback gate + HTTP latency pass) is product/infra work; the hostile-quant scores below (methodology, OOS, signal alpha) are unchanged from v7.6.
 
 > Scores a hostile quant engineer would assign at each snapshot. Trajectory shows real improvement, not feature-count inflation.
 

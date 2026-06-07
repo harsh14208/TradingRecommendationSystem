@@ -26,13 +26,14 @@
 
 ---
 
-## System Status — v10.5+A16+v7.5 (2026-06-05)
+## System Status — v10.5+A16+v7.7 (2026-06-06)
 
-> **Ratings: [`docs/Stats.md §15`](Stats.md) — single source of truth (v7.5).**
+> **Ratings: [`docs/Stats.md §15`](Stats.md) — single source of truth (v7.7).**
+> **Change log v7.7 (2026-06-06):** (1) IBKR broker integration (`ibkr_rest.py` + connect/execute + UI — second auto-execution broker); (2) §75 buyback window live (EDGAR 8-K parsing, 29/31 strategies); (3) HTTP latency pass — `services/http_client.py` (cached TLS + pooled `shared_session()`) across 20 data-service modules. 1646 tests.
 > **Change log v7.5 (2026-06-05):** 32/38 free path-to-10/10 items done. BT-2/4, RD-3/4, CAL-2/3, ML-5, PROD-3/4, SEC-2/3/4/6, FE-1/3/4, DEPLOY-4/5/6, OOS v9 (10 tickers). 1115 tests.
 > **Change log v7.4 (2026-06-05):** RISK-1/2/4 (bracket stops, DD circuit-breaker, kill switch); ML-4; CAL-4; BE-2; 1096 tests.
 
-**Overall: 8.2/10 product audit · 8.6/10 B+ quality** — see [Stats.md §15](Stats.md) for per-area breakdown.
+**Overall: 8.4/10 product audit · 8.8/10 B+ quality** — see [Stats.md §15](Stats.md) for per-area breakdown.
 
 > IS base Sh=0.20 (N=230). OOS v6 CLEAN Sh=0.16. OOS v7/v8/v9 pre-specified (35 tickers). Forward: 0.13–0.18.
 > Next: §85-1 at ≥200 resolved; OOS v7 at ≥30 live healthcare/consumer/exchange trades; Cal v5 at ≥50 post-A19 resolved.
@@ -76,7 +77,7 @@
 
 ## 🏆 Path to 10/10 — Area-by-Area Gap Analysis
 
-> Current overall: **8.2/10 product · 8.6/10 B+ quality** (v7.5, 2026-06-05). Full per-area ratings in [`docs/Stats.md §15`](Stats.md). Items below are the specific gaps and actionable TODOs per area.
+> Current overall: **8.4/10 product · 8.8/10 B+ quality** (v7.7, 2026-06-06). Full per-area ratings in [`docs/Stats.md §15`](Stats.md). Items below are the specific gaps and actionable TODOs per area.
 
 ### 💸 Cost Summary
 
