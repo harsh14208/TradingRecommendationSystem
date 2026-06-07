@@ -1,5 +1,18 @@
 from database import Base
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import func
 
 
@@ -266,3 +279,167 @@ class PerformanceSnapshot(Base):
     sharpe = Column(Float, nullable=True)  # quick filter
     alpha = Column(Float, nullable=True)  # Jensen's alpha annualized (quick filter)
     created_at = Column(DateTime, server_default=func.now())
+
+
+# ── Quant-engine lifecycle (additive, normalized) ─────────────────────────────
+#
+# A proper quant-engine spine layered ADDITIVELY on top of the existing
+# signal-delivery schema. These tables reference existing rows (`signals`,
+# `broker_orders`, `users`) by id and never modify those tables:
+#
+#   instruments ─┬─< bars                 (point-in-time market data)
+#                ├─< feature_snapshots     (point-in-time alpha features ← signals)
+#                ├─< fills                 (execution ledger ← broker_orders)
+#                └─< positions ─< (accounting unit ← signals)
+#   users ───────┬─< positions
+#                ├─< pnl_daily             (equity curve / drawdown)
+#                └─< risk_metrics          (portfolio beta / VaR / concentration)
+#
+# Lifecycle: instruments → signals → broker_orders → fills → positions →
+#            pnl_daily / risk_metrics.
+
+
+class Instrument(Base):
+    """Securities master — one row per tradable symbol (sector, ADV, beta, …)."""
+
+    __tablename__ = "instruments"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(12), unique=True, nullable=False, index=True)
+    name = Column(String(120), nullable=True)
+    asset_type = Column(String(16), nullable=False, default="equity", server_default="equity")
+    sector = Column(String(40), nullable=True)
+    industry = Column(String(80), nullable=True)
+    sector_etf = Column(String(10), nullable=True)  # XLK, XLF, XLE, …
+    currency = Column(String(3), nullable=False, default="USD", server_default="USD")
+    market_cap = Column(Float, nullable=True)  # USD
+    adv_usd = Column(Float, nullable=True)  # 30-day average daily $ volume
+    beta = Column(Float, nullable=True)  # vs SPY
+    shares_outstanding = Column(Float, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False, server_default="1")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class Bar(Base):
+    """OHLCV time-series bar — point-in-time market data (one row per symbol/interval/ts)."""
+
+    __tablename__ = "bars"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False)
+    interval = Column(String(4), nullable=False, default="1d", server_default="1d")  # 1d | 1h | 5m | 1w
+    ts = Column(DateTime, nullable=False)  # close-of-period timestamp (UTC)
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, nullable=False, default=0, server_default="0")
+    vwap = Column(Float, nullable=True)
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "interval", "ts", name="uq_bars_instrument_interval_ts"),
+        Index("ix_bars_instrument_ts", "instrument_id", "ts"),
+    )
+
+
+class FeatureSnapshot(Base):
+    """Point-in-time feature vector for an instrument, optionally tied to the signal it fed.
+
+    Lets a delivered signal's exact inputs be reproduced with no look-ahead. Hot
+    scalars are first-class indexed columns; the full vector lives in `features`.
+    """
+
+    __tablename__ = "feature_snapshots"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False)
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="SET NULL"), nullable=True, index=True)
+    ts = Column(DateTime, nullable=False)
+    rsi = Column(Float, nullable=True)
+    bb_pct_b = Column(Float, nullable=True)
+    ibs = Column(Float, nullable=True)
+    vwap_pct = Column(Float, nullable=True)
+    atr_pct = Column(Float, nullable=True)
+    zscore = Column(Float, nullable=True)
+    quality_score = Column(Float, nullable=True)
+    features = Column(JSON, nullable=True)  # full point-in-time feature dict
+    created_at = Column(DateTime, server_default=func.now())
+    __table_args__ = (Index("ix_feature_snapshots_instrument_ts", "instrument_id", "ts"),)
+
+
+class Fill(Base):
+    """Individual execution against a broker order (an order may fill in parts)."""
+
+    __tablename__ = "fills"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    broker_order_id = Column(Integer, ForeignKey("broker_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id", ondelete="SET NULL"), nullable=True, index=True)
+    side = Column(String(4), nullable=False)  # buy | sell
+    qty = Column(Float, nullable=False)  # shares filled
+    price = Column(Float, nullable=False)  # fill price
+    commission = Column(Float, nullable=False, default=0, server_default="0")
+    slippage_bps = Column(Float, nullable=True)  # vs signal arrival/entry price
+    broker_fill_id = Column(String(64), nullable=True)
+    filled_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
+
+
+class Position(Base):
+    """Open or closed position for a user in an instrument — the accounting unit."""
+
+    __tablename__ = "positions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False, index=True)
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="SET NULL"), nullable=True, index=True)
+    status = Column(String(8), nullable=False, default="open", server_default="open")  # open | closed
+    side = Column(String(5), nullable=False, default="long", server_default="long")  # long | short
+    qty = Column(Float, nullable=False, default=0, server_default="0")
+    avg_entry_price = Column(Float, nullable=False)
+    avg_exit_price = Column(Float, nullable=True)
+    cost_basis = Column(Float, nullable=False, default=0, server_default="0")  # qty * avg_entry_price
+    last_price = Column(Float, nullable=True)  # latest mark
+    market_value = Column(Float, nullable=True)
+    unrealized_pnl = Column(Float, nullable=True)
+    realized_pnl = Column(Float, nullable=False, default=0, server_default="0")
+    stop = Column(Float, nullable=True)
+    target = Column(Float, nullable=True)
+    opened_at = Column(DateTime, server_default=func.now(), index=True)
+    closed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    __table_args__ = (Index("ix_positions_user_status", "user_id", "status"),)
+
+
+class PnlDaily(Base):
+    """Daily portfolio P&L mark per user — equity curve, exposure, drawdown."""
+
+    __tablename__ = "pnl_daily"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    date = Column(Date, nullable=False)
+    equity = Column(Float, nullable=False, default=0, server_default="0")  # total account equity
+    cash = Column(Float, nullable=True)
+    realized_pnl = Column(Float, nullable=False, default=0, server_default="0")  # realized that day
+    unrealized_pnl = Column(Float, nullable=False, default=0, server_default="0")
+    gross_exposure = Column(Float, nullable=True)  # Σ |position market value|
+    net_exposure = Column(Float, nullable=True)  # Σ signed market value
+    drawdown_pct = Column(Float, nullable=True)  # from running peak equity
+    n_positions = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime, server_default=func.now())
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_pnl_daily_user_date"),)
+
+
+class RiskMetric(Base):
+    """Daily portfolio risk snapshot per user — beta, vol, VaR, concentration."""
+
+    __tablename__ = "risk_metrics"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    date = Column(Date, nullable=False)
+    portfolio_beta = Column(Float, nullable=True)  # vs SPY
+    portfolio_vol = Column(Float, nullable=True)  # annualized
+    var_95 = Column(Float, nullable=True)  # 1-day 95% VaR
+    max_sector_pct = Column(Float, nullable=True)  # largest sector weight
+    avg_pairwise_corr = Column(Float, nullable=True)  # §83 cross-signal correlation
+    gross_leverage = Column(Float, nullable=True)
+    net_leverage = Column(Float, nullable=True)
+    metrics = Column(JSON, nullable=True)  # extensible overflow
+    created_at = Column(DateTime, server_default=func.now())
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_risk_metrics_user_date"),)
