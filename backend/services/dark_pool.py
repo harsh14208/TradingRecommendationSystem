@@ -16,6 +16,7 @@ import os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.dark_pool")
 
@@ -292,13 +293,9 @@ async def get_massive_advanced_signals(ticker: str) -> dict:
     if not api_key:
         return {}
 
-    import ssl
     from datetime import date, timedelta
 
-    import aiohttp
-    import certifi
-
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
 
     results = {
         "ftd": {"is_reg_sho": False, "spike_pct": 0.0},
@@ -311,7 +308,7 @@ async def get_massive_advanced_signals(ticker: str) -> dict:
     lookahead_7 = (today + timedelta(days=7)).isoformat()
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
 
             async def _get(url: str, params: dict) -> dict:
                 try:

@@ -22,6 +22,7 @@ import time
 from datetime import date, timedelta
 
 import aiohttp
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.8k_events")
 
@@ -67,17 +68,13 @@ async def get_8k_signals(ticker: str) -> dict:
     if not api_key:
         return {"score": 0.0, "events": [], "filings": []}
 
-    import ssl
-
-    import certifi
-
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
     cutoff = (date.today() - timedelta(days=5)).isoformat()
     url = f"{_BASE}/vX/reference/sec/filings"
     params = {"apiKey": api_key, "ticker": ticker, "type": "8-K", "filing_date.gte": cutoff, "limit": 5}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             async with session.get(url, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status != 200:
                     return {"score": 0.0, "events": [], "filings": []}

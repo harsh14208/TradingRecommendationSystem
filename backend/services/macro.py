@@ -19,6 +19,7 @@ import certifi
 
 from services.market_data import get_history
 from services.redis_cache import cache_get, cache_set
+from services.http_client import get_ssl_context, shared_session
 
 _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
 
@@ -736,7 +737,7 @@ async def get_macro_context() -> dict:
     try:
         _poly_key2 = os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY") or ""
         if _poly_key2:
-            _ssl2 = ssl.create_default_context(cafile=certifi.where())
+            _ssl2 = get_ssl_context()
             _news_scores: list[float] = []
             _keywords_pos = {
                 "rally",
@@ -768,7 +769,7 @@ async def get_macro_context() -> dict:
                 "fear",
                 "risk",
             }
-            async with aiohttp.ClientSession() as _ns:
+            async with shared_session() as _ns:
                 for _etf in ("SPY", "QQQ"):
                     async with _ns.get(
                         "https://api.polygon.io/v2/reference/news",
@@ -936,8 +937,8 @@ async def get_macro_context() -> dict:
     try:
         _poly_key = os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY") or ""
         if _poly_key:
-            _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-            async with aiohttp.ClientSession() as _sess:
+            _ssl_ctx = get_ssl_context()
+            async with shared_session() as _sess:
                 async with _sess.get(
                     "https://api.polygon.io/v1/marketstatus/now",
                     params={"apiKey": _poly_key},

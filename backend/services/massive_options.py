@@ -16,6 +16,7 @@ import os
 import time
 
 import aiohttp
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.massive_options")
 
@@ -42,13 +43,9 @@ async def get_option_chain_signals(ticker: str, current_price: float) -> dict:
     url = f"{_BASE}/v3/snapshot/options/{ticker}"
     params = {"apiKey": api_key, "limit": 250}
 
-    import ssl
-
-    import certifi
-
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             async with session.get(url, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
                     return {}

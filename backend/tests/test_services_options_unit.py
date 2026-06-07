@@ -1,8 +1,6 @@
 """Unit tests for services/options.py — pure math helpers and scoring."""
-import math
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 
 # ── Black-Scholes greeks ──────────────────────────────────────────────────────

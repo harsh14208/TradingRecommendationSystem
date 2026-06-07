@@ -18,6 +18,7 @@ import time
 
 import aiohttp
 import certifi
+from services.http_client import shared_session
 
 log = logging.getLogger("signal.trade.polygon_indicators")
 
@@ -77,7 +78,7 @@ async def get_indicators(ticker: str) -> dict:
 
     result: dict = {}
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
 
             async def _fetch_macd() -> list:
                 try:
@@ -165,7 +166,7 @@ async def get_weekly_indicators(ticker: str) -> dict:
     result: dict = {}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             rsi_w, sma20_w = await asyncio.gather(
                 _fetch_indicator(session, f"v1/indicators/rsi/{t}", {**weekly_params, "window": 14}),
                 _fetch_indicator(session, f"v1/indicators/sma/{t}", {**weekly_params, "window": 20}),

@@ -12,7 +12,7 @@ import time
 from typing import Any, Optional
 
 import aiohttp
-import certifi
+from services.http_client import get_ssl_context
 
 PAPER_BASE = "https://paper-api.alpaca.markets"
 LIVE_BASE = "https://api.alpaca.markets"
@@ -35,7 +35,7 @@ def _headers(api_key: str, api_secret: str) -> dict:
 
 
 def _ssl_ctx() -> ssl.SSLContext:
-    ctx = ssl.create_default_context(cafile=certifi.where())
+    ctx = get_ssl_context()
     return ctx
 
 

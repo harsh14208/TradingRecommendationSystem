@@ -193,6 +193,40 @@ async def test_execute_signal_ibkr_notional():
 
 
 @pytest.mark.asyncio
+async def test_execute_signal_ibkr_no_secret_still_executes():
+    """Regression: IBKR uses a single bearer token (no secret). A user connected
+    via IBKR has alpaca_secret_enc=None — auto-execution must still run, not be
+    silently skipped by the credential guard."""
+    from services.broker_svc import execute_signal_for_user
+
+    user = _make_user(
+        alpaca_key_enc=encrypt_credential("TOKEN"),
+        alpaca_secret_enc=None,  # IBKR has no secret
+        alpaca_account_type="paper",
+        auto_execute_broker="ibkr",
+    )
+
+    db = AsyncMock()
+
+    with patch("services.broker_svc.check_portfolio_drawdown", new_callable=AsyncMock, return_value=False):
+        with patch(
+            "services.ibkr_rest.place_notional_order",
+            new_callable=AsyncMock,
+            return_value={"id": "ibkr_999", "status": "filled"},
+        ) as mock_place:
+            await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "price": 150.0}, 1, db)
+
+            # Order placed despite missing secret (empty string passed through)
+            mock_place.assert_called_once_with(
+                "TOKEN", "", symbol="AAPL", notional=100.0, side="buy", live=False, entry_price=150.0
+            )
+            assert db.add.call_count == 1
+            order = db.add.call_args[0][0]
+            assert order.broker == "ibkr"
+            assert order.alpaca_order_id == "ibkr_999"
+
+
+@pytest.mark.asyncio
 async def test_execute_signal_ibkr_bracket_stop():
     from services.broker_svc import execute_signal_for_user
 

@@ -9,12 +9,11 @@ Cache: 24 hours (holiday schedule doesn't change intraday).
 
 import logging
 import os
-import ssl
 import time
 from datetime import datetime, timezone
 
 import aiohttp
-import certifi
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.market_calendar")
 
@@ -38,9 +37,9 @@ async def get_upcoming_holidays() -> list[dict]:
         _cache["ts"] = now
         return []
 
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             async with session.get(
                 "https://api.polygon.io/v1/marketstatus/upcoming",
                 params={"apiKey": api_key},

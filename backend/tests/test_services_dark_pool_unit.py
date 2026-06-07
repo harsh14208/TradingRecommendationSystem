@@ -1,7 +1,7 @@
 """Unit tests for services/dark_pool.py — pure helpers and async getters."""
 import time
 from collections import deque
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

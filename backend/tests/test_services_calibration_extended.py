@@ -2,10 +2,8 @@
 import json
 import math
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 
 # ── _blend ────────────────────────────────────────────────────────────────────
@@ -270,7 +268,7 @@ def test_apply_calibration_platt_fallback():
 
 
 def test_apply_calibration_clamped():
-    from services.calibration import apply_calibration, _CONF_FLOOR, _CONF_CEIL
+    from services.calibration import apply_calibration, _CONF_CEIL
     # Extreme values should be clamped
     table = [[c / 100, 0.99] for c in range(35, 79)]
     cal_map = {"_isotonic": table, "n": 20}
@@ -288,7 +286,6 @@ def test_fit_isotonic_insufficient_data():
 
 def test_fit_isotonic_success():
     from services.calibration import _fit_isotonic
-    import numpy as np
     # Need ≥20 samples
     X = [0.4 + i * 0.01 for i in range(25)]
     y = [int(x > 0.55) for x in X]

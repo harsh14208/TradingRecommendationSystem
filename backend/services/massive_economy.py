@@ -26,6 +26,7 @@ _BASE = "https://api.polygon.io"
 import ssl as _ssl
 
 import certifi as _certifi
+from services.http_client import shared_session
 
 _SSL_CTX = _ssl.create_default_context(cafile=_certifi.where())
 
@@ -58,7 +59,7 @@ async def get_economy_data() -> dict:
         return {}
 
     base = {"apiKey": api_key, "limit": 5}
-    async with aiohttp.ClientSession() as session:
+    async with shared_session() as session:
         yields_raw, inflation_raw, labor_raw = await asyncio.gather(
             _fetch(session, "economy/treasury_yields", base),
             _fetch(session, "economy/inflation", base),

@@ -340,7 +340,6 @@ async def submit_bracket_stop_order(
 
 
 async def close_position(api_key: str, api_secret: str, symbol: str, live: bool = False) -> dict:
-    acct = await get_account(api_key, api_secret, live)
     positions = await get_positions(api_key, api_secret, live)
 
     position_qty = 0.0

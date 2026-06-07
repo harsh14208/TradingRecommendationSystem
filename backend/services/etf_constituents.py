@@ -22,6 +22,7 @@ import os
 import time
 
 import aiohttp
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.etf_constituents")
 
@@ -34,15 +35,12 @@ TRACKED_ETFS = ["XLK", "XLF", "XLY", "XLC", "XLV", "XLP", "XLE", "XLI", "XLB", "
 
 
 async def _fetch_constituents(etf: str, api_key: str) -> list[dict]:
-    import ssl
 
-    import certifi
-
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
     # Polygon.io ETF constituents — requires Starter plan or higher
     url = f"{_BASE}/v3/reference/tickers?type=ETF&market=stocks&apiKey={api_key}&search={etf}&limit=1"
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             async with session.get(url, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status != 200:  # 403 = premium — return empty, SECTOR_MAP fallback used
                     return []

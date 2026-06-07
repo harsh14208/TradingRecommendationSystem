@@ -1,7 +1,7 @@
 """Unit tests for services/market_data.py — pure helpers and cache."""
 import time
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
 import pytest

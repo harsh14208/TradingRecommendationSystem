@@ -1,8 +1,6 @@
 """Extended tests for routers/auth.py — covering uncovered endpoints."""
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone, timedelta
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

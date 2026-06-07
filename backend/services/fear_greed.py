@@ -9,6 +9,7 @@ import aiohttp
 import certifi
 
 from services.redis_cache import cache_get, cache_set
+from services.http_client import get_ssl_context, shared_session
 
 _cache: dict = {"data": None, "ts": 0.0}  # in-process fallback for serve-stale-on-error
 _ssl_ctx: ssl.SSLContext = ssl.create_default_context(cafile=certifi.where())
@@ -118,19 +119,17 @@ _pc_cache: dict = {"ratio": None, "ts": 0.0}
 
 async def get_put_call_ratio() -> dict | None:
     """CBOE total put/call ratio — free daily CSV, no key needed."""
-    import ssl
     import time
 
     import aiohttp
-    import certifi
 
     now = time.time()
     if _pc_cache["ratio"] is not None and now - _pc_cache["ts"] < 3600 * 4:
         return _pc_cache["ratio"]
-    ctx = ssl.create_default_context(cafile=certifi.where())
+    ctx = get_ssl_context()
     url = "https://www.cboe.com/publish/scheduledtask/mktdata/todays_options_statistics.csv"
     try:
-        async with aiohttp.ClientSession() as s:
+        async with shared_session() as s:
             async with s.get(url, ssl=ctx, timeout=aiohttp.ClientTimeout(total=10)) as r:
                 if r.status != 200:
                     return None

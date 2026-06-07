@@ -18,12 +18,11 @@ Signal value:
 import asyncio
 import logging
 import os
-import ssl
 import time
 from datetime import date, timedelta
 
 import aiohttp
-import certifi
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.corporate_events")
 
@@ -59,7 +58,7 @@ async def _fetch_dividends(tickers: list[str], ssl_ctx, api_key: str) -> list[di
     today = date.today()
     end_date = (today + timedelta(days=7)).isoformat()
     events = []
-    async with aiohttp.ClientSession() as session:
+    async with shared_session() as session:
 
         async def fetch_one(ticker):
             url = f"{_BASE}/v3/reference/dividends"
@@ -105,7 +104,7 @@ async def _fetch_splits(tickers: list[str], ssl_ctx, api_key: str) -> list[dict]
     today = date.today()
     end_date = (today + timedelta(days=14)).isoformat()
     events = []
-    async with aiohttp.ClientSession() as session:
+    async with shared_session() as session:
 
         async def fetch_one(ticker):
             url = f"{_BASE}/v3/reference/splits"
@@ -152,7 +151,7 @@ async def _fetch_news_events(tickers: list[str], ssl_ctx, api_key: str) -> list[
     """Detect M&A, guidance raise/cut from recent news headlines."""
     today = date.today().isoformat()
     events = []
-    async with aiohttp.ClientSession() as session:
+    async with shared_session() as session:
 
         async def fetch_one(ticker):
             url = f"{_BASE}/v2/reference/news"
@@ -237,7 +236,7 @@ async def get_corporate_events(tickers: list[str] | None = None) -> dict:
 
         tickers = get_settings().tickers[:50]  # top 50 to keep startup fast
 
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
 
     divs, splits, news_ev = await asyncio.gather(
         _fetch_dividends(tickers, ssl_ctx, api_key),

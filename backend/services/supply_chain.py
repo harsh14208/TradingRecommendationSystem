@@ -20,6 +20,7 @@ Cached for 4 hours.
 import asyncio
 import logging
 import time
+from services.http_client import shared_session
 
 log = logging.getLogger("signal.trade.supply_chain")
 
@@ -134,7 +135,7 @@ async def _fetch_freight_fred() -> dict | None:
             f"?series_id=CASSFREIGHTEXPNS&sort_order=desc&limit=24"
             f"&api_key={key}&file_type=json"
         )
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status != 200:
                     return None

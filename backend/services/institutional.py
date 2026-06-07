@@ -13,6 +13,7 @@ import logging
 import time
 
 import aiohttp
+from services.http_client import shared_session
 
 log = logging.getLogger("signal.trade.institutional")
 
@@ -250,7 +251,7 @@ async def get_institutional_signals(watchlist: list[str]) -> list[dict]:
     watchlist_set = set(t.upper() for t in watchlist)
     results: list[dict] = []
 
-    async with aiohttp.ClientSession() as session:
+    async with shared_session() as session:
         for fund_name, cik, tier in TRACKED_FUNDS:
             try:
                 holdings = await _fetch_latest_13f_holdings(session, cik)

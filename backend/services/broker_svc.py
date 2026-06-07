@@ -149,17 +149,22 @@ async def execute_signal_for_user(
     """
     from models import BrokerOrder
 
-    if not user.alpaca_key_enc or not user.alpaca_secret_enc:
+    broker_type = user.auto_execute_broker or "alpaca"
+
+    # IBKR authenticates with a single bearer token (no secret); Alpaca needs both.
+    # Mirror broker_connect/broker_status, which store/treat the secret as optional for IBKR.
+    if not user.alpaca_key_enc:
+        return
+    if broker_type != "ibkr" and not user.alpaca_secret_enc:
         return
 
     key = decrypt_credential(user.alpaca_key_enc)
-    secret = decrypt_credential(user.alpaca_secret_enc)
-    if not key or not secret:
+    secret = decrypt_credential(user.alpaca_secret_enc) if user.alpaca_secret_enc else ""
+    if not key or (broker_type != "ibkr" and not secret):
         log.warning("broker_svc: user=%d — credential decryption failed, skipping", user.id)
         return
 
     live = user.alpaca_account_type == "live"
-    broker_type = user.auto_execute_broker or "alpaca"
 
     # RISK-2: Portfolio drawdown circuit-breaker
     if await check_portfolio_drawdown(user, key, secret, live, broker=broker_type):

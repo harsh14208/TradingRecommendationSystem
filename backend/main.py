@@ -1306,6 +1306,9 @@ async def lifespan(app: FastAPI):
     _supervise("warm_indicators", _warm_indicator_cache, restart=False)
     yield
     alpaca_ws.stop()
+    from services.http_client import close_sessions
+
+    await close_sessions()
     if _scan_task:
         _scan_task.cancel()
     for entry in _bg_tasks.values():

@@ -13,6 +13,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Optional
+from services.http_client import get_ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -229,12 +230,10 @@ class LocalLLMClient:
 
 async def _aio_post(url: str, payload: dict, headers: dict = None, timeout: int = 30) -> dict:
     """Non-blocking POST via aiohttp. Replaces urllib.request.urlopen."""
-    import ssl
 
     import aiohttp
-    import certifi
 
-    _ssl = ssl.create_default_context(cafile=certifi.where())
+    _ssl = get_ssl_context()
     hdrs = {"Content-Type": "application/json", **(headers or {})}
     async with aiohttp.ClientSession() as sess:
         async with sess.post(
@@ -245,12 +244,10 @@ async def _aio_post(url: str, payload: dict, headers: dict = None, timeout: int 
 
 async def _aio_get(url: str, headers: dict = None, timeout: int = 5) -> int:
     """Non-blocking GET status check via aiohttp."""
-    import ssl
 
     import aiohttp
-    import certifi
 
-    _ssl = ssl.create_default_context(cafile=certifi.where())
+    _ssl = get_ssl_context()
     try:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(

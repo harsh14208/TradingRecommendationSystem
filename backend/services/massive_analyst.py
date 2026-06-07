@@ -40,6 +40,7 @@ _BASE = "https://api.polygon.io"
 import ssl as _ssl
 
 import certifi as _certifi
+from services.http_client import shared_session
 
 _SSL_CTX = _ssl.create_default_context(cafile=_certifi.where())
 
@@ -86,7 +87,7 @@ async def get_analyst_intelligence(ticker: str) -> dict:
 
     base_params = {"apiKey": api_key, "ticker": ticker}
 
-    async with aiohttp.ClientSession() as session:
+    async with shared_session() as session:
         bulls_bears, consensus, guidance, ratings = await asyncio.gather(
             _fetch(session, "partners/bulls_bears_say", {**base_params, "limit": 1}),
             _fetch(session, "partners/consensus_ratings", base_params),

@@ -18,6 +18,7 @@ log = logging.getLogger("signal.trade.edgar")
 
 import aiohttp
 import certifi
+from services.http_client import shared_session
 
 HEADERS = {"User-Agent": "SignalTrade research@signaltrade.com", "Accept-Encoding": "gzip"}
 _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
@@ -312,7 +313,7 @@ async def _fetch_filing_text(cik: str, form_type: str = "10-Q") -> list[str]:
     url = f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json"
     texts = []
     try:
-        async with aiohttp.ClientSession() as sess:
+        async with shared_session() as sess:
             async with sess.get(url, headers=HEADERS, ssl=_ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)) as r:
                 if r.status != 200:
                     return []
@@ -330,7 +331,7 @@ async def _fetch_filing_text(cik: str, form_type: str = "10-Q") -> list[str]:
             # Fetch the filing index to find the primary document
             idx_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{acc}-index.json"
             try:
-                async with aiohttp.ClientSession() as sess:
+                async with shared_session() as sess:
                     async with sess.get(
                         idx_url, headers=HEADERS, ssl=_ssl_ctx, timeout=aiohttp.ClientTimeout(total=6)
                     ) as r:
@@ -350,7 +351,7 @@ async def _fetch_filing_text(cik: str, form_type: str = "10-Q") -> list[str]:
                     continue
 
                 doc_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{primary_doc}"
-                async with aiohttp.ClientSession() as sess:
+                async with shared_session() as sess:
                     async with sess.get(
                         doc_url, headers=HEADERS, ssl=_ssl_ctx, timeout=aiohttp.ClientTimeout(total=10)
                     ) as r:

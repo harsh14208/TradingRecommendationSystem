@@ -1,5 +1,4 @@
 """Extended tests for validate_predictions.py — async resolution functions."""
-import asyncio
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 

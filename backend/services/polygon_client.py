@@ -4,8 +4,9 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
-import aiohttp
 import pandas as pd
+
+from services.http_client import shared_session
 
 log = logging.getLogger("signal.trade.polygon")
 
@@ -75,13 +76,8 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
     params = {"adjusted": "true", "sort": "asc", "limit": 50000, "apiKey": api_key}
 
     try:
-        import ssl
-
-        import certifi
-
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+        async with shared_session() as session:
+            async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status != 200:
                     log.warning(f"[polygon] Error fetching {ticker}: HTTP {resp.status}")
                     return None
@@ -147,13 +143,8 @@ async def get_polygon_snapshot_batch(tickers: list[str]) -> dict[str, dict]:
     url = f"{_BASE}/v2/snapshot/locale/us/markets/stocks/tickers"
     params = {"tickers": ",".join(t.upper() for t in tickers), "apiKey": api_key}
     try:
-        import ssl as _ssl
-
-        import certifi as _certifi
-
-        ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=15, ssl=ssl_ctx) as resp:
+        async with shared_session() as session:
+            async with session.get(url, params=params, timeout=15) as resp:
                 if resp.status != 200:
                     log.warning("[polygon] snapshot batch: HTTP %s", resp.status)
                     return {}
@@ -211,13 +202,8 @@ async def get_polygon_info(ticker: str) -> dict | None:
     url = f"{_BASE}/v3/reference/tickers/{ticker.upper()}"
     params = {"apiKey": api_key}
     try:
-        import ssl
-
-        import certifi
-
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+        async with shared_session() as session:
+            async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()
@@ -286,13 +272,8 @@ async def get_polygon_weekly_bars(ticker: str, weeks: int = 26) -> pd.DataFrame 
     params = {"adjusted": "true", "sort": "asc", "limit": 50000, "apiKey": api_key}
 
     try:
-        import ssl as _ssl
-
-        import certifi as _certifi
-
-        ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+        async with shared_session() as session:
+            async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()
@@ -327,13 +308,8 @@ async def get_polygon_extended_hours(ticker: str) -> dict | None:
         url = f"{_BASE}/v2/snapshot/locale/us/markets/stocks/tickers/{t}"
         params = {"apiKey": api_key}
         try:
-            import ssl as _ssl
-
-            import certifi as _certifi
-
-            ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+            async with shared_session() as session:
+                async with session.get(url, params=params, timeout=10) as resp:
                     if resp.status != 200:
                         log.debug("[polygon] snapshot %s: HTTP %s", t, resp.status)
                         return None
@@ -386,13 +362,8 @@ async def get_polygon_dividends(ticker: str) -> list[dict]:
     url = f"{_BASE}/v3/reference/dividends"
     params = {"ticker": t, "limit": 5, "order": "desc", "sort": "ex_dividend_date", "apiKey": api_key}
     try:
-        import ssl as _ssl
-
-        import certifi as _certifi
-
-        ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+        async with shared_session() as session:
+            async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status != 200:
                     return []
                 data = await resp.json()
@@ -478,13 +449,8 @@ async def get_recent_block_prints(
         "apiKey": api_key,
     }
     try:
-        import ssl as _ssl
-
-        import certifi as _certifi
-
-        ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=10, ssl=ssl_ctx) as resp:
+        async with shared_session() as session:
+            async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status != 200:
                     return {}
                 data = await resp.json()
@@ -552,12 +518,7 @@ async def get_ofi_signals(ticker: str) -> dict:
         return {}
 
     try:
-        import ssl as _ssl
-
-        import certifi as _certifi
         import numpy as _np
-
-        ssl_ctx = _ssl.create_default_context(cafile=_certifi.where())
 
         # Fetch today's 1-minute bars (full session = up to 390 bars)
         now_utc = datetime.now(timezone.utc)
@@ -572,8 +533,8 @@ async def get_ofi_signals(ticker: str) -> dict:
             "apiKey": api_key,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=5, ssl=ssl_ctx) as resp:
+        async with shared_session() as session:
+            async with session.get(url, params=params, timeout=5) as resp:
                 if resp.status != 200:
                     return {}
                 data = await resp.json(content_type=None)

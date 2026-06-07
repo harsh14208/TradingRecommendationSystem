@@ -10,11 +10,10 @@ Cache: 6 hours (quarterly earnings data).
 
 import logging
 import os
-import ssl
 import time
 
 import aiohttp
-import certifi
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.polygon_financials")
 
@@ -54,10 +53,10 @@ async def get_ratios(ticker: str) -> dict:
         return {}
 
     params = {"ticker": ticker, "timeframe": "quarterly", "limit": 2, "order": "desc", "apiKey": api_key}
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             async with session.get(_BASE, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
                     return {}
@@ -151,10 +150,10 @@ async def get_annual_revenue_acceleration(ticker: str) -> dict:
         return {}
 
     params = {"ticker": ticker, "timeframe": "annual", "limit": 4, "order": "desc", "apiKey": api_key}
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             async with session.get(_BASE, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
                     return {}
@@ -217,11 +216,11 @@ async def get_polygon_dividend_data(ticker: str) -> dict:
     if not api_key:
         return {}
 
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
     result: dict = {}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             # Fetch last 20 payments — enough for 5 years of quarterly dividends
             async with session.get(
                 "https://api.polygon.io/v3/reference/dividends",

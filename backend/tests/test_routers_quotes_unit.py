@@ -1,15 +1,13 @@
 """Unit tests for routers/quotes.py — pure helpers and gated endpoints."""
 import pandas as pd
-import numpy as np
-from datetime import date, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import date
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from models import User
-from services.auth_svc import get_current_user
 
 
 def _make_user(tier="basic", status="active", is_owner=False):
@@ -186,7 +184,6 @@ def test_quotes_endpoint():
 # ── GET /api/market/sectors (cache path) ─────────────────────────────────────
 
 def test_sector_heatmap_cached():
-    import services.market_data as md
     from routers import quotes as q
     q._sector_cache["data"] = [{"etf": "XLK", "ret_1d": 0.5}]
     q._sector_cache["ts"] = 1e18  # far future, won't expire

@@ -13,12 +13,11 @@ Cache: 5 minutes per ticker.
 import asyncio
 import logging
 import os
-import ssl
 import time
 from datetime import datetime, timezone
 
 import aiohttp
-import certifi
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.polygon_news")
 
@@ -123,10 +122,10 @@ async def get_benzinga_news(ticker: str) -> list[dict]:
         return []
 
     params = {"ticker": ticker, "limit": 10, "order": "desc", "sort": "published_utc", "apiKey": api_key}
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             async with session.get(_BASE, params=params, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status != 200:
                     return []
@@ -205,12 +204,12 @@ async def prefetch_news_batch(watchlist: list[str]) -> None:
         return
 
     watchlist_set = set(t.upper() for t in watchlist)
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
     ticker_articles: dict[str, list] = {}
     cursor = None
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             for _page in range(3):  # 3 pages × 50 articles = 150 most recent
                 params: dict = {
                     "limit": 50,

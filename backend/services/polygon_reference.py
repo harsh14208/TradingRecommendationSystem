@@ -14,11 +14,10 @@ Cache: 24 hours (share counts change quarterly, not intraday).
 
 import logging
 import os
-import ssl
 import time
 
 import aiohttp
-import certifi
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.polygon_reference")
 
@@ -42,11 +41,11 @@ async def get_float_data(ticker: str) -> dict:
     if not api_key:
         return {}
 
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
     result: dict = {}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             # Step 1: total shares from ticker details
             async with session.get(
                 f"https://api.polygon.io/v3/reference/tickers/{ticker.upper()}",

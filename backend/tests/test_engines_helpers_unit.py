@@ -1,8 +1,6 @@
 """Unit tests for services/engines/helpers.py — pure scoring helpers."""
-import math
 import pytest
 from unittest.mock import patch
-from datetime import time as dtime
 
 
 # ── _score_to_action ──────────────────────────────────────────────────────────
@@ -157,7 +155,6 @@ def test_levels_rr_buy():
 def test_current_session_regular():
     from services.engines.helpers import _current_session, _ET
     from datetime import datetime
-    import pytz
     with patch("services.engines.helpers.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 6, 1, 14, 0, 0, tzinfo=_ET)
         mock_dt.now.return_value = _ET.localize(datetime(2026, 6, 1, 14, 0, 0).replace(tzinfo=None))

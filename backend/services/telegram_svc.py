@@ -1,4 +1,5 @@
 import aiohttp
+from services.http_client import get_ssl_context
 
 
 def format_signal(signal: dict) -> str:
@@ -24,16 +25,14 @@ async def send_telegram_message(
     timeout: int = 8,
 ) -> tuple[bool, str]:
     """Single shared Telegram send function used by all call sites."""
-    import ssl
 
-    import certifi
     from config import get_settings
 
     s = get_settings()
     if not s.telegram_bot_token or not chat_id:
         return False, "Not configured"
     url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
-    ctx = ssl.create_default_context(cafile=certifi.where())
+    ctx = get_ssl_context()
     try:
         async with aiohttp.ClientSession() as session:
             resp = await session.post(

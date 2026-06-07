@@ -181,7 +181,7 @@ async def test_polygon_extended_hours_happy_path():
     )
 
     with (
-        patch("aiohttp.ClientSession", return_value=mock_session),
+        patch("services.polygon_client.shared_session", return_value=mock_session),
         patch("services.polygon_client._get_api_key", return_value="fake_key"),
     ):
         result = await get_polygon_extended_hours("AAPL")
@@ -198,7 +198,10 @@ async def test_polygon_extended_hours_no_api_key():
     """No API key → returns None without making any HTTP request."""
     from services.polygon_client import get_polygon_extended_hours
 
-    with patch("services.polygon_client._get_api_key", return_value=""), patch("aiohttp.ClientSession") as mock_cls:
+    with (
+        patch("services.polygon_client._get_api_key", return_value=""),
+        patch("services.polygon_client.shared_session") as mock_cls,
+    ):
         result = await get_polygon_extended_hours("AAPL")
 
     mock_cls.assert_not_called()
@@ -223,7 +226,7 @@ async def test_polygon_extended_hours_non_200():
     )
 
     with (
-        patch("aiohttp.ClientSession", return_value=mock_session),
+        patch("services.polygon_client.shared_session", return_value=mock_session),
         patch("services.polygon_client._get_api_key", return_value="key"),
     ):
         result = await get_polygon_extended_hours("TSLA")
@@ -250,7 +253,7 @@ async def test_polygon_extended_hours_missing_fields():
     )
 
     with (
-        patch("aiohttp.ClientSession", return_value=mock_session),
+        patch("services.polygon_client.shared_session", return_value=mock_session),
         patch("services.polygon_client._get_api_key", return_value="key"),
     ):
         result = await get_polygon_extended_hours("MSFT")
@@ -285,7 +288,7 @@ async def test_polygon_extended_hours_flat_direction():
     )
 
     with (
-        patch("aiohttp.ClientSession", return_value=mock_session),
+        patch("services.polygon_client.shared_session", return_value=mock_session),
         patch("services.polygon_client._get_api_key", return_value="key"),
     ):
         result = await get_polygon_extended_hours("SPY")

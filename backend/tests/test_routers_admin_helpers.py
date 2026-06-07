@@ -1,9 +1,6 @@
 """Tests for admin.py pure helper functions and endpoints."""
-import pandas as pd
-import numpy as np
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

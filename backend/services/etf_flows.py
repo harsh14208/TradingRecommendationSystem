@@ -20,6 +20,7 @@ import os
 import time
 
 import aiohttp
+from services.http_client import get_ssl_context, shared_session
 
 log = logging.getLogger("signal.trade.etf_flows")
 
@@ -37,14 +38,10 @@ async def _fetch_etf_flows_massive(tickers: list[str]) -> dict[str, dict]:
     if not api_key:
         return {}
 
-    import ssl
-
-    import certifi
-
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = get_ssl_context()
     results: dict[str, dict] = {}
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
 
             async def fetch_one(etf: str):
                 url = f"{_BASE}/partners/etf_fund_flows"

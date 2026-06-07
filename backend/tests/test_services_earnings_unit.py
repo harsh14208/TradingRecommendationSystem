@@ -1,15 +1,18 @@
 """Unit tests for services/earnings.py — earnings calendar and EPS surprise."""
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, date, timedelta
+
+from unittest.mock import MagicMock, patch
+from datetime import date, timedelta
 
 import pytest
 
 
 # ── _fetch_earnings_calendar ──────────────────────────────────────────────────
 
+
 def test_fetch_calendar_cache_hit():
     import time
     from services import earnings as e_module
+
     e_module._cal_cache["AAPL"] = ({"next_earnings_date": "2026-07-01", "days_to_earnings": 25}, time.time())
     result = e_module._fetch_earnings_calendar("AAPL")
     assert result["next_earnings_date"] == "2026-07-01"
@@ -19,10 +22,10 @@ def test_fetch_calendar_cache_hit():
 
 def test_fetch_calendar_no_data():
     from services.earnings import _fetch_earnings_calendar
+
     mock_ticker = MagicMock()
     mock_ticker.calendar = None
-    with patch("yfinance.Ticker", return_value=mock_ticker), \
-         patch("services.earnings._retry", return_value=None):
+    with patch("yfinance.Ticker", return_value=mock_ticker), patch("services.earnings._retry", return_value=None):
         result = _fetch_earnings_calendar("NVDA")
     assert result == {}
 
@@ -38,8 +41,10 @@ def test_fetch_calendar_with_date():
 
     e_module._cal_cache.clear()
 
-    with patch("yfinance.Ticker", return_value=mock_ticker), \
-         patch("services.earnings._retry", side_effect=lambda fn: fn()):
+    with (
+        patch("yfinance.Ticker", return_value=mock_ticker),
+        patch("services.earnings._retry", side_effect=lambda fn: fn()),
+    ):
         result = _fetch_earnings_calendar("MSFT")
     assert "next_earnings_date" in result or result == {}
 
@@ -47,6 +52,7 @@ def test_fetch_calendar_with_date():
 def test_fetch_calendar_exception():
     from services.earnings import _fetch_earnings_calendar
     from services import earnings as e_module
+
     e_module._cal_cache.clear()
 
     with patch("yfinance.Ticker", side_effect=Exception("network error")):
@@ -56,9 +62,11 @@ def test_fetch_calendar_exception():
 
 # ── _fetch_earnings_surprise ──────────────────────────────────────────────────
 
+
 def test_fetch_surprise_cache_hit():
     import time
     from services import earnings as e_module
+
     e_module._surp_cache["AAPL"] = ({"eps_surprise_pct": 5.2}, time.time())
     result = e_module._fetch_earnings_surprise("AAPL")
     assert result["eps_surprise_pct"] == 5.2
@@ -68,13 +76,13 @@ def test_fetch_surprise_cache_hit():
 def test_fetch_surprise_no_history():
     from services.earnings import _fetch_earnings_surprise
     from services import earnings as e_module
+
     e_module._surp_cache.clear()
 
     mock_ticker = MagicMock()
     mock_ticker.earnings_history = None
 
-    with patch("yfinance.Ticker", return_value=mock_ticker), \
-         patch("services.earnings._retry", return_value=None):
+    with patch("yfinance.Ticker", return_value=mock_ticker), patch("services.earnings._retry", return_value=None):
         result = _fetch_earnings_surprise("NVDA")
     assert result == {}
 
@@ -82,6 +90,7 @@ def test_fetch_surprise_no_history():
 def test_fetch_surprise_exception():
     from services.earnings import _fetch_earnings_surprise
     from services import earnings as e_module
+
     e_module._surp_cache.clear()
 
     with patch("yfinance.Ticker", side_effect=Exception("api error")):
@@ -93,6 +102,7 @@ def test_fetch_surprise_with_data():
     from services.earnings import _fetch_earnings_surprise
     from services import earnings as e_module
     import pandas as pd
+
     e_module._surp_cache.clear()
 
     mock_ticker = MagicMock()
@@ -106,8 +116,10 @@ def test_fetch_surprise_with_data():
     mock_df = pd.DataFrame(history_data)
     mock_ticker.earnings_history = mock_df
 
-    with patch("yfinance.Ticker", return_value=mock_ticker), \
-         patch("services.earnings._retry", side_effect=lambda fn: fn()):
+    with (
+        patch("yfinance.Ticker", return_value=mock_ticker),
+        patch("services.earnings._retry", side_effect=lambda fn: fn()),
+    ):
         result = _fetch_earnings_surprise("AAPL")
     # Should return a dict (may be empty if parsing fails, that's OK)
     assert isinstance(result, dict)
@@ -115,9 +127,11 @@ def test_fetch_surprise_with_data():
 
 # ── get_earnings_calendar / get_earnings_surprise (async) ─────────────────────
 
+
 @pytest.mark.asyncio
 async def test_get_earnings_calendar_async():
     from services.earnings import get_earnings_calendar
+
     with patch("services.earnings._fetch_earnings_calendar", return_value={"days_to_earnings": 10}):
         result = await get_earnings_calendar("AAPL")
     assert result["days_to_earnings"] == 10
@@ -126,6 +140,7 @@ async def test_get_earnings_calendar_async():
 @pytest.mark.asyncio
 async def test_get_earnings_surprise_async():
     from services.earnings import get_earnings_surprise
+
     with patch("services.earnings._fetch_earnings_surprise", return_value={"eps_surprise_pct": 3.5}):
         result = await get_earnings_surprise("AAPL")
     assert result["eps_surprise_pct"] == 3.5
@@ -134,6 +149,9 @@ async def test_get_earnings_surprise_async():
 @pytest.mark.asyncio
 async def test_get_earnings_calendar_exception():
     from services.earnings import get_earnings_calendar
-    with patch("services.earnings._fetch_earnings_calendar", side_effect=Exception("error")), \
-         pytest.raises(Exception):
+
+    with (
+        patch("services.earnings._fetch_earnings_calendar", side_effect=Exception("error")),
+        pytest.raises(Exception, match="error"),
+    ):
         await get_earnings_calendar("AAPL")

@@ -1,5 +1,4 @@
 """Unit tests for services/signal_scoring.py — family scorer functions."""
-import pytest
 
 
 def _make_tech(**kwargs):

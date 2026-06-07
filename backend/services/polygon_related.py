@@ -21,6 +21,7 @@ import time
 
 import aiohttp
 import certifi
+from services.http_client import shared_session
 
 log = logging.getLogger("signal.trade.polygon_related")
 
@@ -51,7 +52,7 @@ async def get_related_companies(ticker: str) -> list[str]:
     params = {"apiKey": key}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             async with session.get(url, params=params, ssl=_SSL_CTX, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status != 200:
                     _cache[ticker] = {"tickers": [], "ts": now}
