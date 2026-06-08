@@ -23,6 +23,35 @@ def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+@router.get("/version-info")
+async def version_info():
+    """TSYS-11c: the policy / model / calibration versions behind current signals,
+    so analyst-facing views can show explainability badges. No auth or PII."""
+    import json
+    from pathlib import Path
+
+    data_dir = Path(__file__).resolve().parent.parent / "data"
+
+    def _read_json_field(filename: str, field: str):
+        try:
+            return json.loads((data_dir / filename).read_text()).get(field)
+        except Exception:
+            return None
+
+    try:
+        from services.signal_policy import get_current_policy_version
+
+        policy_version = get_current_policy_version()
+    except Exception:
+        policy_version = None
+
+    return {
+        "policy_version": policy_version,
+        "model_trained_at": _read_json_field("signal_ml_features.json", "trained_at"),
+        "calibration_version": _read_json_field("calibration.json", "last_run"),
+    }
+
+
 @router.get("/track-record")
 async def public_track_record(db: AsyncSession = Depends(get_db)):
     """
