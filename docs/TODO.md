@@ -161,14 +161,14 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 - [x] **TSYS-6a** Store a machine-readable gate trace for every signal: gate id, version, input values, score/confidence delta, pass/fail, and reason.
 - [x] **TSYS-6b** Add a gate registry with owner, status, test coverage, live-validation status, and retirement criteria for each gate.
 - [x] **TSYS-6c** Generate a signal policy version/changelog from gate, scoring, calibration, and sizing config so every live signal is reproducible.
-- [ ] **TSYS-6d** Add parity tests proving extracted gate modules match current `_assemble_signal()` behavior during engine decomposition.
+- [x] **TSYS-6d** Add parity tests proving extracted gate modules match current `_assemble_signal()` behavior during engine decomposition.
 
 ### TSYS-7 — Calibration, ML & Model Operations
 
-- [ ] **TSYS-7a** Add a model registry artifact for every deployed model with model id, training-data hash, feature-schema hash, hyperparameters, metrics, and approval decision.
+- [x] **TSYS-7a** Add a model registry artifact for every deployed model with model id, training-data hash, feature-schema hash, hyperparameters, metrics, and approval decision.
 - [x] **TSYS-7b** Validate feature schemas before inference to catch missing, renamed, reordered, or type-shifted fields before they affect live scores.
 - [x] **TSYS-7c** Run champion/challenger shadow scoring on live signals and log deltas even when the challenger is not eligible to trade or alert.
-- [ ] **TSYS-7d** Add calibration rollback support that preserves prior calibration files and allows an admin-controlled revert after live degradation.
+- [x] **TSYS-7d** Add calibration rollback support that preserves prior calibration files and allows an admin-controlled revert after live degradation.
 
 ### TSYS-8 — Backtests, Outcomes & Analytics
 
@@ -181,7 +181,7 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 
 - [x] **TSYS-9a** Add broker reconciliation jobs that poll open orders and positions, update `BrokerOrder.status`, and flag orphan orders/positions.
 - [x] **TSYS-9b** Add user-level runtime risk limits: max daily orders, max daily loss, max open positions, max per-ticker notional, and max sector exposure.
-- [ ] **TSYS-9c** Add a paper/live parity dashboard comparing intended order, submitted order, fill, final position, and current broker state.
+- [x] **TSYS-9c** Add a paper/live parity dashboard comparing intended order, submitted order, fill, final position, and current broker state.
 - [x] **TSYS-9d** Add credential encryption key versioning and rotation; do not rely on a single long-lived application secret for future broker credential decryptability.
 
 ### TSYS-10 — Admin, Observability & Runbook Automation

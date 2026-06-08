@@ -1086,6 +1086,58 @@ async def retention_purge(
     return {"dry_run": dry_run, "report": report}
 
 
+@router.get("/calibration-history")
+async def calibration_history(
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """TSYS-7d: list archived calibration versions (newest first)."""
+    from models import CalibrationHistory
+
+    rows = (
+        (await db.execute(select(CalibrationHistory).order_by(CalibrationHistory.created_at.desc()).limit(50)))
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "version": r.version,
+            "is_active": r.is_active,
+            "brier": (r.calibration_data or {}).get("brier_walkforward"),
+            "n_total": (r.calibration_data or {}).get("n_total"),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/calibration-archive")
+async def calibration_archive(
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """TSYS-7d: snapshot the current on-disk calibration into history."""
+    from services.calibration import archive_current_calibration
+
+    version = await archive_current_calibration(db)
+    return {"archived": bool(version), "version": version}
+
+
+@router.post("/calibration-rollback")
+async def calibration_rollback(
+    version: str,
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """TSYS-7d: restore a previously archived calibration version to disk."""
+    from services.calibration import restore_calibration_version
+
+    ok = await restore_calibration_version(db, version)
+    if not ok:
+        raise HTTPException(404, f"Calibration version '{version}' not found.")
+    return {"restored": True, "version": version}
+
+
 @router.get("/index-audit")
 async def index_audit(owner: User = Depends(_require_owner)):
     """TSYS-12c: verify hot-path columns are indexed. Returns missing indexes."""

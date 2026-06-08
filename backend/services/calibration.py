@@ -365,6 +365,66 @@ def load_calibration() -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TSYS-7d — calibration rollback
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def archive_current_calibration(db) -> str:
+    """Snapshot the on-disk calibration into CalibrationHistory and mark it active.
+
+    Returns the archived version string. Idempotent per version (same last_run is
+    not re-archived). Call after writing a new calibration so a prior good curve
+    can be restored if the new one degrades live performance.
+    """
+    from sqlalchemy import update
+
+    from models import CalibrationHistory
+
+    cal = load_calibration()
+    if not cal:
+        return ""
+    version = str(cal.get("last_run") or datetime.now(timezone.utc).isoformat()[:19])
+
+    from sqlalchemy import select
+
+    existing = (
+        await db.execute(select(CalibrationHistory).where(CalibrationHistory.version == version))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return version
+
+    await db.execute(update(CalibrationHistory).values(is_active=False))
+    db.add(CalibrationHistory(version=version, calibration_data=cal, is_active=True))
+    await db.commit()
+    log.info(f"[calibration] archived version {version}")
+    return version
+
+
+async def restore_calibration_version(db, version: str) -> bool:
+    """TSYS-7d: restore a previously archived calibration to disk and mark active.
+
+    Returns True on success, False if the version does not exist.
+    """
+    from sqlalchemy import select, update
+
+    from models import CalibrationHistory
+
+    row = (
+        await db.execute(select(CalibrationHistory).where(CalibrationHistory.version == version))
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _CAL_FILE.write_text(json.dumps(row.calibration_data, indent=2))
+    await db.execute(update(CalibrationHistory).values(is_active=False))
+    row.is_active = True
+    await db.commit()
+    log.info(f"[calibration] rolled back to version {version}")
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Apply calibration
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -368,3 +368,78 @@ async def list_broker_orders(
         }
         for r in rows
     ]
+
+
+@router.get("/parity")
+async def broker_parity(
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """TSYS-9c: paper/live parity view — for each recent order compare the intended
+    instruction, what was submitted, whether it filled, and the live broker state
+    (current positions, best-effort). Highlights orders that diverge (orphans,
+    errors, submitted-but-never-filled)."""
+    _require_pro(user)
+
+    rows = (
+        (
+            await db.execute(
+                select(BrokerOrder)
+                .where(BrokerOrder.user_id == user.id)
+                .order_by(BrokerOrder.created_at.desc())
+                .limit(min(limit, 200))
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # Best-effort current broker positions keyed by symbol.
+    positions: dict[str, dict] = {}
+    positions_available = False
+    if user.alpaca_key_enc:
+        from services.broker_svc import decrypt_credential
+
+        key = decrypt_credential(user.alpaca_key_enc)
+        secret = decrypt_credential(user.alpaca_secret_enc) if user.alpaca_secret_enc else ""
+        if key:
+            broker_type = user.auto_execute_broker or "alpaca"
+            live = user.alpaca_account_type == "live"
+            client_rest = __import__(
+                f"services.{'ibkr_rest' if broker_type == 'ibkr' else 'alpaca_rest'}", fromlist=["x"]
+            )
+            try:
+                pos_list = await client_rest.get_positions(key, secret, live=live)
+                positions = {str(p.get("symbol")): p for p in (pos_list or []) if p.get("symbol")}
+                positions_available = True
+            except Exception as e:
+                log.warning("broker_parity: get_positions failed for user=%d: %s", user.id, e)
+
+    def _diverged(r) -> str | None:
+        if r.status in ("error", "orphan", "rejected"):
+            return r.status
+        if r.status == "submitted" and not r.alpaca_order_id:
+            return "no_broker_id"
+        return None
+
+    orders = []
+    for r in rows:
+        orders.append(
+            {
+                "id": r.id,
+                "symbol": r.symbol,
+                "intended": {"side": r.side, "notional": r.notional},
+                "submitted": {"broker_order_id": r.alpaca_order_id, "status": r.status},
+                "filled": r.status == "filled",
+                "current_position": positions.get(r.symbol) if positions_available else None,
+                "diverged": _diverged(r),
+            }
+        )
+
+    return {
+        "account_type": user.alpaca_account_type or "paper",
+        "positions_available": positions_available,
+        "diverged_count": sum(1 for o in orders if o["diverged"]),
+        "orders": orders,
+    }

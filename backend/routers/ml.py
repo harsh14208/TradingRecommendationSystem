@@ -12,9 +12,11 @@ import json
 import logging
 from pathlib import Path
 
+from database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Request
 from models import User
 from services.auth_svc import get_current_user
+from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -42,6 +44,68 @@ def _read_metadata() -> dict:
         return json.loads(_FEATURE_FILE.read_text())
     except Exception:
         return {}
+
+
+async def _record_model_registry(db: AsyncSession, meta: dict, kind: str = "entry") -> None:
+    """TSYS-7a: record a ModelRegistry artifact for a freshly trained model.
+
+    The training-data hash is derived from the training population descriptors and
+    the feature-schema hash from the ordered feature list, so two trains over the
+    same data + schema are identifiable and schema drift is detectable.
+    """
+    import hashlib
+
+    from models import ModelRegistry
+
+    features = meta.get("features") or meta.get("top_features") or []
+    feature_schema_hash = hashlib.sha256(json.dumps(features, sort_keys=True).encode()).hexdigest()
+    train_descriptor = {"n_train": meta.get("n_train"), "n_test": meta.get("n_test"), "kind": kind}
+    training_data_hash = hashlib.sha256(json.dumps(train_descriptor, sort_keys=True).encode()).hexdigest()
+    model_id = f"{kind}-{meta.get('trained_at', 'unknown')}"
+    metrics = {k: meta.get(k) for k in ("oos_auc", "oos_accuracy", "oos_precision", "oos_recall", "n_train", "n_test")}
+
+    try:
+        existing = await db.get(ModelRegistry, model_id)
+        if existing is None:
+            db.add(
+                ModelRegistry(
+                    model_id=model_id,
+                    training_data_hash=training_data_hash,
+                    feature_schema_hash=feature_schema_hash,
+                    hyperparameters=meta.get("hyperparameters"),
+                    metrics=metrics,
+                    approval_decision="pending",
+                    is_active=False,
+                )
+            )
+            await db.commit()
+    except Exception as e:  # pragma: no cover - registry must not break training
+        log.warning(f"[ml] failed to record ModelRegistry for {model_id}: {e}")
+
+
+@router.get("/registry")
+async def ml_registry(
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """TSYS-7a: list recorded model artifacts (newest first)."""
+    from sqlalchemy import select
+
+    from models import ModelRegistry
+
+    rows = (await db.execute(select(ModelRegistry).order_by(ModelRegistry.created_at.desc()).limit(50))).scalars().all()
+    return [
+        {
+            "model_id": r.model_id,
+            "training_data_hash": r.training_data_hash,
+            "feature_schema_hash": r.feature_schema_hash,
+            "metrics": r.metrics,
+            "approval_decision": r.approval_decision,
+            "is_active": r.is_active,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/status")
@@ -72,7 +136,11 @@ async def ml_status(owner: User = Depends(_require_owner)):
 
 @router.post("/train")
 @_limiter.limit("1/hour")
-async def ml_train(request: Request, owner: User = Depends(_require_owner)):
+async def ml_train(
+    request: Request,
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Trigger XGBoost retraining in a background thread.
     Rate-limited to 1 request per hour per IP to prevent abuse.
@@ -99,6 +167,8 @@ async def ml_train(request: Request, owner: User = Depends(_require_owner)):
 
     # Return fresh metadata from disk (train_model writes it)
     meta = _read_metadata()
+    # TSYS-7a: register the trained model artifact.
+    await _record_model_registry(db, meta, kind="entry")
     return {
         "status": "ok",
         "model_exists": True,
