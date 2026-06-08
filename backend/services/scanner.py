@@ -898,6 +898,65 @@ async def _maybe_auto_execute_for_signal(sig: dict, signal_id, db) -> None:
         log.warning("_maybe_auto_execute_for_signal: unexpected error: %s", e)
 
 
+async def _maybe_auto_execute_portfolio(delivered_signals: list[tuple[dict, int]], db) -> None:
+    """
+    REF-5: Auto-execute a portfolio of active signals for all users with auto_execute enabled
+    using HRP portfolio allocation weights.
+    """
+    try:
+        from models import User
+        from sqlalchemy import select as _sel
+        from config import TIERS
+
+        # Create a new async session to avoid mixing with main scan transaction
+        async with AsyncSessionLocal() as exec_db:
+            candidates = (
+                (
+                    await exec_db.execute(
+                        _sel(User).where(
+                            User.auto_execute == True,
+                            User.auto_execute_broker.in_(["alpaca", "ibkr"]),
+                            User.alpaca_key_enc.isnot(None),
+                            User.is_active == True,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            if not candidates:
+                return
+
+            from services.broker_svc import execute_portfolio_for_user
+
+            for user in candidates:
+                # Require Pro/owner subscription
+                if not user.is_owner and not (
+                    user.subscription_status == "active" and TIERS.index(user.subscription_tier) >= TIERS.index("pro")
+                ):
+                    continue
+
+                min_conf = user.auto_execute_min_conf or 75.0
+                
+                # Filter delivered signals that meet the user's min_conf threshold
+                user_signals = []
+                for sig, signal_id in delivered_signals:
+                    enriched_sig = sig.copy()
+                    enriched_sig["id"] = signal_id
+                    conf = float(enriched_sig.get("confidence") or 0.0)
+                    if conf >= min_conf:
+                        user_signals.append(enriched_sig)
+                        
+                if user_signals:
+                    # Execute portfolio-level allocation and orders for this user
+                    await execute_portfolio_for_user(user, user_signals, exec_db)
+
+            await exec_db.commit()
+    except Exception as e:
+        log.warning("_maybe_auto_execute_portfolio: unexpected error: %s", e)
+
+
 async def _alert_telegram(text: str):
     """Send a plain alert message via Telegram (best-effort, never raises)."""
     try:
@@ -1625,6 +1684,7 @@ async def _deliver_scan_signals(
                     label = "new" if id(row) in new_set else "unsent"
                     candidates.append((sig, row, label, force))
 
+            delivered_signals = []
             for sig, row, label, force in candidates:
                 cohort = sig.get("cohort", "delivered")
                 merged = await db.merge(row)
@@ -1634,12 +1694,15 @@ async def _deliver_scan_signals(
                         sig, merged, settings, db, label, force_resend=force, scan_started_at=scan_cycle_started_at
                     )
                     await _maybe_paper_trade(sig, positions_map, settings, db_settings)
-                    await _maybe_auto_execute_for_signal(sig, merged.id, db)
+                    delivered_signals.append((sig, merged.id))
                 elif cohort == "shadow":
                     log.info("Cohort: Ticker %s routed to SHADOW (paper-only). Skipping notifications/live orders.", sig["ticker"])
                     await _maybe_paper_trade(sig, positions_map, settings, db_settings)
                 elif cohort == "withheld":
                     log.info("Cohort: Ticker %s routed to WITHHELD (control). Skipping all executions/notifications.", sig["ticker"])
+
+            if delivered_signals:
+                await _maybe_auto_execute_portfolio(delivered_signals, db)
 
             await db.commit()
     elif db_settings.get("auto_paper_trade"):

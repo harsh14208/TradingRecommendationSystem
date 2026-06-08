@@ -815,6 +815,7 @@ async def get_sector_relative_strength(
             _etf_cache[etf] = (etf_df, _time.time())
 
         etf_1m = (float(etf_df["Close"].iloc[-1]) / float(etf_df["Close"].iloc[-lookback]) - 1) * 100
+        etf_5d = (float(etf_df["Close"].iloc[-1]) / float(etf_df["Close"].iloc[-5]) - 1) * 100 if len(etf_df) >= 5 else 0.0
 
         # ── Ticker data ────────────────────────────────────────────────
         if ticker_df is not None and len(ticker_df) >= lookback:
@@ -829,6 +830,7 @@ async def get_sector_relative_strength(
         return {
             "sector_etf": etf,
             "sector_1m_ret": round(etf_1m, 2),
+            "sector_5d_ret": round(etf_5d, 2),
             "rs_vs_sector": round(ticker_1m - etf_1m, 2),
         }
 

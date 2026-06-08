@@ -715,114 +715,35 @@ async def generate_signal(
         # appeared in the UI but had zero effect on the actual signal score.
         volume_score = 0.0
 
-        # ── Moving averages — all routed to ma_score family bucket ─────────
-        # SMA200, SMA50, Golden/Death Cross, and EMA200 double-confirmation.
-        # Cap the family at ±22 to prevent triple-counting "above all MAs".
-        # Low-ATR: skip MA family — moving-average breakout logic invalid on range-bound stocks.
-        _ma_delta, _ma_rat = score_moving_averages(price, sma50, sma200, _poly_ind or {})
-        ma_score += _ma_delta
-        rationale.extend(_ma_rat)
+        # ── Decomposed Scoring via ScoringContext (BE-1) ───────────────────────
+        from services.engines.context import ScoringContext
+        from services.engines.scorers import score_moving_averages_block, score_bollinger_bands_block
 
-        if not _is_low_atr:
-            # MA cap raised ±22→±30: SCTR research shows long-term trend (SMA200,
-            # golden cross) should carry ~60% of composite score weight — higher
-            # cap lets the MA family dominate when price is strongly above/below trend.
-            score += max(-30, min(30, ma_score))
+        vix = (market_ctx or {}).get("macro", {}).get("vix") if market_ctx else None
 
-        # ── Bollinger Bands — tiered BB%B + RSI confluence ─────────────────
-        # Matches backtest score_row() research baseline (WR=60.3%, Sharpe=0.17,
-        # 23yr IS). Flat +4 was an over-correction; BB+RSI confluence at extreme
-        # oversold (BB%B<0.05+RSI<35=+18) is the primary MR driver in the backtest.
-        _bb_rsi = rsi if isinstance(rsi, (int, float)) else 50.0
-        if _bb_pct_b is not None:
-            if _bb_pct_b < 0.05:
-                if _bb_rsi < 35:
-                    _bb_pts = 18
-                    _bb_body = f"BB%B={_bb_pct_b:.2f} + RSI={_bb_rsi:.0f} — deep oversold confluence. Highest-probability MR setup."
-                elif _bb_rsi < 45:
-                    _bb_pts = 12
-                    _bb_body = f"BB%B={_bb_pct_b:.2f} at lower extreme, RSI={_bb_rsi:.0f} confirming oversold."
-                else:
-                    _bb_pts = 6
-                    _bb_body = f"BB%B={_bb_pct_b:.2f} at lower extreme — price statistically stretched."
-                mean_rev_score += _bb_pts
-                rationale.append(
-                    {
-                        "src": "Technical",
-                        "head": "BB Extreme Oversold",
-                        "body": _bb_body,
-                        "sentiment": "pos",
-                        "meta": f"BB%B={_bb_pct_b:.2f} | RSI={_bb_rsi:.0f}",
-                    }
-                )
-            elif _bb_pct_b < 0.15:
-                if _bb_rsi < 35:
-                    mean_rev_score += 10
-                    rationale.append(
-                        {
-                            "src": "Technical",
-                            "head": "BB Oversold + RSI Confirmed",
-                            "body": f"BB%B={_bb_pct_b:.2f}, RSI={_bb_rsi:.0f} — both in oversold territory.",
-                            "sentiment": "pos",
-                            "meta": f"BB%B={_bb_pct_b:.2f}",
-                        }
-                    )
-                elif _bb_rsi < 45:
-                    mean_rev_score += 5
-                    rationale.append(
-                        {
-                            "src": "Technical",
-                            "head": "BB Near Lower Band",
-                            "body": f"BB%B={_bb_pct_b:.2f} — approaching oversold, RSI={_bb_rsi:.0f} softening.",
-                            "sentiment": "pos",
-                            "meta": f"BB%B={_bb_pct_b:.2f}",
-                        }
-                    )
-            elif _bb_pct_b > 0.95:
-                if _bb_rsi > 65:
-                    mean_rev_score -= 14
-                    rationale.append(
-                        {
-                            "src": "Technical",
-                            "head": "BB Extreme Overbought",
-                            "body": f"BB%B={_bb_pct_b:.2f} + RSI={_bb_rsi:.0f} — both overbought. High distribution risk.",
-                            "sentiment": "neg",
-                            "meta": f"BB%B={_bb_pct_b:.2f}",
-                        }
-                    )
-                elif _bb_rsi > 55:
-                    mean_rev_score -= 8
-                elif bb_upper:
-                    mean_rev_score -= 4
-            elif _bb_pct_b > 0.85:
-                if _bb_rsi > 65:
-                    mean_rev_score -= 8
-                elif _bb_rsi > 55:
-                    mean_rev_score -= 4
-        elif bb_lower and bb_upper:
-            # Fallback if bb_pct_b unavailable — use absolute price vs band
-            if price <= bb_lower * 1.005:
-                mean_rev_score += 6
-                rationale.append(
-                    {
-                        "src": "Technical",
-                        "head": "Lower Bollinger Band Touch",
-                        "body": "Price at lower BB — potential mean-reversion bounce.",
-                        "sentiment": "pos",
-                        "meta": f"BB Lower ${bb_lower:.2f}",
-                    }
-                )
-            elif price >= bb_upper * 0.995:
-                mean_rev_score -= 6
-                rationale.append(
-                    {
-                        "src": "Technical",
-                        "head": "Upper Bollinger Band Touch",
-                        "body": "Price at upper BB — potential overextension.",
-                        "sentiment": "neg",
-                        "meta": f"BB Upper ${bb_upper:.2f}",
-                    }
-                )
+        ctx = ScoringContext(ticker, df, info, market_ctx)
+        ctx.tech = tech
+        ctx.price = price
+        ctx.atr = atr
+        ctx.vix = vix
+        ctx._atr_pct_pre = _atr_pct_pre
+        ctx._is_low_atr = _is_low_atr
+        ctx._is_lev_etf = _is_lev_etf
+        
+        ctx.score = score
+        ctx.rationale = rationale
+        ctx.sources = sources
+        ctx.ma_score = ma_score
+        ctx.mean_rev_score = mean_rev_score
+
+        score_moving_averages_block(ctx)
+        score_bollinger_bands_block(ctx)
+
+        score = ctx.score
+        rationale = ctx.rationale
+        sources = ctx.sources
+        ma_score = ctx.ma_score
+        mean_rev_score = ctx.mean_rev_score
 
         # ── 52-Week High / Low Proximity ────────────────────────────────
         # 52W high = momentum/breakout signal → momentum_score bucket.

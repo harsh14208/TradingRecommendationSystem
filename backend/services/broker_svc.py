@@ -446,3 +446,179 @@ async def execute_signal_for_user(
 
     db.add(order_record)
     # Caller is responsible for committing the session.
+
+
+async def execute_portfolio_for_user(
+    user,
+    active_signals: list[dict],
+    db: AsyncSession,
+) -> None:
+    """
+    QENG-4a/b/c: Portfolio allocator integration.
+    Calculates target allocation weights using HRP, applies risk/TCA limits, and executes orders.
+    """
+    from typing import List, Dict
+    from models import BrokerOrder
+    from services.portfolio_allocator import allocate_portfolio
+
+    broker_type = user.auto_execute_broker or "alpaca"
+
+    if not user.alpaca_key_enc:
+        return
+    if broker_type != "ibkr" and not user.alpaca_secret_enc:
+        return
+
+    key = decrypt_credential(user.alpaca_key_enc)
+    secret = decrypt_credential(user.alpaca_secret_enc) if user.alpaca_secret_enc else ""
+    if not key or (broker_type != "ibkr" and not secret):
+        log.warning("broker_svc: user=%d — credential decryption failed, skipping", user.id)
+        return
+
+    live = user.alpaca_account_type == "live"
+
+    # RISK-2: Portfolio drawdown circuit-breaker
+    if await check_portfolio_drawdown(user, key, secret, live, broker=broker_type):
+        return
+
+    # Fetch total equity from broker to use as capital base
+    total_cash = user.auto_execute_qty_dollars or 100.0
+    try:
+        if broker_type == "ibkr":
+            from services import ibkr_rest as broker_rest
+        else:
+            from services import alpaca_rest as broker_rest
+        account = await broker_rest.get_account(key, secret, live=live)
+        equity = float(account.get("equity") or 0.0)
+        if equity > 0:
+            total_cash = equity
+    except Exception as e:
+        log.warning("broker_svc: user=%d — could not fetch account equity, using fallback: %s", user.id, e)
+        total_cash = (user.auto_execute_qty_dollars or 100.0) * 10.0
+
+    # Call portfolio allocator to get sized orders
+    try:
+        orders_to_place = await allocate_portfolio(db, user.id, active_signals, total_cash)
+    except Exception as e:
+        log.error("broker_svc: portfolio allocation failed for user=%d: %s", user.id, e, exc_info=True)
+        return
+
+    if not orders_to_place:
+        log.info("broker_svc: user=%d — no new orders to place after portfolio allocation", user.id)
+        return
+
+    # Map signals list by ticker for stop/target extraction
+    sig_map = {s["ticker"]: s for s in active_signals}
+
+    for order in orders_to_place:
+        ticker = order["ticker"]
+        action = order["action"]
+        notional = order["notional"]
+        target_weight = order["target_weight"]
+        signal_id = order["signal_id"]
+        
+        side = "buy" if action == "BUY" else "sell"
+        sig = sig_map.get(ticker)
+        if not sig:
+            continue
+
+        # TSYS-9b: per-user risk limits
+        _risk_block = await check_runtime_risk_limits(user, ticker, notional, db)
+        if _risk_block:
+            log.info("broker_svc: user=%d — order blocked by risk limit: %s", user.id, _risk_block)
+            continue
+
+        # QENG-3c: Capacity check
+        entry_price = float(sig.get("entry") or sig.get("price") or 1.0)
+        from services.tca_service import check_capacity_limits
+        blocked, suggested_notional, expected_slip = await check_capacity_limits(
+            db, ticker, notional, entry_price
+        )
+        if blocked:
+            log.info("broker_svc: user=%d — order blocked by capacity limits (expected slippage %.1f bps)", user.id, expected_slip)
+            continue
+        if suggested_notional != notional:
+            log.info("broker_svc: user=%d — order sized down from %.2f to %.2f due to capacity limits", user.id, notional, suggested_notional)
+            notional = suggested_notional
+
+        # Place order
+        if broker_type == "ibkr":
+            from services import ibkr_rest as client_rest
+        else:
+            from services import alpaca_rest as client_rest
+
+        from services.provider_telemetry import current_cycle_id
+
+        order_record = BrokerOrder(
+            signal_id=signal_id,
+            user_id=user.id,
+            broker=broker_type,
+            account_type=user.alpaca_account_type or "paper",
+            symbol=ticker,
+            notional=notional,
+            side=side,
+            status="submitted",
+            cycle_id=current_cycle_id.get(),
+            arrival_price=entry_price,
+        )
+
+        try:
+            stop_price = sig.get("stopPrice") or sig.get("stop")
+            target_price = sig.get("targetPrice") or sig.get("target")
+            entry_price = sig.get("entry") or sig.get("price")
+
+            if stop_price and float(stop_price) > 0:
+                result = await client_rest.submit_bracket_stop_order(
+                    key,
+                    secret,
+                    symbol=ticker,
+                    notional=notional,
+                    side=side,
+                    stop_price=float(stop_price),
+                    take_profit_price=float(target_price) if target_price else None,
+                    entry_price=float(entry_price) if entry_price else None,
+                    live=live,
+                )
+            else:
+                if broker_type == "ibkr":
+                    result = await client_rest.place_notional_order(
+                        key,
+                        secret,
+                        symbol=ticker,
+                        notional=notional,
+                        side=side,
+                        live=live,
+                        entry_price=float(entry_price) if entry_price else None,
+                    )
+                else:
+                    result = await client_rest.place_notional_order(
+                        key,
+                        secret,
+                        symbol=ticker,
+                        notional=notional,
+                        side=side,
+                        live=live,
+                    )
+
+            order_id = result.get("id") or result.get("orderId") or result.get("alpaca_order_id") or ""
+            order_record.alpaca_order_id = order_id
+            order_record.status = result.get("status", "submitted")
+            log.info(
+                "broker_svc: user=%d (HRP target weight %s) %s %s $%.2f stop=%.2f → order_id=%s status=%s",
+                user.id,
+                target_weight,
+                side.upper(),
+                ticker,
+                notional,
+                float(stop_price) if stop_price else 0.0,
+                order_id,
+                order_record.status,
+            )
+        except Exception as e:
+            order_record.status = "error"
+            order_record.error_msg = str(e)[:500]
+            log.warning("broker_svc: user=%d order failed for %s: %s", user.id, ticker, e)
+            from services.metrics import inc
+            inc("order_error_total", broker=broker_type)
+
+        db.add(order_record)
+

@@ -15,9 +15,10 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
-from models import Instrument, Position
+from models import Instrument, Position, Fill, BrokerOrder
+
 from services.market_data import get_histories_batch
 
 log = logging.getLogger("signal.trade.allocator")
@@ -225,6 +226,22 @@ async def fetch_historical_covariance(db: AsyncSession, tickers: List[str], look
         log.error(f"Failed to fetch historical covariance: {e}")
         return np.eye(n) * 0.05
 
+async def fetch_realized_slippage_avg(db: AsyncSession, lookback_days: int = 30) -> Dict[str, float]:
+    """Fetch historical average realized slippage (bps) per symbol in the lookback window."""
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        stmt = (
+            select(BrokerOrder.symbol, func.avg(Fill.slippage_bps))
+            .join(BrokerOrder, Fill.broker_order_id == BrokerOrder.id)
+            .where(Fill.filled_at >= cutoff)
+            .group_by(BrokerOrder.symbol)
+        )
+        res = await db.execute(stmt)
+        return {symbol: float(avg) for symbol, avg in res.all() if avg is not None}
+    except Exception as e:
+        log.warning(f"Failed to fetch realized slippage avg: {e}")
+        return {}
+
 async def allocate_portfolio(
     db: AsyncSession,
     user_id: int,
@@ -245,10 +262,21 @@ async def allocate_portfolio(
     cov = await fetch_historical_covariance(db, tickers)
     hrp_weights = compute_hrp_weights(cov, tickers)
     
-    # 2. Apply constraints (Max single stock limit)
+    # Fetch historical realized slippage for feedback (REF-1)
+    realized_slippage = await fetch_realized_slippage_avg(db)
+    
+    # 2. Apply constraints (Max single stock limit & realized slippage feedback)
     constrained_weights = {}
     for t, w in hrp_weights.items():
-        constrained_weights[t] = min(w, MAX_SINGLE_STOCK)
+        weight = w
+        if t in realized_slippage:
+            slippage_bps = realized_slippage[t]
+            slippage_threshold = 42.0  # 35% of 120 bps edge
+            # Apply dynamic penalty multiplier based on actual execution slippage
+            penalty_multiplier = max(0.0, 1.0 - (slippage_bps / slippage_threshold))
+            weight *= penalty_multiplier
+            log.info(f"TCA feedback: {t} weight scaled by {penalty_multiplier:.2f} due to {slippage_bps:.1f} bps average realized slippage.")
+        constrained_weights[t] = min(weight, MAX_SINGLE_STOCK)
         
     # Renormalize
     w_sum = sum(constrained_weights.values())
@@ -328,12 +356,13 @@ async def allocate_portfolio(
         diff_notional = target_notional - current_notional
         
         if abs(diff_notional) > 5.0:  # minimum trade size $5
+            ticker_slippage = realized_slippage.get(t, 15.0)
             orders_to_place.append({
                 "ticker": t,
                 "action": "BUY" if diff_notional > 0 else "SELL",
                 "notional": round(abs(diff_notional), 2),
                 "target_weight": round(target_w, 4),
-                "expected_slippage": 15.0,  # placeholder, calculated at check
+                "expected_slippage": round(ticker_slippage, 2),
                 "signal_id": s.get("id")
             })
             

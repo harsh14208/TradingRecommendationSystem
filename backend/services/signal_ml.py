@@ -1223,6 +1223,9 @@ _META_FEATURE_NAMES = [
     "dte_bucket",  # earnings proximity (0–3)
     "sector_ord",  # sector ETF ordinal
     "dow",  # day of week
+    "vix_term_ratio",  # VIX / VIX3M ratio
+    "sector_momentum", # 5-day sector ETF return
+    "vix_9d_ratio",    # VIX9D / VIX ratio
 ]
 
 
@@ -1234,8 +1237,11 @@ def _extract_meta_features(
     sector_etf: str | None,
     dow: int | None,
     dte: int | None,
+    vix_term_ratio: float | None = None,
+    sector_momentum: float | None = None,
+    vix_9d_ratio: float | None = None,
 ) -> list[float]:
-    """Build the 11-feature meta-label vector."""
+    """Build the 14-feature meta-label vector."""
 
     def _f(key: str) -> float:
         v = tech.get(key)
@@ -1255,6 +1261,19 @@ def _extract_meta_features(
         atr_pct = float("nan")
 
     hmm = hmm_regime or {}
+
+    vix_tr = vix_term_ratio if vix_term_ratio is not None else tech.get("vix_term_ratio")
+    if vix_tr is None:
+        vix_tr = float("nan")
+
+    sec_mom = sector_momentum if sector_momentum is not None else tech.get("sector_momentum")
+    if sec_mom is None:
+        sec_mom = float("nan")
+
+    vix_9d = vix_9d_ratio if vix_9d_ratio is not None else tech.get("vix_9d_ratio")
+    if vix_9d is None:
+        vix_9d = float("nan")
+
     return [
         float(entry_prob) if entry_prob is not None else float("nan"),
         _f("ou_halflife"),
@@ -1267,6 +1286,9 @@ def _extract_meta_features(
         _dte_bucket(dte),
         _sector_ord(sector_etf),
         float(dow) if dow is not None else float("nan"),
+        float(vix_tr),
+        float(sec_mom),
+        float(vix_9d),
     ]
 
 
@@ -1299,6 +1321,9 @@ def predict_meta_prob(
     vix: float | None,
     sector_etf: str | None,
     dte: int | None,
+    vix_term_ratio: float | None = None,
+    sector_momentum: float | None = None,
+    vix_9d_ratio: float | None = None,
 ) -> float | None:
     """
     Predict P(primary model is correct | context) using the meta-label model.
@@ -1316,7 +1341,18 @@ def predict_meta_prob(
         from datetime import datetime
 
         now = datetime.now()
-        feats = _extract_meta_features(tech, entry_prob, hmm_regime, vix, sector_etf, now.weekday(), dte)
+        feats = _extract_meta_features(
+            tech,
+            entry_prob,
+            hmm_regime,
+            vix,
+            sector_etf,
+            now.weekday(),
+            dte,
+            vix_term_ratio=vix_term_ratio,
+            sector_momentum=sector_momentum,
+            vix_9d_ratio=vix_9d_ratio,
+        )
         dm = xgb.DMatrix(np.array([feats], dtype=float), feature_names=_META_FEATURE_NAMES)
         return float(model.predict(dm)[0])
     except Exception as e:

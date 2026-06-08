@@ -63,6 +63,9 @@ _META_FEATURE_NAMES = [
     "dte_bucket",
     "sector_ord",
     "dow",
+    "vix_term_ratio",
+    "sector_momentum",
+    "vix_9d_ratio",
 ]
 
 _SECTOR_ORD = {
@@ -185,7 +188,7 @@ def _dte_bucket(dte) -> float:
 
 def extract_meta_features(trades: pd.DataFrame) -> np.ndarray:
     """
-    Build the 11-feature meta-label matrix from backtest trade columns.
+    Build the 14-feature meta-label matrix from backtest trade columns.
     Uses NaN for missing fields — XGBoost handles NaN natively.
     """
     rows = []
@@ -212,6 +215,9 @@ def extract_meta_features(trades: pd.DataFrame) -> np.ndarray:
             _dte_bucket(r.get("days_to_earnings")),
             float(_SECTOR_ORD.get(str(r.get("sector_etf") or ""), -1)),
             dow,
+            float(r.get("vix_term_ratio") or float("nan")),
+            float(r.get("sector_momentum") or r.get("sector_momentum_5d") or float("nan")),
+            float(r.get("vix_9d_ratio") or float("nan")),
         ]
         rows.append(row)
 

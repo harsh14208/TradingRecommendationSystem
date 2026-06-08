@@ -11,12 +11,13 @@ import logging
 import math
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
-from models import Instrument, Position
+from models import Instrument, Position, Signal
+
 from services.market_data import get_histories_batch
 
 log = logging.getLogger("signal.trade.alpha_sleeves")
@@ -187,6 +188,144 @@ async def compute_cross_sectional_factor_scores(tickers: List[str]) -> Dict[str,
         log.error(f"Failed to calculate cross-sectional factor scores: {e}", exc_info=True)
         
     return scores
+
+async def get_dynamic_sleeve_sharpes(db: AsyncSession, lookback_days: int = 30) -> Dict[str, float]:
+    """
+    REF-3: Calculate rolling out-of-sample Sharpe ratios for each sleeve.
+    Uses historical database signals for MR, and simulates simple daily returns
+    for StatArb, Trend, and Factor sleeves over the lookback window.
+    """
+    sharpes = {"MR": 1.0, "StatArb": 1.0, "Trend": 1.0, "Factor": 1.0}
+    cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+    
+    # 1. MR Sharpe (using resolved live signals)
+    try:
+        stmt = select(Signal.outcome_pct).where(
+            Signal.outcome_pct.isnot(None),
+            Signal.created_at >= cutoff
+        )
+        res = await db.execute(stmt)
+        rets = [float(r) for r, in res.all() if r is not None]
+        if len(rets) >= 5:
+            mean = np.mean(rets)
+            std = np.std(rets)
+            if std > 0.0001:
+                # Annualise simple return (assumes ~10d holding period, so 25 periods per year)
+                sharpes["MR"] = max(0.1, (mean / std) * math.sqrt(25.0))
+    except Exception as e:
+        log.warning(f"Failed to calculate dynamic MR Sharpe: {e}")
+
+    # 2. Trend Sharpe (simulated trend-following on TREND_ETFS)
+    try:
+        histories = await get_histories_batch(TREND_ETFS, period="1y", interval="1d")
+        trend_daily_rets = []
+        for etf in TREND_ETFS:
+            df = histories.get(etf)
+            if df is not None and len(df) >= 200:
+                closes = df["Close"].astype(float).values[-lookback_days-1:]
+                smas = [np.mean(df["Close"].astype(float).values[i-200:i]) for i in range(len(df)-lookback_days, len(df))]
+                # Daily strategy returns
+                for idx in range(1, len(closes)):
+                    day_ret = (closes[idx] - closes[idx-1]) / closes[idx-1]
+                    if closes[idx-1] > smas[idx-1]:
+                        trend_daily_rets.append(day_ret)
+                    else:
+                        trend_daily_rets.append(0.0) # flat
+        if len(trend_daily_rets) >= 10:
+            mean = np.mean(trend_daily_rets)
+            std = np.std(trend_daily_rets)
+            if std > 0.0001:
+                sharpes["Trend"] = max(0.1, (mean / std) * math.sqrt(252.0))
+    except Exception as e:
+        log.warning(f"Failed to calculate dynamic Trend Sharpe: {e}")
+
+    # 3. StatArb Sharpe (simulated AAPL/MSFT stat-arb returns)
+    try:
+        tickers = ["AAPL", "MSFT"]
+        sector_etfs = {"AAPL": "XLK", "MSFT": "XLK"}
+        histories = await get_histories_batch(["AAPL", "MSFT", "XLK"], period="6mo", interval="1d")
+        
+        arb_daily_rets = []
+        for t in tickers:
+            df_stock = histories.get(t)
+            df_etf = histories.get("XLK")
+            if df_stock is not None and df_etf is not None and len(df_stock) >= 60:
+                closes_s = df_stock["Close"].astype(float).values
+                closes_e = df_etf["Close"].astype(float).values
+                
+                # Regress and trace daily residual
+                for idx in range(len(closes_s) - lookback_days, len(closes_s)):
+                    window_s = closes_s[idx-60:idx]
+                    window_e = closes_e[idx-60:idx]
+                    
+                    ret_s = np.diff(window_s) / window_s[:-1]
+                    ret_e = np.diff(window_e) / window_e[:-1]
+                    
+                    A = np.column_stack([np.ones_like(ret_e), ret_e])
+                    beta_vector, residuals, _, _ = np.linalg.lstsq(A, ret_s, rcond=None)
+                    alpha, beta = beta_vector[0], beta_vector[1]
+                    
+                    all_residuals = ret_s - (alpha + beta * ret_e)
+                    mean_res = np.mean(all_residuals)
+                    std_res = max(np.std(all_residuals), 0.0001)
+                    
+                    # Next day return
+                    next_ret_s = (closes_s[idx] - closes_s[idx-1]) / closes_s[idx-1]
+                    next_ret_e = (closes_e[idx] - closes_e[idx-1]) / closes_e[idx-1]
+                    next_res = next_ret_s - (alpha + beta * next_ret_e)
+                    z = (next_res - mean_res) / std_res
+                    
+                    # If z was low yesterday, go long stock / short ETF
+                    if z < -2.0:
+                        arb_daily_rets.append(next_ret_s - beta * next_ret_e)
+                    elif z > 2.0:
+                        arb_daily_rets.append(-(next_ret_s - beta * next_ret_e))
+                    else:
+                        arb_daily_rets.append(0.0)
+                        
+        if len(arb_daily_rets) >= 10:
+            mean = np.mean(arb_daily_rets)
+            std = np.std(arb_daily_rets)
+            if std > 0.0001:
+                sharpes["StatArb"] = max(0.1, (mean / std) * math.sqrt(252.0))
+    except Exception as e:
+        log.warning(f"Failed to calculate dynamic StatArb Sharpe: {e}")
+
+    # 4. Factor Sharpe (simulated factor long-short returns)
+    try:
+        tickers = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOG"]
+        histories = await get_histories_batch(tickers, period="6mo", interval="1d")
+        
+        factor_daily_rets = []
+        for idx in range(120, min(120 + lookback_days, len(histories["AAPL"]))):
+            daily_scores = {}
+            daily_rets = {}
+            for t in tickers:
+                df = histories.get(t)
+                if df is not None and len(df) > idx:
+                    close = df["Close"].astype(float).values[:idx]
+                    mom = (close[-1] - close[-120]) / close[-120]
+                    rets_60 = np.diff(close[-60:]) / close[-60:-1]
+                    vol = np.std(rets_60)
+                    daily_scores[t] = mom - vol
+                    next_close = df["Close"].astype(float).values[idx]
+                    daily_rets[t] = (next_close - close[-1]) / close[-1]
+            if daily_scores:
+                sorted_t = sorted(daily_scores, key=daily_scores.get)
+                long_t = sorted_t[-1]
+                short_t = sorted_t[0]
+                factor_daily_rets.append(daily_rets[long_t] - daily_rets[short_t])
+                
+        if len(factor_daily_rets) >= 5:
+            mean = np.mean(factor_daily_rets)
+            std = np.std(factor_daily_rets)
+            if std > 0.0001:
+                sharpes["Factor"] = max(0.1, (mean / std) * math.sqrt(252.0))
+    except Exception as e:
+        log.warning(f"Failed to calculate dynamic Factor Sharpe: {e}")
+
+    log.info(f"Dynamic cross-sleeve Sharpe ratios: {sharpes}")
+    return sharpes
 
 def allocate_cross_sleeve_capital(
     sleeve_sharpes: Dict[str, float],

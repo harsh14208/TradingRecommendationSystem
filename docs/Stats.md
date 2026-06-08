@@ -384,8 +384,12 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 > v7.3 (2026-05-31): adversarial quant review, 10 methodology fixes, OOS v6 CLEAN (N=51, Sh=0.16), block bootstrap, phantom win correction.
 > Two lenses: **Quant** = statistical rigour | **Product** = user-facing completeness × soundness.
 
-**Overall: 9.0/10 product audit · 9.2/10 A- quality grade** (v8.0, 2026-06-08)
+**Overall: 8.6/10 product audit · 8.3/10 B+ quality grade** (v8.0.1, 2026-06-08 — post-deployment audit)
 > Δ since v7.8: Complete Quant Engine (QENG) roadmap implementation. Added point-in-time database snapshots and replay engine, portfolio allocation with HRP and turnover control, TCA slippage/friction engine, residual stat-arb/trend/factor alpha sleeves, triple-barrier meta-labeling model, and shadow-control randomized cohort routing.
+> **v8.0.1 correction (2026-06-08, server-log audit):** the initial v8.0 self-rating (9.0/9.2) was revised down after a production-log review exposed a **gap between "implemented + unit-tested" and "working in production"** in two flagship features from the last two version bumps — both were green in the test suite yet broken live:
+> **(1) QENG-2a PIT feature store** crashed *every* live scan — a non-finite float (`NaN`) flowed into the Postgres `json` column, which rejects the bare `NaN` token, aborting `save_feature_snapshot()` → `_persist_scan_signals()` → the whole `run_scan()` task as an unretrieved exception. Fixed: `_json_safe()` sanitizer in `feature_store.py` recursively nulls NaN/Inf before hashing/storage.
+> **(2) TSYS-5a provider health scorecard** recorded **0 calls** in production — a select-then-insert race with no unique constraint created duplicate `(provider, endpoint)` rows (9 for the hot `polygon /v2/aggs`), after which every `scalar_one_or_none()` raised `MultipleResultsFound` (~23k errors/day). Fixed: `uq_provider_endpoint` unique constraint (+ dedup migration), resilient `.scalars().first()` read, and `IntegrityError`-tolerant insert.
+> Also removed dead `^TRIN`/`^NYAD` macro fetches (CLAUDE.md claimed already removed; they 404'd on every cycle). **Lesson:** 1,871 green tests is coverage *by count* — the suite is unit/mock-heavy and lacks an integration layer that exercises the real persist path, so neither prod-breaking bug was caught pre-deploy. The quant/alpha scores were already honest; the engineering-quality scores were the inflated ones.
 
 ### Signal & Research
 
@@ -395,7 +399,7 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 | **OOS / Forward Validation** | 6.5/10 | B | ↑ from 6.3 | OOS v6 CLEAN: N=51, Sh=0.16. OOS v9 locked. Added checklist-based promotion verification via promote_model.py. SR=0 still inside CI at N=51; need N≥387 to clear. |
 | **Live Alpha Quality** | 7.0/10 | B | ↑ from 6.7 | Added shadow-control randomized cohort routing (delivered/shadow/withheld) to causally measure gate changes. EOD-batch silent-block fix live. §76 Altman removed. §85-1 audit pending ≥200 resolved signals. |
 | **Gate Stack (§47–§83)** | 8.8/10 | A− | ↑ from 8.7 | 29 of 31 strategies live -- §75 buyback window live. Added residual stat-arb, trend-following, and monthly factor sleeves. |
-| **Backtest Infrastructure** | 8.8/10 | A− | ↑ from 8.2 | Added point-in-time feature store (QENG-2a), event-driven replay engine (QENG-2b), and version lineage (QENG-2c). Ceiling: survivorship bias. |
+| **Backtest Infrastructure** | 7.8/10 | B+ | ↓ from 8.8 | Replay engine (QENG-2b) + version lineage (QENG-2c) solid. PIT feature store (QENG-2a) was crash-on-every-write in prod (NaN→json) until the v8.0.1 fix — credit the design, discount the "live" claim until it has burn-in. Ceiling: survivorship bias. |
 | **Confidence Calibration** | 7.6/10 | B+ | ↑ from 7.5 | Cal v4: Brier 0.2641. Added ModelRegistry and CalibrationHistory rollback capability. Sector-cal and reliability curves live. |
 
 ### Risk & Execution
@@ -421,13 +425,14 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 |---|---|---|---|---|
 | **ML Methodology** | 8.9/10 | A− | ↑ from 8.6 | Triple-barrier meta-labeling model operationalized (QENG-6a). ModelRegistry artifacts, feature-schema validation, shadow scoring, calibration rollback. Entry OOS AUC=0.6399. |
 | **Signal Engine / Gate Stack** | 8.5/10 | B+ | ↑ from 8.4 | Decomposition to services/engines/, parity tests, machine-readable gate trace, gate registry, signal-policy versioning. Remaining: ~5.2k-line generate_signal() scorer. |
-| **Backend Architecture** | 9.3/10 | A | ↑ from 8.9 | Integrated portfolio allocator, HRP baseline, turnover control, residual stat-arb sleeve, time-series momentum, cross-sectional factors, cross-sleeve allocator, and cohort routing. |
-| **Data Pipeline** | 9.5/10 | A+ | ↑ from 9.4 | Polygon + yfinance + FRED + EDGAR + options + execution. Cointegration, short-int velocity, EDGAR 8-K buyback. Provider health scorecard, action validation, schema-drift. PIT feature store & index audit. |
-| **Test Coverage** | 9.8/10 | A+ | ↑ from 9.6 | 1871 passing (ex-e2e) tests. Added 9 new unit/integration tests for PIT feature store, replay engine, lineage, TCA, capacity, HRP allocator, alpha sleeves, cohort routing, and checklist promotions. |
+| **Backend Architecture** | 8.5/10 | B+ | ↓ from 9.3 | Strong decomposition + integrated portfolio allocator, HRP baseline, turnover control, residual stat-arb sleeve, TS-momentum, cross-sectional factors, cross-sleeve allocator, cohort routing. Robustness gap: a crash in one scan sub-step (NaN persist) silently killed the whole `run_scan()` task as an unretrieved exception — needs per-step isolation + a task-exception handler. |
+| **Data Pipeline** | 8.3/10 | B+ | ↓ from 9.5 | Excellent source breadth (Polygon + yfinance + FRED + EDGAR + options + execution; cointegration, short-int velocity, 8-K buyback). But two named reliability features were broken in prod (health scorecard recorded 0 calls; PIT feature store crashed on write) and dead `^TRIN`/`^NYAD`/`^BDI` fetches still 404'd every cycle. Design breadth real; live reliability was not. |
+| **Test Coverage** | 7.5/10 | B | ↓ from 9.8 | 1,871 passing (ex-e2e) is coverage *by count*, not assurance — unit/mock-heavy with no integration layer exercising the real persist path. Two prod-breaking bugs (NaN→json scan crash; scorecard race) were green in the suite. Needs: an end-to-end "scan actually persists" test, NaN/edge-case inputs, and DB-constraint/race coverage. |
 
 ### Adversarial Assessment — v7.2 → v7.3 → v7.4 → v7.5 → v7.6 → v7.8
 
 > v8.0 (Quant Engine implementation) upgrades alpha/backtesting, risk, execution friction tracking, and ML modeling capabilities substantially, checking off almost the entire QENG roadmap.
+> **v8.0.1 caveat (2026-06-08):** a hostile reviewer reading the server logs (not just the test report) would dock Test Coverage hard — two of the marquee features (QENG-2a feature store, TSYS-5a scorecard) were crashing/non-functional in production while the suite stayed green. The lesson is the gap between green-on-mocks and works-under-load, not the feature count.
 
 > Scores a hostile quant engineer would assign at each snapshot. Trajectory shows real improvement, not feature-count inflation.
 
@@ -440,7 +445,7 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 | ML Methodology | 3.5/10 | 7.5/10 | 8.2/10 | 8.4/10 | 8.4/10 | 8.5/10 | **8.9/10** | 8.5/10 → ceiling raised | Triple-barrier meta-labeling + model registry + shadow scoring + cal rollback; live model experimental until N≥300 |
 | Friction & Execution | 4/10 | 7/10 | 7.2/10 | 7.2/10 | 7.2/10 | 7.2/10 | **8.0/10** | 8/10 | Fill ledger + TCA service added; variable spread by ticker not modeled |
 | Product & Security | 5/10 | 6.5/10 | 8.5/10 | 8.9/10 | 9.0/10 | 9.2/10 | **9.3/10** | 9/10 → ceiling raised | Audit trail + key rotation + risk-ack + deletion verification; owner password/HTTPS/VAPID still needed |
-| Test Coverage | 7/10 | 8.5/10 | 9.3/10 | 9.5/10 | 9.6/10 | 9.7/10 | **9.8/10** | — | 1871 tests; §73/§74/§69–§72 gates lack dedicated tests |
+| Test Coverage | 7/10 | 8.5/10 | 9.3/10 | 9.5/10 | 9.6/10 | 9.7/10 | **7.5/10** ↓ | 9/10 | 1,871 tests but 2 flagship features broke in prod (NaN→json scan crash; scorecard race); unit/mock-heavy, no integration/persist-path layer; §69–§74 gates also untested |
 
 ### Next Highest-Leverage Improvements
 

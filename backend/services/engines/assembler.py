@@ -1098,6 +1098,9 @@ def _assemble_signal(
                 vix,
                 _sector_etf_ml,
                 days_to_earnings,
+                vix_term_ratio=macro.get("vix_term_ratio"),
+                sector_momentum=(sector_rs or {}).get("sector_5d_ret"),
+                vix_9d_ratio=macro.get("vix_9d_ratio"),
             )
 
             if _live_prob is not None or _entry_prob is not None or _challenger_prob is not None:
@@ -1363,5 +1366,8 @@ def _assemble_signal(
             "sp500_trend": sp500_trend,
             "quality_score": _quality_score,
             "hasMr": _has_mr,
+            "vix_term_ratio": macro.get("vix_term_ratio"),
+            "vix_9d_ratio": macro.get("vix_9d_ratio"),
+            "sector_momentum": (sector_rs or {}).get("sector_5d_ret"),
         },
     }

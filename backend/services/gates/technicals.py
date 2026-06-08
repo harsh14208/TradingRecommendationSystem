@@ -504,7 +504,8 @@ class AtrRankCeilingGate(GateBase):
                     "MR bounces require panic-level volatility (ATR 20th–70th pct); "
                     "above the 70th pct the stock is in a breakdown, not a dip. "
                     "Quantpedia ATR regime research: P70 is the optimal MR ceiling. "
-                    f"(Gate active when VIX ≥ {self._VIX_REGIME_PIVOT:.0f}; current VIX {ctx.vix:.0f}.)"
+                    f"(Gate active when VIX ≥ {self._VIX_REGIME_PIVOT:.0f}; "
+                    + (f"current VIX {float(ctx.vix):.0f}.)" if ctx.vix is not None else "VIX unavailable.)")
                 ),
                 "sentiment": "neg",
                 "meta": (
