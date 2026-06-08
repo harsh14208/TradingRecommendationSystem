@@ -1,10 +1,12 @@
 # Signal.Trade — Development Progress
 
-> **Version: v6.4** · Updated: 2026-05-31 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
-> ~210 tickers (incl. 52 leveraged ETFs) · 70+ signal blocks · 116 API endpoints · Max confidence: 72% (empirically calibrated)
-> **Data: Polygon.io/Massive-first (bulk OHLCV + quotes + reference info) · yfinance fallback · Massive WebSocket (dark pool) · FRED (macro + credit spreads)**
-> **Database: PostgreSQL 16 (primary) · SQLite removed · 7,015+ signals · 8 users**
-> **Tests: 1000 passed, 0 failed, 2 skipped (1 pre-existing flaky: test_vector_store isolation) · Backtest IS: N=157, WR=70.7%, Sharpe=0.29, MC P5=0.16 ✅ · Lo(2002) 95% CI [0.13, 0.44] — SR=0 outside CI ✅ · Sector-filtered: N=136, WR=69.9%, Sharpe=0.27 · OOS v5 CLEAN: N=27, WR=55.6%, Sharpe=0.05 ⚠**
+> **Version: v7.8** · Updated: 2026-06-08 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Ratings live in [`docs/Stats.md §15`](Stats.md) (single source of truth, v7.8). This file is a chronological dev log.**
+> ~210 tickers (incl. 52 leveraged ETFs) · 150 API endpoints · dual auto-execution brokers (Alpaca + IBKR)
+> **Data: Polygon.io-first (bulk OHLCV + quotes + reference) · yfinance fallback · FRED (macro) · EDGAR (fundamentals/8-K) — pooled aiohttp + cached TLS across 20 modules**
+> **Database: PostgreSQL 16 (primary) · single Alembic head · Alembic-only prod schema policy ([`SCHEMA_CHANGE_POLICY.md`](SCHEMA_CHANGE_POLICY.md))**
+> **Tests: 1862 passed (ex-e2e), 4 skipped · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.5: N=230, WR=66.1%, Sharpe=0.20**
+> **v7.8 — TSYS-1→13 targeted-system roadmap complete (52/52):** auth/billing/delivery/jobs hardening, provider reliability, gate explainability, ML ops, outcome auditing, broker reconciliation + runtime risk, observability (Prometheus + incident timeline), retention + migration policy, compliance/audit trail, frontend preview/badge/contract tests. Overall 8.6/10 product · 8.9/10 quality.
 
 ## 📊 Live database stats (2026-05-17)
 
