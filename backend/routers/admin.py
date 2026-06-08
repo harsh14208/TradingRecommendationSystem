@@ -1060,3 +1060,58 @@ async def check_alerts(
     breaches = await check_alert_thresholds(db)
     await db.commit()
     return {"breaches": breaches, "count": len(breaches)}
+
+
+# ── TSYS-12 Data retention & schema hygiene ───────────────────────────────────
+
+
+@router.get("/retention-rules")
+async def retention_rules(owner: User = Depends(_require_owner)):
+    """TSYS-12b: the per-table retention/anonymization policy registry."""
+    from services.retention_svc import default_rules
+
+    return default_rules()
+
+
+@router.post("/retention/purge")
+async def retention_purge(
+    dry_run: bool = True,
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """TSYS-12b: count (dry_run) or delete expired rows in prunable tables."""
+    from services.retention_svc import purge_expired
+
+    report = await purge_expired(db, dry_run=dry_run)
+    return {"dry_run": dry_run, "report": report}
+
+
+@router.get("/index-audit")
+async def index_audit(owner: User = Depends(_require_owner)):
+    """TSYS-12c: verify hot-path columns are indexed. Returns missing indexes."""
+    import models
+
+    # (table, column) pairs that must be indexed for hot query paths.
+    required = [
+        ("signals", "created_at"),
+        ("signals", "is_sent"),
+        ("signal_deliveries", "user_id"),
+        ("signal_deliveries", "signal_id"),
+        ("broker_orders", "user_id"),
+        ("broker_orders", "status"),
+        ("broker_orders", "created_at"),
+        ("action_audit_logs", "user_id"),
+        ("provider_response_samples", "created_at"),
+    ]
+    tables = {m.__tablename__: m.__table__ for m in models.Base.__subclasses__() if hasattr(m, "__tablename__")}
+    missing = []
+    for table_name, column in required:
+        tbl = tables.get(table_name)
+        if tbl is None:
+            missing.append({"table": table_name, "column": column, "reason": "table not found"})
+            continue
+        col = tbl.columns.get(column)
+        indexed = bool(col is not None and col.index) or any(column in idx.columns for idx in tbl.indexes)
+        if not indexed:
+            missing.append({"table": table_name, "column": column, "reason": "no index"})
+    return {"checked": len(required), "missing": missing, "ok": not missing}

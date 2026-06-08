@@ -151,23 +151,23 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 
 ### TSYS-5 — Market Data & Provider Reliability
 
-- [ ] **TSYS-5a** Add a provider health scorecard per endpoint with latency, error rate, stale-data rate, schema-drift incidents, and automatic priority selection.
-- [ ] **TSYS-5b** Sample and store raw vendor responses for schema-drift detection and post-incident replay.
-- [ ] **TSYS-5c** Add corporate-action adjustment validation comparing splits, dividends, and adjusted closes across providers.
-- [ ] **TSYS-5d** Expose provider rate-limit budgets and degradation state in the admin surface before a scan is allowed to saturate paid quotas.
+- [x] **TSYS-5a** Add a provider health scorecard per endpoint with latency, error rate, stale-data rate, schema-drift incidents, and automatic priority selection.
+- [x] **TSYS-5b** Sample and store raw vendor responses for schema-drift detection and post-incident replay.
+- [x] **TSYS-5c** Add corporate-action adjustment validation comparing splits, dividends, and adjusted closes across providers.
+- [x] **TSYS-5d** Expose provider rate-limit budgets and degradation state in the admin surface before a scan is allowed to saturate paid quotas.
 
 ### TSYS-6 — Signal Engine, Gates & Explainability
 
-- [ ] **TSYS-6a** Store a machine-readable gate trace for every signal: gate id, version, input values, score/confidence delta, pass/fail, and reason.
-- [ ] **TSYS-6b** Add a gate registry with owner, status, test coverage, live-validation status, and retirement criteria for each gate.
-- [ ] **TSYS-6c** Generate a signal policy version/changelog from gate, scoring, calibration, and sizing config so every live signal is reproducible.
+- [x] **TSYS-6a** Store a machine-readable gate trace for every signal: gate id, version, input values, score/confidence delta, pass/fail, and reason.
+- [x] **TSYS-6b** Add a gate registry with owner, status, test coverage, live-validation status, and retirement criteria for each gate.
+- [x] **TSYS-6c** Generate a signal policy version/changelog from gate, scoring, calibration, and sizing config so every live signal is reproducible.
 - [ ] **TSYS-6d** Add parity tests proving extracted gate modules match current `_assemble_signal()` behavior during engine decomposition.
 
 ### TSYS-7 — Calibration, ML & Model Operations
 
 - [ ] **TSYS-7a** Add a model registry artifact for every deployed model with model id, training-data hash, feature-schema hash, hyperparameters, metrics, and approval decision.
-- [ ] **TSYS-7b** Validate feature schemas before inference to catch missing, renamed, reordered, or type-shifted fields before they affect live scores.
-- [ ] **TSYS-7c** Run champion/challenger shadow scoring on live signals and log deltas even when the challenger is not eligible to trade or alert.
+- [x] **TSYS-7b** Validate feature schemas before inference to catch missing, renamed, reordered, or type-shifted fields before they affect live scores.
+- [x] **TSYS-7c** Run champion/challenger shadow scoring on live signals and log deltas even when the challenger is not eligible to trade or alert.
 - [ ] **TSYS-7d** Add calibration rollback support that preserves prior calibration files and allows an admin-controlled revert after live degradation.
 
 ### TSYS-8 — Backtests, Outcomes & Analytics
@@ -200,10 +200,10 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 
 ### TSYS-12 — Database, Migrations & Data Retention
 
-- [ ] **TSYS-12a** Enforce an Alembic-only production schema-change policy; keep `init_db` column additions limited to dev/test compatibility.
-- [ ] **TSYS-12b** Define retention and anonymization rules per table for users, signals, deliveries, broker orders, webhook logs, analytics, and provider samples.
-- [ ] **TSYS-12c** Run an index audit for hot paths: active signals, unsent deliveries, user alerts, broker orders by status, analytics windows, and admin logs.
-- [ ] **TSYS-12d** Add migration smoke tests from both a blank database and the previous production migration head.
+- [x] **TSYS-12a** Enforce an Alembic-only production schema-change policy; keep `init_db` column additions limited to dev/test compatibility.
+- [x] **TSYS-12b** Define retention and anonymization rules per table for users, signals, deliveries, broker orders, webhook logs, analytics, and provider samples.
+- [x] **TSYS-12c** Run an index audit for hot paths: active signals, unsent deliveries, user alerts, broker orders by status, analytics windows, and admin logs.
+- [x] **TSYS-12d** Add migration smoke tests from both a blank database and the previous production migration head.
 
 ### TSYS-13 — Compliance, Legal & User Safety
 

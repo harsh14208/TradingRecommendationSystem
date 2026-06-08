@@ -40,7 +40,7 @@ class Signal(Base):
     # the real-time path (ACT-4c: hasMr/vix/crossAssetHeadwinds/daysToExDiv).
     extra_data = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True)
-    is_sent = Column(Boolean, default=False)
+    is_sent = Column(Boolean, default=False, index=True)  # TSYS-12c: hot filter
     is_skipped = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now(), index=True)
     sent_at = Column(DateTime, nullable=True)
@@ -290,7 +290,9 @@ class BrokerOrder(Base):
     symbol = Column(String(10), nullable=False, index=True)
     notional = Column(Float, nullable=False)  # dollar amount ordered
     side = Column(String(10), nullable=False)  # "buy" | "sell"
-    status = Column(String(20), nullable=False, default="submitted")  # submitted | filled | rejected | error
+    status = Column(
+        String(20), nullable=False, default="submitted", index=True
+    )  # TSYS-12c: submitted | filled | rejected | error | orphan
     error_msg = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), index=True)
     cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
@@ -566,7 +568,7 @@ class ProviderResponseSample(Base):
     response_body = Column(Text, nullable=False)
     is_drifted = Column(Boolean, default=False, nullable=False, server_default="0")
     drift_details = Column(Text, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now(), index=True)  # TSYS-12c: retention purge
 
 
 class ProviderHealthScorecard(Base):
