@@ -40,6 +40,7 @@ function App() {
   const [tickerTape,  setTickerTape]  = useState(typeof TICKER_TAPE !== "undefined" ? TICKER_TAPE : []);
   const [marketCtx,   setMarketCtx]   = useState(null);
   const [online,      setOnline]      = useState(false);
+  const [lastRefresh, setLastRefresh] = useState(null);  // TSYS-11b: stale-data tracking
   const [loading,     setLoading]     = useState(true);
 
   /* UI state */
@@ -441,6 +442,7 @@ function App() {
       }
       if (Array.isArray(srcs)) setSources(srcs);
       setOnline(true);
+      setLastRefresh(new Date());  // TSYS-11b
     } catch {
       setOnline(false);
     } finally {
@@ -874,6 +876,19 @@ function App() {
                   </div>
                 </div>
               )}
+              {/* TSYS-11b: last-refresh + stale-data indicator (live-ticks via `now`) */}
+              {(() => {
+                if (!lastRefresh) return null;
+                const ageS = Math.max(0, Math.round((now - lastRefresh) / 1000));
+                const stale = ageS > 120;
+                const ageLabel = ageS < 60 ? `${ageS}s` : `${Math.round(ageS / 60)}m`;
+                return (
+                  <div className="faint mono" style={{ fontSize: 9, marginTop: 4, color: stale ? "var(--warn)" : undefined }}>
+                    {stale ? "⚠ stale · " : ""}updated {ageLabel} ago
+                  </div>
+                );
+              })()}
+              <VersionBadge/>
             </div>
           </div>
         </div>

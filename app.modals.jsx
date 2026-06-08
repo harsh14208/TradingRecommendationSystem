@@ -148,6 +148,28 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   };
 
   const saveAutoExec = async () => {
+    // TSYS-11a: execution preview + explicit acknowledgement before enabling
+    // auto-execution. Shows notional, account mode, and max loss; a live account
+    // requires confirming real-money orders.
+    if (autoExec) {
+      const acct = (brokerStatus?.account_type || brokerAcctType || "paper").toLowerCase();
+      const isLive = acct === "live";
+      const notional = autoExecQty !== "" ? `$${autoExecQty}` : "$100 (default)";
+      const minConf = autoExecConf !== "" ? `${autoExecConf}%` : "system default";
+      const preview = [
+        "Enable automated order execution?",
+        "",
+        `• Account mode: ${acct.toUpperCase()}${isLive ? "  ⚠ REAL MONEY" : ""}`,
+        `• Notional per signal: ${notional}`,
+        `• Min confidence: ${minConf}`,
+        "• Max loss per trade: up to the notional (bracket stop applied when a stop is available)",
+        "",
+        isLive
+          ? "This places REAL orders with real funds. I understand and accept the risk."
+          : "This places simulated paper orders only.",
+      ].join("\n");
+      if (!window.confirm(preview)) return;
+    }
     setAutoExecSaving(true);
     setAutoExecMsg("");
     try {

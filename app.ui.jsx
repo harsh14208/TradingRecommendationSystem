@@ -9,6 +9,29 @@ const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDig
 const pct = n => `${n >= 0 ? "+" : ""}${fmt(n, 2)}%`;
 const sgn = n => n >= 0 ? "+" : "";
 
+/* TSYS-11c: explainability badge — shows the policy / model / calibration versions
+   behind current signals so a change in recommendations is traceable. Self-contained
+   (own fetch of the public version-info endpoint); renders nothing until loaded. */
+function VersionBadge() {
+  const [v, setV] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/public/version-info")
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (alive && d) setV(d); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!v || !v.policy_version) return null;
+  const cal = v.calibration_version ? String(v.calibration_version).slice(0, 10) : "—";
+  const title = `Policy ${v.policy_version} · Model ${v.model_trained_at || "—"} · Calibration ${v.calibration_version || "—"}`;
+  return (
+    <div className="faint mono" style={{ fontSize: 9, marginTop: 4 }} title={title}>
+      v {v.policy_version} · cal {cal}
+    </div>
+  );
+}
+
 const Icon = ({ name, size = 16 }) => {
   const paths = {
     search:  <><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></>,

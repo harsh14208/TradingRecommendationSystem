@@ -193,9 +193,9 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 
 ### TSYS-11 — Frontend, Mobile & Product UX
 
-- [ ] **TSYS-11a** Add broker execution preview/confirmation UX showing notional, stop, target, max loss, account mode, and live-trading acknowledgement before auto-execution.
-- [ ] **TSYS-11b** Add stale-data and provider-degradation states across dashboard, mobile, and PWA views with visible last-refresh timestamps.
-- [ ] **TSYS-11c** Show signal policy/model/calibration version badges in analyst-facing views so changes in recommendations are explainable.
+- [x] **TSYS-11a** Add broker execution preview/confirmation UX showing notional, stop, target, max loss, account mode, and live-trading acknowledgement before auto-execution.
+- [x] **TSYS-11b** Add stale-data and provider-degradation states across dashboard, mobile, and PWA views with visible last-refresh timestamps.
+- [x] **TSYS-11c** Show signal policy/model/calibration version badges in analyst-facing views so changes in recommendations are explainable.
 - [x] **TSYS-11d** Add frontend contract tests for API response shapes used by dashboard, signals, alerts, broker, billing, and admin views.
 
 ### TSYS-12 — Database, Migrations & Data Retention
