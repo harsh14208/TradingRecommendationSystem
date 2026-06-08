@@ -24,8 +24,12 @@ client = TestClient(app)
 @pytest.fixture
 def mock_db():
     session = AsyncMock()
-    # Default: no existing StripeEvent (event not yet processed)
-    session.execute.return_value.scalar_one_or_none.return_value = None
+    # `await db.execute(q)` must yield a sync result object whose
+    # `.scalar_one_or_none()` returns synchronously — a bare AsyncMock would make
+    # scalar_one_or_none() return a (truthy) coroutine and spuriously trigger dedup.
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None  # no existing StripeEvent by default
+    session.execute = AsyncMock(return_value=result)
 
     async def override_get_db():
         yield session

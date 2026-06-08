@@ -75,13 +75,39 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
     url = f"https://api.polygon.io/v2/aggs/ticker/{ticker.upper()}/range/{multiplier}/{timespan}/{start_str}/{end_str}"
     params = {"adjusted": "true", "sort": "asc", "limit": 50000, "apiKey": api_key}
 
+    t0 = time.perf_counter()
     try:
         async with shared_session() as session:
             async with session.get(url, params=params, timeout=10) as resp:
+                status_code = resp.status
+                latency = (time.perf_counter() - t0) * 1000.0
                 if resp.status != 200:
                     log.warning(f"[polygon] Error fetching {ticker}: HTTP {resp.status}")
+                    try:
+                        from services.provider_reliability import record_endpoint_call
+
+                        await record_endpoint_call("polygon", "/v2/aggs", latency, status_code, ticker=ticker)
+                    except Exception:
+                        pass
                     return None
                 data = await resp.json()
+                try:
+                    import json
+                    from services.provider_reliability import record_endpoint_call, detect_schema_drift
+
+                    is_drifted, drift_details = detect_schema_drift("polygon", "/v2/aggs", data)
+                    await record_endpoint_call(
+                        "polygon",
+                        "/v2/aggs",
+                        latency,
+                        status_code,
+                        json.dumps(data),
+                        ticker,
+                        is_drifted=is_drifted,
+                        drift_details=drift_details,
+                    )
+                except Exception:
+                    pass
 
                 results = data.get("results", [])
                 if not results:
@@ -142,13 +168,38 @@ async def get_polygon_snapshot_batch(tickers: list[str]) -> dict[str, dict]:
         return {}
     url = f"{_BASE}/v2/snapshot/locale/us/markets/stocks/tickers"
     params = {"tickers": ",".join(t.upper() for t in tickers), "apiKey": api_key}
+    t0 = time.perf_counter()
     try:
         async with shared_session() as session:
             async with session.get(url, params=params, timeout=15) as resp:
+                status_code = resp.status
+                latency = (time.perf_counter() - t0) * 1000.0
                 if resp.status != 200:
                     log.warning("[polygon] snapshot batch: HTTP %s", resp.status)
+                    try:
+                        from services.provider_reliability import record_endpoint_call
+
+                        await record_endpoint_call("polygon", "/v2/snapshot", latency, status_code)
+                    except Exception:
+                        pass
                     return {}
                 data = await resp.json()
+                try:
+                    import json
+                    from services.provider_reliability import record_endpoint_call, detect_schema_drift
+
+                    is_drifted, drift_details = detect_schema_drift("polygon", "/v2/snapshot", data)
+                    await record_endpoint_call(
+                        "polygon",
+                        "/v2/snapshot",
+                        latency,
+                        status_code,
+                        json.dumps(data),
+                        is_drifted=is_drifted,
+                        drift_details=drift_details,
+                    )
+                except Exception:
+                    pass
         now = time.monotonic()
         out: dict[str, dict] = {}
         for snap in data.get("tickers") or []:  # NOTE: "tickers" key, NOT "results"

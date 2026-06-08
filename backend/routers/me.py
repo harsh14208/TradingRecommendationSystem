@@ -110,6 +110,11 @@ _NOTIF_PREF_DEFAULTS = {
     "sectors": [],  # empty list = all sectors; e.g. ["XLK", "XLV"]
     "score_min": 50,  # only notify if raw score >= this threshold
     "actions": ["BUY"],  # "BUY" | "SELL" | both
+    "quiet_hours_start": None,
+    "quiet_hours_end": None,
+    "timezone": "America/New_York",
+    "digest_vs_realtime": "realtime",
+    "channel_escalation": None,
 }
 
 _NOTIF_PREF_KEY = "notification_prefs"
@@ -127,6 +132,11 @@ class NotificationPrefsIn(BaseModel):
     sectors: Optional[list[str]] = None
     score_min: Optional[int] = None
     actions: Optional[list[str]] = None
+    quiet_hours_start: Optional[str] = None
+    quiet_hours_end: Optional[str] = None
+    timezone: Optional[str] = None
+    digest_vs_realtime: Optional[str] = None
+    channel_escalation: Optional[list[str]] = None
 
 
 @router.get("/notification-prefs")

@@ -12,14 +12,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, EmailStr, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 _limiter = Limiter(key_func=get_remote_address)
 
 from config import get_settings
 from database import get_db
-from models import PasswordResetToken, RefreshToken, User
+from models import PasswordResetToken, RefreshToken, User, AuthAuditLog, EmailChangeRequest
 from services.auth_svc import (
     create_access_token,
     generate_link_code,
@@ -103,6 +103,22 @@ class ResetPasswordIn(BaseModel):
     new_password: str
 
 
+class ChangeEmailIn(BaseModel):
+    new_email: str
+
+    @field_validator("new_email")
+    @classmethod
+    def email_format(cls, v: str) -> str:
+        import re
+
+        v = v.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Invalid email address")
+        if len(v) > 254:
+            raise ValueError("Email address too long")
+        return v
+
+
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -132,12 +148,20 @@ def _clear_refresh_cookie(response: Response):
     response.delete_cookie(REFRESH_COOKIE, path="/api/auth/refresh-cookie")
 
 
-async def _create_tokens(user: User, db: AsyncSession, response: Response) -> dict:
+async def _create_tokens(user: User, db: AsyncSession, response: Response, request: Request = None) -> dict:
     s = get_settings()
     access = create_access_token(user.id, user.subscription_tier, user.is_owner)
     raw_refresh, hashed_refresh = generate_refresh_token()
     expire = _utcnow_naive() + timedelta(days=s.refresh_token_expire_days)
-    db.add(RefreshToken(user_id=user.id, token_hash=hashed_refresh, expires_at=expire))
+
+    user_agent = request.headers.get("user-agent") if request else None
+    ip_address = request.client.host if request and request.client else None
+
+    db.add(
+        RefreshToken(
+            user_id=user.id, token_hash=hashed_refresh, expires_at=expire, user_agent=user_agent, ip_address=ip_address
+        )
+    )
     await db.commit()
     _set_refresh_cookie(response, raw_refresh)
     return {"access_token": access, "token_type": "bearer", "user": user_to_dict(user)}
@@ -194,7 +218,7 @@ async def register(
             log.info(f"[auth] registered (auto-verified, SMTP not configured) {user.email}")
         else:
             log.info(f"[auth] registered (owner/auto-verified) {user.email}")
-        return await _create_tokens(user, db, response)
+        return await _create_tokens(user, db, response, request)
 
     # Send verification email — user must click before they can log in
     verify_link = f"{s.app_url}/verify-email?token={verify_token}"
@@ -209,8 +233,60 @@ async def register(
 async def login(request: Request, body: LoginIn, response: Response, db: AsyncSession = Depends(get_db)):
     email = body.email.lower().strip()
     user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    if user:
+        if user.lockout_until and user.lockout_until > _utcnow_naive():
+            db.add(
+                AuthAuditLog(
+                    user_id=user.id,
+                    email=email,
+                    event="lockout_active_rejected",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+            )
+            await db.commit()
+            raise HTTPException(401, "Account temporarily locked. Please try again later.")
+
     if not user or not verify_password(body.password, user.password_hash):
+        if user:
+            attempts = (user.failed_login_attempts or 0) + 1
+            user.failed_login_attempts = attempts
+            if attempts >= 5:
+                user.lockout_until = _utcnow_naive() + timedelta(minutes=15)
+                db.add(
+                    AuthAuditLog(
+                        user_id=user.id,
+                        email=email,
+                        event="lockout_triggered",
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                    )
+                )
+                log.warning(f"[auth] lockout triggered for {email}")
+            else:
+                db.add(
+                    AuthAuditLog(
+                        user_id=user.id, email=email, event="failed_login", ip_address=ip_address, user_agent=user_agent
+                    )
+                )
+            await db.commit()
+        else:
+            db.add(
+                AuthAuditLog(
+                    user_id=None,
+                    email=email,
+                    event="failed_login_nonexistent_user",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+            )
+            await db.commit()
         raise HTTPException(401, "Invalid email or password.")
+
     if not user.is_active:
         raise HTTPException(403, "Account disabled. Contact support.")
     if not user.email_verified:
@@ -222,11 +298,19 @@ async def login(request: Request, body: LoginIn, response: Response, db: AsyncSe
             },
         )
 
+    user.failed_login_attempts = 0
+    user.lockout_until = None
     user.last_seen_at = _utcnow_naive()
+
+    db.add(
+        AuthAuditLog(
+            user_id=user.id, email=email, event="successful_login", ip_address=ip_address, user_agent=user_agent
+        )
+    )
     await db.commit()
 
     log.info(f"[auth] login {user.email}")
-    return await _create_tokens(user, db, response)
+    return await _create_tokens(user, db, response, request)
 
 
 @router.post("/refresh")
@@ -262,7 +346,7 @@ async def refresh_cookie(request: Request, response: Response, db: AsyncSession 
     # Rotate: revoke old, issue new
     token_row.revoked = True
     user.last_seen_at = now
-    return await _create_tokens(user, db, response)
+    return await _create_tokens(user, db, response, request)
 
 
 @router.post("/logout")
@@ -416,6 +500,10 @@ async def unlink_telegram(
 async def forgot_password(request: Request, body: ForgotPasswordIn, db: AsyncSession = Depends(get_db)):
     email = body.email.lower().strip()
     user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
     # Always return 200 to prevent email enumeration
     if user:
         token = _secrets.token_urlsafe(32)
@@ -427,6 +515,15 @@ async def forgot_password(request: Request, body: ForgotPasswordIn, db: AsyncSes
             .where(PasswordResetToken.email == email, PasswordResetToken.used == False)
             .values(used=True)
         )
+        db.add(
+            AuthAuditLog(
+                user_id=user.id,
+                email=email,
+                event="forgot_password_request",
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        )
         db.add(PasswordResetToken(token_hash=_hash_token(token), email=email, expires_at=expires))
         await db.commit()
         reset_url = f"{get_settings().app_url}/reset-password?token={token}"
@@ -436,6 +533,17 @@ async def forgot_password(request: Request, body: ForgotPasswordIn, db: AsyncSes
             await send_password_reset(email, reset_url)
         except Exception as e:
             log.warning(f"[auth] password reset email failed: {e}")
+    else:
+        db.add(
+            AuthAuditLog(
+                user_id=None,
+                email=email,
+                event="forgot_password_request_nonexistent_user",
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        )
+        await db.commit()
     return {"message": "If that email is registered, a reset link has been sent."}
 
 
@@ -443,6 +551,9 @@ async def forgot_password(request: Request, body: ForgotPasswordIn, db: AsyncSes
 @_limiter.limit("10/minute")
 async def reset_password(request: Request, body: ResetPasswordIn, db: AsyncSession = Depends(get_db)):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
     row = (
         await db.execute(
             select(PasswordResetToken).where(
@@ -453,6 +564,16 @@ async def reset_password(request: Request, body: ResetPasswordIn, db: AsyncSessi
         )
     ).scalar_one_or_none()
     if not row:
+        db.add(
+            AuthAuditLog(
+                user_id=None,
+                email="unknown",
+                event="failed_password_reset_invalid_token",
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        )
+        await db.commit()
         raise HTTPException(400, "Invalid or expired reset token.")
     user = (await db.execute(select(User).where(User.email == row.email))).scalar_one_or_none()
     if not user:
@@ -461,6 +582,21 @@ async def reset_password(request: Request, body: ResetPasswordIn, db: AsyncSessi
         raise HTTPException(400, "Password must be at least 8 characters.")
     user.password_hash = hash_password(body.new_password)
     row.used = True
+
+    # Reset lockouts on successful reset
+    user.failed_login_attempts = 0
+    user.lockout_until = None
+
+    db.add(
+        AuthAuditLog(
+            user_id=user.id,
+            email=user.email,
+            event="successful_password_reset",
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+    )
+
     # Revoke all refresh tokens so stolen sessions can't persist after reset
     await db.execute(update(RefreshToken).where(RefreshToken.user_id == user.id).values(revoked=True))
     await db.commit()
@@ -624,3 +760,221 @@ async def resend_verification(request: Request, body: ResendVerificationIn, db: 
     asyncio.create_task(send_verification_email(user.email, user.full_name or "", verify_link))
     log.info(f"[auth] resent verification to {user.email}")
     return {"message": "Verification email sent. Check your inbox."}
+
+
+# ── Device/Session Management & Security ──────────────────────────────────────
+
+
+class SessionResponse(BaseModel):
+    id: int
+    created_at: datetime
+    expires_at: datetime
+    user_agent: str | None
+    ip_address: str | None
+    is_current: bool
+
+
+@router.get("/sessions", response_model=list[SessionResponse])
+async def list_sessions(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """List all active refresh token sessions for the authenticated user."""
+    now = _utcnow_naive()
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user.id, RefreshToken.revoked == False, RefreshToken.expires_at > now
+        )
+    )
+    tokens = result.scalars().all()
+
+    current_raw = request.cookies.get(REFRESH_COOKIE)
+    current_hash = hashlib.sha256(current_raw.encode()).hexdigest() if current_raw else None
+
+    sessions = []
+    for t in tokens:
+        sessions.append(
+            SessionResponse(
+                id=t.id,
+                created_at=t.created_at,
+                expires_at=t.expires_at,
+                user_agent=t.user_agent,
+                ip_address=t.ip_address,
+                is_current=(current_hash == t.token_hash),
+            )
+        )
+    return sessions
+
+
+@router.post("/sessions/revoke/{session_id}")
+async def revoke_session(
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Revoke a specific active refresh token session."""
+    token = await db.get(RefreshToken, session_id)
+    if not token or token.user_id != user.id:
+        raise HTTPException(404, "Session not found.")
+
+    token.revoked = True
+    await db.commit()
+    return {"message": "Session successfully revoked."}
+
+
+@router.post("/sessions/revoke-others")
+async def revoke_other_sessions(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Revoke all refresh token sessions except the current one."""
+    current_raw = request.cookies.get(REFRESH_COOKIE)
+    current_hash = hashlib.sha256(current_raw.encode()).hexdigest() if current_raw else None
+
+    if not current_hash:
+        raise HTTPException(400, "Current session token not found in cookies.")
+
+    # Revoke all other active refresh tokens
+    await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id, RefreshToken.token_hash != current_hash, RefreshToken.revoked == False)
+        .values(revoked=True)
+    )
+    await db.commit()
+    return {"message": "All other sessions successfully revoked."}
+
+
+# ── Email Change with Confirmation ───────────────────────────────────────────
+
+
+@router.post("/change-email")
+async def request_change_email(
+    body: ChangeEmailIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Request an email change. Generates token and sends verification to the new email."""
+    new_email = body.new_email.lower().strip()
+    if new_email == user.email:
+        raise HTTPException(400, "New email must be different from current email.")
+
+    # Check if new email already exists
+    existing = (await db.execute(select(User).where(User.email == new_email))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(400, "Email address already registered.")
+
+    token = _secrets.token_urlsafe(32)
+    expires = _utcnow_naive() + timedelta(hours=2)
+
+    # Invalidate old requests
+    await db.execute(delete(EmailChangeRequest).where(EmailChangeRequest.user_id == user.id))
+
+    db.add(
+        EmailChangeRequest(
+            user_id=user.id,
+            old_email=user.email,
+            new_email=new_email,
+            token_hash=_hash_token(token),
+            expires_at=expires,
+        )
+    )
+    await db.commit()
+
+    confirm_url = f"{get_settings().app_url}/api/auth/confirm-email-change?token={token}"
+    try:
+        from services.email_svc import send_verification_email
+
+        await send_verification_email(new_email, user.full_name or "User", confirm_url)
+        log.info(f"[auth] email change requested from {user.email} to {new_email}")
+    except Exception as e:
+        log.warning(f"[auth] email change confirmation send failed: {e}")
+
+    return {"message": "A confirmation link has been sent to your new email address."}
+
+
+@router.get("/confirm-email-change")
+async def confirm_email_change(
+    token: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm the email change using the token sent to the new email address."""
+    now = _utcnow_naive()
+    row = (
+        await db.execute(
+            select(EmailChangeRequest).where(
+                EmailChangeRequest.token_hash == _hash_token(token), EmailChangeRequest.expires_at > now
+            )
+        )
+    ).scalar_one_or_none()
+
+    if not row:
+        raise HTTPException(400, "Invalid or expired email change token.")
+
+    user = await db.get(User, row.user_id)
+    if not user:
+        raise HTTPException(404, "User not found.")
+
+    # Double check new email is not occupied
+    existing = (await db.execute(select(User).where(User.email == row.new_email))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(400, "Email address already registered.")
+
+    old_email = user.email
+    user.email = row.new_email
+
+    # Audit log
+    db.add(
+        AuthAuditLog(
+            user_id=user.id,
+            email=row.new_email,
+            event="email_changed",
+            ip_address=None,
+            user_agent="email_change_confirmation",
+        )
+    )
+
+    await db.delete(row)
+    await db.commit()
+
+    log.info(f"[auth] email changed successfully for user {user.id} from {old_email} to {row.new_email}")
+
+    from fastapi.responses import RedirectResponse
+
+    return RedirectResponse(f"{get_settings().app_url}/app?email_changed=success")
+
+
+# ── Admin Account Unlock ──────────────────────────────────────────────────────
+
+
+@router.post("/unlock")
+async def unlock_user(
+    email: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Admin unlock endpoint. Only owners/admins can unlock accounts."""
+    if not current_user.is_owner:
+        raise HTTPException(403, "Forbidden: Only owners/admins can unlock accounts.")
+
+    target_user = (await db.execute(select(User).where(User.email == email.lower().strip()))).scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(404, "User not found.")
+
+    target_user.failed_login_attempts = 0
+    target_user.lockout_until = None
+
+    db.add(
+        AuthAuditLog(
+            user_id=current_user.id,
+            email=email.lower().strip(),
+            event="admin_unlock",
+            ip_address=None,
+            user_agent="system/admin",
+        )
+    )
+    await db.commit()
+
+    log.info(f"[auth] user {email} unlocked by admin {current_user.email}")
+    return {"message": f"User {email} has been successfully unlocked."}

@@ -377,6 +377,33 @@ async def _nightly_signal_cleanup():
             log.warning(f"[cleanup] nightly cleanup failed: {e}")
 
 
+async def _nightly_stripe_reconciliation():
+    """Run Stripe subscription reconciliation daily at 4:30am ET (TSYS-2a)."""
+    import pytz
+
+    ET = pytz.timezone("America/New_York")
+    while True:
+        now_et = datetime.now(ET)
+        target = now_et.replace(hour=4, minute=30, second=0, microsecond=0)
+        if now_et >= target:
+            target += timedelta(days=1)
+        await asyncio.sleep((target - now_et).total_seconds())
+        try:
+            from database import AsyncSessionLocal
+            from services.billing_reconciliation import reconcile_stripe_subscriptions
+
+            async with AsyncSessionLocal() as db:
+                await reconcile_stripe_subscriptions(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning(
+                "[main] Nightly Stripe reconciliation failed: %s: %s",
+                type(e).__name__,
+                e,
+            )
+
+
 async def _nightly_outcome_resolution():
     """
     Resolve pending outcomes + MAE/MFE + refresh calibration nightly at 2:00am ET.
@@ -413,6 +440,13 @@ async def _nightly_outcome_resolution():
 
             cal = await run_calibration()
             log.info(f"[nightly] calibration refreshed — {len(cal)} bins")
+            try:
+                from routers.signals import clear_analytics_cache
+
+                clear_analytics_cache()
+                log.info("[nightly] analytics cache cleared")
+            except Exception as ce:
+                log.warning(f"[nightly] failed to clear analytics cache: {ce}")
         except Exception as e:
             log.warning(f"[nightly] outcome resolution failed: {e}")
 
@@ -1207,22 +1241,104 @@ def _supervise(name: str, coro_fn, restart: bool = True):
     from datetime import timezone as _tz
 
     async def _wrapper():
+        import os
+        import socket
+        import uuid
+        import time as _time
+        from database import AsyncSessionLocal
+        from models import BackgroundJobRun
+        from services.redis_cache import cache_acquire_lock, cache_release_lock
+
+        locked_jobs = {
+            "weekly_digest",
+            "weekly_factor_mining",
+            "weekly_ml_retrain",
+            "nightly_outcome_resolution",
+        }
+
+        worker_id = f"{socket.gethostname()}:{os.getpid()}"
+
         while True:
             started = datetime.now(_tz.utc).replace(tzinfo=None)
             task = asyncio.current_task()
             _bg_tasks[name]["started_at"] = started
             _bg_tasks[name]["task"] = task
             _bg_tasks[name]["status"] = "running"
+
+            # Check if this job needs distributed locking
+            lock_token = None
+            if name in locked_jobs:
+                try:
+                    lock_token = await cache_acquire_lock(f"lock:job:{name}", ttl=7200)  # 2 hours TTL
+                    if not lock_token:
+                        log.info(f"[bg:{name}] Lock lock:job:{name} already held. Skipping execution.")
+                        _bg_tasks[name]["status"] = "skipped_lock"
+                        if not restart:
+                            break
+                        await asyncio.sleep(60)
+                        continue
+                except Exception as le:
+                    log.warning(f"[bg:{name}] Error acquiring lock: {le}. Proceeding anyway.")
+
+            cycle_id = f"bg:{name}:{int(_time.time())}:{uuid.uuid4().hex[:6]}"
+
+            # Log start of run to DB
+            run_id = None
+            try:
+                async with AsyncSessionLocal() as db:
+                    run_rec = BackgroundJobRun(
+                        job_name=name,
+                        cycle_id=cycle_id,
+                        start_time=started,
+                        status="running",
+                        worker_id=worker_id,
+                    )
+                    db.add(run_rec)
+                    await db.commit()
+                    run_id = run_rec.id
+            except Exception as dbe:
+                log.warning(f"[bg:{name}] Failed to log job run start: {dbe}")
+
+            status = "completed"
+            err_msg = None
             try:
                 await coro_fn()
                 _bg_tasks[name]["status"] = "done"
             except asyncio.CancelledError:
                 _bg_tasks[name]["status"] = "cancelled"
+                status = "cancelled"
                 raise
             except Exception as exc:
                 _bg_tasks[name]["status"] = f"error: {exc}"
                 log.error(f"[bg:{name}] crashed — {exc}", exc_info=True)
                 await _alert_telegram(f"⚠️ Background task '{name}' died: {exc}")
+                status = "failed"
+                err_msg = str(exc)
+            finally:
+                ended = datetime.now(_tz.utc).replace(tzinfo=None)
+                duration = (ended - started).total_seconds()
+
+                # Log end of run to DB
+                if run_id:
+                    try:
+                        async with AsyncSessionLocal() as db:
+                            run_rec = await db.get(BackgroundJobRun, run_id)
+                            if run_rec:
+                                run_rec.status = status
+                                run_rec.end_time = ended
+                                run_rec.duration_s = duration
+                                if err_msg:
+                                    run_rec.error = err_msg
+                                await db.commit()
+                    except Exception as dbe:
+                        log.warning(f"[bg:{name}] Failed to log job run end: {dbe}")
+
+                if lock_token:
+                    try:
+                        await cache_release_lock(f"lock:job:{name}", lock_token)
+                    except Exception as le:
+                        log.warning(f"[bg:{name}] Error releasing lock: {le}")
+
             if not restart:
                 break
             await asyncio.sleep(5)  # brief pause before restart
@@ -1271,6 +1387,12 @@ async def lifespan(app: FastAPI):
         )
     # ─────────────────────────────────────────────────────────────────────────
     await init_db()
+    try:
+        from services.signal_policy import initialize_policy_and_registry
+
+        await initialize_policy_and_registry()
+    except Exception as e:
+        log.warning(f"[startup] Failed to initialize policy/registry: {e}")
     await _ensure_owner_account()
     await _ensure_default_watchlist()
     asyncio.create_task(run_scan(broadcast_fn=manager.broadcast))
@@ -1281,6 +1403,7 @@ async def lifespan(app: FastAPI):
     _supervise("weekly_factor_mining", _weekly_factor_mining, restart=True)
     _supervise("weekly_ml_retrain", _weekly_ml_retrain, restart=True)
     _supervise("nightly_signal_cleanup", _nightly_signal_cleanup, restart=True)
+    _supervise("nightly_stripe_reconciliation", _nightly_stripe_reconciliation, restart=True)
     _supervise("nightly_outcome_resolution", _nightly_outcome_resolution, restart=True)
     _supervise("intraday_stop_monitor", _intraday_stop_monitor, restart=True)
     _supervise("nightly_reflection", _nightly_reflection_learning, restart=True)

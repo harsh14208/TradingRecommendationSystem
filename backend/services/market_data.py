@@ -103,13 +103,18 @@ _ohlcv_cache: dict[tuple, dict] = {}
 def _ohlcv_cache_get(key: tuple) -> "Optional[pd.DataFrame]":
     """Return a cached DataFrame if present and not expired, else None."""
     import pickle as _pickle
+    from services.provider_telemetry import record_cache_hit, record_cache_miss, current_cycle_id
+
+    cycle_id = current_cycle_id.get()
 
     if _redis_client is not None:
         try:
             raw = _redis_client.get(f"ohlcv:{':'.join(str(k) for k in key)}")
             if raw:
+                record_cache_hit(cycle_id, "yfinance")
                 return _pickle.loads(raw)
             # Redis is up and confirmed a miss — don't fall through to stale in-memory.
+            record_cache_miss(cycle_id, "yfinance")
             return None
         except Exception:
             # Redis went down mid-session; fall through to in-memory fallback so the
@@ -118,7 +123,9 @@ def _ohlcv_cache_get(key: tuple) -> "Optional[pd.DataFrame]":
     # In-memory fallback (also used when Redis is down mid-session)
     entry = _ohlcv_cache.get(key)
     if entry and _time.time() - entry["ts"] < _OHLCV_TTL:
+        record_cache_hit(cycle_id, "yfinance")
         return entry["df"]
+    record_cache_miss(cycle_id, "yfinance")
     return None
 
 
@@ -281,15 +288,21 @@ def _retry(fn, *args, retries: int = 4, base_delay: float = 2.0, **kwargs):
     """Exponential back-off with ±30% jitter. Detects 429, trips the circuit breaker."""
     if _yf_is_blocked():
         raise RuntimeError("yfinance circuit breaker active — skipping to protect IP")
+    from services.provider_telemetry import record_api_call, current_cycle_id
+
+    cycle_id = current_cycle_id.get()
+
     last_err = None
     for attempt in range(retries):
         try:
+            record_api_call(cycle_id, "yfinance")
             return fn(*args, **kwargs)
         except Exception as e:
             last_err = e
             err_str = str(e).lower()
             is_429 = "429" in err_str or "too many" in err_str or "rate limit" in err_str
             if is_429:
+                record_api_call(cycle_id, "yfinance", throttled=True)
                 _yf_trip_breaker()  # back off for 15 min — don't keep hammering
                 raise RuntimeError(f"yfinance 429 — circuit breaker tripped for {_YF_BACKOFF_SECS}s") from e
             if attempt < retries - 1:

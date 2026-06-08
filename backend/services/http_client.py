@@ -57,7 +57,46 @@ def get_session() -> aiohttp.ClientSession:
             keepalive_timeout=60,  # reuse idle connections for 60 s
             enable_cleanup_closed=True,
         )
-        sess = aiohttp.ClientSession(connector=connector)
+
+        # TSYS-4d TraceConfig for provider telemetry
+        async def on_request_start(session, trace_config_ctx, params):
+            url_str = str(params.url).lower()
+            provider = "generic"
+            if "polygon" in url_str:
+                provider = "polygon"
+            elif "telegram" in url_str:
+                provider = "telegram"
+            elif "discord" in url_str:
+                provider = "discord"
+            elif "alpaca" in url_str:
+                provider = "alpaca"
+            elif "finnhub" in url_str:
+                provider = "finnhub"
+            trace_config_ctx.provider = provider
+
+        async def on_request_end(session, trace_config_ctx, params):
+            provider = getattr(trace_config_ctx, "provider", "generic")
+            from services.provider_telemetry import record_api_call, update_quota, current_cycle_id
+
+            cycle_id = current_cycle_id.get()
+            throttled = params.response.status == 429
+            record_api_call(cycle_id, provider, throttled=throttled)
+
+            # Check for standard quota headers
+            quota_rem = params.response.headers.get("X-RateLimit-Remaining") or params.response.headers.get(
+                "X-Quota-Remaining"
+            )
+            if quota_rem is not None:
+                try:
+                    update_quota(cycle_id, provider, int(quota_rem))
+                except Exception:
+                    pass
+
+        trace_config = aiohttp.TraceConfig()
+        trace_config.on_request_start.append(on_request_start)
+        trace_config.on_request_end.append(on_request_end)
+
+        sess = aiohttp.ClientSession(connector=connector, trace_configs=[trace_config])
         _sessions[loop] = sess
     return sess
 

@@ -179,3 +179,78 @@ def test_live_wr_stats():
     with TestClient(app) as client:
         resp = client.get("/api/admin/live-wr-stats")
     assert resp.status_code == 200
+
+
+@patch("routers.admin.get_settings")
+@patch("services.broker_svc.verify_alpaca_connection")
+@patch("services.http_client.shared_session")
+def test_system_readiness(mock_shared_session, mock_verify_alpaca, mock_get_settings):
+    from contextlib import asynccontextmanager
+
+    # Mock settings
+    settings = MagicMock()
+    settings.jwt_secret = "secret"
+    settings.owner_email = "owner@t.com"
+    settings.owner_password = "SecurePassword1234!"
+    settings.telegram_bot_token = "token"
+    settings.stripe_secret_key = "sk"
+    settings.stripe_webhook_secret = "whsec_stripe"
+    settings.stripe_price_basic = "price_basic"
+    settings.stripe_price_pro = "price_pro"
+    settings.app_url = "https://app.com"
+    settings.alpaca_api_key = "key"
+    settings.alpaca_api_secret = "secret"
+    settings.finnhub_api_key = "key"
+    settings.fred_api_key = "key"
+    settings.polygon_api_key = "key"
+    settings.redis_url = ""  # no redis check
+    mock_get_settings.return_value = settings
+
+    # Mock Alpaca verification
+    mock_verify_alpaca.return_value = {"status": "ACTIVE"}
+
+    # Mock aiohttp session and responses
+    mock_session = MagicMock()
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"ok": True, "result": {"url": "https://app.com/api/telegram/webhook"}})
+
+    class FakeAsyncContextManager:
+        async def __aenter__(self):
+            return mock_resp
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    mock_session.get.return_value = FakeAsyncContextManager()
+
+    @asynccontextmanager
+    async def fake_shared_session():
+        yield mock_session
+
+    mock_shared_session.return_value = fake_shared_session()
+
+    mock_db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = MagicMock(data={"execution_paused": False})
+    mock_db.execute = AsyncMock(return_value=result)
+
+    async def _get_db():
+        yield mock_db
+
+    app = _make_app()
+    app.dependency_overrides[get_db] = _get_db
+    with TestClient(app) as client:
+        resp = client.get("/api/admin/system-readiness")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is True
+    assert data["kill_switch"]["execution_paused"] is False
+    assert data["database"]["status"] == "ok"
+    assert data["env_vars"]["status"] == "ok"
+    assert data["providers"]["alpaca"]["status"] == "ok"
+    assert data["providers"]["finnhub"]["status"] == "ok"
+    assert data["webhooks"]["telegram"]["status"] == "ok"
+    assert data["webhooks"]["stripe"]["status"] == "ok"

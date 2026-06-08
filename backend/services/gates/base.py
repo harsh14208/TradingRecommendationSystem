@@ -70,6 +70,7 @@ class SignalContext:
     # ── Extended inputs (populated by signal_engine; default-safe for tests) ─
     sector_config: dict = field(default_factory=dict)  # _SECTOR_MR_CONFIG[sector_etf]
     is_lev_etf: bool = False  # ticker in _LEVERAGED_ETFS
+    gate_traces: list[dict] = field(default_factory=list)  # TSYS-6a
 
 
 class GateBase(ABC):
@@ -107,7 +108,40 @@ class GatePipeline:
 
     def run(self, ctx: SignalContext) -> None:
         for gate in self.gates:
+            prev_action = ctx.action
+            prev_confidence = ctx.confidence
+            prev_score = ctx.score
+
             gate.apply(ctx)
+
+            passed = True
+            if ctx.action == "HOLD" and prev_action in ("BUY", "SELL"):
+                passed = False
+
+            reason = None
+            if ctx.rationale:
+                last_card = ctx.rationale[-1]
+                # If the last card's source matches this gate or Risk Gate, use its message
+                if last_card.get("src") == gate.__class__.__name__ or last_card.get("src") == "Risk Gate":
+                    reason = last_card.get("head") or last_card.get("body")
+
+            ctx.gate_traces.append(
+                {
+                    "gate_id": gate.__class__.__name__,
+                    "version": getattr(gate, "version", "1.0"),
+                    "input_values": {
+                        "price": ctx.price,
+                        "atr": ctx.atr,
+                        "has_mr": ctx.has_mr,
+                        "vix": ctx.vix,
+                        "ticker": ctx.ticker,
+                    },
+                    "score_delta": ctx.score - prev_score,
+                    "confidence_delta": ctx.confidence - prev_confidence,
+                    "passed": passed,
+                    "reason": reason,
+                }
+            )
 
     def __repr__(self) -> str:
         names = ", ".join(repr(g) for g in self.gates)

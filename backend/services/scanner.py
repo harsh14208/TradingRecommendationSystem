@@ -15,7 +15,7 @@ log = logging.getLogger("scanner")
 import aiohttp
 from config import TIERS, get_settings
 from database import AsyncSessionLocal
-from models import AppSettings, SendLog, Signal, SignalAlert, SignalDelivery, User
+from models import AppSettings, SendLog, Signal, SignalAlert, SignalDelivery, User, SignalGateTrace, ModelShadowScore
 from sqlalchemy import desc, select, update
 
 from services.aaii import get_aaii_sentiment
@@ -145,104 +145,122 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
 
     global_min_conf = get_settings().min_confidence
     sent_chat_ids: set[str] = set()  # dedup: never send twice to the same chat
-    async with aiohttp.ClientSession() as session:
-        for user in eligible:
-            if user.id in delivered_user_ids:
+    from services.delivery_manager import queue_delivery
+
+    for user in eligible:
+        if user.id in delivered_user_ids:
+            continue
+        if user.telegram_chat_id in sent_chat_ids:
+            log.info(f" [fanout] skipped user={user.id} — chat {user.telegram_chat_id} already received this signal")
+            continue
+        # PROD-3: telegram master toggle — applies even to ticker-rule matches.
+        _prefs = _user_prefs(user.id)
+        if _prefs is not None and _prefs.get("telegram") is False:
+            log.info(f" [fanout] user={user.id} telegram notifications disabled — skipped")
+            continue
+        # Per-ticker signal alert rules override the global confidence threshold.
+        # If the user has an active rule for this ticker, apply it; otherwise
+        # fall back to the user's global override or the system default.
+        rule = ticker_rules.get(user.id)
+        if rule is not None:
+            if sig_dict.get("confidence", 0) < rule.min_confidence:
+                log.info(f" [fanout] user={user.id} ticker rule {ticker}>={rule.min_confidence:.0f}% not met — skipped")
                 continue
-            if user.telegram_chat_id in sent_chat_ids:
+            if rule.action_filter != "any" and sig_dict.get("action") != rule.action_filter:
                 log.info(
-                    f" [fanout] skipped user={user.id} — chat {user.telegram_chat_id} already received this signal"
+                    f" [fanout] user={user.id} ticker rule action_filter={rule.action_filter} != {sig_dict.get('action')} — skipped"
                 )
                 continue
-            # PROD-3: telegram master toggle — applies even to ticker-rule matches.
-            _prefs = _user_prefs(user.id)
-            if _prefs is not None and _prefs.get("telegram") is False:
-                log.info(f" [fanout] user={user.id} telegram notifications disabled — skipped")
-                continue
-            # Per-ticker signal alert rules override the global confidence threshold.
-            # If the user has an active rule for this ticker, apply it; otherwise
-            # fall back to the user's global override or the system default.
-            rule = ticker_rules.get(user.id)
-            if rule is not None:
-                if sig_dict.get("confidence", 0) < rule.min_confidence:
-                    log.info(
-                        f" [fanout] user={user.id} ticker rule {ticker}>={rule.min_confidence:.0f}% not met — skipped"
-                    )
+        else:
+            # PROD-3: apply explicit per-user sector / score / action filters.
+            if _prefs is not None:
+                _secs = _prefs.get("sectors") or []
+                if _secs and sig_dict.get("sectorEtf") not in _secs:
+                    log.info(f" [fanout] user={user.id} sector {sig_dict.get('sectorEtf')} not in {_secs} — skipped")
                     continue
-                if rule.action_filter != "any" and sig_dict.get("action") != rule.action_filter:
-                    log.info(
-                        f" [fanout] user={user.id} ticker rule action_filter={rule.action_filter} != {sig_dict.get('action')} — skipped"
-                    )
+                _smin = _prefs.get("score_min")
+                if _smin is not None and (sig_dict.get("raw_score") or 0) < _smin:
+                    log.info(f" [fanout] user={user.id} raw_score < score_min {_smin} — skipped")
                     continue
+                _acts = _prefs.get("actions") or []
+                if _acts and sig_dict.get("action") not in _acts:
+                    log.info(f" [fanout] user={user.id} action {sig_dict.get('action')} not in {_acts} — skipped")
+                    continue
+            # Confidence: prefs.min_conf > user column override > global default.
+            if _prefs is not None and _prefs.get("min_conf") is not None:
+                user_min = _prefs["min_conf"]
+            elif user.min_confidence_override is not None:
+                user_min = user.min_confidence_override
             else:
-                # PROD-3: apply explicit per-user sector / score / action filters.
-                if _prefs is not None:
-                    _secs = _prefs.get("sectors") or []
-                    if _secs and sig_dict.get("sectorEtf") not in _secs:
-                        log.info(
-                            f" [fanout] user={user.id} sector {sig_dict.get('sectorEtf')} not in {_secs} — skipped"
-                        )
-                        continue
-                    _smin = _prefs.get("score_min")
-                    if _smin is not None and (sig_dict.get("raw_score") or 0) < _smin:
-                        log.info(f" [fanout] user={user.id} raw_score < score_min {_smin} — skipped")
-                        continue
-                    _acts = _prefs.get("actions") or []
-                    if _acts and sig_dict.get("action") not in _acts:
-                        log.info(f" [fanout] user={user.id} action {sig_dict.get('action')} not in {_acts} — skipped")
-                        continue
-                # Confidence: prefs.min_conf > user column override > global default.
-                if _prefs is not None and _prefs.get("min_conf") is not None:
-                    user_min = _prefs["min_conf"]
-                elif user.min_confidence_override is not None:
-                    user_min = user.min_confidence_override
-                else:
-                    user_min = global_min_conf
-                if sig_dict.get("confidence", 0) < user_min:
-                    log.info(
-                        f" [fanout] user={user.id} threshold {user_min:.0f}% > conf {sig_dict['confidence']:.0f}% — skipped"
-                    )
-                    continue
+                user_min = global_min_conf
+            if sig_dict.get("confidence", 0) < user_min:
+                log.info(
+                    f" [fanout] user={user.id} threshold {user_min:.0f}% > conf {sig_dict['confidence']:.0f}% — skipped"
+                )
+                continue
+
+        # TSYS-3c: Check digest preference
+        if _prefs is not None and _prefs.get("digest_vs_realtime") == "digest":
+            log.info(f" [fanout] user={user.id} digest preference active — skipping realtime delivery")
+            continue
+
+        try:
+            tg_payload = {
+                "chat_id": user.telegram_chat_id,
+                "text": message_text,
+                "parse_mode": "Markdown",
+            }
+            await queue_delivery(
+                signal_id=db_row.id,
+                user_id=user.id,
+                channel="telegram",
+                payload=tg_payload,
+            )
+            any_success = True
+            sent_chat_ids.add(user.telegram_chat_id)
+            log.info(f" [fanout] queued Telegram delivery for user={user.id} chat={user.telegram_chat_id}")
+        except Exception as e:
+            log.warning(f" [fanout] error queuing Telegram for user={user.id}: {e}")
+
+        # Discord delivery — for users with a webhook configured. Runs inside the
+        # per-user loop so it inherits the SAME gating as Telegram (already-delivered
+        # dedup, confidence threshold, notification prefs, digest mode). A standalone
+        # Discord pass would bypass all of those and double-deliver.
+        discord_webhook = getattr(user, "discord_webhook_url", None)
+        if discord_webhook:
             try:
-                resp = await session.post(
-                    url,
-                    json={
-                        "chat_id": user.telegram_chat_id,
-                        "text": message_text,
-                        "parse_mode": "Markdown",
-                    },
+                await queue_delivery(
+                    signal_id=db_row.id,
+                    user_id=user.id,
+                    channel="discord",
+                    payload={"webhook_url": discord_webhook, "payload": {"embeds": [_build_discord_embed(sig_dict)]}},
                 )
-                data = await resp.json()
-                msg_id = str(data.get("result", {}).get("message_id", "")) if data.get("ok") else None
-                db.add(
-                    SignalDelivery(
-                        signal_id=db_row.id,
-                        user_id=user.id,
-                        telegram_msg_id=msg_id,
-                    )
-                )
-                if data.get("ok"):
-                    any_success = True
-                    sent_chat_ids.add(user.telegram_chat_id)
-                    log.info(f" [fanout] delivered to user={user.id} chat={user.telegram_chat_id}")
-                else:
-                    log.warning(f" [fanout] failed user={user.id}: {data.get('description')}")
+                any_success = True
             except Exception as e:
-                log.warning(f" [fanout] error user={user.id}: {e}")
-
-    await db.flush()  # persist deliveries before outer commit
-
-    # Discord delivery — alongside Telegram, for users with webhook_url set
-    try:
-        from services.discord_bot import send_discord_signal
-
-        discord_users = [u for u in eligible if getattr(u, "discord_webhook_url", None)]
-        for du in discord_users:
-            asyncio.create_task(send_discord_signal(du.discord_webhook_url, sig_dict))
-    except Exception:
-        pass
+                log.warning(f" [fanout] error queuing Discord for user={user.id}: {e}")
 
     return any_success
+
+
+def _build_discord_embed(sig_dict: dict) -> dict:
+    """Build the Discord embed payload for a signal."""
+    action = sig_dict.get("action", "HOLD")
+    color = 0x10B981 if action == "BUY" else 0xEF4444 if action == "SELL" else 0xF59E0B
+    return {
+        "title": f"{action} {sig_dict.get('ticker')}",
+        "description": sig_dict.get("headline", ""),
+        "color": color,
+        "fields": [
+            {"name": "Confidence", "value": f"{sig_dict.get('confidence')}%", "inline": True},
+            {"name": "Price", "value": f"${sig_dict.get('price')}", "inline": True},
+            {"name": "R:R", "value": str(sig_dict.get("rr", "—")), "inline": True},
+            {"name": "Entry", "value": f"${sig_dict.get('entry')}", "inline": True},
+            {"name": "Stop", "value": f"${sig_dict.get('stop')}", "inline": True},
+            {"name": "Target", "value": f"${sig_dict.get('target')}", "inline": True},
+            {"name": "Analysis", "value": sig_dict.get("plain_english", {}).get("summary", ""), "inline": False},
+        ],
+        "footer": {"text": "NOT FINANCIAL ADVICE. Trade at your own risk."},
+    }
 
 
 _ET = pytz.timezone("America/New_York")
@@ -522,27 +540,29 @@ async def _maybe_send(
         )
         # Fire web push to all subscribers for high-confidence signals
         if sig_dict["confidence"] >= 70:
-            asyncio.create_task(_push_web_notifications(sig_dict, db))
+            asyncio.create_task(_push_web_notifications(sig_dict, db, signal_id=db_row.id))
         # Webhook outbound — POST signal JSON to user's webhook_url with HMAC signature
-        asyncio.create_task(_send_webhook_outbound(sig_dict, db))
+        asyncio.create_task(_send_webhook_outbound(sig_dict, db, signal_id=db_row.id))
     else:
         log.info(f" ✗ Telegram failed — {sig_dict['ticker']}: {detail}")
+
+    from services.provider_telemetry import current_cycle_id
 
     db.add(
         SendLog(
             time=et_time,  # ET time
             status="sent" if success else "fail",
             message=log_msg,
+            cycle_id=current_cycle_id.get(),
         )
     )
 
 
-async def _push_web_notifications(sig_dict: dict, db) -> None:
+async def _push_web_notifications(sig_dict: dict, db, signal_id: int | None = None) -> None:
     """Send web push notifications to all subscribed users for a high-confidence signal."""
     try:
         from models import PushSubscription
-
-        from services.push_svc import send_web_push
+        from services.delivery_manager import queue_delivery
 
         subs = (await db.execute(select(PushSubscription))).scalars().all()
         if not subs:
@@ -573,53 +593,40 @@ async def _push_web_notifications(sig_dict: dict, db) -> None:
             if _push_disabled(sub.user_id):
                 continue
             sub_info = {"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}}
-            await asyncio.to_thread(send_web_push, sub_info, push_payload)
+            await queue_delivery(
+                signal_id=signal_id,
+                user_id=sub.user_id,
+                channel="push",
+                payload={"subscription_info": sub_info, "payload": push_payload},
+            )
             sent += 1
-        log.info(f"[push] Web push sent to {sent} subscriber(s) for {sig_dict['ticker']}")
+        log.info(f"[push] Web push queued to {sent} subscriber(s) for {sig_dict['ticker']}")
     except Exception as e:
-        log.warning(f"[push] Web push failed: {e}")
+        log.warning(f"[push] Web push queuing failed: {e}")
 
 
-async def _send_webhook_outbound(sig_dict: dict, db) -> None:
-    """POST signal JSON to each user's webhook_url (if set) with HMAC-SHA256 signature.
-    Lets power users route signals to their own order management systems (e.g. TradingView bots).
-    """
+async def _send_webhook_outbound(sig_dict: dict, db, signal_id: int | None = None) -> None:
+    """POST signal JSON to each user's webhook_url (if set) with HMAC-SHA256 signature."""
     try:
-        import hashlib
-        import hmac
-        import json
-
         from models import User
         from sqlalchemy import select as _sel
+        from services.delivery_manager import queue_delivery
 
         users_with_webhook = (
-            await db.execute(
-                _sel(User.webhook_url, User.id).where(User.webhook_url.isnot(None)).where(User.is_active == True)
+            (await db.execute(_sel(User).where(User.webhook_url.isnot(None)).where(User.is_active == True)))
+            .scalars()
+            .all()
+        )
+
+        for u in users_with_webhook:
+            await queue_delivery(
+                signal_id=signal_id,
+                user_id=u.id,
+                channel="webhook",
+                payload={"signal_data": sig_dict, "webhook_url": u.webhook_url},
             )
-        ).all()
-        if not users_with_webhook:
-            return
-
-        payload = json.dumps(sig_dict, default=str).encode()
-        secret = (get_settings().jwt_secret or "").encode()
-        sig_hdr = "sha256=" + hmac.new(secret, payload, hashlib.sha256).hexdigest()
-
-        async with aiohttp.ClientSession() as sess:
-            for row in users_with_webhook:
-                url = row[0]
-                try:
-                    async with sess.post(
-                        url,
-                        data=payload,
-                        headers={"Content-Type": "application/json", "X-Signal-Trade-Signature": sig_hdr},
-                        ssl=_SSL_CTX,
-                        timeout=aiohttp.ClientTimeout(total=5),
-                    ) as r:
-                        log.debug(f"[webhook] user={row[1]} → {url} status={r.status}")
-                except Exception as we:
-                    log.debug(f"[webhook] user={row[1]} failed: {we}")
     except Exception as e:
-        log.warning(f"[webhook] outbound error: {e}")
+        log.warning(f"[webhook] queueing outbound error: {e}")
 
 
 async def _compute_adaptive_weights() -> dict:
@@ -1230,10 +1237,6 @@ async def run_scan(broadcast_fn=None):
             return None
     except Exception:
         # Redis unavailable — fall through to the local asyncio.Lock only.
-        # In a multi-worker deployment this means each worker process scans independently,
-        # which will produce duplicate DB writes and may trigger Polygon/Finnhub rate limits.
-        # Per-ticker Telegram cooldown is still DB-enforced (not in-memory) so duplicate
-        # notifications are prevented, but concurrent API bursts should be monitored.
         log.warning(
             "[scanner] Redis distributed lock unavailable — proceeding with local lock only. "
             "In multi-worker deployments this can cause duplicate scans and API rate-limit bursts."
@@ -1241,7 +1244,43 @@ async def run_scan(broadcast_fn=None):
         lock_token = None
 
     async with _scan_lock:
+        import os
+        import socket
+        import time as _time
+        import uuid
+        from database import AsyncSessionLocal
+        from models import BackgroundJobRun
+        from services.provider_telemetry import (
+            current_cycle_id,
+            init_cycle_telemetry,
+            flush_cycle_telemetry,
+        )
+
+        cycle_id = f"scan:{int(_time.time())}:{uuid.uuid4().hex[:6]}"
+        token = current_cycle_id.set(cycle_id)
+        init_cycle_telemetry(cycle_id)
+
         started = monotonic()
+        start_time_db = datetime.now(timezone.utc).replace(tzinfo=None)
+        worker_id = f"{socket.gethostname()}:{os.getpid()}"
+
+        # Insert run row
+        job_run_id = None
+        try:
+            async with AsyncSessionLocal() as db_session:
+                job_run = BackgroundJobRun(
+                    job_name="run_scan",
+                    cycle_id=cycle_id,
+                    start_time=start_time_db,
+                    status="running",
+                    worker_id=worker_id,
+                )
+                db_session.add(job_run)
+                await db_session.commit()
+                job_run_id = job_run.id
+        except Exception as dbe:
+            log.warning(f"[scanner] Failed to log scan run start: {dbe}")
+
         _scan_status.update(
             {
                 "state": "running",
@@ -1269,6 +1308,35 @@ async def run_scan(broadcast_fn=None):
             _scan_status["running"] = False
             _scan_status["last_finished_at"] = _utc_iso()
             _scan_status["last_duration_s"] = round(monotonic() - started, 3)
+
+            # Update run row
+            if job_run_id:
+                try:
+                    end_time_db = datetime.now(timezone.utc).replace(tzinfo=None)
+                    duration = (end_time_db - start_time_db).total_seconds()
+                    async with AsyncSessionLocal() as db_session:
+                        db_run = await db_session.get(BackgroundJobRun, job_run_id)
+                        if db_run:
+                            db_run.end_time = end_time_db
+                            db_run.duration_s = duration
+                            if _scan_status["state"] == "success":
+                                db_run.status = "completed"
+                            else:
+                                db_run.status = "failed"
+                                db_run.error = _scan_status.get("last_error")
+                            await db_session.commit()
+                except Exception as dbe:
+                    log.warning(f"[scanner] Failed to log scan run end: {dbe}")
+
+            # Flush provider telemetry
+            try:
+                await flush_cycle_telemetry(cycle_id)
+            except Exception as te:
+                log.warning(f"[scanner] Failed to flush telemetry: {te}")
+
+            # Reset ContextVar
+            current_cycle_id.reset(token)
+
             if lock_token:
                 try:
                     from services.redis_cache import cache_release_lock
@@ -1450,6 +1518,8 @@ async def _persist_scan_signals(
                 _swing_hold = sig.get("recommendedHoldDays", 10) or 10
                 _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=_swing_hold)
 
+            from services.provider_telemetry import current_cycle_id
+
             row = Signal(
                 ticker=sig["ticker"],
                 company=sig.get("company"),
@@ -1477,8 +1547,35 @@ async def _persist_scan_signals(
                 rs_vs_sector=sig.get("rsVsSector"),
                 expires_at=_expires,
                 extra_data=_gate_extra,
+                cycle_id=current_cycle_id.get(),
             )
             db.add(row)
+            await db.flush()
+            # Save gate traces (TSYS-6a)
+            for trace in sig.get("gate_traces", []):
+                trace_row = SignalGateTrace(
+                    signal_id=row.id,
+                    gate_id=trace["gate_id"],
+                    version=trace["version"],
+                    input_values=trace["input_values"],
+                    score_delta=trace["score_delta"],
+                    confidence_delta=trace["confidence_delta"],
+                    passed=trace["passed"],
+                    reason=trace["reason"],
+                )
+                db.add(trace_row)
+            # Save shadow scores (TSYS-7c)
+            shadow = sig.get("shadow_scores")
+            if shadow:
+                shadow_row = ModelShadowScore(
+                    signal_id=row.id,
+                    model_id=shadow["model_id"],
+                    score=shadow["score"],
+                    confidence=shadow["confidence"],
+                    champion_score=shadow["champion_score"],
+                    champion_confidence=shadow["champion_confidence"],
+                )
+                db.add(shadow_row)
             new_signals.append((sig, row, force_resend))
 
         await db.commit()

@@ -1048,6 +1048,7 @@ def _assemble_signal(
     #   Entry model   — trained on 23yr backtest (technical setup quality)
     # Gracefully skipped when models are absent or xgboost is not installed.
     _day_chg_pct = tech.get("change_pct")  # used in ML feature dict below
+    _shadow_scores = None
     if action in ("BUY", "SELL"):
         try:
             from services.signal_ml import (
@@ -1101,6 +1102,14 @@ def _assemble_signal(
 
             if _live_prob is not None or _entry_prob is not None or _challenger_prob is not None:
                 confidence = _ml_blend(confidence, _entry_prob, _live_prob, _challenger_prob, _meta_prob)
+                if _challenger_prob is not None:
+                    _shadow_scores = {
+                        "model_id": "A17_challenger",
+                        "score": float(_challenger_prob),
+                        "confidence": float(confidence),
+                        "champion_score": float(_live_prob or 0.0),
+                        "champion_confidence": float(confidence),
+                    }
         except Exception as _ml_err:
             log.debug("[engine] %s ML blend failed (model may need retraining): %s", ticker, _ml_err)
 
@@ -1346,4 +1355,6 @@ def _assemble_signal(
             if vix is not None
             else "unknown"
         ),
+        "gate_traces": _sig_ctx.gate_traces,
+        "shadow_scores": _shadow_scores,
     }

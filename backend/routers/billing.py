@@ -154,6 +154,8 @@ async def billing_portal(
 
 @router.get("/status")
 async def billing_status(user: User = Depends(get_current_user)):
+    from datetime import timedelta, timezone as _tz
+
     base = {
         "tier": user.subscription_tier,
         "status": user.subscription_status,
@@ -163,6 +165,12 @@ async def billing_status(user: User = Depends(get_current_user)):
         "cancel_at_period_end": False,
         "payment_method": None,
     }
+
+    period_end_dt = user.subscription_period_end
+    grace_period_end = None
+    cancellation_date = None
+    downgrade_date = None
+
     # Enrich with live Stripe data when keys are configured
     try:
         s = get_settings()
@@ -173,7 +181,10 @@ async def billing_status(user: User = Depends(get_current_user)):
                 expand=["default_payment_method"],
             )
             base["cancel_at_period_end"] = sub.get("cancel_at_period_end", False)
-            base["period_end"] = sub.get("current_period_end")  # Unix timestamp
+            period_end_ts = sub.get("current_period_end")  # Unix timestamp
+            if period_end_ts:
+                base["period_end"] = period_end_ts
+                period_end_dt = datetime.fromtimestamp(period_end_ts, tz=_tz.utc).replace(tzinfo=None)
             pm = sub.get("default_payment_method") or {}
             card = (pm.get("card") or {}) if isinstance(pm, dict) else {}
             if card:
@@ -185,6 +196,17 @@ async def billing_status(user: User = Depends(get_current_user)):
                 }
     except Exception:
         pass  # return base data if Stripe unreachable
+
+    if period_end_dt:
+        if user.subscription_status == "past_due":
+            grace_period_end = (period_end_dt + timedelta(days=15)).isoformat()
+        if base.get("cancel_at_period_end"):
+            cancellation_date = period_end_dt.isoformat()
+            downgrade_date = period_end_dt.isoformat()
+
+    base["grace_period_end"] = grace_period_end
+    base["cancellation_date"] = cancellation_date
+    base["downgrade_date"] = downgrade_date
     return base
 
 
@@ -213,29 +235,75 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(400, "Invalid signature")
 
     event_id = event.get("id", "")
+    etype = event["type"]
+    data = event["data"]["object"]
+    log.info(f"[billing] webhook {etype}")
+
+    stripe_event_row = None
     if event_id:
         existing = (await db.execute(select(StripeEvent).where(StripeEvent.event_id == event_id))).scalar_one_or_none()
         if existing:
+            existing.is_replay = True
+            existing.handler_result = "duplicate_ignored"
+            await db.commit()
             return Response(status_code=200)
-        db.add(StripeEvent(event_id=event_id))
-        await db.flush()
 
-    etype = event["type"]
-    data = event["data"]["object"]
+        cust_id = data.get("customer")
+        sub_id = data.get("subscription") or (data.get("id") if data.get("object") == "subscription" else None)
+        stripe_event_row = StripeEvent(
+            event_id=event_id,
+            customer_id=cust_id,
+            subscription_id=sub_id,
+            event_type=etype,
+            is_replay=False,
+            handler_result="pending",
+        )
+        db.add(stripe_event_row)
+        await db.commit()
 
-    log.info(f"[billing] webhook {etype}")
+    # Get user state before handler execution
+    user_before = None
+    cust_id = data.get("customer")
+    if cust_id:
+        user_before = await _get_user_by_stripe_customer(cust_id, db)
+    elif etype == "checkout.session.completed":
+        user_id = int(data.get("metadata", {}).get("user_id", 0))
+        if user_id:
+            user_before = await db.get(User, user_id)
 
-    if etype == "checkout.session.completed":
-        await _handle_checkout_completed(data, db)
+    old_status = user_before.subscription_status if user_before else "unknown"
+    old_tier = user_before.subscription_tier if user_before else "unknown"
 
-    elif etype in ("customer.subscription.updated", "customer.subscription.created"):
-        await _handle_subscription_updated(data, db)
+    handler_result = "success"
+    try:
+        if etype == "checkout.session.completed":
+            await _handle_checkout_completed(data, db)
+        elif etype in ("customer.subscription.updated", "customer.subscription.created"):
+            await _handle_subscription_updated(data, db)
+        elif etype == "customer.subscription.deleted":
+            await _handle_subscription_deleted(data, db)
+        elif etype == "invoice.payment_failed":
+            await _handle_payment_failed(data, db)
+    except Exception as e:
+        handler_result = f"error: {str(e)}"
+        log.exception(f"[billing] error processing webhook {etype}")
 
-    elif etype == "customer.subscription.deleted":
-        await _handle_subscription_deleted(data, db)
+    # Record transition and result in database
+    if stripe_event_row:
+        if user_before:
+            await db.refresh(user_before)
+            new_status = user_before.subscription_status
+            new_tier = user_before.subscription_tier
+        else:
+            new_status = "unknown"
+            new_tier = "unknown"
 
-    elif etype == "invoice.payment_failed":
-        await _handle_payment_failed(data, db)
+        stripe_event_row.transition = f"{old_tier}:{old_status} -> {new_tier}:{new_status}"
+        stripe_event_row.handler_result = handler_result
+        await db.commit()
+
+    if handler_result.startswith("error"):
+        raise HTTPException(500, handler_result)
 
     return {"received": True}
 

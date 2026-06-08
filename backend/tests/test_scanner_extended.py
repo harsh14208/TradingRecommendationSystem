@@ -511,6 +511,7 @@ class TestFanoutToSubscribers:
             u.subscription_tier = "basic"
             u.telegram_chat_id = chat_id
             u.min_confidence_override = None
+            u.discord_webhook_url = None  # isolate the telegram chat-dedup path
             return u
 
         user_a = _make_eligible_user(1, "SHARED_CHAT")
@@ -546,14 +547,15 @@ class TestFanoutToSubscribers:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
+        mock_queue = AsyncMock()
         with patch("services.scanner.get_settings", return_value=settings_ok):
             with patch("services.scanner.format_signal", return_value="msg"):
-                with patch("aiohttp.ClientSession", return_value=mock_ctx):
+                with patch("services.delivery_manager.queue_delivery", mock_queue):
                     with patch("services.scanner.asyncio.create_task"):
                         result = await scanner._fanout_to_subscribers(_sig(), row, db)
 
-        # post should have been called exactly once despite two eligible users
-        assert mock_session.post.call_count == 1
+        # Delivery should be queued exactly once despite two eligible users sharing a chat
+        assert mock_queue.call_count == 1
         assert result is True
 
     @pytest.mark.asyncio

@@ -65,13 +65,20 @@ async def _get_redis() -> Optional[Any]:
 
 async def cache_get(key: str) -> Optional[Any]:
     """Return cached value or None if missing / expired."""
+    from services.provider_telemetry import record_cache_hit, record_cache_miss, current_cycle_id
+
+    cycle_id = current_cycle_id.get()
+    provider = key.split(":")[0] if ":" in key else "generic"
+
     # Try Redis first
     try:
         r = await _get_redis()
         if r is not None:
             raw = await r.get(key)
             if raw is not None:
+                record_cache_hit(cycle_id, provider)
                 return json.loads(raw)
+            record_cache_miss(cycle_id, provider)
             return None
     except Exception as e:
         log.debug(f"[cache] Redis get error ({key}): {e}")
@@ -79,11 +86,14 @@ async def cache_get(key: str) -> Optional[Any]:
     # Fallback: in-memory
     entry = _mem.get(key)
     if entry is None:
+        record_cache_miss(cycle_id, provider)
         return None
     value, expires_at = entry
     if expires_at and time.monotonic() > expires_at:
         del _mem[key]
+        record_cache_miss(cycle_id, provider)
         return None
+    record_cache_hit(cycle_id, provider)
     return value
 
 

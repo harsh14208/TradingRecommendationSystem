@@ -73,6 +73,8 @@ class Signal(Base):
     mae = Column(Float, nullable=True)  # Max Adverse Excursion (worst % from entry)
     mfe = Column(Float, nullable=True)  # Max Favorable Excursion (best % from entry)
     exit_type = Column(String(10), nullable=True)  # 'target' | 'stop' | 'time' | 'pending'
+    cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
+    policy_version = Column(String(20), nullable=True)  # TSYS-6c
 
 
 class SendLog(Base):
@@ -82,6 +84,7 @@ class SendLog(Base):
     status = Column(String(10))
     message = Column(Text)
     created_at = Column(DateTime, server_default=func.now(), index=True)
+    cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
 
 
 class AppSettings(Base):
@@ -146,6 +149,7 @@ class User(Base):
     # Integrations — outbound webhooks + Discord delivery
     webhook_url = Column(String(500), nullable=True)  # HMAC-signed signal POST
     discord_webhook_url = Column(String(500), nullable=True)  # Discord channel webhook
+    webhook_secret = Column(String(255), nullable=True)  # TSYS-3d HMAC webhook signing secret
     # Autonomous execution — auto-trade signals above min confidence
     auto_execute = Column(Boolean, default=False, nullable=False, server_default="0")
     auto_execute_min_conf = Column(Float, nullable=True)  # None = use 75.0
@@ -158,6 +162,20 @@ class User(Base):
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())
     last_seen_at = Column(DateTime, nullable=True)
+    # Lockout & Security
+    failed_login_attempts = Column(Integer, default=0, nullable=False, server_default="0")
+    lockout_until = Column(DateTime, nullable=True)
+    # Risk limits (TSYS-9b)
+    max_daily_orders = Column(Integer, nullable=True)
+    max_daily_loss = Column(Float, nullable=True)
+    max_open_positions = Column(Integer, nullable=True)
+    max_ticker_notional = Column(Float, nullable=True)
+    max_sector_exposure = Column(Float, nullable=True)
+    # Encryption key versioning (TSYS-9d)
+    alpaca_key_version = Column(Integer, default=1, nullable=False, server_default="1")
+    # Risk acknowledgement (TSYS-13b)
+    risk_acknowledged = Column(Boolean, default=False, nullable=False, server_default="0")
+    risk_acknowledged_at = Column(DateTime, nullable=True)
 
 
 class RefreshToken(Base):
@@ -167,18 +185,28 @@ class RefreshToken(Base):
     token_hash = Column(String(255), nullable=False, unique=True)
     expires_at = Column(DateTime, nullable=False)
     revoked = Column(Boolean, default=False)
+    user_agent = Column(String(255), nullable=True)
+    ip_address = Column(String(50), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 
 class SignalDelivery(Base):
-    """Tracks which signal was delivered to which subscriber, preventing duplicates."""
+    """Tracks which signal or system message was delivered to which subscriber (TSYS-3a)."""
 
     __tablename__ = "signal_deliveries"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False, index=True)
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    sent_at = Column(DateTime, server_default=func.now())
+    channel = Column(String(20), nullable=False, default="telegram", server_default="telegram")
+    status = Column(String(20), nullable=False, default="sent", server_default="sent")
+    retry_count = Column(Integer, default=0, nullable=False, server_default="0")
+    latency_ms = Column(Float, nullable=True)
+    error_code = Column(String(50), nullable=True)
+    dedupe_key = Column(String(150), nullable=True, unique=True, index=True)
     telegram_msg_id = Column(String(50), nullable=True)
+    provider_message_id = Column(String(100), nullable=True)
+    sent_at = Column(DateTime, server_default=func.now())
+    cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
 
 
 class PriceAlert(Base):
@@ -208,6 +236,12 @@ class StripeEvent(Base):
     __tablename__ = "stripe_events"
     id = Column(Integer, primary_key=True, autoincrement=True)
     event_id = Column(String(64), nullable=False, unique=True, index=True)
+    customer_id = Column(String(64), nullable=True)
+    subscription_id = Column(String(64), nullable=True)
+    event_type = Column(String(64), nullable=True)
+    transition = Column(String(100), nullable=True)
+    handler_result = Column(Text, nullable=True)
+    is_replay = Column(Boolean, default=False, nullable=False, server_default="0")
     processed_at = Column(DateTime, server_default=func.now())
 
 
@@ -259,6 +293,7 @@ class BrokerOrder(Base):
     status = Column(String(20), nullable=False, default="submitted")  # submitted | filled | rejected | error
     error_msg = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), index=True)
+    cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
 
 
 class PerformanceSnapshot(Base):
@@ -443,3 +478,276 @@ class RiskMetric(Base):
     metrics = Column(JSON, nullable=True)  # extensible overflow
     created_at = Column(DateTime, server_default=func.now())
     __table_args__ = (UniqueConstraint("user_id", "date", name="uq_risk_metrics_user_date"),)
+
+
+class OAuthState(Base):
+    __tablename__ = "oauth_states"
+    state = Column(String(64), primary_key=True, index=True)
+    referred_by = Column(Integer, nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class OAuthOneTimeCode(Base):
+    __tablename__ = "oauth_one_time_codes"
+    code = Column(String(64), primary_key=True, index=True)
+    access_token = Column(String(500), nullable=False)
+    user_data = Column(JSON, nullable=False)  # stores user_dict
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class EmailChangeRequest(Base):
+    __tablename__ = "email_change_requests"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    old_email = Column(String(255), nullable=False)
+    new_email = Column(String(255), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)  # SHA-256 hex
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class AuthAuditLog(Base):
+    __tablename__ = "auth_audit_logs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    event = Column(String(50), nullable=False)  # "failed_login", "lockout", "unlock", "password_reset_fail"
+    ip_address = Column(String(50), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class BackgroundJobRun(Base):
+    """Tracks background job execution history (TSYS-4a)."""
+
+    __tablename__ = "background_job_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_name = Column(String(100), nullable=False)
+    cycle_id = Column(String(100), nullable=True, index=True)
+    start_time = Column(DateTime, nullable=False, server_default=func.now())
+    end_time = Column(DateTime, nullable=True)
+    status = Column(String(20), nullable=False, default="running")  # running | completed | failed
+    duration_s = Column(Float, nullable=True)
+    error = Column(Text, nullable=True)
+    worker_id = Column(String(100), nullable=True)
+
+
+class ProviderTelemetry(Base):
+    """Tracks API provider budget and usage telemetry per scan cycle (TSYS-4d)."""
+
+    __tablename__ = "provider_telemetry"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cycle_id = Column(String(100), nullable=False, index=True)
+    provider = Column(String(50), nullable=False)  # "polygon", "alpaca", "yfinance", etc.
+    api_calls = Column(Integer, default=0, nullable=False)
+    cache_hits = Column(Integer, default=0, nullable=False)
+    cache_misses = Column(Integer, default=0, nullable=False)
+    quota_remaining = Column(Integer, nullable=True)
+    throttles = Column(Integer, default=0, nullable=False)
+    fallback_usage = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# ── TSYS-5 Reliability models ──────────────────────────────────────────────────
+
+
+class ProviderResponseSample(Base):
+    """Raw vendor responses sampled for schema-drift detection and replay (TSYS-5b)."""
+
+    __tablename__ = "provider_response_samples"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String(50), nullable=False)
+    endpoint = Column(String(255), nullable=False)
+    ticker = Column(String(12), nullable=True)
+    status_code = Column(Integer, nullable=False)
+    latency_ms = Column(Float, nullable=True)
+    response_body = Column(Text, nullable=False)
+    is_drifted = Column(Boolean, default=False, nullable=False, server_default="0")
+    drift_details = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ProviderHealthScorecard(Base):
+    """Provider health metrics scorecard per endpoint (TSYS-5a)."""
+
+    __tablename__ = "provider_health_scorecards"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String(50), nullable=False)
+    endpoint = Column(String(255), nullable=False)
+    latency_avg_ms = Column(Float, default=0.0, nullable=False, server_default="0.0")
+    error_rate = Column(Float, default=0.0, nullable=False, server_default="0.0")
+    stale_data_rate = Column(Float, default=0.0, nullable=False, server_default="0.0")
+    schema_drift_count = Column(Integer, default=0, nullable=False, server_default="0")
+    health_score = Column(Float, default=100.0, nullable=False, server_default="100.0")
+    is_active = Column(Boolean, default=True, nullable=False, server_default="1")
+    last_updated = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class CorporateActionValidation(Base):
+    """Validation comparing corporate-action adjustments across providers (TSYS-5c)."""
+
+    __tablename__ = "corporate_action_validations"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(12), nullable=False)
+    action_type = Column(String(20), nullable=False)  # "split" | "dividend"
+    execution_date = Column(Date, nullable=False)
+    polygon_value = Column(Float, nullable=True)
+    yfinance_value = Column(Float, nullable=True)
+    is_valid = Column(Boolean, default=True, nullable=False, server_default="1")
+    discrepancy_details = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# ── TSYS-6 Signal Engine Explainability models ───────────────────────────────
+
+
+class SignalGateTrace(Base):
+    """Machine-readable gate trace for every generated signal (TSYS-6a)."""
+
+    __tablename__ = "signal_gate_traces"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False, index=True)
+    gate_id = Column(String(50), nullable=False)
+    version = Column(String(20), nullable=False)
+    input_values = Column(JSON, nullable=True)
+    score_delta = Column(Float, default=0.0, nullable=False, server_default="0.0")
+    confidence_delta = Column(Float, default=0.0, nullable=False, server_default="0.0")
+    passed = Column(Boolean, nullable=False)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class GateRegistry(Base):
+    """Registry of technical signal/scoring gates (TSYS-6b)."""
+
+    __tablename__ = "gate_registry"
+    id = Column(String(50), primary_key=True)
+    owner = Column(String(100), nullable=False)
+    status = Column(String(20), default="active", nullable=False, server_default="active")
+    test_coverage = Column(Float, default=0.0, nullable=False, server_default="0.0")
+    live_validation_status = Column(String(50), nullable=True)
+    retirement_criteria = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class SignalPolicy(Base):
+    """Signal generation policy snapshots (TSYS-6c)."""
+
+    __tablename__ = "signal_policies"
+    version = Column(String(20), primary_key=True)
+    config = Column(JSON, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# ── TSYS-7 Calibration & ML Ops models ────────────────────────────────────────
+
+
+class ModelRegistry(Base):
+    """Model registry tracking trained/deployed ML models (TSYS-7a)."""
+
+    __tablename__ = "model_registry"
+    model_id = Column(String(100), primary_key=True)
+    training_data_hash = Column(String(64), nullable=False)
+    feature_schema_hash = Column(String(64), nullable=False)
+    hyperparameters = Column(JSON, nullable=True)
+    metrics = Column(JSON, nullable=True)
+    approval_decision = Column(String(20), default="pending", nullable=False, server_default="pending")
+    is_active = Column(Boolean, default=False, nullable=False, server_default="0")
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ModelShadowScore(Base):
+    """Champion/challenger model shadow scoring logs (TSYS-7c)."""
+
+    __tablename__ = "model_shadow_scores"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False, index=True)
+    model_id = Column(String(100), nullable=False)
+    score = Column(Float, nullable=False)
+    confidence = Column(Float, nullable=False)
+    champion_score = Column(Float, nullable=False)
+    champion_confidence = Column(Float, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class CalibrationHistory(Base):
+    """Preserves historical calibration curves for rollback capability (TSYS-7d)."""
+
+    __tablename__ = "calibration_history"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(String(20), nullable=False)
+    calibration_data = Column(JSON, nullable=False)
+    is_active = Column(Boolean, default=False, nullable=False, server_default="0")
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# ── TSYS-8 Outcomes & Backtests models ────────────────────────────────────────
+
+
+class OutcomeResolverAudit(Base):
+    """Audit records of prediction resolution passes (TSYS-8a)."""
+
+    __tablename__ = "outcome_resolver_audits"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_at = Column(DateTime, server_default=func.now())
+    signals_processed = Column(Integer, default=0, nullable=False, server_default="0")
+    signals_resolved = Column(Integer, default=0, nullable=False, server_default="0")
+    price_source = Column(String(50), nullable=True)
+    missing_bars_count = Column(Integer, default=0, nullable=False, server_default="0")
+    corrections_applied = Column(JSON, nullable=True)
+    unresolved_reasons = Column(JSON, nullable=True)
+
+
+class OutcomePathSnapshot(Base):
+    """Point-in-time price path snapshots for MAE/MFE replay (TSYS-8b)."""
+
+    __tablename__ = "outcome_path_snapshots"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False, index=True)
+    path_data = Column(JSON, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# ── TSYS-10 Observability models ──────────────────────────────────────────────
+
+
+class IncidentTimeline(Base):
+    """System incident audit timeline (TSYS-10a)."""
+
+    __tablename__ = "incident_timeline"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_type = Column(String(50), nullable=False)
+    severity = Column(String(10), default="info", nullable=False, server_default="info")
+    message = Column(Text, nullable=False)
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# ── TSYS-12 Data Retention models ─────────────────────────────────────────────
+
+
+class DataRetentionRule(Base):
+    """Data retention and anonymization rules configuration (TSYS-12b)."""
+
+    __tablename__ = "data_retention_rules"
+    table_name = Column(String(100), primary_key=True)
+    retention_days = Column(Integer, nullable=False)
+    anonymize = Column(Boolean, default=False, nullable=False, server_default="0")
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+# ── TSYS-13 Safety & CCPA models ──────────────────────────────────────────────
+
+
+class ActionAuditLog(Base):
+    """Immutable log of safety-critical admin and user actions (TSYS-13c)."""
+
+    __tablename__ = "action_audit_logs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    action = Column(String(100), nullable=False)
+    details = Column(JSON, nullable=True)
+    ip_address = Column(String(50), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())

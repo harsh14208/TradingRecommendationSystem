@@ -123,31 +123,31 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 
 ### TSYS-1 — Auth, OAuth & Account Lifecycle
 
-- [ ] **TSYS-1a** Persist OAuth state/nonces in Redis or the database with TTL instead of in-process memory so login survives restarts and multi-worker deploys.
-- [ ] **TSYS-1b** Add account lockout, admin unlock, and suspicious-login audit trail for repeated failed login/reset attempts.
-- [ ] **TSYS-1c** Add refresh-token device/session management APIs: list active sessions, revoke one session, and revoke all except current.
-- [ ] **TSYS-1d** Add email-change confirmation requiring proof of the new email address before replacing `User.email`.
+- [x] **TSYS-1a** Persist OAuth state/nonces in Redis or the database with TTL instead of in-process memory so login survives restarts and multi-worker deploys.
+- [x] **TSYS-1b** Add account lockout, admin unlock, and suspicious-login audit trail for repeated failed login/reset attempts.
+- [x] **TSYS-1c** Add refresh-token device/session management APIs: list active sessions, revoke one session, and revoke all except current.
+- [x] **TSYS-1d** Add email-change confirmation requiring proof of the new email address before replacing `User.email`.
 
 ### TSYS-2 — Billing & Subscription Entitlements
 
-- [ ] **TSYS-2a** Add a nightly Stripe entitlement reconciliation job that compares local user subscription state against Stripe, independent of webhook delivery.
-- [ ] **TSYS-2b** Define and enforce explicit `past_due`, grace-period, cancellation, and downgrade dates in both API responses and UI copy.
-- [ ] **TSYS-2c** Store a fuller billing event audit trail with Stripe event id, customer id, subscription id, transition, handler result, and replay status.
-- [ ] **TSYS-2d** Add tests that a checkout/session/customer returned from Stripe can only mutate the authenticated owner’s subscription.
+- [x] **TSYS-2a** Add a nightly Stripe entitlement reconciliation job that compares local user subscription state against Stripe, independent of webhook delivery.
+- [x] **TSYS-2b** Define and enforce explicit `past_due`, grace-period, cancellation, and downgrade dates in both API responses and UI copy.
+- [x] **TSYS-2c** Store a fuller billing event audit trail with Stripe event id, customer id, subscription id, transition, handler result, and replay status.
+- [x] **TSYS-2d** Add tests that a checkout/session/customer returned from Stripe can only mutate the authenticated owner’s subscription.
 
 ### TSYS-3 — Notifications, Webhooks & Delivery
 
-- [ ] **TSYS-3a** Create a unified delivery receipt table for Telegram, email, push, Discord, and webhooks with provider status, retry count, latency, error code, and dedupe key.
-- [ ] **TSYS-3b** Add channel-specific retry queues with exponential backoff and dead-letter handling for failed delivery attempts.
-- [ ] **TSYS-3c** Add quiet-hours, user timezone, digest-vs-realtime, and per-channel escalation preferences to alert settings.
-- [ ] **TSYS-3d** Add outbound webhook signing-secret rotation plus a signed test-event endpoint for users to verify integrations safely.
+- [x] **TSYS-3a** Create a unified delivery receipt table for Telegram, email, push, Discord, and webhooks with provider status, retry count, latency, error code, and dedupe key.
+- [x] **TSYS-3b** Add channel-specific retry queues with exponential backoff and dead-letter handling for failed delivery attempts.
+- [x] **TSYS-3c** Add quiet-hours, user timezone, digest-vs-realtime, and per-channel escalation preferences to alert settings.
+- [x] **TSYS-3d** Add outbound webhook signing-secret rotation plus a signed test-event endpoint for users to verify integrations safely.
 
 ### TSYS-4 — Scanner, Worker Bus & Background Jobs
 
-- [ ] **TSYS-4a** Persist every background job run with job name, cycle id, start/end time, status, duration, error, and worker id so health survives restarts.
-- [ ] **TSYS-4b** Attach a scan-cycle id to every generated signal, delivery, broker order, and admin log created by that cycle.
-- [ ] **TSYS-4c** Add distributed singleton locks for periodic scan, weekly ML, factor mining, outcome resolution, and digest jobs.
-- [ ] **TSYS-4d** Add provider budget telemetry per cycle: API calls, cache hits/misses, quota remaining, throttles, and fallback usage.
+- [x] **TSYS-4a** Persist every background job run with job name, cycle id, start/end time, status, duration, error, and worker id so health survives restarts.
+- [x] **TSYS-4b** Attach a scan-cycle id to every generated signal, delivery, broker order, and admin log created by that cycle.
+- [x] **TSYS-4c** Add distributed singleton locks for periodic scan, weekly ML, factor mining, outcome resolution, and digest jobs.
+- [x] **TSYS-4d** Add provider budget telemetry per cycle: API calls, cache hits/misses, quota remaining, throttles, and fallback usage.
 
 ### TSYS-5 — Market Data & Provider Reliability
 
@@ -187,7 +187,7 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 ### TSYS-10 — Admin, Observability & Runbook Automation
 
 - [ ] **TSYS-10a** Add an admin incident timeline covering scan failures, provider degradations, delivery spikes, execution pauses, calibration changes, and model promotions.
-- [ ] **TSYS-10b** Add `/api/admin/system-readiness` that computes launch readiness from env vars, DB state, provider status, webhooks, queues, and current kill-switch flags.
+- [x] **TSYS-10b** Add `/api/admin/system-readiness` that computes launch readiness from env vars, DB state, provider status, webhooks, queues, and current kill-switch flags.
 - [ ] **TSYS-10c** Export structured metrics for Prometheus/OpenTelemetry: scan latency, delivery latency, provider 429s, DB pool saturation, cache misses, and order errors.
 - [ ] **TSYS-10d** Add alert thresholds and escalation routing for the metrics above so production incidents are not discovered only through dashboards.
 

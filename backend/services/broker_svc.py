@@ -187,6 +187,8 @@ async def execute_signal_for_user(
     else:
         from services import alpaca_rest as client_rest
 
+    from services.provider_telemetry import current_cycle_id
+
     order_record = BrokerOrder(
         signal_id=signal_id,
         user_id=user.id,
@@ -196,6 +198,7 @@ async def execute_signal_for_user(
         notional=notional,
         side=side,
         status="submitted",
+        cycle_id=current_cycle_id.get(),
     )
 
     try:

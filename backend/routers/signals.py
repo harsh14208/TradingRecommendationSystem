@@ -46,6 +46,11 @@ def _cache_set(key: str, data):
     _analytics_cache[key] = {"data": data, "ts": _time.time()}
 
 
+def clear_analytics_cache():
+    """TSYS-8c: Invalidate the analytics cache on signal/outcome mutation."""
+    _analytics_cache.clear()
+
+
 def _to_dict(s: Signal) -> dict:
     return {
         "id": s.id,
@@ -180,8 +185,7 @@ async def send_signal(
     if sig.ticker in BLOCKED_TICKERS:
         raise HTTPException(
             400,
-            f"{sig.ticker} is on the blocked-ticker list (no confirmed mean-reversion edge) "
-            "and cannot be sent.",
+            f"{sig.ticker} is on the blocked-ticker list (no confirmed mean-reversion edge) and cannot be sent.",
         )
 
     # Determine the target chat_id for this user
@@ -220,6 +224,7 @@ async def send_signal(
     if success:
         sig.is_sent = True
         sig.sent_at = now
+        clear_analytics_cache()
 
     db.add(SendLog(time=now_et.strftime("%H:%M:%S"), status=status, message=log_msg))
     await db.commit()
@@ -235,6 +240,7 @@ async def skip_signal(signal_id: int, db: AsyncSession = Depends(get_db), _user:
         raise HTTPException(404, "Signal not found")
     sig.is_skipped = True
     await db.commit()
+    clear_analytics_cache()
     return {"success": True}
 
 
@@ -247,6 +253,7 @@ async def review_signal(signal_id: int, db: AsyncSession = Depends(get_db), _use
         raise HTTPException(404, "Signal not found")
     sig.reviewed = True  # mark reviewed — keeps signal in feed, just flags it
     await db.commit()
+    clear_analytics_cache()
     return {"success": True, "reviewed": True}
 
 
@@ -684,6 +691,7 @@ async def update_notes(
     notes = (body.notes or "")[:2000]  # enforce max length server-side
     sig.notes = notes
     await db.commit()
+    clear_analytics_cache()
     return {"ok": True}
 
 

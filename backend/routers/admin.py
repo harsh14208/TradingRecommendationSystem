@@ -134,6 +134,207 @@ async def setup_status(owner: User = Depends(_require_owner)):
     }
 
 
+@router.get("/system-readiness")
+async def system_readiness(
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Computes system launch readiness by checking:
+    1. Critical environment variables
+    2. Database connection health and latency
+    3. External provider API status (Alpaca, Finnhub, FRED, Polygon)
+    4. Webhook settings (Telegram, Stripe)
+    5. Background queues (Redis if configured)
+    6. System status flags (Kill-switch)
+    """
+    import time
+    import asyncio
+    from services.http_client import shared_session
+    from services.broker_svc import verify_alpaca_connection
+
+    s = get_settings()
+
+    # 1. Env check (equivalent to setup-status critical check logic)
+    owner_password_ok = bool(
+        s.owner_email and s.owner_password and s.owner_password != "ChangeMe123!" and len(s.owner_password) >= 16
+    )
+    env_checks = {
+        "jwt_secret": bool(s.jwt_secret),
+        "owner_account": owner_password_ok,
+        "telegram_bot_token": bool(s.telegram_bot_token),
+        "stripe_secret_key": bool(s.stripe_secret_key),
+        "stripe_webhook_secret": bool(s.stripe_webhook_secret),
+        "stripe_price_basic": bool(s.stripe_price_basic) and not s.stripe_price_basic.startswith("price_..."),
+        "stripe_price_pro": bool(s.stripe_price_pro) and not s.stripe_price_pro.startswith("price_..."),
+        "app_url": s.app_url.startswith("https://"),
+    }
+    env_ok = all(env_checks.values())
+
+    # 2. Database Check
+    db_ok = True
+    db_error = None
+    db_start = time.monotonic()
+    try:
+        await db.execute(select(1))
+    except Exception as e:
+        db_ok = False
+        db_error = str(e)
+    db_latency = (time.monotonic() - db_start) * 1000
+
+    # 3. Kill Switch Check
+    row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+    execution_paused = bool(row and row.data and row.data.get("execution_paused"))
+
+    # Check providers and webhooks
+    providers = {}
+    webhooks = {}
+    queues = {}
+
+    # 5. Background queue / Redis
+    redis_ok = True
+    redis_error = None
+    if s.redis_url:
+        try:
+            import redis.asyncio as aioredis
+
+            r = aioredis.from_url(s.redis_url)
+            await asyncio.wait_for(r.ping(), timeout=3.0)
+            await r.close()
+        except Exception as e:
+            redis_ok = False
+            redis_error = str(e)
+
+    queues["redis"] = {
+        "configured": bool(s.redis_url),
+        "status": "ok" if redis_ok else "error",
+        "error": redis_error,
+    }
+
+    # Helper function to check an HTTP endpoint
+    async def check_endpoint(session, url, name):
+        try:
+            async with session.get(url, timeout=3.0) as resp:
+                if resp.status == 200:
+                    return True, None
+                else:
+                    return False, f"HTTP {resp.status}"
+        except Exception as e:
+            return False, str(e)
+
+    async with shared_session() as session:
+        # Check Alpaca
+        alpaca_ok = False
+        alpaca_err = None
+        if s.alpaca_api_key and s.alpaca_api_secret:
+            try:
+                # Reuse verify_alpaca_connection
+                await asyncio.wait_for(
+                    verify_alpaca_connection(s.alpaca_api_key, s.alpaca_api_secret, live=False), timeout=3.0
+                )
+                alpaca_ok = True
+            except Exception as e:
+                alpaca_err = str(e)
+        else:
+            alpaca_err = "Alpaca API keys not set"
+
+        providers["alpaca"] = {"status": "ok" if alpaca_ok else "error", "error": alpaca_err}
+
+        # Check Finnhub
+        finnhub_ok = False
+        finnhub_err = None
+        if s.finnhub_api_key:
+            finnhub_ok, finnhub_err = await check_endpoint(
+                session, f"https://finnhub.io/api/v1/news?category=general&token={s.finnhub_api_key}", "Finnhub"
+            )
+        else:
+            finnhub_err = "Finnhub API key not set"
+
+        providers["finnhub"] = {"status": "ok" if finnhub_ok else "error", "error": finnhub_err}
+
+        # Check FRED
+        fred_ok = False
+        fred_err = None
+        if s.fred_api_key:
+            fred_ok, fred_err = await check_endpoint(
+                session,
+                f"https://api.stlouisfed.org/fred/series?series_id=VIXCLS&api_key={s.fred_api_key}&file_type=json",
+                "FRED",
+            )
+        else:
+            fred_err = "FRED API key not set"
+
+        providers["fred"] = {"status": "ok" if fred_ok else "error", "error": fred_err}
+
+        # Check Polygon
+        polygon_ok = False
+        polygon_err = None
+        if s.polygon_api_key:
+            polygon_ok, polygon_err = await check_endpoint(
+                session, f"https://api.polygon.io/v1/meta/crypto-exchanges?apiKey={s.polygon_api_key}", "Polygon"
+            )
+        else:
+            polygon_err = "Polygon API key not set"
+
+        providers["polygon"] = {"status": "ok" if polygon_ok else "error", "error": polygon_err}
+
+        # Check Telegram Webhook info
+        telegram_ok = False
+        telegram_err = None
+        telegram_webhook_info = {}
+        if s.telegram_bot_token:
+            try:
+                async with session.get(
+                    f"https://api.telegram.org/bot{s.telegram_bot_token}/getWebhookInfo", timeout=3.0
+                ) as resp:
+                    if resp.status == 200:
+                        res_data = await resp.json()
+                        if res_data.get("ok"):
+                            telegram_webhook_info = res_data.get("result", {})
+                            actual_url = telegram_webhook_info.get("url", "")
+                            expected_url = f"{s.app_url}/api/telegram/webhook"
+                            if actual_url == expected_url:
+                                telegram_ok = True
+                            else:
+                                telegram_err = (
+                                    f"Webhook URL mismatch: expected {expected_url}, got {actual_url or 'None'}"
+                                )
+                        else:
+                            telegram_err = "Telegram API error response"
+                    else:
+                        telegram_err = f"HTTP {resp.status}"
+            except Exception as e:
+                telegram_err = str(e)
+        else:
+            telegram_err = "Telegram bot token not set"
+
+        webhooks["telegram"] = {
+            "status": "ok" if telegram_ok else "error",
+            "webhook_info": telegram_webhook_info,
+            "error": telegram_err,
+        }
+
+    # Check Stripe Webhook Configuration
+    stripe_ok = bool(s.stripe_webhook_secret and s.stripe_webhook_secret.startswith("whsec_"))
+    webhooks["stripe"] = {
+        "status": "ok" if stripe_ok else "error",
+        "error": None if stripe_ok else "Stripe Webhook Secret not configured or invalid format",
+    }
+
+    # Overall launch readiness score / status
+    ready = env_ok and db_ok and not execution_paused and telegram_ok and stripe_ok and alpaca_ok and redis_ok
+
+    return {
+        "ready": ready,
+        "kill_switch": {"execution_paused": execution_paused},
+        "database": {"status": "ok" if db_ok else "error", "latency_ms": db_latency, "error": db_error},
+        "env_vars": {"status": "ok" if env_ok else "error", "checks": env_checks},
+        "providers": providers,
+        "webhooks": webhooks,
+        "queues": queues,
+    }
+
+
 # ── User management ───────────────────────────────────────────────────────────
 
 
@@ -700,3 +901,54 @@ def _find_flagged(d: dict, prefix: str = "") -> list[dict]:
             else:
                 flagged.extend(_find_flagged(v, path))
     return flagged
+
+
+@router.get("/provider-reliability")
+async def provider_reliability(db: AsyncSession = Depends(get_db), owner: User = Depends(_require_owner)):
+    """
+    TSYS-5d: Expose provider rate-limit budgets, health scorecards, and degradation states.
+    """
+    from models import ProviderHealthScorecard, ProviderTelemetry
+
+    # Get all health scorecards
+    scorecards = (await db.execute(select(ProviderHealthScorecard))).scalars().all()
+
+    # Get recent telemetry records (e.g. last 20 records)
+    telemetry = (
+        (await db.execute(select(ProviderTelemetry).order_by(ProviderTelemetry.created_at.desc()).limit(20)))
+        .scalars()
+        .all()
+    )
+
+    return {
+        "scorecards": [
+            {
+                "id": s.id,
+                "provider": s.provider,
+                "endpoint": s.endpoint,
+                "latency_avg_ms": round(s.latency_avg_ms, 2),
+                "error_rate": round(s.error_rate, 4),
+                "stale_data_rate": round(s.stale_data_rate, 4),
+                "schema_drift_count": s.schema_drift_count,
+                "health_score": round(s.health_score, 2),
+                "is_active": s.is_active,
+                "last_updated": s.last_updated.isoformat() if s.last_updated else None,
+            }
+            for s in scorecards
+        ],
+        "telemetry": [
+            {
+                "id": t.id,
+                "cycle_id": t.cycle_id,
+                "provider": t.provider,
+                "api_calls": t.api_calls,
+                "cache_hits": t.cache_hits,
+                "cache_misses": t.cache_misses,
+                "quota_remaining": t.quota_remaining,
+                "throttles": t.throttles,
+                "fallback_usage": t.fallback_usage,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            }
+            for t in telemetry
+        ],
+    }

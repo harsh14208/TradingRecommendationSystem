@@ -9,7 +9,6 @@ All providers share the same redirect→callback→one-time-code pattern:
 import asyncio
 import logging
 import secrets
-import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -18,7 +17,7 @@ from config import get_settings
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from models import RefreshToken, User
+from models import RefreshToken, User, OAuthState, OAuthOneTimeCode
 from services.auth_svc import (
     create_access_token,
     generate_link_code,
@@ -41,31 +40,38 @@ DISCORD_AUTH_URL = "https://discord.com/api/oauth2/authorize"
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
 DISCORD_INFO_URL = "https://discord.com/api/users/@me"
 
-# In-memory stores (single-process safe; resets on restart which is acceptable)
-_state_store: dict[str, tuple[int | None, float]] = {}  # state → (ref_user_id, expires)
-_code_store: dict[str, tuple[str, dict, float]] = {}  # one-time-code → (access_token, user_dict, expires)
+from sqlalchemy import delete
 
 _STATE_TTL = 300  # 5 minutes
 _CODE_TTL = 60  # 60 seconds
 
 
-def _prune(store: dict, now: float):
-    expired = [k for k, v in store.items() if v[-1] < now]
-    for k in expired:
-        del store[k]
+async def _prune_expired_oauth_data(db: AsyncSession):
+    try:
+        now = _utcnow_naive()
+        await db.execute(delete(OAuthState).where(OAuthState.expires_at < now))
+        await db.execute(delete(OAuthOneTimeCode).where(OAuthOneTimeCode.expires_at < now))
+        await db.commit()
+    except Exception as e:
+        log.error(f"[oauth] failed to prune expired oauth data: {e}")
 
 
 # ── Step 1: Redirect to Google ─────────────────────────────────────────────────
 
 
 @router.get("/google")
-async def google_oauth_start(ref: int | None = Query(None)):
+async def google_oauth_start(
+    ref: int | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
     s = get_settings()
     if not s.google_client_id:
         raise HTTPException(503, "Google OAuth not configured — set GOOGLE_CLIENT_ID in .env")
 
     state = secrets.token_urlsafe(24)
-    _state_store[state] = (ref, time.monotonic() + _STATE_TTL)
+    expires_at = _utcnow_naive() + timedelta(seconds=_STATE_TTL)
+    db.add(OAuthState(state=state, referred_by=ref, expires_at=expires_at))
+    await db.commit()
 
     params = urlencode(
         {
@@ -91,13 +97,17 @@ async def google_oauth_callback(
     db: AsyncSession = Depends(get_db),
 ):
     s = get_settings()
-    now = time.monotonic()
-    _prune(_state_store, now)
+    await _prune_expired_oauth_data(db)
 
-    state_entry = _state_store.pop(state, None)
-    if not state_entry or state_entry[1] < now:
+    state_entry = (await db.execute(select(OAuthState).where(OAuthState.state == state))).scalar_one_or_none()
+    if not state_entry or state_entry.expires_at < _utcnow_naive():
+        if state_entry:
+            await db.delete(state_entry)
+            await db.commit()
         raise HTTPException(400, "OAuth state invalid or expired. Please try again.")
-    ref_user_id = state_entry[0]
+    ref_user_id = state_entry.referred_by
+    await db.delete(state_entry)
+    await db.commit()
 
     # Exchange code for tokens
     async with aiohttp.ClientSession() as session:
@@ -136,12 +146,12 @@ async def google_oauth_callback(
     user = await _upsert_oauth_user(
         db,
         provider="google",
-        sub=sub,
+        sub=f"google:{sub}",
         email=email,
         name=name,
         ref_user_id=ref_user_id,
     )
-    otc = _issue_otc(user)
+    otc = await _issue_otc(user, db)
     return RedirectResponse(f"{s.app_url}/app?oauth_code={otc}")
 
 
@@ -165,14 +175,23 @@ async def oauth_exchange(
 
     from fastapi.responses import JSONResponse
 
-    now = time.monotonic()
-    _prune(_code_store, now)
+    await _prune_expired_oauth_data(db)
 
-    entry = _code_store.pop(code, None)
-    if not entry or entry[2] < now:
+    code_entry = (await db.execute(select(OAuthOneTimeCode).where(OAuthOneTimeCode.code == code))).scalar_one_or_none()
+    if not code_entry or code_entry.expires_at < _utcnow_naive():
+        if code_entry:
+            await db.delete(code_entry)
+            await db.commit()
         raise HTTPException(400, "OAuth code invalid or expired.")
 
-    access_token, user_dict, _, user_id, raw_refresh = entry
+    user_data = code_entry.user_data
+    access_token = user_data["access_token"]
+    raw_refresh = user_data["refresh_token"]
+    user_id = user_data["user_id"]
+    user_dict = user_data["user"]
+
+    await db.delete(code_entry)
+    await db.commit()
 
     # Persist the refresh token so the user can renew their session silently
     try:
@@ -244,13 +263,21 @@ async def _upsert_oauth_user(
     return user
 
 
-def _issue_otc(user: User) -> str:
+async def _issue_otc(user: User, db: AsyncSession) -> str:
     """Create a short-lived one-time code, store it, return the code."""
     access_token = create_access_token(user.id, user.subscription_tier, user.is_owner)
     refresh_token = generate_refresh_token()
     otc = secrets.token_urlsafe(32)
-    # Store (access_token, user_dict, expiry, user_id, raw_refresh_token)
-    _code_store[otc] = (access_token, user_to_dict(user), time.monotonic() + _CODE_TTL, user.id, refresh_token)
+    expires_at = _utcnow_naive() + timedelta(seconds=_CODE_TTL)
+
+    user_data = {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user_id": user.id,
+        "user": user_to_dict(user),
+    }
+    db.add(OAuthOneTimeCode(code=otc, access_token=access_token, user_data=user_data, expires_at=expires_at))
+    await db.commit()
     return otc
 
 
@@ -258,13 +285,18 @@ def _issue_otc(user: User) -> str:
 
 
 @router.get("/discord")
-async def discord_oauth_start(ref: int | None = Query(None)):
+async def discord_oauth_start(
+    ref: int | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
     s = get_settings()
     if not s.discord_client_id:
         raise HTTPException(503, "Discord OAuth not configured — set DISCORD_CLIENT_ID in .env")
 
     state = secrets.token_urlsafe(24)
-    _state_store[state] = (ref, time.monotonic() + _STATE_TTL)
+    expires_at = _utcnow_naive() + timedelta(seconds=_STATE_TTL)
+    db.add(OAuthState(state=state, referred_by=ref, expires_at=expires_at))
+    await db.commit()
 
     params = urlencode(
         {
@@ -289,13 +321,17 @@ async def discord_oauth_callback(
     db: AsyncSession = Depends(get_db),
 ):
     s = get_settings()
-    now = time.monotonic()
-    _prune(_state_store, now)
+    await _prune_expired_oauth_data(db)
 
-    state_entry = _state_store.pop(state, None)
-    if not state_entry or state_entry[1] < now:
+    state_entry = (await db.execute(select(OAuthState).where(OAuthState.state == state))).scalar_one_or_none()
+    if not state_entry or state_entry.expires_at < _utcnow_naive():
+        if state_entry:
+            await db.delete(state_entry)
+            await db.commit()
         raise HTTPException(400, "OAuth state invalid or expired. Please try again.")
-    ref_user_id = state_entry[0]
+    ref_user_id = state_entry.referred_by
+    await db.delete(state_entry)
+    await db.commit()
 
     async with aiohttp.ClientSession() as session:
         # Exchange code for access token
@@ -344,5 +380,5 @@ async def discord_oauth_callback(
         name=name,
         ref_user_id=ref_user_id,
     )
-    otc = _issue_otc(user)
+    otc = await _issue_otc(user, db)
     return RedirectResponse(f"{s.app_url}/app?oauth_code={otc}")
