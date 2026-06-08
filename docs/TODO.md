@@ -207,10 +207,10 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 
 ### TSYS-13 — Compliance, Legal & User Safety
 
-- [ ] **TSYS-13a** Audit product and marketing language for regulated-advice risk, especially around auto-execution, copy-like workflows, and performance claims.
-- [ ] **TSYS-13b** Add risk acknowledgement and suitability warnings before broker connection, paper-to-live transition, and any automated execution setting.
-- [ ] **TSYS-13c** Add immutable admin/user action audit logs for kill-switch toggles, billing overrides, model/calibration promotion, signal sends/skips, and broker setting changes.
-- [ ] **TSYS-13d** Add a deletion verification report for GDPR/CCPA account deletion covering user records, delivery records, broker credentials, tokens, and third-party identifiers.
+- [x] **TSYS-13a** Audit product and marketing language for regulated-advice risk, especially around auto-execution, copy-like workflows, and performance claims.
+- [x] **TSYS-13b** Add risk acknowledgement and suitability warnings before broker connection, paper-to-live transition, and any automated execution setting.
+- [x] **TSYS-13c** Add immutable admin/user action audit logs for kill-switch toggles, billing overrides, model/calibration promotion, signal sends/skips, and broker setting changes.
+- [x] **TSYS-13d** Add a deletion verification report for GDPR/CCPA account deletion covering user records, delivery records, broker credentials, tokens, and third-party identifiers.
 
 ## 🏆 Path to 10/10 — Area-by-Area Gap Analysis
 

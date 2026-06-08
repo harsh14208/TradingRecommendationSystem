@@ -177,3 +177,33 @@ async def update_notification_prefs(
     row.data = {**(row.data or {}), pref_key: current}
     await db.commit()
     return current
+
+
+@router.get("/risk-acknowledgement")
+async def get_risk_acknowledgement(
+    user: User = Depends(get_current_user),
+):
+    """TSYS-13b: whether this user has acknowledged the trading-risk disclosure."""
+    return {
+        "acknowledged": bool(getattr(user, "risk_acknowledged", False)),
+        "acknowledged_at": user.risk_acknowledged_at.isoformat() if user.risk_acknowledged_at else None,
+    }
+
+
+@router.post("/risk-acknowledge")
+async def acknowledge_risk(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """TSYS-13b: record the user's acknowledgement of the trading-risk/suitability
+    disclosure. Required before connecting a live broker account."""
+    from datetime import datetime, timezone
+
+    from services.audit_svc import ACTION_RISK_ACK, record_action
+
+    merged = await db.merge(user)
+    merged.risk_acknowledged = True
+    merged.risk_acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await record_action(db, ACTION_RISK_ACK, user_id=user.id)
+    await db.commit()
+    return {"acknowledged": True, "acknowledged_at": merged.risk_acknowledged_at.isoformat()}

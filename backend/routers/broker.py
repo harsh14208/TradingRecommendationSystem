@@ -170,6 +170,15 @@ async def broker_connect(
     from services.broker_svc import encrypt_credential
 
     live = body.account_type == "live"
+
+    # TSYS-13b: require a recorded risk acknowledgement before a LIVE (real-money)
+    # broker connection. Paper accounts are exempt so users can evaluate safely.
+    if live and not getattr(user, "risk_acknowledged", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Risk acknowledgement required before connecting a live trading account. "
+            "POST /api/me/risk-acknowledge first.",
+        )
     try:
         if body.broker == "ibkr":
             from services.broker_svc import verify_ibkr_connection
@@ -187,6 +196,19 @@ async def broker_connect(
     merged.alpaca_secret_enc = encrypt_credential(body.api_secret) if body.api_secret else None
     merged.alpaca_account_type = body.account_type
     merged.auto_execute_broker = body.broker
+    # TSYS-9d: stamp the key version the credentials were encrypted under.
+    from services.broker_svc import current_key_version
+
+    merged.alpaca_key_version = current_key_version()
+    # TSYS-13c: audit the broker connection (safety-critical setting change).
+    from services.audit_svc import ACTION_BROKER_CONNECT, record_action
+
+    await record_action(
+        db,
+        ACTION_BROKER_CONNECT,
+        user_id=user.id,
+        details={"broker": body.broker, "account_type": body.account_type},
+    )
     await db.commit()
     await db.refresh(merged)
 

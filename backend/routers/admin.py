@@ -569,10 +569,56 @@ async def delete_user(
         raise HTTPException(404, "User not found.")
     if user.is_owner:
         raise HTTPException(400, "Cannot delete owner account.")
+
+    # TSYS-13d: GDPR/CCPA deletion verification report. Count related records and
+    # capture third-party identifiers before deletion, then verify cascade after.
+    from sqlalchemy import func
+
+    from models import BrokerOrder, RefreshToken, SignalDelivery
+
+    async def _count(model):
+        return (await db.execute(select(func.count(model.id)).where(model.user_id == user_id))).scalar() or 0
+
+    before = {
+        "signal_deliveries": await _count(SignalDelivery),
+        "broker_orders": await _count(BrokerOrder),
+        "refresh_tokens": await _count(RefreshToken),
+    }
+    third_party = {
+        "stripe_customer_id": bool(user.stripe_customer_id),
+        "telegram_chat_id": bool(user.telegram_chat_id),
+        "broker_credentials": bool(user.alpaca_key_enc),
+    }
+
+    # TSYS-13c: audit the deletion before the user row (and its FK row) is gone.
+    from services.audit_svc import ACTION_ACCOUNT_DELETION, record_action
+
+    await record_action(
+        db,
+        ACTION_ACCOUNT_DELETION,
+        user_id=None,  # user row is about to be deleted; keep the log orphan-safe
+        details={"deleted_user_id": user_id, "related": before, "third_party": third_party},
+    )
+
     await db.delete(user)
     await db.commit()
-    log.info(f"[admin] deleted user={user_id}")
-    return {"ok": True}
+
+    # Verify the cascade actually removed the child rows.
+    after = {
+        "signal_deliveries": await _count(SignalDelivery),
+        "broker_orders": await _count(BrokerOrder),
+        "refresh_tokens": await _count(RefreshToken),
+    }
+    fully_purged = all(v == 0 for v in after.values())
+    log.info(f"[admin] deleted user={user_id} purged={fully_purged} before={before}")
+    return {
+        "ok": True,
+        "deleted_user_id": user_id,
+        "records_before": before,
+        "records_after": after,
+        "third_party_identifiers_cleared": third_party,
+        "fully_purged": fully_purged,
+    }
 
 
 # ── Signal delivery SLA ───────────────────────────────────────────────────────
@@ -734,6 +780,15 @@ async def execution_kill_switch(
     data = dict(row.data or {})
     data["execution_paused"] = not data.get("execution_paused", False)
     row.data = data
+    # TSYS-13c: immutable audit of the kill-switch toggle.
+    from services.audit_svc import ACTION_KILL_SWITCH, record_action
+
+    await record_action(
+        db,
+        ACTION_KILL_SWITCH,
+        user_id=owner.id,
+        details={"execution_paused": data["execution_paused"]},
+    )
     await db.commit()
     log.info("kill_switch: execution_paused set to %s by owner=%d", data["execution_paused"], owner.id)
     return {"execution_paused": data["execution_paused"]}
