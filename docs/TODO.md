@@ -75,6 +75,143 @@
 
 ---
 
+## 🧠 World-Class Quant Engine TODOs — Newly Identified
+
+> Added 2026-06-05 after updated-codebase review + external quant research pass. These are intentionally non-duplicate TODOs: they focus on research governance, point-in-time replay, live execution learning, and portfolio construction rather than adding another indicator to the existing MR stack.
+
+### QENG-1 — Research Factory & Anti-Overfit Controls
+
+- [ ] **QENG-1a. Research experiment registry** — Add a `ResearchExperiment` table/log for every screener, parameter sweep, gate ablation, ML training run, and factor-mining run. Store hypothesis, universe, data version, git SHA, search space, number of trials, IS/OOS metrics, DSR/PBO, decision, and promotion status. Rationale: `factor_miner.py` already has Benjamini-Hochberg FDR, and live DSR exists, but there is no global trial ledger; without it, the true multiple-testing budget is unknowable.
+- [ ] **QENG-1b. Combinatorially symmetric cross-validation / PBO report** — Add a `--pbo` report for strategy variants and factor-mining outputs. Compute Probability of Backtest Overfitting using CSCV-style splits where feasible, and require PBO below a defined threshold before any gate/model promotion. Rationale: DSR corrects reported Sharpe, but PBO measures the selection process itself.
+- [ ] **QENG-1c. Model/policy promotion checklist** — Require every promoted gate/model to have: registry entry, locked OOS universe, replay result, live shadow result, cost-adjusted result, rollback plan, and expiration/retest date.
+
+### QENG-2 — Point-in-Time Data & Replay
+
+- [ ] **QENG-2a. Point-in-time feature store** — Persist immutable feature snapshots keyed by ticker, observation time, effective time, provider timestamp, retrieval time, provider, adjusted/raw values, feature vector hash, and signal policy version. Current `Signal` rows store outputs and outcomes, not the full as-of state that produced the decision.
+- [ ] **QENG-2b. Event-driven as-of replay engine** — Build a replay harness that runs the same live `generate_signal()` + delivery gates against historical point-in-time feature snapshots. Goal: remove divergence between the live engine and `backtest_technicals.py`, whose docstring honestly excludes several live gates because the data is not point-in-time.
+- [ ] **QENG-2c. Dataset/version lineage** — Version data pulls and feature transforms so every backtest, ML model, calibration run, and signal can be traced to exact inputs. Include vendor, endpoint, adjustment mode, calendar, and corporate-action handling.
+
+### QENG-3 — Execution, TCA & Capacity
+
+- [ ] **QENG-3a. Live fill ledger** — Extend `BrokerOrder` into full order/fill/event tracking: arrival price, NBBO mid, spread, route/order type, requested qty/notional, filled qty, average fill, partial fills, fees, reject reason, stop/target child order ids, and final execution status.
+- [ ] **QENG-3b. Transaction Cost Analysis service** — Compute realized slippage, spread capture, implementation shortfall, adverse selection, stop-fill gap, and cost by ticker/time/spread/participation/order type. Feed this back into backtests, delivery gates, and position sizing.
+- [ ] **QENG-3c. Capacity and participation limits** — Add per-ticker capacity estimates using ADV, spread, volatility, and realized fill quality. Block or shrink trades when expected implementation shortfall consumes the signal edge.
+- [ ] **QENG-3d. Execution policy simulator** — Compare market, limit, midpoint, delayed-entry, and bracket variants in paper/shadow mode before changing live execution. Promote only on cost-adjusted expected value, not raw fill rate.
+
+### QENG-4 — Portfolio Construction Layer
+
+- [ ] **QENG-4a. Portfolio allocator service** — Build one allocator that converts active signals into orders under cash, exposure, covariance, turnover, cost, drawdown, sector/factor, and concentration constraints. This should sit above per-signal `positionSizeScale`.
+- [ ] **QENG-4b. Hierarchical Risk Parity baseline** — Implement HRP/risk-budgeting as the robust first allocator, benchmarked against equal weight, inverse vol, and current per-signal sizing.
+- [ ] **QENG-4c. Cost-aware turnover control** — Add no-trade bands / buy-hold spread logic so small expected-edge changes do not trigger unnecessary churn. Rationale: transaction-cost literature shows turnover control is often the simplest way to preserve anomaly returns.
+
+### QENG-5 — Orthogonal Alpha Sleeves
+
+- [ ] **QENG-5a. PCA/ETF residual stat-arb sleeve** — Research Avellaneda-Lee style residual mean reversion: regress stocks on sector ETF/PCA factors using trailing windows, trade residual z-scores with OU half-life and stationarity filters, and evaluate separately from the current directional MR engine.
+- [ ] **QENG-5b. Time-series momentum / crisis trend sleeve** — Add a separate sleeve for persistent trend regimes across SPY/QQQ/TLT/GLD/DXY/HYG/sector ETFs. Goal: diversify the current system, whose edge depends on fear-driven mean reversion and beta recovery.
+- [ ] **QENG-5c. Lower-turnover cross-sectional factor sleeve** — Research monthly/weekly quality, value, momentum, low-beta, and residual-momentum factors with explicit cost controls. Keep separate from the short-horizon MR signal stack.
+- [ ] **QENG-5d. Cross-sleeve capital allocator** — Allocate risk across MR, residual stat-arb, trend, and factor sleeves by live Sharpe confidence, drawdown state, correlation, and capacity.
+
+### QENG-6 — Meta-Labeling & Live Causal Measurement
+
+- [ ] **QENG-6a. Operationalize triple-barrier meta-labeling** — `signal_ml.py` already has `predict_meta_prob()` plumbing and `train_metalabel_model.py` exists, but `meta_label_model.json` is not present and this is not a first-class roadmap item. Train, validate, canary in paper mode, and deploy only when the meta-label model improves cost-adjusted OOS/live results.
+- [ ] **QENG-6b. Shadow-control framework** — For every eligible signal, log policy version and assignment: delivered, paper-only, withheld-control, challenger-policy, or execution-disabled. Use randomized/counterfactual cohorts to measure gate changes causally instead of relying only on before/after live WR.
+- [ ] **QENG-6c. Policy versioning in every signal** — Persist scoring version, gate version, calibration version, ML model ids, and allocator version in each signal row so live performance can be attributed to the exact decision policy.
+
+## 🎯 Targeted System TODOs — Newly Identified
+
+Added 2026-06-05 after a system-by-system review of the existing backend, data, ML, broker, delivery, admin, and frontend surfaces. These are intentionally narrower than the quant-engine roadmap above and avoid duplicating items already listed elsewhere in this file.
+
+### TSYS-1 — Auth, OAuth & Account Lifecycle
+
+- [ ] **TSYS-1a** Persist OAuth state/nonces in Redis or the database with TTL instead of in-process memory so login survives restarts and multi-worker deploys.
+- [ ] **TSYS-1b** Add account lockout, admin unlock, and suspicious-login audit trail for repeated failed login/reset attempts.
+- [ ] **TSYS-1c** Add refresh-token device/session management APIs: list active sessions, revoke one session, and revoke all except current.
+- [ ] **TSYS-1d** Add email-change confirmation requiring proof of the new email address before replacing `User.email`.
+
+### TSYS-2 — Billing & Subscription Entitlements
+
+- [ ] **TSYS-2a** Add a nightly Stripe entitlement reconciliation job that compares local user subscription state against Stripe, independent of webhook delivery.
+- [ ] **TSYS-2b** Define and enforce explicit `past_due`, grace-period, cancellation, and downgrade dates in both API responses and UI copy.
+- [ ] **TSYS-2c** Store a fuller billing event audit trail with Stripe event id, customer id, subscription id, transition, handler result, and replay status.
+- [ ] **TSYS-2d** Add tests that a checkout/session/customer returned from Stripe can only mutate the authenticated owner’s subscription.
+
+### TSYS-3 — Notifications, Webhooks & Delivery
+
+- [ ] **TSYS-3a** Create a unified delivery receipt table for Telegram, email, push, Discord, and webhooks with provider status, retry count, latency, error code, and dedupe key.
+- [ ] **TSYS-3b** Add channel-specific retry queues with exponential backoff and dead-letter handling for failed delivery attempts.
+- [ ] **TSYS-3c** Add quiet-hours, user timezone, digest-vs-realtime, and per-channel escalation preferences to alert settings.
+- [ ] **TSYS-3d** Add outbound webhook signing-secret rotation plus a signed test-event endpoint for users to verify integrations safely.
+
+### TSYS-4 — Scanner, Worker Bus & Background Jobs
+
+- [ ] **TSYS-4a** Persist every background job run with job name, cycle id, start/end time, status, duration, error, and worker id so health survives restarts.
+- [ ] **TSYS-4b** Attach a scan-cycle id to every generated signal, delivery, broker order, and admin log created by that cycle.
+- [ ] **TSYS-4c** Add distributed singleton locks for periodic scan, weekly ML, factor mining, outcome resolution, and digest jobs.
+- [ ] **TSYS-4d** Add provider budget telemetry per cycle: API calls, cache hits/misses, quota remaining, throttles, and fallback usage.
+
+### TSYS-5 — Market Data & Provider Reliability
+
+- [ ] **TSYS-5a** Add a provider health scorecard per endpoint with latency, error rate, stale-data rate, schema-drift incidents, and automatic priority selection.
+- [ ] **TSYS-5b** Sample and store raw vendor responses for schema-drift detection and post-incident replay.
+- [ ] **TSYS-5c** Add corporate-action adjustment validation comparing splits, dividends, and adjusted closes across providers.
+- [ ] **TSYS-5d** Expose provider rate-limit budgets and degradation state in the admin surface before a scan is allowed to saturate paid quotas.
+
+### TSYS-6 — Signal Engine, Gates & Explainability
+
+- [ ] **TSYS-6a** Store a machine-readable gate trace for every signal: gate id, version, input values, score/confidence delta, pass/fail, and reason.
+- [ ] **TSYS-6b** Add a gate registry with owner, status, test coverage, live-validation status, and retirement criteria for each gate.
+- [ ] **TSYS-6c** Generate a signal policy version/changelog from gate, scoring, calibration, and sizing config so every live signal is reproducible.
+- [ ] **TSYS-6d** Add parity tests proving extracted gate modules match current `_assemble_signal()` behavior during engine decomposition.
+
+### TSYS-7 — Calibration, ML & Model Operations
+
+- [ ] **TSYS-7a** Add a model registry artifact for every deployed model with model id, training-data hash, feature-schema hash, hyperparameters, metrics, and approval decision.
+- [ ] **TSYS-7b** Validate feature schemas before inference to catch missing, renamed, reordered, or type-shifted fields before they affect live scores.
+- [ ] **TSYS-7c** Run champion/challenger shadow scoring on live signals and log deltas even when the challenger is not eligible to trade or alert.
+- [ ] **TSYS-7d** Add calibration rollback support that preserves prior calibration files and allows an admin-controlled revert after live degradation.
+
+### TSYS-8 — Backtests, Outcomes & Analytics
+
+- [ ] **TSYS-8a** Add an outcome resolver audit table recording each resolution pass, signals touched, price source, missing bars, stop/target corrections, and unresolved reasons.
+- [ ] **TSYS-8b** Store outcome path snapshots or compressed OHLCV references so MAE/MFE, stop timing, and target timing can be replayed without changing definitions.
+- [ ] **TSYS-8c** Key analytics cache invalidation to signal/outcome mutations instead of relying only on TTL expiry.
+- [ ] **TSYS-8d** Add consistency tests proving `validate_predictions.py`, `/api/signals/backtest`, analytics cards, and public track record use the same win/loss definitions.
+
+### TSYS-9 — Broker, Paper Trading & Runtime Risk
+
+- [ ] **TSYS-9a** Add broker reconciliation jobs that poll open orders and positions, update `BrokerOrder.status`, and flag orphan orders/positions.
+- [ ] **TSYS-9b** Add user-level runtime risk limits: max daily orders, max daily loss, max open positions, max per-ticker notional, and max sector exposure.
+- [ ] **TSYS-9c** Add a paper/live parity dashboard comparing intended order, submitted order, fill, final position, and current broker state.
+- [ ] **TSYS-9d** Add credential encryption key versioning and rotation; do not rely on a single long-lived application secret for future broker credential decryptability.
+
+### TSYS-10 — Admin, Observability & Runbook Automation
+
+- [ ] **TSYS-10a** Add an admin incident timeline covering scan failures, provider degradations, delivery spikes, execution pauses, calibration changes, and model promotions.
+- [ ] **TSYS-10b** Add `/api/admin/system-readiness` that computes launch readiness from env vars, DB state, provider status, webhooks, queues, and current kill-switch flags.
+- [ ] **TSYS-10c** Export structured metrics for Prometheus/OpenTelemetry: scan latency, delivery latency, provider 429s, DB pool saturation, cache misses, and order errors.
+- [ ] **TSYS-10d** Add alert thresholds and escalation routing for the metrics above so production incidents are not discovered only through dashboards.
+
+### TSYS-11 — Frontend, Mobile & Product UX
+
+- [ ] **TSYS-11a** Add broker execution preview/confirmation UX showing notional, stop, target, max loss, account mode, and live-trading acknowledgement before auto-execution.
+- [ ] **TSYS-11b** Add stale-data and provider-degradation states across dashboard, mobile, and PWA views with visible last-refresh timestamps.
+- [ ] **TSYS-11c** Show signal policy/model/calibration version badges in analyst-facing views so changes in recommendations are explainable.
+- [ ] **TSYS-11d** Add frontend contract tests for API response shapes used by dashboard, signals, alerts, broker, billing, and admin views.
+
+### TSYS-12 — Database, Migrations & Data Retention
+
+- [ ] **TSYS-12a** Enforce an Alembic-only production schema-change policy; keep `init_db` column additions limited to dev/test compatibility.
+- [ ] **TSYS-12b** Define retention and anonymization rules per table for users, signals, deliveries, broker orders, webhook logs, analytics, and provider samples.
+- [ ] **TSYS-12c** Run an index audit for hot paths: active signals, unsent deliveries, user alerts, broker orders by status, analytics windows, and admin logs.
+- [ ] **TSYS-12d** Add migration smoke tests from both a blank database and the previous production migration head.
+
+### TSYS-13 — Compliance, Legal & User Safety
+
+- [ ] **TSYS-13a** Audit product and marketing language for regulated-advice risk, especially around auto-execution, copy-like workflows, and performance claims.
+- [ ] **TSYS-13b** Add risk acknowledgement and suitability warnings before broker connection, paper-to-live transition, and any automated execution setting.
+- [ ] **TSYS-13c** Add immutable admin/user action audit logs for kill-switch toggles, billing overrides, model/calibration promotion, signal sends/skips, and broker setting changes.
+- [ ] **TSYS-13d** Add a deletion verification report for GDPR/CCPA account deletion covering user records, delivery records, broker credentials, tokens, and third-party identifiers.
+
 ## 🏆 Path to 10/10 — Area-by-Area Gap Analysis
 
 > Current overall: **8.4/10 product · 8.8/10 B+ quality** (v7.7, 2026-06-06). Full per-area ratings in [`docs/Stats.md §15`](Stats.md). Items below are the specific gaps and actionable TODOs per area.

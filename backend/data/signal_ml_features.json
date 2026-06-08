@@ -1,75 +1,75 @@
 {
-  "trained_at": "2026-06-02T00:37:23.736458",
-  "n_train": 382,
-  "n_test": 164,
-  "n_total": 546,
-  "oos_accuracy": 0.5976,
-  "oos_auc": 0.7007,
+  "trained_at": "2026-06-08T04:10:16.794695",
+  "n_train": 396,
+  "n_test": 170,
+  "n_total": 566,
+  "oos_accuracy": 0.6059,
+  "oos_auc": 0.6883,
   "oos_auc_ci_95": [
-    0.6211,
-    0.7803
+    0.6085,
+    0.7681
   ],
-  "oos_precision": 0.7297,
-  "oos_recall": 0.3253,
+  "oos_precision": 0.6744,
+  "oos_recall": 0.3537,
   "top_features": [
+    "has_fundamentals_source",
+    "is_buy",
     "target_pct",
     "n_rationale",
-    "is_buy",
-    "n_pos_rationale",
-    "stop_pct"
+    "n_pos_rationale"
   ],
   "feature_importances": [
     {
-      "feature": "target_pct",
-      "importance": 0.10449
-    },
-    {
-      "feature": "n_rationale",
-      "importance": 0.09827
+      "feature": "has_fundamentals_source",
+      "importance": 0.15494
     },
     {
       "feature": "is_buy",
-      "importance": 0.09153
+      "importance": 0.09811
+    },
+    {
+      "feature": "target_pct",
+      "importance": 0.09705
+    },
+    {
+      "feature": "n_rationale",
+      "importance": 0.09165
     },
     {
       "feature": "n_pos_rationale",
-      "importance": 0.08747
+      "importance": 0.08396
     },
     {
       "feature": "stop_pct",
-      "importance": 0.08685
+      "importance": 0.07951
     },
     {
       "feature": "n_neg_rationale",
-      "importance": 0.08214
-    },
-    {
-      "feature": "price_log",
-      "importance": 0.07331
-    },
-    {
-      "feature": "change_pct",
-      "importance": 0.06919
-    },
-    {
-      "feature": "day_of_week",
-      "importance": 0.06694
-    },
-    {
-      "feature": "has_macro_source",
-      "importance": 0.06343
+      "importance": 0.07043
     },
     {
       "feature": "n_sources",
-      "importance": 0.0625
+      "importance": 0.07011
+    },
+    {
+      "feature": "price_log",
+      "importance": 0.06948
+    },
+    {
+      "feature": "change_pct",
+      "importance": 0.06012
     },
     {
       "feature": "month",
-      "importance": 0.05968
+      "importance": 0.04657
+    },
+    {
+      "feature": "day_of_week",
+      "importance": 0.04618
     },
     {
       "feature": "has_options_source",
-      "importance": 0.05422
+      "importance": 0.03189
     },
     {
       "feature": "rr_numeric",
@@ -80,11 +80,11 @@
       "importance": 0.0
     },
     {
-      "feature": "has_fundamentals_source",
+      "feature": "has_institutional_source",
       "importance": 0.0
     },
     {
-      "feature": "has_institutional_source",
+      "feature": "has_macro_source",
       "importance": 0.0
     },
     {
@@ -114,7 +114,7 @@
   ],
   "deployed": false,
   "training_only": false,
-  "champion_auc": 0.7331,
+  "champion_auc": 0.7007,
   "min_live_n_for_deployment": 300,
   "min_auc_delta_to_deploy": 0.005
 }

@@ -71,7 +71,7 @@ async def my_performance(
     )
     total_count = len(total_delivered)
 
-    resolved = [r for r in recent if r["outcome_pct"] is not None]
+    resolved = [r for r in recent if r["outcome_pct"] is not None and r["exit_type"] != "pending"]
     wins = [r for r in resolved if r["outcome_pct"] > 0]
     returns = [r["outcome_pct"] for r in resolved]
 
@@ -83,13 +83,13 @@ async def my_performance(
         mean_r = sum(returns) / len(returns)
         std_r = math.sqrt(sum((r - mean_r) ** 2 for r in returns) / max(len(returns) - 1, 1))
         if std_r > 0:
-            sharpe = round((mean_r / std_r) * math.sqrt(52), 2)
+            sharpe = round((mean_r / std_r) * math.sqrt(252 / 10), 2)
 
     return {
         "stats": {
             "delivered": total_count,
             "resolved": len(resolved),
-            "pending": len([r for r in recent if r["outcome_pct"] is None]),
+            "pending": len([r for r in recent if r["exit_type"] == "pending" or r["outcome_pct"] is None]),
             "win_rate": win_rate,
             "avg_return": avg_return,
             "sharpe": sharpe,
