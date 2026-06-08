@@ -1,6 +1,7 @@
 import logging
 from datetime import date
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from database import AsyncSessionLocal
 from models import ProviderResponseSample, ProviderHealthScorecard, CorporateActionValidation, IncidentTimeline
 
@@ -49,7 +50,10 @@ async def record_endpoint_call(
                 ProviderHealthScorecard.provider == provider, ProviderHealthScorecard.endpoint == endpoint
             )
             res = await db.execute(stmt)
-            scorecard = res.scalar_one_or_none()
+            # .first() (not scalar_one_or_none) so any pre-existing duplicate
+            # (provider, endpoint) rows can't crash this hot path. A unique
+            # constraint (uq_provider_endpoint) now prevents new duplicates.
+            scorecard = res.scalars().first()
 
             error_val = 1 if status_code != 200 else 0
             stale_val = 1 if is_stale else 0
@@ -98,7 +102,13 @@ async def record_endpoint_call(
                     )
                     db.add(incident)
 
-            await db.commit()
+            try:
+                await db.commit()
+            except IntegrityError:
+                # Concurrent first-write for this (provider, endpoint) won the
+                # uq_provider_endpoint race. The other writer's row stands; the
+                # next call updates it via EMA. Nothing to recover here.
+                await db.rollback()
     except Exception as e:
         log.error(f"Failed to record endpoint call: {e}")
 

@@ -122,9 +122,18 @@ def apply_triple_barrier(
 
         # Forward price window: days 1–10 after entry
         try:
+            if df_t.index.tz is not None:
+                if entry_date.tz is None:
+                    entry_date = entry_date.tz_localize("UTC").tz_convert(df_t.index.tz)
+                else:
+                    entry_date = entry_date.tz_convert(df_t.index.tz)
+            else:
+                if entry_date.tz is not None:
+                    entry_date = entry_date.tz_localize(None)
+
             idx_pos = df_t.index.searchsorted(entry_date)
             fwd = df_t.iloc[idx_pos + 1 : idx_pos + 1 + _HOLD_DAYS]
-        except Exception:
+        except Exception as e_idx:
             labels.append(np.nan)
             continue
 
@@ -267,7 +276,15 @@ def main():
         )
         sys.exit(1)
 
-    trades = pd.read_csv(trades_path, parse_dates=["entry_date"])
+    date_col = "date" if "date" in pd.read_csv(trades_path, nrows=5).columns else "entry_date"
+    trades = pd.read_csv(trades_path, parse_dates=[date_col])
+    if date_col == "date":
+        trades.rename(columns={"date": "entry_date"}, inplace=True)
+    if "entry" in trades.columns and "entry_price" not in trades.columns:
+        trades.rename(columns={"entry": "entry_price"}, inplace=True)
+    if "atr_pct" in trades.columns and "atr" not in trades.columns:
+        trades["atr"] = trades["entry_price"] * trades["atr_pct"] / 100.0
+
     log.info("Loaded %d IS trades from %s", len(trades), trades_path)
 
     required_cols = {"ticker", "entry_date", "entry_price", "atr"}

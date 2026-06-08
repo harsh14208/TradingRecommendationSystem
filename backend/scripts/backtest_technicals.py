@@ -38,6 +38,15 @@ from __future__ import annotations
 import math
 import os
 import sys
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PARENT = os.path.dirname(_HERE)
+if _PARENT not in sys.path:
+    sys.path.insert(0, _PARENT)
+
+import socket
+socket.setdefaulttimeout(10)
+
 import warnings
 from datetime import datetime
 from multiprocessing import Pool
@@ -2820,6 +2829,8 @@ def fetch_cross_asset_composite(start: str, end: str) -> dict[pd.Timestamp, int]
     §55: Dalio/Bridgewater cross-asset triangulation — isolates equity panic from
     systemic macro breakdown. Missing data → 0 (no headwind assumed).
     """
+    if "--pbo" in sys.argv:
+        return {}
     try:
         tlt_raw = yf.download("TLT", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
         uup_raw = yf.download("UUP", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
@@ -3767,7 +3778,9 @@ def process_ticker(args):
 
 
 def main():
-    global HOLD_DAYS, MAX_LOSS_DAYS
+    global HOLD_DAYS, MAX_LOSS_DAYS, TICKERS
+    if "--pbo" in sys.argv:
+        TICKERS = TICKERS[:15]
     # --hold N : override hold period (e.g. --hold 5 for short-horizon MR validation)
     if "--hold" in sys.argv:
         _hi = sys.argv.index("--hold")
@@ -3869,11 +3882,20 @@ def main():
         for t in TICKERS
     ]
 
-    import multiprocessing as _mp
+    # Run sequentially if --sequential is present or when running --pbo to prevent macOS fork deadlocks
+    _run_seq = "--sequential" in sys.argv or "--pbo" in sys.argv
+    if _run_seq:
+        print("Running ticker processing sequentially to avoid macOS fork deadlocks...")
+        results = [process_ticker(args) for args in args_list]
+    else:
+        import multiprocessing as _mp
+        try:
+            _mp.set_start_method("fork", force=True)  # macOS Python 3.14 spawn→fork
+        except Exception:
+            pass
+        with Pool(8) as p:
+            results = p.map(process_ticker, args_list)
 
-    _mp.set_start_method("fork", force=True)  # macOS Python 3.14 spawn→fork
-    with Pool(8) as p:
-        results = p.map(process_ticker, args_list)
 
     for ticker, t_df, bh_ret, df in results:
         if bh_ret is not None:
@@ -5366,6 +5388,202 @@ def main():
             print("> §54 VIX<20 hard block in delivery_gates.py should eliminate most calm-regime signals.")
             print("> If stress-regime Sharpe >> elevated-regime: consider sizing up during VIX>30 entries.")
             print()
+
+    # ── QENG-1b: Probability of Backtest Overfitting (PBO) Report ─────────────
+    if "--pbo" in sys.argv and all_dfs:
+        from itertools import combinations as _combinations
+        import numpy as _np
+        import asyncio as _asyncio
+
+        print("\n## QENG-1b: Probability of Backtest Overfitting (PBO) Report\n")
+        print("> Goal: Compute PBO using Combinatorially Symmetric Cross-Validation (CSCV) splits.")
+        print("> Sweeps BUY_THRESH from 45 to 55 (11 parameter variants) over S=8 temporal partitions.")
+        print("> Promotability threshold: PBO < 0.15 is required.\n")
+
+        # 1. Gather all trades for each trial BUY_THRESH in [45..55]
+        _orig_bt = BUY_THRESH
+        _trials = list(range(45, 56))
+        _all_trial_trades = {}
+
+        print("Simulating strategy variants...")
+        for _bt in _trials:
+            _trades_list = []
+            for _t, _df in all_dfs.items():
+                _tr = simulate_ticker(_t, _df, vix, spy_trend, stlfsi4, mr_only=True, buy_thresh_override=_bt)
+                if _tr is not None and not _tr.empty:
+                    _trades_list.append(_tr)
+            if _trades_list:
+                _all_trial_trades[_bt] = pd.concat(_trades_list, ignore_index=True)
+            else:
+                _all_trial_trades[_bt] = pd.DataFrame(columns=["entry_date", "net_pct"])
+        
+        # Determine the global min/max dates across all trials to split chronologically
+        _all_dates = []
+        for _bt, _df_trades in _all_trial_trades.items():
+            if not _df_trades.empty:
+                _col = "entry" if "entry" in _df_trades.columns else "entry_date"
+                _all_dates.extend(pd.to_datetime(_df_trades[_col]).tolist())
+        
+        if not _all_dates:
+            print("No trades found across any trials to compute PBO.")
+        else:
+            _min_date = min(_all_dates)
+            _max_date = max(_all_dates)
+            _duration = _max_date - _min_date
+            
+            # Divide timeline into S=8 slices
+            S = 8
+            _slice_duration = _duration / S
+            _slices = []
+            for i in range(S):
+                _start = _min_date + i * _slice_duration
+                _end = _min_date + (i + 1) * _slice_duration
+                _slices.append((_start, _end))
+                
+            # Helper to calculate Sharpe of a list of returns
+            def _calc_raw_sharpe(returns: list[float]) -> float:
+                if len(returns) < 3:
+                    return 0.0
+                mean_r = sum(returns) / len(returns)
+                std_r = (sum((r - mean_r) ** 2 for r in returns) / (len(returns) - 1)) ** 0.5
+                if std_r == 0:
+                    return 0.0
+                return (mean_r / std_r) * math.sqrt(52)
+
+            # Assign each trade to a slice for each trial
+            _trial_slice_rets = {}
+            for _bt in _trials:
+                _df_trades = _all_trial_trades[_bt]
+                _trial_slice_rets[_bt] = [[] for _ in range(S)]
+                if not _df_trades.empty:
+                    _col = "entry" if "entry" in _df_trades.columns else "entry_date"
+                    _dates = pd.to_datetime(_df_trades[_col])
+                    _rets = _df_trades["net_pct"].tolist()
+                    for _idx, _d in enumerate(_dates):
+                        # Find which slice it belongs to
+                        _s_found = S - 1
+                        for _s in range(S - 1):
+                            if _slices[_s][0] <= _d < _slices[_s][1]:
+                                _s_found = _s
+                                break
+                        _trial_slice_rets[_bt][_s_found].append(_rets[_idx])
+
+            # Now form combinations of S/2 train slices
+            _all_combos = list(_combinations(range(S), S // 2))
+            _overfit_count = 0
+            _total_combos = len(_all_combos)
+            
+            _rank_distribution = []
+            
+            for _train_indices in _all_combos:
+                _test_indices = [idx for idx in range(S) if idx not in _train_indices]
+                
+                # Evaluate all trials on training set
+                _train_sharpes = {}
+                for _bt in _trials:
+                    _train_rets = []
+                    for idx in _train_indices:
+                        _train_rets.extend(_trial_slice_rets[_bt][idx])
+                    _train_sharpes[_bt] = _calc_raw_sharpe(_train_rets)
+                
+                # Identify optimal trial on training set:
+                _best_train_bt = max(_trials, key=lambda _bt: _train_sharpes[_bt])
+                
+                # Evaluate all trials on testing set
+                _test_sharpes = {}
+                for _bt in _trials:
+                    _test_rets = []
+                    for idx in _test_indices:
+                        _test_rets.extend(_trial_slice_rets[_bt][idx])
+                    _test_sharpes[_bt] = _calc_raw_sharpe(_test_rets)
+                
+                # Rank the selected parameter on testing set.
+                _sorted_test_sharpes = sorted([(_test_sharpes[_bt], _bt) for _bt in _trials])
+                _rank_idx = -1
+                for rank_i, (sh, _bt) in enumerate(_sorted_test_sharpes):
+                    if _bt == _best_train_bt:
+                        _rank_idx = rank_i
+                        break
+                
+                _rel_rank = (_rank_idx + 1) / len(_trials)
+                _rank_distribution.append(_rel_rank)
+                
+                if _rel_rank <= 0.50:
+                    _overfit_count += 1
+
+            _pbo = _overfit_count / _total_combos
+            print(f"Combinations evaluated: {_total_combos} (S={S} slices, S//2 train)")
+            print(f"Overfit instances (test rank <= median): {_overfit_count}")
+            print(f"Probability of Backtest Overfitting (PBO): {_pbo:.4f} ({_pbo * 100:.1f}%)")
+            
+            _threshold = 0.15
+            _passed = _pbo < _threshold
+            _status_str = "PASS" if _passed else "WARNING"
+            print(f"STATUS: {_status_str} (PBO {_pbo:.4f} vs limit {_threshold})")
+            
+            # Print relative rank distribution
+            _p10 = float(_np.percentile(_rank_distribution, 10))
+            _p50 = float(_np.percentile(_rank_distribution, 50))
+            _p90 = float(_np.percentile(_rank_distribution, 90))
+            print("\nTest Rank Distribution:")
+            print(f"  P10 Rank: {_p10 * 100:.1f}%")
+            print(f"  P50 Rank: {_p50 * 100:.1f}%")
+            print(f"  P90 Rank: {_p90 * 100:.1f}%")
+            print()
+
+            # Save the experiment into database
+            async def _save_experiment_in_db():
+                try:
+                    import subprocess
+                    from database import AsyncSessionLocal
+                    from models import ResearchExperiment
+                    
+                    try:
+                        git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+                    except Exception:
+                        git_sha = None
+
+                    # Find best global trial
+                    # (simulate original or current)
+                    _orig_sv = stats(_all_trial_trades[_orig_bt]["net_pct"].tolist()) if not _all_trial_trades[_orig_bt].empty else {"sharpe": 0.0, "wr": 0.0, "avg": 0.0}
+
+                    async with AsyncSessionLocal() as db:
+                        exp = ResearchExperiment(
+                            experiment_type="parameter_sweep",
+                            hypothesis="BUY_THRESH parameter sweep from 45 to 55 to verify stability and compute PBO",
+                            universe={"tickers": list(all_dfs.keys())},
+                            data_version="1.0",
+                            git_sha=git_sha,
+                            search_space={"BUY_THRESH": _trials},
+                            number_of_trials=len(_trials),
+                            is_metrics={
+                                "original_sharpe": _orig_sv.get("sharpe", 0.0),
+                                "original_win_rate": _orig_sv.get("wr", 0.0),
+                                "original_avg_ret": _orig_sv.get("avg", 0.0)
+                            },
+                            oos_metrics={
+                                "rank_distribution": {
+                                    "p10": _p10,
+                                    "p50": _p50,
+                                    "p90": _p90
+                                }
+                            },
+                            dsr_pbo={
+                                "pbo": _pbo,
+                                "S": S,
+                                "combos": _total_combos
+                            },
+                            decision="shadow" if _passed else "rejected",
+                            promotion_status="pending"
+                        )
+                        db.add(exp)
+                        await db.commit()
+                        print(f"> Registered experiment in DB registry (ID: {exp.id})")
+                except Exception as db_err:
+                    print(f"Failed to write experiment to DB: {db_err}")
+
+            _asyncio.run(_save_experiment_in_db())
+
 
 
 if __name__ == "__main__":

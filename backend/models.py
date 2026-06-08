@@ -297,6 +297,22 @@ class BrokerOrder(Base):
     created_at = Column(DateTime, server_default=func.now(), index=True)
     cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
 
+    # Live fill ledger columns (QENG-3a)
+    arrival_price = Column(Float, nullable=True)
+    nbbo_mid = Column(Float, nullable=True)
+    spread = Column(Float, nullable=True)
+    route_order_type = Column(String(50), nullable=True)  # "market" | "limit" | "midpoint"
+    requested_qty = Column(Float, nullable=True)
+    filled_qty = Column(Float, nullable=True)
+    avg_fill_price = Column(Float, nullable=True)
+    partial_fills = Column(JSON, nullable=True)  # list of sub-fills
+    fees = Column(Float, nullable=True)
+    reject_reason = Column(Text, nullable=True)
+    stop_child_order_id = Column(String(50), nullable=True)
+    target_child_order_id = Column(String(50), nullable=True)
+    final_execution_status = Column(String(20), nullable=True)
+
+
 
 class PerformanceSnapshot(Base):
     """Immutable point-in-time record of system performance metrics.
@@ -388,7 +404,7 @@ class FeatureSnapshot(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     instrument_id = Column(Integer, ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False)
     signal_id = Column(Integer, ForeignKey("signals.id", ondelete="SET NULL"), nullable=True, index=True)
-    ts = Column(DateTime, nullable=False)
+    ts = Column(DateTime, nullable=False)  # observation time
     rsi = Column(Float, nullable=True)
     bb_pct_b = Column(Float, nullable=True)
     ibs = Column(Float, nullable=True)
@@ -397,8 +413,14 @@ class FeatureSnapshot(Base):
     zscore = Column(Float, nullable=True)
     quality_score = Column(Float, nullable=True)
     features = Column(JSON, nullable=True)  # full point-in-time feature dict
+    effective_time = Column(DateTime, nullable=True)  # when the feature vector became effective
+    provider_timestamp = Column(DateTime, nullable=True)  # timestamp from provider
+    provider = Column(String(50), nullable=True)  # provider name
+    feature_vector_hash = Column(String(64), nullable=True, index=True)  # hash of feature vector
+    signal_policy_version = Column(String(20), nullable=True, index=True)  # active policy version
     created_at = Column(DateTime, server_default=func.now())
     __table_args__ = (Index("ix_feature_snapshots_instrument_ts", "instrument_id", "ts"),)
+
 
 
 class Fill(Base):
@@ -575,6 +597,9 @@ class ProviderHealthScorecard(Base):
     """Provider health metrics scorecard per endpoint (TSYS-5a)."""
 
     __tablename__ = "provider_health_scorecards"
+    __table_args__ = (
+        UniqueConstraint("provider", "endpoint", name="uq_provider_endpoint"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     provider = Column(String(50), nullable=False)
     endpoint = Column(String(255), nullable=False)
@@ -753,3 +778,28 @@ class ActionAuditLog(Base):
     details = Column(JSON, nullable=True)
     ip_address = Column(String(50), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+
+# ── QENG Quant Engine models ──────────────────────────────────────────────────
+
+
+class ResearchExperiment(Base):
+    """Research experiment registry (QENG-1a)."""
+
+    __tablename__ = "research_experiments"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    experiment_type = Column(String(50), nullable=False, index=True)  # "screener" | "parameter_sweep" | "gate_ablation" | "ml_training" | "factor_mining"
+    hypothesis = Column(Text, nullable=False)
+    universe = Column(JSON, nullable=True)  # list of tickers or description
+    data_version = Column(String(50), nullable=False)
+    git_sha = Column(String(40), nullable=True)
+    search_space = Column(JSON, nullable=True)
+    number_of_trials = Column(Integer, default=1, nullable=False)
+    is_metrics = Column(JSON, nullable=True)
+    oos_metrics = Column(JSON, nullable=True)
+    dsr_pbo = Column(JSON, nullable=True)  # e.g., {"dsr": 0.25, "pbo": 0.05}
+    decision = Column(String(20), default="pending", nullable=False, index=True)  # "promoted" | "rejected" | "shadow" | "pending"
+    promotion_status = Column(String(20), default="pending", nullable=False, index=True)  # "pending" | "live" | "rolled_back" | "expired"
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+

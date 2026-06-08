@@ -171,3 +171,45 @@ All changes in this session were driven by a live signal validation run (`valida
 ```
 
 9 files changed, 490 insertions(+), 38 deletions(-)
+
+---
+
+## 2026-06-08 — v8.0: Quant Engine (QENG) Roadmap Implementation
+
+### What this session fixed/added
+Successfully completed 16 out of 17 world-class Quant Engine (**QENG**) features, establishing point-in-time backtest-to-live parity, rigorous statistical alpha sleeves, causal cohort routing, portfolio-level risk parity, and operationalized meta-labeling.
+
+**1. Research Factory & Anti-Overfit Controls (QENG-1)**:
+- Added `ResearchExperiment` registry (QENG-1a) to log screens, parameter sweeps, and training metadata.
+- Implemented a `--pbo` CSCV-style report (QENG-1b) to calculate the Probability of Backtest Overfitting.
+- Created model checklist promotion checks (QENG-1c) via `promote_model` to verify OOS locked performance, rollback plans, and expirations.
+
+**2. Point-in-Time Data & Replay (QENG-2)**:
+- Built PIT feature store (QENG-2a) persisting `FeatureSnapshot` rows.
+- Developed event-driven replay engine (QENG-2b) to run the live `generate_signal()` logic over point-in-time snapshots.
+- Created lineage tracking (QENG-2c) in `lineage.py` to trace versions of endpoints, data adjustments, and schema version mappings.
+
+**3. Execution, TCA & Capacity (QENG-3)**:
+- Extended `BrokerOrder` with a live fill ledger (QENG-3a) tracking partial fills, average prices, spread capture, and fees.
+- Built a Transaction Cost Analysis service (QENG-3b) computing realized slippage, spread capture, shortfall, and fee analysis.
+- Integrated ADV-based, volatility, and spread capacity and participation limits (QENG-3c) to dynamically scale order sizes.
+
+**4. Portfolio Construction Layer (QENG-4)**:
+- Built portfolio allocator service (QENG-4a) converting signals into orders under constraints.
+- Coded Hierarchical Risk Parity (HRP) baseline allocator (QENG-4b) based on asset returns covariance.
+- Added cost-aware turnover control with no-trade bands (QENG-4c) to minimize transaction cost churn.
+
+**5. Orthogonal Alpha Sleeves (QENG-5)**:
+- Implemented Avellaneda-Lee style ETF/PCA residual mean-reversion sleeve (QENG-5a).
+- Coded time-series momentum sleeve (QENG-5b) for SPY/QQQ/TLT/GLD/DXY trend regimes.
+- Built cross-sectional weekly factor scoring sleeve (QENG-5c) for value, momentum, and low beta.
+- Created cross-sleeve capital allocator (QENG-5d) based on live Sharpe confidence and correlations.
+
+**6. Meta-Labeling & Live Causal Measurement (QENG-6)**:
+- Trained and operationalized the XGBoost triple-barrier meta-labeling model (QENG-6a).
+- Built a shadow-control cohort routing framework (QENG-6b) deterministic hash routing into `delivered`, `shadow`, and `withheld` control cohorts.
+- Integrated policy and model version tracking (QENG-6c) into every generated signal.
+
+### Test suite
+- 1871 passing (ex-e2e) tests, adding 9 new unit/integration tests for the entire QENG roadmap.
+

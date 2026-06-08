@@ -1,0 +1,36 @@
+{
+  "trained_at": "2026-06-08T08:05:35.726258",
+  "n_train": 39,
+  "pos_rate": 0.9231,
+  "cv_auc_mean": 0.5,
+  "cv_auc_std": 0.0,
+  "feature_names": [
+    "entry_prob",
+    "ou_halflife",
+    "hurst",
+    "vix",
+    "atr_pct",
+    "rvol",
+    "hmm_bull_prob",
+    "hmm_trans_risk",
+    "dte_bucket",
+    "sector_ord",
+    "dow"
+  ],
+  "feature_importance": {
+    "entry_prob": 0.0,
+    "ou_halflife": 0.0,
+    "hurst": 0.0,
+    "vix": 0.0,
+    "atr_pct": 0.3249,
+    "rvol": 0.0,
+    "hmm_bull_prob": 0.0,
+    "hmm_trans_risk": 0.0,
+    "dte_bucket": 0.3411,
+    "sector_ord": 0.0,
+    "dow": 0.334
+  },
+  "upper_mult": 2.0,
+  "lower_mult": 1.5,
+  "hold_days": 10
+}

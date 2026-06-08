@@ -1357,4 +1357,11 @@ def _assemble_signal(
         ),
         "gate_traces": _sig_ctx.gate_traces,
         "shadow_scores": _shadow_scores,
+        "features": {
+            **tech,
+            "vix": vix,
+            "sp500_trend": sp500_trend,
+            "quality_score": _quality_score,
+            "hasMr": _has_mr,
+        },
     }

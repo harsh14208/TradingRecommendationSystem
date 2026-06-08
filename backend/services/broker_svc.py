@@ -224,6 +224,9 @@ async def reconcile_broker_orders(db: AsyncSession) -> dict:
                 if mapped and mapped != o.status:
                     o.status = mapped
                     summary["updated"] += 1
+                    if mapped == "filled":
+                        from services.tca_service import record_fill_tca
+                        await record_fill_tca(db, o, match)
             else:
                 age_h = (now - o.created_at).total_seconds() / 3600 if o.created_at else 0
                 if age_h >= _ORPHAN_AGE_HOURS:
@@ -347,6 +350,19 @@ async def execute_signal_for_user(
         log.info("broker_svc: user=%d — order blocked by risk limit: %s", user.id, _risk_block)
         return
 
+    # QENG-3c: Expected slippage & capacity check
+    entry_price = float(sig.get("entry") or sig.get("price") or 1.0)
+    from services.tca_service import check_capacity_limits
+    blocked, suggested_notional, expected_slip = await check_capacity_limits(
+        db, ticker, notional, entry_price
+    )
+    if blocked:
+        log.info("broker_svc: user=%d — order blocked by capacity limits (expected slippage %.1f bps)", user.id, expected_slip)
+        return
+    if suggested_notional != notional:
+        log.info("broker_svc: user=%d — order sized down from %.2f to %.2f due to capacity limits", user.id, notional, suggested_notional)
+        notional = suggested_notional
+
     if broker_type == "ibkr":
         from services import ibkr_rest as client_rest
     else:
@@ -364,6 +380,7 @@ async def execute_signal_for_user(
         side=side,
         status="submitted",
         cycle_id=current_cycle_id.get(),
+        arrival_price=entry_price,
     )
 
     try:

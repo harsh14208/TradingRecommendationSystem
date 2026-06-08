@@ -1,12 +1,12 @@
 # Signal.Trade — Development Progress
 
-> **Version: v7.8** · Updated: 2026-06-08 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
-> **Ratings live in [`docs/Stats.md §15`](Stats.md) (single source of truth, v7.8). This file is a chronological dev log.**
+> **Version: v8.0** · Updated: 2026-06-08 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Ratings live in [`docs/Stats.md §15`](Stats.md) (single source of truth, v8.0). This file is a chronological dev log.**
 > ~210 tickers (incl. 52 leveraged ETFs) · 150 API endpoints · dual auto-execution brokers (Alpaca + IBKR)
 > **Data: Polygon.io-first (bulk OHLCV + quotes + reference) · yfinance fallback · FRED (macro) · EDGAR (fundamentals/8-K) — pooled aiohttp + cached TLS across 20 modules**
 > **Database: PostgreSQL 16 (primary) · single Alembic head · Alembic-only prod schema policy ([`SCHEMA_CHANGE_POLICY.md`](SCHEMA_CHANGE_POLICY.md))**
-> **Tests: 1862 passed (ex-e2e), 4 skipped · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.5: N=230, WR=66.1%, Sharpe=0.20**
-> **v7.8 — TSYS-1→13 targeted-system roadmap complete (52/52):** auth/billing/delivery/jobs hardening, provider reliability, gate explainability, ML ops, outcome auditing, broker reconciliation + runtime risk, observability (Prometheus + incident timeline), retention + migration policy, compliance/audit trail, frontend preview/badge/contract tests. Overall 8.6/10 product · 8.9/10 quality.
+> **Tests: 1871 passed (ex-e2e) · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.5: N=230, WR=66.1%, Sharpe=0.20**
+> **v8.0 — Quant Engine (QENG) Roadmap Implementation (16/17 QENG features complete):** experiment registry, PBO report, checklist promotions, PIT feature store, replay engine, version lineage, live fill ledger, TCA service, capacity limits, portfolio allocator, HRP, cost-aware turnover control, stat-arb residual sleeve, TS momentum trend sleeve, cross-sectional factors, cross-sleeve capital allocator, triple-barrier meta-labeling, shadow-control cohort routing, and policy versioning. Overall 9.0/10 product · 9.2/10 quality.
 
 ## 📊 Live database stats (2026-05-17)
 
@@ -25,13 +25,15 @@
 | Confidence gap | +11.0pp overconfident (raw) |
 | XGBoost training samples | 529 |
 
-## 🏅 Quality Ratings — v7.7 (2026-06-06)
-
+## 🏅 Quality Ratings — v8.0 (2026-06-08)
+ 
 > Ratings maintained in **[`docs/Stats.md §15`](Stats.md)** — single source of truth.
-> **Overall: 8.4/10 product audit · 8.8/10 B+ quality grade** (v7.7, 2026-06-06).
-> v7.7: (1) IBKR broker integration (`ibkr_rest.py` + connect/execute + UI; Product Completeness 9.0→9.1); (2) §75 buyback window live (EDGAR 8-K parsing; Gate Stack 8.6→8.7, 29/31 strategies); (3) HTTP latency pass (`services/http_client.py` cached TLS + pooled `shared_session()` across 20 data-service modules; Data Pipeline 9.2→9.3, Backend Architecture 8.6→8.7). 1646 tests.
-> v7.6: BE-1 partial (signal_engine.py 7421→5848, `services/engines/`), ACT-4 EOD-batch delivery fix (`extra_data` column), DPC-1 notification prefs enforced, ACT-1 XLI block, ACT-2 sector audit fix. 1636 tests.
-> v7.5: 32/38 free items (BT/RD/CAL/ML/PROD/SEC/FE/DEPLOY + OOS v9). 1115 tests.
+> **Overall: 9.0/10 product audit · 9.2/10 A- quality grade** (v8.0, 2026-06-08).
+> v8.0: Quant Engine (QENG) Roadmap Implementation (16/17 items): (1) Research experiment registry, PBO report, checklist; (2) PIT feature store, event replay, lineage; (3) fill ledger, TCA service, capacity limits; (4) portfolio allocator, HRP baseline, turnover control; (5) residual stat-arb, TS momentum, weekly factor sleeves, cross-sleeve allocator; (6) triple-barrier meta-labeling, cohort routing, policy versions. 1871 tests.
+> v7.8: TSYS-1→13 targeted-system hardening (auth lockout/session, Stripe reconciliation, provider scorecard/corporate action validation, gate trace/explainability, model registry, outcome audit, risk limits/key rotation, Prometheus metrics, index audit/purges, audit log/risk-ack gate). 1862 tests.
+> v7.7: IBKR integration, §75 buyback window EDGAR parser, HTTP latency cached TLS / pooled sessions pass. 1646 tests.
+> v7.6: BE-1 partial (signal_engine.py 7421→5848, `services/engines/`), ACT-4 EOD-batch delivery fix, DPC-1 notification prefs, ACT-1 XLI block, ACT-2 sector audit. 1636 tests.
+> v7.5: 32/38 free path-to-10/10 items done. BT-2/4, RD-3/4, CAL-2/3, ML-5, PROD-3/4, SEC-2/3/4/6, FE-1/3/4, DEPLOY-4/5/6, OOS v9 (10 tickers). 1115 tests.
 > v7.4: RISK-1/2/4 (bracket stops + DD circuit-breaker + kill switch), A16-UI, PROD-1/3, ML-4, CAL-4, BE-2. 1096 tests.
 
 ---

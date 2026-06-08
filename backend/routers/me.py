@@ -109,7 +109,7 @@ _NOTIF_PREF_DEFAULTS = {
     "min_conf": 45.0,  # override global min_confidence for this user's notifications
     "sectors": [],  # empty list = all sectors; e.g. ["XLK", "XLV"]
     "score_min": 50,  # only notify if raw score >= this threshold
-    "actions": ["BUY"],  # "BUY" | "SELL" | both
+    "actions": ["BUY", "SELL"],  # "BUY" | "SELL" | both — default to both
     "quiet_hours_start": None,
     "quiet_hours_end": None,
     "timezone": "America/New_York",

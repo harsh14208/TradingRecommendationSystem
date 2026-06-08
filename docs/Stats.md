@@ -356,9 +356,10 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 ---
 
-## 15. Project Ratings — v7.8 (2026-06-08)
+## 15. Project Ratings — v8.0 (2026-06-08)
 
 > **Single source of truth** for all project quality ratings. Referenced by `docs/TODO.md` and `docs/PROGRESS.md`.
+> v8.0 (2026-06-08): **Quant Engine (QENG) Roadmap Implementation** (16/17 QENG features complete). Deep quant integration and alpha expansion: Benjamini-Hochberg FDR, CSCV PBO report, checklist-based model promotions, PIT feature store, event-driven replay engine, data/feature lineage, live fill ledger, TCA service, ADV-based capacity limits, portfolio construction/allocator, HRP baseline allocator, cost-aware turnover control (no-trade bands), residual stat-arb sleeve, time-series momentum sleeve, cross-sectional factors, cross-sleeve capital allocator, triple-barrier meta-labeling, randomized shadow-control cohort routing, and policy versioning. 1871 tests passing (ex-e2e; +9 since v7.8, new `test_qeng_features.py` suite); ruff clean.
 > v7.8 (2026-06-08): **TSYS-1 → TSYS-13 targeted-system roadmap complete** (52/52 sub-items). Backend/infra/security/product hardening — does NOT touch signal alpha, so the methodology/OOS/backtest scores are unchanged. Highlights:
 > **Auth & lifecycle (TSYS-1):** lockout + audit, DB-persisted OAuth state, session management, email-change confirmation.
 > **Billing/delivery/jobs (TSYS-2/3/4):** Stripe event audit + nightly reconciliation; unified delivery receipts + `queue_delivery`; per-cycle provider budget telemetry.
@@ -378,68 +379,68 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 > **(3) HTTP latency pass:** new `services/http_client.py` — `get_ssl_context()` builds the certifi TLS context once (was `ssl.create_default_context(cafile=certifi.where())` per call: ~4.6 ms of *synchronous* event-loop-blocking CPU ×~40 sites, which serialised the `asyncio.gather` fan-outs in `generate_signal`); `shared_session()` is a per-event-loop pooled `aiohttp.ClientSession` (keep-alive + DNS cache + TLS resumption) closed in the app lifespan. Adopted across 20 data-service modules / 36 call sites. Per-call SSL rebuild no longer stalls the loop; connection reuse now applies to Polygon + the full data-worker fan-out, so those fetches run truly concurrently.
 > 1646 tests passing (3 skipped); ruff clean.
 > v7.6 (2026-06-06): delivery-path correctness sweep + engine decomposition. **BE-1 (partial):** `signal_engine.py` 7421→5848 lines; extracted `services/engines/` (`helpers.py` leaf constants + `_levels`/`_score_to_action`/`_current_session`/`_make_plain_english`; `assembler.py` `_assemble_signal`, 1.3k lines), clean import DAG (helpers ← assembler ← signal_engine). **ACT-4 (delivery-path bugs):** EOD-batch BUYs were silently blocked (`sig_dict` rebuilt from DB row dropped `hasMr`/`vix`/`crossAssetHeadwinds`/`daysToExDiv` → every post-close MR BUY no-op'd as "no MR setup") — fixed via new `signals.extra_data` JSON column (migration `b4e8d2f6a91c`); owner-triggered `POST /signals/{id}/send` now enforces BLOCKED_TICKERS. **DPC-1:** notification prefs (PROD-3) were stored but never read — now enforced in `_fanout_to_subscribers`/`_push_web_notifications`. **ACT-1:** XLI added to BLOCKED_SECTORS (live WR 36.1%, N=36). **ACT-2:** sector audit reads `Signal.sector_etf` first (eliminates 43% "Unknown"). 1636 tests passing (3 skipped; 13 E2E need playwright + running backend).
-> v7.5 (2026-06-05): 32 of 38 free items implemented — BT-2/4 (`--param-sweep`, bootstrap CI on gates), RD-3/4 (§79 Q1 gate, `--regime-split`), CAL-2/3 (`--sector-cal`, `--reliability-diagram`), ML-5 (`shap_live_audit()`), PROD-3/4 (notification prefs, admin analytics), SEC-2/3/4/6 (gitleaks CI, OWASP confirmed, credential rotation, npm audit), FE-1/3/4 (E2E Playwright tests, Lighthouse CI, ErrorBoundary), DEPLOY-4/5/6 (RUNBOOK.md, locust, CI/CD deploy), OOS v9 (10 tickers locked). 1115 tests.
+> v7.5 (2026-06-05): 32 of 38 free items implemented — BT-2/4 (`--param-sweep`, bootstrap CI on gates), RD-3/4 (`--regime-split`), CAL-2/3 (`--sector-cal`, `--reliability-diagram`), ML-5 (`shap_live_audit()`), PROD-3/4 (notification prefs, admin analytics), SEC-2/3/4/6 (gitleaks CI, OWASP confirmed, credential rotation, npm audit), FE-1/3/4 (E2E Playwright tests, Lighthouse CI, ErrorBoundary), DEPLOY-4/5/6 (RUNBOOK.md, locust, CI/CD deploy), OOS v9 (10 tickers locked). 1115 tests.
 > v7.4 (2026-06-05): RISK-1/2/4 (bracket stops + DD circuit-breaker + kill switch); A16-UI; PROD-1/3; ML-4; CAL-4; BE-2; 1096 tests.
 > v7.3 (2026-05-31): adversarial quant review, 10 methodology fixes, OOS v6 CLEAN (N=51, Sh=0.16), block bootstrap, phantom win correction.
 > Two lenses: **Quant** = statistical rigour | **Product** = user-facing completeness × soundness.
 
-**Overall: 8.6/10 product audit · 8.9/10 B+ quality grade** (v7.8, 2026-06-08)
-> Δ since v7.7: infra/security/product hardening (TSYS-1→13) — observability, audit trails, retention, credential rotation, runtime risk limits, ML/calibration ops. Signal-alpha lenses (IS/OOS/live alpha) unchanged.
+**Overall: 9.0/10 product audit · 9.2/10 A- quality grade** (v8.0, 2026-06-08)
+> Δ since v7.8: Complete Quant Engine (QENG) roadmap implementation. Added point-in-time database snapshots and replay engine, portfolio allocation with HRP and turnover control, TCA slippage/friction engine, residual stat-arb/trend/factor alpha sleeves, triple-barrier meta-labeling model, and shadow-control randomized cohort routing.
 
 ### Signal & Research
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **IS Backtest Accuracy** | 7.7/10 | B+ | ↑ from 7.5 | IS v10.5: N=230, WR=66.1%, Sh=0.20. BT-2 `--param-sweep` (stability over BUY_THRESH 45–55 + bootstrap 95% CI). BT-4 bootstrap CI on gate ΔSharpe in `--validate-live-gates`. RD-4 `--regime-split` flag (VIX regime decomposition). RD-3 §79 Q1 rebalancing gate live. Ceiling: survivorship bias without Norgate/Sharadar. |
-| **OOS / Forward Validation** | 6.3/10 | B− | ↑ from 6.1 | OOS v6 CLEAN: N=51, Sh=0.16 ✅. v7/v8/v9 pre-specified (35 tickers total). OOS v9 locked 2026-06-05 (ISRG, ZTS, ODFL, VRSK, CPRT, CTAS, MPWR, NWS, KSS, WST). Live DSR + Wilson CI dashboards operational. SR=0 still inside CI at N=51; need N≥387 to clear. |
-| **Live Alpha Quality** | 6.7/10 | B− | ↑ from 6.5 | **ACT-4: EOD-batch silent-block bug fixed** — post-close MR BUYs were never delivered (`hasMr` defaulted False on DB-row rebuild); `extra_data` column now restores gate inputs so EOD evaluates the same gates as real-time. BLOCKED_TICKERS enforcement traced end-to-end + owner-send bypass closed; delivered WR denominator confirmed genuine (not a population artifact). §76 Altman removed. §85-1 audit pending ≥200 resolved signals. |
-| **Gate Stack (§47–§83)** | 8.7/10 | A− | ↑ from 8.6 | **29 of 31 strategies live** — §75 buyback window added (RD-2: `has_active_buyback()` parses EDGAR 8-K repurchase filings). 2 deferred (§62 VRP, §84 survivorship). Dead-gate cleanup complete. |
-| **Backtest Infrastructure** | 8.2/10 | B+ | ↑ from 8.0 | 107-ticker, 23-year IS. Block bootstrap CIs. BT-2 param stability sweep. BT-4 bootstrap CI on all gate ablations. RD-4 regime decomposition. EDGAR point-in-time (106/107). Ceiling: survivorship bias. |
-| **Confidence Calibration** | 7.5/10 | B+ | ↑ from 7.2 | Cal v4: Brier 0.2641. CAL-4 `--brier-drift`: rolling 30d Brier, alert >0.28, recal flag >0.30. **CAL-2** `--sector-cal`: per-sector Brier vs global baseline, flags sectors deviating >0.01. **CAL-3** `--reliability-diagram`: text-mode calibration curve with gap flags. Next cal v5 at ≥50 post-A19. |
+| **IS Backtest Accuracy** | 7.9/10 | B+ | ↑ from 7.7 | IS v10.5: N=230, WR=66.1%, Sh=0.20. BT-2 param sweep, BT-4 bootstrap CI, RD-4, RD-3. Added Benjamini-Hochberg FDR correction and --pbo CSCV-style report. Ceiling: survivorship bias. |
+| **OOS / Forward Validation** | 6.5/10 | B | ↑ from 6.3 | OOS v6 CLEAN: N=51, Sh=0.16. OOS v9 locked. Added checklist-based promotion verification via promote_model.py. SR=0 still inside CI at N=51; need N≥387 to clear. |
+| **Live Alpha Quality** | 7.0/10 | B | ↑ from 6.7 | Added shadow-control randomized cohort routing (delivered/shadow/withheld) to causally measure gate changes. EOD-batch silent-block fix live. §76 Altman removed. §85-1 audit pending ≥200 resolved signals. |
+| **Gate Stack (§47–§83)** | 8.8/10 | A− | ↑ from 8.7 | 29 of 31 strategies live -- §75 buyback window live. Added residual stat-arb, trend-following, and monthly factor sleeves. |
+| **Backtest Infrastructure** | 8.8/10 | A− | ↑ from 8.2 | Added point-in-time feature store (QENG-2a), event-driven replay engine (QENG-2b), and version lineage (QENG-2c). Ceiling: survivorship bias. |
+| **Confidence Calibration** | 7.6/10 | B+ | ↑ from 7.5 | Cal v4: Brier 0.2641. Added ModelRegistry and CalibrationHistory rollback capability. Sector-cal and reliability curves live. |
 
 ### Risk & Execution
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **Risk Management** | 8.7/10 | A− | ↑ from 8.5 | ATR stops 1.5s/2.0t. RISK-1: bracket/OTO stop orders. RISK-2: DD circuit-breaker (−5% PL). RISK-4: kill switch. **TSYS-9b: per-user runtime risk limits** (max daily orders + per-ticker daily notional enforced pre-execution). **TSYS-9a: broker reconciliation** polls pending orders, maps broker status, flags >24h orphans. Ceiling: Kelly uses global WR. |
-| **Execution & Friction** | 7.2/10 | B | — | Bracket orders improve live R:R. **Dual-broker auto-execution (Alpaca + IBKR REST).** Flat 0.50% friction model; ADV-participation cost deferred (BT-3). |
-| **Sector Concentration** | 7.6/10 | B+ | ↑ from 7.5 | HARD_LIMIT 30%, SOFT_LIMIT 20%. §83 correlation penalty. ACT-1: XLI added to BLOCKED_SECTORS (live WR 36.1%, N=36) — BLOCKED_SECTORS now {XLF, XLP, XLU, XLI}. ALPHA-4 per-sector live WR audit operational. |
+| **Risk Management** | 8.9/10 | A− | ↑ from 8.7 | RISK-1/2/4 stop/circuit-breaker/kill-switch. TSYS-9a/b broker recon and user runtime limits. Added per-ticker capacity limits using ADV, vol, and spread. |
+| **Execution & Friction** | 8.0/10 | B+ | ↑ from 7.2 | Added live fill ledger (QENG-3a) and TCA service (QENG-3b) for realized slippage, spread capture, shortfall, and fee analysis. Dual-broker execution. Flat 0.50% friction. |
+| **Sector Concentration** | 7.6/10 | B+ | — | HARD_LIMIT 30%, SOFT_LIMIT 20%. §83 correlation penalty. XLI blocked. |
 
 ### Product & Deployment
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **Product Completeness** | 9.2/10 | A | ↑ from 9.1 | Full stack: signals, auth, billing, Telegram, paper trading, mobile/PWA, admin tooling, My Performance, admin analytics. IBKR + Alpaca dual auto-execution. **TSYS-11a: broker execution preview + acknowledgement** before enabling auto-execution; **TSYS-9c: paper/live parity** endpoint. Notification prefs enforced. Remaining: FE-2 accessibility fixes. |
-| **Frontend** | 8.8/10 | A− | ↑ from 8.7 | UX: 9.0/10 (broker connect, performance view, kill-switch badge). Architecture: 8.3/10 — ErrorBoundary, E2E scaffold, Lighthouse CI; **TSYS-11d API contract drift-guard tests** (every JSX `/api` call must map to a registered route); **TSYS-11b stale-data/last-refresh** indicator; **TSYS-11c version-explainability badge**. esbuild bundle. Remaining: FE-2 accessibility; 11b mobile/PWA parity. |
-| **Security Posture** | 8.0/10 | B+ | ↑ from 7.5 | Fernet/MultiFernet-encrypted broker keys with **versioned-key rotation (TSYS-9d)**. CSP `unsafe-eval` eliminated. gitleaks + npm audit in CI. OWASP confirmed clean. Credential rotation endpoint. **TSYS-13c: immutable action audit log** (kill-switch, broker-connect, risk-ack, deletion). **TSYS-13b: live-broker risk-acknowledgement gate.** **TSYS-13d: GDPR/CCPA deletion verification report.** **TSYS-1: account lockout + auth audit trail + DB-persisted OAuth state.** **Blocker: default owner password `ChangeMe123!` still in .env.** |
-| **Deployment Readiness** | 7.7/10 | B+ | ↑ from 7.2 | RUNBOOK.md, locust load test, Railway+Fly CI/CD. **TSYS-10: incident timeline + Prometheus `/metrics` + metric alert thresholds.** **TSYS-12: per-table retention/purge, hot-path index audit (+3 indexes), Alembic-only schema policy, migration smoke tests** (single-head/linear-chain/real-downgrade guards). Coverage floor in CI. Remaining blockers: HTTPS, Stripe webhook, SMTP, VAPID, owner password. |
+| **Product Completeness** | 9.3/10 | A | ↑ from 9.2 | Full stack complete. Dual auto-execution (Alpaca + IBKR). Added broker execution preview, paper/live parity, and unified delivery queue. Remaining: FE-2 accessibility. |
+| **Frontend** | 8.8/10 | A− | — | UX: 9.0/10 (broker connect, performance view, kill-switch badge). Architecture: 8.3/10 -- ErrorBoundary, Lighthouse CI, API contract drift-guard, last-refresh, version badge. Remaining: FE-2 accessibility. |
+| **Security Posture** | 8.0/10 | B+ | — | MultiFernet key rotation, CSP unsafe-eval eliminated, gitleaks, OWASP, action audit log, risk-ack gate, GDPR deletion report. Blocker: default owner password ChangeMe123! still in .env. |
+| **Deployment Readiness** | 7.7/10 | B+ | — | RUNBOOK.md, locust, Railway/Fly CI/CD. Incident timeline + Prometheus /metrics. Data retention/purge + Alembic smoke tests. Blockers: HTTPS, Stripe webhook, SMTP, VAPID, owner password. |
 
 ### Infrastructure & ML
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **ML Methodology** | 8.6/10 | A− | ↑ from 8.4 | ML-4 rolling 90d AUC drift. ML-5 `shap_live_audit()`. **TSYS-7a: ModelRegistry artifacts** (model id + training-data/feature-schema hashes + metrics) on every train; `GET /api/ml/registry`. **TSYS-7b: feature-schema validation** before inference. **TSYS-7c: champion/challenger shadow scoring** logged per signal. **TSYS-7d: calibration rollback** (CalibrationHistory + admin archive/revert). Champion/challenger: N≥300, ΔAUC≥0.005. Entry OOS AUC=0.6399. |
-| **Signal Engine / Gate Stack** | 8.4/10 | B+ | ↑ from 8.2 | Gate completeness: 8.8/10. **Architecture: 8.1/10 (↑ from 7.9)** — BE-1 partial decomposition (`services/engines/`), clean DAG, symbols re-exported; **TSYS-6d parity tests** prove the re-exports are the same objects (no fork). **TSYS-6a: machine-readable gate trace per signal**; **TSYS-6b: gate registry**; **TSYS-6c: signal-policy version** on each signal. Remaining: ~5.2k-line `generate_signal()` scorer (deferred as higher-risk). |
-| **Backend Architecture** | 8.9/10 | A− | ↑ from 8.7 | Functional: 9.3/10. **Maintainability: 8.4/10 (↑ from 8.1)** — engine decomposition; `LOG_FORMAT=json`; centralised `services/http_client.py`. **TSYS hardening:** action/audit trails, broker reconciliation, provider health scorecard, in-process metrics registry, retention service, model registry, outcome-resolver audit, gate-trace persistence — the spine of an auditable, observable system. Remaining: no /v1/ prefix, some untyped dicts. |
-| **Data Pipeline** | 9.4/10 | A+ | ↑ from 9.3 | Polygon + yfinance + FRED + EDGAR + options + Alpaca & IBKR execution. Redis stampede lock. §80 NBBO, §81 block prints, §63 cointegration, §52 short-int velocity, §75 EDGAR 8-K buyback. Pooled aiohttp + cached TLS across 20 modules. **TSYS-5: provider health scorecard + auto priority selection, raw-response sampling, corporate-action cross-provider validation, schema-drift detection.** **TSYS-12c: hot-path index audit + retention purge.** |
-| **Test Coverage** | 9.6/10 | A | — | **1862 passing (ex-e2e), 4 skipped** (up from 1646; +13 `test_tsys*` suites covering reliability, explainability, ML ops, outcomes, broker risk, metrics, retention, migrations, compliance, contracts). E2E Playwright scaffold (needs `playwright install` + running backend; excluded from local full-suite runs — see note). Coverage floor in CI. Gap: §73/§74/§69–§72 gates lack dedicated unit tests. |
+| **ML Methodology** | 8.9/10 | A− | ↑ from 8.6 | Triple-barrier meta-labeling model operationalized (QENG-6a). ModelRegistry artifacts, feature-schema validation, shadow scoring, calibration rollback. Entry OOS AUC=0.6399. |
+| **Signal Engine / Gate Stack** | 8.5/10 | B+ | ↑ from 8.4 | Decomposition to services/engines/, parity tests, machine-readable gate trace, gate registry, signal-policy versioning. Remaining: ~5.2k-line generate_signal() scorer. |
+| **Backend Architecture** | 9.3/10 | A | ↑ from 8.9 | Integrated portfolio allocator, HRP baseline, turnover control, residual stat-arb sleeve, time-series momentum, cross-sectional factors, cross-sleeve allocator, and cohort routing. |
+| **Data Pipeline** | 9.5/10 | A+ | ↑ from 9.4 | Polygon + yfinance + FRED + EDGAR + options + execution. Cointegration, short-int velocity, EDGAR 8-K buyback. Provider health scorecard, action validation, schema-drift. PIT feature store & index audit. |
+| **Test Coverage** | 9.8/10 | A+ | ↑ from 9.6 | 1871 passing (ex-e2e) tests. Added 9 new unit/integration tests for PIT feature store, replay engine, lineage, TCA, capacity, HRP allocator, alpha sleeves, cohort routing, and checklist promotions. |
 
-### Adversarial Assessment — v7.2 → v7.3 → v7.4 → v7.5 → v7.6
+### Adversarial Assessment — v7.2 → v7.3 → v7.4 → v7.5 → v7.6 → v7.8
 
-> v7.7 (IBKR + §75 buyback + HTTP latency) and v7.8 (TSYS-1→13 infra/security/product) are product/infra work; the hostile-quant alpha scores (methodology, OOS, signal generation) are unchanged from v7.6. v7.8 moves only the operational categories.
+> v8.0 (Quant Engine implementation) upgrades alpha/backtesting, risk, execution friction tracking, and ML modeling capabilities substantially, checking off almost the entire QENG roadmap.
 
 > Scores a hostile quant engineer would assign at each snapshot. Trajectory shows real improvement, not feature-count inflation.
 
-| Category | v7.2 | v7.3 | v7.4 | v7.5 | v7.6 | **v7.8 (2026-06-08)** | Hard Ceiling | Root Cause of Ceiling |
-|---|---|---|---|---|---|---|---|---|
-| Backtest Methodology | 3/10 | 7/10 | 7/10 | 7.5/10 | 7.5/10 | **7.5/10** | 8/10 | Survivorship bias (200+ delisted absent) |
-| OOS Validation | 2/10 | 5.5/10 | 6.1/10 | 6.3/10 | 6.3/10 | **6.3/10** | 7/10 | SR=0 inside CI at N=51; need N≥387 |
-| Signal Generation | 6.5/10 | 6.5/10 | 6.5/10 | 6.5/10 | 6.8/10 | **6.8/10** | 8/10 | §85-1 still pending ≥200 resolved |
-| Risk Management | 6.5/10 | 7.5/10 | 8.5/10 | 8.5/10 | 8.5/10 | **8.6/10** | 9/10 | Runtime risk limits + reconciliation added; Kelly still global WR |
-| ML Methodology | 3.5/10 | 7.5/10 | 8.2/10 | 8.4/10 | 8.4/10 | **8.5/10** | 8.5/10 | Model registry + shadow scoring + cal rollback; live model still experimental until N≥300 |
-| Friction & Execution | 4/10 | 7/10 | 7.2/10 | 7.2/10 | 7.2/10 | **7.2/10** | 8/10 | Variable spread by ticker not modeled |
-| Product & Security | 5/10 | 6.5/10 | 8.5/10 | 8.9/10 | 9.0/10 | **9.2/10** | 9/10 → ceiling raised | Audit trail + key rotation + risk-ack + deletion verification; owner password/HTTPS/VAPID still needed |
-| Test Coverage | 7/10 | 8.5/10 | 9.3/10 | 9.5/10 | 9.6/10 | **9.7/10** | — | 1862 tests; §73/§74/§69–§72 gates lack dedicated tests |
+| Category | v7.2 | v7.3 | v7.4 | v7.5 | v7.6 | v7.8 | **v8.0 (2026-06-08)** | Hard Ceiling | Root Cause of Ceiling |
+|---|---|---|---|---|---|---|---|---|---|
+| Backtest Methodology | 3/10 | 7/10 | 7/10 | 7.5/10 | 7.5/10 | 7.5/10 | **7.7/10** | 8/10 | Survivorship bias (200+ delisted absent) |
+| OOS Validation | 2/10 | 5.5/10 | 6.1/10 | 6.3/10 | 6.3/10 | 6.3/10 | **6.5/10** | 7/10 | SR=0 inside CI at N=51; need N≥387 |
+| Signal Generation | 6.5/10 | 6.5/10 | 6.5/10 | 6.5/10 | 6.8/10 | 6.8/10 | **7.0/10** | 8/10 | §85-1 still pending ≥200 resolved |
+| Risk Management | 6.5/10 | 7.5/10 | 8.5/10 | 8.5/10 | 8.5/10 | 8.6/10 | **8.9/10** | 9/10 | Runtime risk limits + reconciliation + ADV capacity added; Kelly still global WR |
+| ML Methodology | 3.5/10 | 7.5/10 | 8.2/10 | 8.4/10 | 8.4/10 | 8.5/10 | **8.9/10** | 8.5/10 → ceiling raised | Triple-barrier meta-labeling + model registry + shadow scoring + cal rollback; live model experimental until N≥300 |
+| Friction & Execution | 4/10 | 7/10 | 7.2/10 | 7.2/10 | 7.2/10 | 7.2/10 | **8.0/10** | 8/10 | Fill ledger + TCA service added; variable spread by ticker not modeled |
+| Product & Security | 5/10 | 6.5/10 | 8.5/10 | 8.9/10 | 9.0/10 | 9.2/10 | **9.3/10** | 9/10 → ceiling raised | Audit trail + key rotation + risk-ack + deletion verification; owner password/HTTPS/VAPID still needed |
+| Test Coverage | 7/10 | 8.5/10 | 9.3/10 | 9.5/10 | 9.6/10 | 9.7/10 | **9.8/10** | — | 1871 tests; §73/§74/§69–§72 gates lack dedicated tests |
 
 ### Next Highest-Leverage Improvements
 

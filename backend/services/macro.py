@@ -891,27 +891,9 @@ async def get_macro_context() -> dict:
     result["macro_score"] = score
     result["rationale"] = rationale
 
-    # ── §65 TRIN (Arms Index) ─────────────────────────────────────────────
-    try:
-        trin_df = await get_history("^TRIN", period="5d", interval="1d")
-        if trin_df is not None and not trin_df.empty:
-            result["trin"] = round(float(trin_df["Close"].iloc[-1]), 3)
-    except Exception:
-        pass
-
-    # ── §66 NYSE A/D Breadth Thrust (Zweig) ──────────────────────────────
-    try:
-        ad_df = await get_history("^NYAD", period="1mo", interval="1d")
-        if ad_df is not None and len(ad_df) >= 12:
-            ad_chg = ad_df["Close"].diff().dropna()
-            ad_ema10 = float(ad_chg.ewm(span=10, adjust=False).mean().iloc[-1])
-            result["ad_ema10_chg"] = round(ad_ema10, 1)
-            ema_series = ad_chg.ewm(span=10, adjust=False).mean()
-            if len(ema_series) >= 10:
-                was_neg = any(v < 0 for v in ema_series.iloc[-10:-1].values)
-                result["zweig_thrust"] = bool(was_neg and ad_ema10 > 50)
-    except Exception:
-        pass
+    # §65 TRIN (^TRIN) and §66 NYSE A/D breadth (^NYAD) fetches removed —
+    # yfinance 404s on both symbols, so trin/ad_ema10_chg/zweig_thrust never
+    # populated. Gates in macro_extensions.py already tolerate their absence.
 
     # ── §64 10Y-3M Yield Spread ───────────────────────────────────────────
     try:

@@ -29,7 +29,7 @@ async def test_record_endpoint_call_and_scorecard():
     mock_session.add = MagicMock()
 
     mock_res = MagicMock()
-    mock_res.scalar_one_or_none.return_value = None
+    mock_res.scalars.return_value.first.return_value = None
     mock_session.execute = AsyncMock(return_value=mock_res)
 
     mock_db = MagicMock()

@@ -129,7 +129,7 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
 
     # PROD-3: per-user notification prefs (saved by routers/me.py in AppSettings).
     # Key format mirrors me.py:_user_pref_key. We filter ONLY users who explicitly
-    # saved prefs — the defaults are opinionated (actions=["BUY"], score_min=50), so
+    # saved prefs — the defaults are opinionated (actions=["BUY","SELL"], score_min=50), so
     # applying them to users who never configured prefs would silently stop all
     # SELL / low-score delivery. stored=None ⇒ no PROD-3 filtering (legacy behavior).
     _app_row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
@@ -1445,6 +1445,8 @@ async def _persist_scan_signals(
                 "vix": sig.get("vix"),
                 "crossAssetHeadwinds": sig.get("crossAssetHeadwinds"),
                 "daysToExDiv": sig.get("daysToExDiv"),
+                "cohort": sig.get("cohort"),
+                "cohort_meta": sig.get("cohort_meta"),
             }
             result = await db.execute(
                 select(Signal)
@@ -1575,7 +1577,21 @@ async def _persist_scan_signals(
                     champion_score=shadow["champion_score"],
                     champion_confidence=shadow["champion_confidence"],
                 )
-                db.add(shadow_row)
+            # Save feature snapshots (QENG-2a)
+            if "features" in sig:
+                from services.feature_store import save_feature_snapshot
+                from services.lineage import DATA_LINEAGE_VERSION
+                await save_feature_snapshot(
+                    db=db,
+                    ticker=sig["ticker"],
+                    ts=datetime.utcnow(),
+                    features=sig["features"],
+                    signal_id=row.id,
+                    effective_time=datetime.utcnow(),
+                    provider="polygon",
+                    signal_policy_version=DATA_LINEAGE_VERSION,
+                )
+
             new_signals.append((sig, row, force_resend))
 
         await db.commit()
@@ -1610,12 +1626,20 @@ async def _deliver_scan_signals(
                     candidates.append((sig, row, label, force))
 
             for sig, row, label, force in candidates:
+                cohort = sig.get("cohort", "delivered")
                 merged = await db.merge(row)
-                await _maybe_send(
-                    sig, merged, settings, db, label, force_resend=force, scan_started_at=scan_cycle_started_at
-                )
-                await _maybe_paper_trade(sig, positions_map, settings, db_settings)
-                await _maybe_auto_execute_for_signal(sig, merged.id, db)
+                
+                if cohort == "delivered":
+                    await _maybe_send(
+                        sig, merged, settings, db, label, force_resend=force, scan_started_at=scan_cycle_started_at
+                    )
+                    await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+                    await _maybe_auto_execute_for_signal(sig, merged.id, db)
+                elif cohort == "shadow":
+                    log.info("Cohort: Ticker %s routed to SHADOW (paper-only). Skipping notifications/live orders.", sig["ticker"])
+                    await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+                elif cohort == "withheld":
+                    log.info("Cohort: Ticker %s routed to WITHHELD (control). Skipping all executions/notifications.", sig["ticker"])
 
             await db.commit()
     elif db_settings.get("auto_paper_trade"):
@@ -1624,7 +1648,9 @@ async def _deliver_scan_signals(
             key = (sig["ticker"], sig["action"])
             if key not in seen:
                 seen.add(key)
-                await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+                cohort = sig.get("cohort", "delivered")
+                if cohort != "withheld":
+                    await _maybe_paper_trade(sig, positions_map, settings, db_settings)
 
 
 async def eod_batch_send() -> None:
@@ -1909,6 +1935,37 @@ async def _run_scan_impl(broadcast_fn=None):
             histories={t: histories[t] for t in active_tickers if t in histories},
             infos={t: infos.get(t, {}) for t in active_tickers},
         )
+        
+        # QENG-6a/b/c: Enrich signals with Meta-Label probability and Cohort assignment
+        for sig in signals:
+            try:
+                from services.signal_ml import predict_meta_prob
+                from services.cohort_service import build_policy_version_meta
+                
+                feats = sig.get("features", {})
+                entry_prob = sig.get("confidence", 50.0) / 100.0
+                hmm_regime = sig.get("hmmRegime", "")
+                vix_val = sig.get("vix")
+                sector_etf = sig.get("sectorEtf")
+                
+                meta_prob = predict_meta_prob(
+                    tech=feats,
+                    entry_prob=entry_prob,
+                    hmm_regime=hmm_regime,
+                    vix=vix_val,
+                    sector_etf=sector_etf
+                )
+                
+                cohort_meta = build_policy_version_meta(
+                    ticker=sig["ticker"],
+                    ts=datetime.utcnow(),
+                    meta_prob=meta_prob
+                )
+                sig["cohort_meta"] = cohort_meta
+                sig["cohort"] = cohort_meta["cohort"]
+            except Exception as e_cohort:
+                log.warning(f"Failed to enrich signal with cohort/meta metadata: {e_cohort}")
+                
     except Exception as e:
         log.info(f" scan_all failed: {e}")
         raise RuntimeError(f"scan_all failed: {e}") from e
