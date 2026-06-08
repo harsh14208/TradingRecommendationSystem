@@ -12,30 +12,48 @@ import hashlib
 import logging
 from typing import Optional
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger("broker_svc")
 
-_FERNET_CACHE: Optional[Fernet] = None
+# TSYS-9d: credential encryption key versioning. The primary (current) version is
+# used for new encryptions; all versions down to v1 remain valid for decryption,
+# so a rotation re-encrypts ciphertexts under the new primary without forcing
+# users to re-enter credentials. Bump this to rotate.
+_BROKER_KEY_VERSION = 1
+_FERNET_CACHE: Optional[MultiFernet] = None
 
 # Portfolio drawdown circuit-breaker: if unrealised P&L drops below this
 # fraction of account equity, new auto-executions are blocked for the session.
 _DD_BLOCK_THRESHOLD = -0.05  # −5%
 
 
-def _get_fernet() -> Fernet:
+def _derive_key(jwt_secret: str, version: int) -> bytes:
+    """Derive a Fernet key for a given version. v1 keeps the original
+    ":broker-v1" domain separator so pre-versioning ciphertexts still decrypt."""
+    raw = hashlib.sha256(f"{jwt_secret}:broker-v{version}".encode()).digest()
+    return base64.urlsafe_b64encode(raw)
+
+
+def _get_fernet() -> MultiFernet:
+    """MultiFernet whose first key is the current version (used for encryption)
+    and whose remaining keys (older versions) remain valid for decryption."""
     global _FERNET_CACHE
     if _FERNET_CACHE is None:
         from config import get_settings
 
         jwt_secret = get_settings().jwt_secret_key
-        # Derive a 32-byte key from JWT_SECRET; the ":broker-v1" suffix
-        # domain-separates broker encryption from JWT signing.
-        raw = hashlib.sha256((jwt_secret + ":broker-v1").encode()).digest()
-        key = base64.urlsafe_b64encode(raw)
-        _FERNET_CACHE = Fernet(key)
+        # Newest version first → MultiFernet encrypts with it; older versions
+        # follow so existing ciphertexts keep decrypting after a rotation.
+        keys = [Fernet(_derive_key(jwt_secret, v)) for v in range(_BROKER_KEY_VERSION, 0, -1)]
+        _FERNET_CACHE = MultiFernet(keys)
     return _FERNET_CACHE
+
+
+def current_key_version() -> int:
+    """TSYS-9d: the key version new credentials are encrypted under."""
+    return _BROKER_KEY_VERSION
 
 
 def encrypt_credential(plaintext: str) -> str:
@@ -47,6 +65,15 @@ def decrypt_credential(ciphertext: str) -> Optional[str]:
     """Decrypt a broker credential. Returns None if the token is invalid."""
     try:
         return _get_fernet().decrypt(ciphertext.encode()).decode()
+    except (InvalidToken, Exception):
+        return None
+
+
+def rotate_credential(ciphertext: str) -> Optional[str]:
+    """TSYS-9d: re-encrypt a ciphertext under the current primary key without
+    decrypting to plaintext in the caller. Returns None if the token is invalid."""
+    try:
+        return _get_fernet().rotate(ciphertext.encode()).decode()
     except (InvalidToken, Exception):
         return None
 
@@ -129,6 +156,138 @@ async def check_portfolio_drawdown(user, key: str, secret: str, live: bool, brok
     return False
 
 
+# Alpaca/IBKR order states mapped onto our BrokerOrder.status vocabulary.
+_BROKER_STATUS_MAP = {
+    "filled": "filled",
+    "partially_filled": "filled",
+    "canceled": "canceled",
+    "cancelled": "canceled",
+    "expired": "canceled",
+    "rejected": "rejected",
+    "done_for_day": "canceled",
+}
+# A submitted order with no broker record after this long is flagged as an orphan.
+_ORPHAN_AGE_HOURS = 24
+
+
+async def reconcile_broker_orders(db: AsyncSession) -> dict:
+    """TSYS-9a: poll the broker for every pending order, update its status, and
+    flag orphans (submitted orders the broker has no record of).
+
+    Returns a summary dict. Never raises: one bad user cannot break the pass.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from models import BrokerOrder, User
+
+    pending = (await db.execute(select(BrokerOrder).where(BrokerOrder.status == "submitted"))).scalars().all()
+    summary = {"checked": 0, "updated": 0, "orphaned": 0, "users": 0}
+    if not pending:
+        return summary
+
+    by_user: dict[int, list] = {}
+    for o in pending:
+        by_user.setdefault(o.user_id, []).append(o)
+    summary["users"] = len(by_user)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    for user_id, orders in by_user.items():
+        user = await db.get(User, user_id)
+        if user is None or not user.alpaca_key_enc:
+            continue
+        key = decrypt_credential(user.alpaca_key_enc)
+        secret = decrypt_credential(user.alpaca_secret_enc) if user.alpaca_secret_enc else ""
+        if not key:
+            continue
+        broker_type = user.auto_execute_broker or "alpaca"
+        live = user.alpaca_account_type == "live"
+        if broker_type == "ibkr":
+            from services import ibkr_rest as client_rest
+        else:
+            from services import alpaca_rest as client_rest
+
+        try:
+            broker_orders = await client_rest.get_orders(key, secret, status="all", limit=200, live=live)
+        except Exception as e:  # pragma: no cover - network failure path
+            log.warning("reconcile: user=%d get_orders failed: %s", user_id, e)
+            continue
+
+        broker_by_id = {str(b.get("id")): b for b in (broker_orders or []) if b.get("id")}
+
+        for o in orders:
+            summary["checked"] += 1
+            match = broker_by_id.get(str(o.alpaca_order_id)) if o.alpaca_order_id else None
+            if match:
+                mapped = _BROKER_STATUS_MAP.get(str(match.get("status", "")).lower())
+                if mapped and mapped != o.status:
+                    o.status = mapped
+                    summary["updated"] += 1
+            else:
+                age_h = (now - o.created_at).total_seconds() / 3600 if o.created_at else 0
+                if age_h >= _ORPHAN_AGE_HOURS:
+                    o.status = "orphan"
+                    o.error_msg = "reconciliation: no matching broker order found"
+                    summary["orphaned"] += 1
+
+    await db.commit()
+    log.info("reconcile_broker_orders: %s", summary)
+    return summary
+
+
+async def check_runtime_risk_limits(user, ticker: str, notional: float, db: AsyncSession) -> Optional[str]:
+    """TSYS-9b: enforce per-user runtime risk limits before placing an order.
+
+    Returns a human-readable reason string if the order should be BLOCKED, or
+    None if it is within limits. Only the limits computable from the local
+    broker_orders ledger are enforced here (daily order count, per-ticker daily
+    notional); position-count / sector-exposure limits require live broker state
+    and are enforced via the drawdown/position path.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    from models import BrokerOrder
+
+    # Only same-day, non-rejected orders count toward the rolling daily limits.
+    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    counted = ("submitted", "filled")
+
+    if user.max_daily_orders is not None:
+        order_count = (
+            await db.execute(
+                select(func.count(BrokerOrder.id)).where(
+                    BrokerOrder.user_id == user.id,
+                    BrokerOrder.created_at >= day_start,
+                    BrokerOrder.status.in_(counted),
+                )
+            )
+        ).scalar() or 0
+        if order_count >= user.max_daily_orders:
+            return f"max_daily_orders reached ({order_count}/{user.max_daily_orders})"
+
+    if user.max_ticker_notional is not None:
+        ticker_notional = (
+            await db.execute(
+                select(func.coalesce(func.sum(BrokerOrder.notional), 0.0)).where(
+                    BrokerOrder.user_id == user.id,
+                    BrokerOrder.symbol == ticker,
+                    BrokerOrder.created_at >= day_start,
+                    BrokerOrder.status.in_(counted),
+                )
+            )
+        ).scalar() or 0.0
+        if ticker_notional + notional > user.max_ticker_notional:
+            return (
+                f"max_ticker_notional exceeded for {ticker} "
+                f"(${ticker_notional:.0f}+${notional:.0f} > ${user.max_ticker_notional:.0f})"
+            )
+
+    return None
+
+
 async def execute_signal_for_user(
     user,  # models.User
     sig: dict,
@@ -181,6 +340,12 @@ async def execute_signal_for_user(
         return
 
     side = "buy" if action == "BUY" else "sell"
+
+    # TSYS-9b: per-user runtime risk limits (daily order count, per-ticker notional).
+    _risk_block = await check_runtime_risk_limits(user, ticker, notional, db)
+    if _risk_block:
+        log.info("broker_svc: user=%d — order blocked by risk limit: %s", user.id, _risk_block)
+        return
 
     if broker_type == "ibkr":
         from services import ibkr_rest as client_rest

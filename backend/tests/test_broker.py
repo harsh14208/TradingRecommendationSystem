@@ -46,6 +46,9 @@ def _make_user(**kwargs):
     u.alpaca_key_enc = None
     u.alpaca_secret_enc = None
     u.alpaca_account_type = "paper"
+    # TSYS-9b runtime risk limits default to unset (None) like a real User row.
+    u.max_daily_orders = None
+    u.max_ticker_notional = None
     for k, v in kwargs.items():
         setattr(u, k, v)
     return u

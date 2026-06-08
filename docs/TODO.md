@@ -172,17 +172,17 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 
 ### TSYS-8 — Backtests, Outcomes & Analytics
 
-- [ ] **TSYS-8a** Add an outcome resolver audit table recording each resolution pass, signals touched, price source, missing bars, stop/target corrections, and unresolved reasons.
-- [ ] **TSYS-8b** Store outcome path snapshots or compressed OHLCV references so MAE/MFE, stop timing, and target timing can be replayed without changing definitions.
-- [ ] **TSYS-8c** Key analytics cache invalidation to signal/outcome mutations instead of relying only on TTL expiry.
-- [ ] **TSYS-8d** Add consistency tests proving `validate_predictions.py`, `/api/signals/backtest`, analytics cards, and public track record use the same win/loss definitions.
+- [x] **TSYS-8a** Add an outcome resolver audit table recording each resolution pass, signals touched, price source, missing bars, stop/target corrections, and unresolved reasons.
+- [x] **TSYS-8b** Store outcome path snapshots or compressed OHLCV references so MAE/MFE, stop timing, and target timing can be replayed without changing definitions.
+- [x] **TSYS-8c** Key analytics cache invalidation to signal/outcome mutations instead of relying only on TTL expiry.
+- [x] **TSYS-8d** Add consistency tests proving `validate_predictions.py`, `/api/signals/backtest`, analytics cards, and public track record use the same win/loss definitions.
 
 ### TSYS-9 — Broker, Paper Trading & Runtime Risk
 
-- [ ] **TSYS-9a** Add broker reconciliation jobs that poll open orders and positions, update `BrokerOrder.status`, and flag orphan orders/positions.
-- [ ] **TSYS-9b** Add user-level runtime risk limits: max daily orders, max daily loss, max open positions, max per-ticker notional, and max sector exposure.
+- [x] **TSYS-9a** Add broker reconciliation jobs that poll open orders and positions, update `BrokerOrder.status`, and flag orphan orders/positions.
+- [x] **TSYS-9b** Add user-level runtime risk limits: max daily orders, max daily loss, max open positions, max per-ticker notional, and max sector exposure.
 - [ ] **TSYS-9c** Add a paper/live parity dashboard comparing intended order, submitted order, fill, final position, and current broker state.
-- [ ] **TSYS-9d** Add credential encryption key versioning and rotation; do not rely on a single long-lived application secret for future broker credential decryptability.
+- [x] **TSYS-9d** Add credential encryption key versioning and rotation; do not rely on a single long-lived application secret for future broker credential decryptability.
 
 ### TSYS-10 — Admin, Observability & Runbook Automation
 

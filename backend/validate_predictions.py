@@ -25,7 +25,7 @@ sys.path.insert(0, ".")
 import os as _os
 from pathlib import Path as _Path
 
-from models import Signal
+from models import OutcomePathSnapshot, OutcomeResolverAudit, Signal
 
 try:
     from dotenv import load_dotenv as _load_dotenv
@@ -157,14 +157,22 @@ async def resolve_outcomes() -> int:
     print(f"  Got prices for {len(prices)} tickers.")
 
     updated = 0
+    # TSYS-8a: track resolution-pass metrics for the audit row.
+    processed = 0
+    missing_price_tickers: set[str] = set()
+    unresolved: dict[str, int] = defaultdict(int)
     async with Session() as db:
         rows = (await db.execute(select(Signal).where(Signal.is_sent == True))).scalars().all()
 
         for sig in rows:
             if not sig.entry or sig.entry <= 0:
+                unresolved["no_entry"] += 1
                 continue
+            processed += 1
             current = prices.get(sig.ticker)
             if not current:
+                unresolved["no_price"] += 1
+                missing_price_tickers.add(sig.ticker)
                 continue
             age = _age_days(sig)
             changed = False
@@ -190,6 +198,19 @@ async def resolve_outcomes() -> int:
 
             if changed:
                 updated += 1
+
+        # TSYS-8a: persist an audit record of this resolution pass so missing
+        # bars, price source, and unresolved reasons are inspectable after the fact.
+        db.add(
+            OutcomeResolverAudit(
+                signals_processed=processed,
+                signals_resolved=updated,
+                price_source="yfinance",
+                missing_bars_count=len(missing_price_tickers),
+                corrections_applied=None,
+                unresolved_reasons=dict(unresolved) if unresolved else None,
+            )
+        )
 
         await db.commit()
 
@@ -348,6 +369,25 @@ async def resolve_mae_mfe() -> int:
                         raw = (sig.target - entry) / entry * 100
                         sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
                         sig_db.outcome_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+                    # TSYS-8b: snapshot the price path used to derive MAE/MFE/exit so
+                    # the resolution can be replayed without re-fetching OHLCV. Runs
+                    # once per signal (this pass only selects mae IS NULL rows).
+                    db.add(
+                        OutcomePathSnapshot(
+                            signal_id=sig.id,
+                            path_data={
+                                "bars": [[round(h, 4), round(low, 4)] for h, low in window],
+                                "entry": entry,
+                                "stop": stop,
+                                "target": target,
+                                "action": sig.action,
+                                "mae": round(worst_pct, 2),
+                                "mfe": round(best_pct, 2),
+                                "exit_type": exit_type,
+                            },
+                        )
+                    )
 
                     updated += 1
 
