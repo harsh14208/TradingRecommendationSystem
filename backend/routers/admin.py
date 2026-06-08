@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from config import TIER_PRICES_CENTS, get_settings
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from models import AppSettings, PerformanceSnapshot, Signal, SignalDelivery, User
 from services.auth_svc import get_current_user
 from sqlalchemy import func, select
@@ -1007,3 +1008,55 @@ async def provider_reliability(db: AsyncSession = Depends(get_db), owner: User =
             for t in telemetry
         ],
     }
+
+
+# ── TSYS-10 Observability ─────────────────────────────────────────────────────
+
+
+@router.get("/incident-timeline")
+async def incident_timeline(
+    limit: int = 100,
+    severity: str | None = None,
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """TSYS-10a: recent system incidents (scan failures, provider degradations,
+    metric-threshold breaches, etc.) newest-first."""
+    from models import IncidentTimeline
+
+    stmt = select(IncidentTimeline).order_by(IncidentTimeline.created_at.desc()).limit(min(limit, 500))
+    if severity:
+        stmt = stmt.where(IncidentTimeline.severity == severity)
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "event_type": r.event_type,
+            "severity": r.severity,
+            "message": r.message,
+            "details": r.details,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/metrics", response_class=PlainTextResponse)
+async def prometheus_metrics(owner: User = Depends(_require_owner)):
+    """TSYS-10c: export in-process metrics in Prometheus text exposition format."""
+    from services.metrics import render_prometheus
+
+    return render_prometheus()
+
+
+@router.post("/check-alerts")
+async def check_alerts(
+    owner: User = Depends(_require_owner),
+    db: AsyncSession = Depends(get_db),
+):
+    """TSYS-10d: evaluate metric alert thresholds; record incidents on breach."""
+    from services.metrics import check_alert_thresholds
+
+    breaches = await check_alert_thresholds(db)
+    await db.commit()
+    return {"breaches": breaches, "count": len(breaches)}

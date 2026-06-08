@@ -186,10 +186,10 @@ Added 2026-06-05 after a system-by-system review of the existing backend, data, 
 
 ### TSYS-10 — Admin, Observability & Runbook Automation
 
-- [ ] **TSYS-10a** Add an admin incident timeline covering scan failures, provider degradations, delivery spikes, execution pauses, calibration changes, and model promotions.
+- [x] **TSYS-10a** Add an admin incident timeline covering scan failures, provider degradations, delivery spikes, execution pauses, calibration changes, and model promotions.
 - [x] **TSYS-10b** Add `/api/admin/system-readiness` that computes launch readiness from env vars, DB state, provider status, webhooks, queues, and current kill-switch flags.
-- [ ] **TSYS-10c** Export structured metrics for Prometheus/OpenTelemetry: scan latency, delivery latency, provider 429s, DB pool saturation, cache misses, and order errors.
-- [ ] **TSYS-10d** Add alert thresholds and escalation routing for the metrics above so production incidents are not discovered only through dashboards.
+- [x] **TSYS-10c** Export structured metrics for Prometheus/OpenTelemetry: scan latency, delivery latency, provider 429s, DB pool saturation, cache misses, and order errors.
+- [x] **TSYS-10d** Add alert thresholds and escalation routing for the metrics above so production incidents are not discovered only through dashboards.
 
 ### TSYS-11 — Frontend, Mobile & Product UX
 

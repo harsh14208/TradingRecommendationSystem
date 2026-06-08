@@ -422,6 +422,10 @@ async def execute_signal_for_user(
         order_record.status = "error"
         order_record.error_msg = str(e)[:500]
         log.warning("broker_svc: user=%d order failed for %s: %s", user.id, ticker, e)
+        # TSYS-10c: broker order-error counter for Prometheus export.
+        from services.metrics import inc
+
+        inc("order_error_total", broker=broker_type)
 
     db.add(order_record)
     # Caller is responsible for committing the session.

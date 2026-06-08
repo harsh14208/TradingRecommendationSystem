@@ -81,6 +81,11 @@ def get_session() -> aiohttp.ClientSession:
             cycle_id = current_cycle_id.get()
             throttled = params.response.status == 429
             record_api_call(cycle_id, provider, throttled=throttled)
+            if throttled:
+                # TSYS-10c: provider rate-limit counter for Prometheus export.
+                from services.metrics import inc
+
+                inc("provider_429_total", provider=provider)
 
             # Check for standard quota headers
             quota_rem = params.response.headers.get("X-RateLimit-Remaining") or params.response.headers.get(

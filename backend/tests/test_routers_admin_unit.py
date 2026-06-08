@@ -254,3 +254,37 @@ def test_system_readiness(mock_shared_session, mock_verify_alpaca, mock_get_sett
     assert data["providers"]["finnhub"]["status"] == "ok"
     assert data["webhooks"]["telegram"]["status"] == "ok"
     assert data["webhooks"]["stripe"]["status"] == "ok"
+
+
+# ── TSYS-10 observability endpoints ──────────────────────────────────────────
+
+
+def test_incident_timeline_returns_list():
+    app = _make_app(is_owner=True)
+    app.dependency_overrides[get_db] = _mock_db()
+    with TestClient(app) as client:
+        resp = client.get("/api/admin/incident-timeline")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+def test_incident_timeline_requires_owner():
+    app = _make_app(is_owner=False)
+    app.dependency_overrides[get_db] = _mock_db()
+    with TestClient(app) as client:
+        resp = client.get("/api/admin/incident-timeline")
+    assert resp.status_code in (401, 403)
+
+
+def test_prometheus_metrics_endpoint():
+    from services import metrics
+
+    metrics.reset()
+    metrics.inc("provider_429_total", provider="polygon")
+    app = _make_app(is_owner=True)
+    with TestClient(app) as client:
+        resp = client.get("/api/admin/metrics")
+    assert resp.status_code == 200
+    assert "provider_429_total" in resp.text
+    assert resp.headers["content-type"].startswith("text/plain")
+    metrics.reset()
