@@ -72,6 +72,40 @@ def close_panel(tickers: list[str] | None = None, start: str = "2006-01-01") -> 
     return panel
 
 
+def ohlcv_panels(
+    tickers: list[str] | None = None,
+    start: str = "2008-01-01",
+    min_coverage: float = 0.6,
+) -> dict[str, pd.DataFrame]:
+    """Wide OHLCV panels for the WorldQuant-101 screen.
+
+    Returns {"open","high","low","close","volume"} → each a (date × ticker)
+    DataFrame on a common date index, restricted to tickers with at least
+    `min_coverage` of rows present over the window (dense cross-section).
+    """
+    files = _latest_files()
+    if tickers is not None:
+        files = {t: p for t, p in files.items() if t in tickers}
+    cols = ("Open", "High", "Low", "Close", "Volume")
+    frames: dict[str, list[pd.Series]] = {c: [] for c in cols}
+    for t, p in files.items():
+        df = load_ohlc(t, p)
+        if df is None or "Volume" not in df.columns:
+            continue
+        df = df[df.index >= start]
+        if df.empty:
+            continue
+        for c in cols:
+            s = pd.to_numeric(df[c], errors="coerce")
+            s.name = t
+            frames[c].append(s)
+    out = {c.lower(): pd.concat(frames[c], axis=1).sort_index() for c in cols}
+    # Keep only tickers dense enough over the window (avoid sparse-column noise)
+    close = out["close"]
+    keep = close.columns[close.notna().mean() >= min_coverage]
+    return {k: v[keep] for k, v in out.items()}
+
+
 def traded_tickers() -> list[str]:
     df = pd.read_csv(TRADES)
     return sorted(df["ticker"].unique().tolist())

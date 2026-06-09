@@ -391,6 +391,66 @@ def add_short_interest_features(panel: pd.DataFrame, si: pd.DataFrame) -> pd.Dat
     return panel
 
 
+# ---------------------------------------------------------------------------
+# WorldQuant-101 orthogonal alphas (research EXP4/EXP5, 2026-06-09)
+# ---------------------------------------------------------------------------
+# Of 30 OHLCV-computable WQ-101 alphas screened for IC, two cleared usable IR
+# (~0.11-0.14) AND low turnover AND the orthogonality bar (max |corr| ~0.2 vs the
+# 8 RAW_FEATURE_COLS — genuinely new information, not repackaged reversal/RSI):
+#   wq002 = -corr(rank(Δ²log volume), rank((close-open)/open), 6)   — vol/return microstructure
+#   wq026 = -ts_max(corr(ts_rank(volume,5), ts_rank(high,5), 5), 3) — vol/high co-movement
+# Both embed a cross-sectional rank(), so they're computed on the wide panel (not
+# per-ticker) before the generic z-score. Enabled by --wq-alphas (off by default
+# until the net-of-cost lift is confirmed). The dropped WQ candidates wq004
+# (|corr|=0.62 vs rev_5) and wq019 (0.57 vs rsi_14) were redundant with existing
+# reversal/RSI features.
+WQ_ALPHA_COLS = ["wq002", "wq026"]
+
+
+def _wq_alpha_panel(tickers: list[str]) -> pd.DataFrame:
+    """Compute the orthogonal WQ-101 alphas on wide OHLCV panels.
+
+    Returns a long [date, ticker, wq002, wq026] frame to merge into the model
+    panel. Uses trailing windows only (no lookahead). ts_rank is vectorized via
+    shift-counts (avoids a slow rolling.apply over the full universe).
+    """
+    o_, h_, c_, v_ = {}, {}, {}, {}
+    for t in tickers:
+        df = load_ohlcv(_norm_ticker(t))
+        if df is None:
+            df = load_ohlcv(t)
+        if df is None or len(df) < 300:
+            continue
+        o_[t], h_[t], c_[t], v_[t] = df["Open"], df["High"], df["Close"], df["Volume"]
+    if not c_:
+        return pd.DataFrame(columns=["date", "ticker", *WQ_ALPHA_COLS])
+    o = pd.DataFrame(o_).sort_index()
+    h = pd.DataFrame(h_).reindex_like(o)
+    c = pd.DataFrame(c_).reindex_like(o)
+    v = pd.DataFrame(v_).reindex_like(o)
+
+    def _rank(d):  # cross-sectional percentile rank
+        return d.rank(axis=1, pct=True)
+
+    def _corr(x, y, n):  # rolling Pearson per ticker
+        mx, my = x.rolling(n).mean(), y.rolling(n).mean()
+        cov = (x * y).rolling(n).mean() - mx * my
+        sx, sy = x.rolling(n).std(ddof=0), y.rolling(n).std(ddof=0)
+        return (cov / (sx * sy)).replace([np.inf, -np.inf], np.nan)
+
+    def _ts_rank(d, n):  # percentile of current value within trailing n (vectorized)
+        le = sum((d.shift(j) <= d).astype(float) for j in range(n))
+        return le / n
+
+    logv = np.log(v.where(v > 0))
+    wq002 = -1 * _corr(_rank(logv - logv.shift(2)), _rank((c - o) / o), 6)
+    wq026 = -1 * _corr(_ts_rank(v, 5), _ts_rank(h, 5), 5).rolling(3).max()
+
+    out = pd.concat({"wq002": wq002.stack(), "wq026": wq026.stack()}, axis=1).reset_index()
+    out.columns = ["date", "ticker", "wq002", "wq026"]
+    return out
+
+
 def build_panel(
     use_short_interest: bool = False,
     min_price: float = 5.0,
@@ -888,6 +948,7 @@ def report(res: dict, decile: float, cost_bps: float, mode: str) -> None:
 
 
 def main() -> None:
+    global HORIZON, PERIODS_PER_YEAR  # may be overridden by --horizon below
     ap = argparse.ArgumentParser(description="Cross-sectional market-neutral alpha model")
     ap.add_argument("--split", default="2019-01-01", help="single-split train/test boundary (chronological)")
     ap.add_argument("--decile", type=float, default=0.10, help="fraction per long/short leg")
@@ -916,7 +977,26 @@ def main() -> None:
         default="full",
         help="'full' = complete S&P 500 history; 'curated' = legacy large-cap set (0.42 baseline)",
     )
+    ap.add_argument(
+        "--wq-alphas",
+        action="store_true",
+        help="add the orthogonal WorldQuant-101 alphas (wq002, wq026) as extra features",
+    )
+    ap.add_argument(
+        "--horizon",
+        type=int,
+        default=HORIZON,
+        help="forward-return horizon = rebalance period in trading days (default 5). "
+        "Longer horizons cut turnover (the binding constraint on net Sharpe).",
+    )
     args = ap.parse_args()
+
+    # Override the horizon globals before any data is built (forward return,
+    # rebalance step, embargo, and the annualization factor all read these).
+    HORIZON = args.horizon
+    PERIODS_PER_YEAR = TRADING_DAYS / HORIZON
+    if HORIZON != 5:
+        print(f"Horizon override: {HORIZON}d rebalance (PERIODS_PER_YEAR={PERIODS_PER_YEAR:.1f})")
 
     panel = build_panel(
         use_short_interest=args.short_interest,
@@ -925,6 +1005,12 @@ def main() -> None:
         universe_source=args.universe,
     )
     feature_cols = [c for c in RAW_FEATURE_COLS if c in panel.columns]
+    if args.wq_alphas:
+        print("Adding WorldQuant-101 orthogonal alphas (wq002, wq026)…")
+        wq = _wq_alpha_panel(sorted(panel["ticker"].unique()))
+        panel = panel.merge(wq, on=["date", "ticker"], how="left")
+        feature_cols += [c for c in WQ_ALPHA_COLS if c in panel.columns]
+        print(f"  feature set now {len(feature_cols)}: {feature_cols}")
     panel = cross_sectional_zscore(panel, feature_cols)
 
     if args.walk_forward:
