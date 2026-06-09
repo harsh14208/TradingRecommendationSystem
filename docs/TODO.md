@@ -19,30 +19,6 @@ These are critical tasks that must be completed before public launch or marketin
 
 ---
 
-## 🔄 Refinement Tasks — Improving Existing Features
-The following items target refining and polishing existing capabilities to their maximum efficiency without bloating the system with unnecessary new features.
-
-- [x] **REF-1: Dynamic TCA Slippage Feedback**
-  - *Description*: Feed realized slippage computed by `tca_service.py` back into the backtester friction model and the position allocator. If a ticker/sector exhibits persistently higher slippage than expected in live fills, dynamically scale down its target portfolio weight or adjust its entry threshold.
-  - *Target Files*: [tca_service.py](file:///Users/harshv.singh/TradingRecommendationSystem/backend/services/tca_service.py), [portfolio_allocator.py](file:///Users/harshv.singh/TradingRecommendationSystem/backend/services/portfolio_allocator.py), and backtesting scripts.
-- [x] **REF-2: Replay Engine Drift Detection**
-  - *Description*: Set up an automated weekly script to compare historical live signals (and their feature states) against the event-driven replay engine. Flag any parameter, score, or decision discrepancies to verify parity and catch data pipeline/logical drift.
-  - *Target Files*: Replay engine tests / new monitoring scripts.
-- [x] **REF-3: Dynamic Cross-Sleeve Capital Sizing**
-  - *Description*: Refine the cross-sleeve allocator (`alpha_sleeves.py`) to dynamically size capital allocations using rolling 30-day out-of-sample Sharpe ratios and drawdown statuses (e.g. dynamic Kelly or risk-parity budgeting) instead of the static Sharpe confidence allocation.
-  - *Target Files*: [alpha_sleeves.py](file:///Users/harshv.singh/TradingRecommendationSystem/backend/services/alpha_sleeves.py).
-- [x] **REF-4: Causal Cohort Analytics Dashboard**
-  - *Description*: Build a dedicated admin dashboard view to compare empirical win rates, average returns, and Brier scores across randomized cohort groups: `delivered`, `withheld` (control), and `shadow` (challenger policies). This will validate the actual treatment effect of newly promoted policy versions.
-  - *Target Files*: Frontend/Admin views, router files.
-- [x] **REF-5: HRP Scanner Loop Integration**
-  - *Description*: Integrate the Hierarchical Risk Parity (HRP) allocator dynamically into the main real-time scan/execution loop. Currently, the allocator is standalone; it should guide live order sizing based on the covariance of the scanned candidates.
-  - *Target Files*: Scanner / worker processes.
-- [x] **REF-6: Meta-Labeling Feature Hardening**
-  - *Description*: Expand the features used in the XGBoost meta-labeling model (`signal_ml.py`) by feeding in macro/regime indicators directly (e.g., VIX term structure, HMM macro regimes, and sector momentum metrics) to refine the classifier's probability calibration.
-  - *Target Files*: [signal_ml.py](file:///Users/harshv.singh/TradingRecommendationSystem/backend/services/signal_ml.py).
-
----
-
 ## 🎯 Active Research & Alpha TODOs
 These are targeted research and statistical modeling opportunities to improve signal edge.
 
@@ -58,7 +34,6 @@ These are targeted research and statistical modeling opportunities to improve si
 ## ⚙️ Operational, Deployment & Testing TODOs
 Infrastructure, testing, and system-level follow-ups.
 
-- [x] **BE-1. Decompose signal_engine.py** — Decompose the ~5.2k-line `generate_signal()` sequential scorer into a scoring-context object to handle shared mutable state safely without risking regression.
 - [ ] **DEPLOY-2. Sentry + UptimeRobot Setup** — Configure Sentry (free tier) for Python exception tracking and UptimeRobot for endpoint availability monitoring. Add `SENTRY_DSN` to `.env` and wire it in `main.py`.
 - [ ] **DEPLOY-3. DB Backups** — Automated daily backup of `trading.db` to a Cloudflare R2 or S3 bucket (Railway volumes are ephemeral). Retention: 7 daily, 4 weekly.
 - [ ] **FE-2. Accessibility audit (WCAG 2.1 AA)** — Run `axe-core` or Lighthouse accessibility audit. Fix: keyboard navigation for all interactive elements, ARIA labels on icon buttons, color contrast, screen reader compatibility.
@@ -98,8 +73,8 @@ Concrete work to take each [Stats.md §15](Stats.md#L359) rating aspect to 10/10
 - [ ] **R10-6: Confidence Calibration (7.6 → 10)** ⏳gated — **CAL-1** Calibration v5 on ≥50 post-A19 signals + **ACT-3** per-sector isotonic curves; target val-Brier ≤ 0.23 and reliability-diagram ECE < 0.03.
 
 ### Risk & Execution
-- [ ] **R10-7: Risk Management (8.9 → 10)** — replace global-WR Kelly with **per-signal Kelly** (confidence- and regime-conditional); validate via **RISK-3** live sizing audit (realized vs theoretical within 20%) and a live drawdown-circuit-breaker fire drill.
-- [ ] **R10-8: Execution & Friction (8.0 → 10)** — model **variable per-ticker spread/slippage** (replace flat 0.50% friction) using the fill ledger; close the **REF-1** TCA→backtester/allocator feedback loop; run **QENG-3d** execution-policy simulator and promote the lowest cost-adjusted variant.
+- [~] **R10-7: Per-signal Kelly — RESEARCHED, NO-DEPLOY (2026-06-08).** Added `stats_kelly` + `kelly_size_mult` + the §Inv-K validator to `backtest_technicals.py`. **Key finding:** the universal 1.5s/2.0t stop/target makes reward:risk *constant* (realized b=0.83), so per-signal Kelly has no payoff term and is just a convex reshaping of conviction sizing. Exploratory half-Kelly (empirical p, wide [0.70,1.30] clamp) showed +0.022 IS Sharpe, but the **deployable** formula clamped to the live [0.85,1.15] envelope scored **−0.015 vs the incumbent linear L7** (0.25→0.24) — the gain didn't survive a realistic risk envelope (in-sample, N=221). **Decision: keep linear L7.** Future: revisit only with per-signal-varying R:R or an OOS-validated wider envelope. Validate via RISK-3 once N≥50 live trades.
+- [~] **R10-8: Per-ticker friction — RESEARCHED, NO backtest change (2026-06-08).** Added the §R10-8 vol-scaled friction validator. **Findings:** (1) realistic large-cap friction ≈0.25% vs the flat 0.50%, i.e. the flat number is a deliberate ~2× conservative buffer — lowering it would manufacture fake Sharpe (0.23→0.30 is *all* lower assumed cost, not alpha), so flat 0.50% is **kept**; (2) the edge is **robust across volatility/spread terciles** (Sharpe 0.29 / 0.34 / 0.30). The backtest can't validate per-ticker friction (no historical fills). Deployable lever is sizing-down wide-NBBO-spread names live — §80 already penalises their *score*; a dedicated sizing lever is deferred (unvalidatable offline). Closing REF-1 TCA→allocator feedback + QENG-3d sim remain the live path.
 - [ ] **R10-9: Sector Concentration (7.6 → 10)** — make limits **dynamic/correlation-aware** (size off the live covariance via **REF-5** HRP-in-scanner, not static 30/20%); unblock XLF/XLP/XLU/XLI by training **ML-2** sector XGBoost models that earn them back rather than hard-blocking.
 
 ### Product & Deployment
@@ -110,10 +85,9 @@ Concrete work to take each [Stats.md §15](Stats.md#L359) rating aspect to 10/10
 
 ### Infrastructure & ML
 - [ ] **R10-14: ML Methodology (8.9 → 10)** ⏳gated — deploy the live entry model at **N ≥ 300** (Pre-Launch #7) once AUC delta clears 0.005; ship **REF-6** meta-label feature hardening (VIX term structure/HMM regime/sector momentum) and **ML-2** sector sub-models; require champion/challenger shadow-win before promotion.
-- [x] **R10-15: Signal Engine / Gate Stack (8.5 → 10)** — complete **BE-1**: decompose the ~5.2k-line `generate_signal()` into a scoring-context object with no behavior change (parity tests stay green), removing the last "god function".
-- [ ] **R10-16: Backend Architecture (8.5 → 10)** — **NEW (from 2026-06-08 audit):** add per-step isolation in `run_scan()` so a single sub-step failure (e.g. a persist error) cannot abort the whole cycle, plus a global `asyncio` task-exception handler that logs+alerts instead of swallowing unretrieved exceptions. *Target Files: [scanner.py](file:///Users/harshv.singh/TradingRecommendationSystem/backend/services/scanner.py), [main.py](file:///Users/harshv.singh/TradingRecommendationSystem/backend/main.py).*
+- [x] **R10-16: Backend Architecture (8.5 → 9.0)** — **DONE (2026-06-08):** aux-data persistence (gate traces, shadow scores, feature snapshot) now wrapped in a SAVEPOINT in `_persist_scan_signals` so one bad ticker rolls back only its aux data — the core Signal still commits and the cycle continues; also fixed a latent bug where `ModelShadowScore` rows were built but never `db.add`-ed. Added `_async_exception_handler` (installed in lifespan) so unretrieved fire-and-forget task exceptions are logged with task name + traceback instead of swallowed. *Files: [scanner.py](file:///Users/harshv.singh/TradingRecommendationSystem/backend/services/scanner.py), [main.py](file:///Users/harshv.singh/TradingRecommendationSystem/backend/main.py).*
 - [ ] **R10-17: Data Pipeline (8.3 → 10)** — prove live reliability, not just breadth: health-scorecard + PIT feature store run a full week with 0 errors; remove the remaining dead `^TRIN`/`^NYAD`/`^BDI`/ETF-fundamentals fetches (or route them to providers that serve them); add **§84** point-in-time data so the pipeline is survivorship-correct.
-- [ ] **R10-18: Test Coverage (7.5 → 10)** — **NEW (from 2026-06-08 audit):** add the integration layer the unit suite lacks — an end-to-end "scan actually persists a signal + feature snapshot" test against a real (test) Postgres; NaN/Inf/empty/edge-case fuzzing on every JSON-column writer; DB unique-constraint/race regression tests; finish **TEST-4** mutation testing (>70%) and add the missing **§69–§74** gate unit tests.
+- [~] **R10-18: Test Coverage (7.5 → 8.0, partial)** — **DONE (2026-06-08):** `tests/test_r10_hardening.py` (8 tests) — NaN/Inf recursive fuzzing on the json writer, the real `save_feature_snapshot` sanitization path, `uq_provider_endpoint` constraint presence, and duplicate-row `record_endpoint_call` resilience (both bug tests fail against the pre-fix code). **Still open:** an end-to-end "scan actually persists a signal + feature snapshot" test against a real (test) Postgres; **TEST-4** mutation testing (>70%); and the missing **§69–§74** gate unit tests.
 
 ---
 
@@ -127,7 +101,20 @@ Ongoing known issues or constraints.
 ---
 
 ## ✅ Completed Tasks Archive
-*Note: All items completed as of v8.0 (2026-06-08) and prior versions.*
+*Note: All items completed as of v8.1 (2026-06-08) and prior versions.*
+
+<details>
+<summary><b>v8.1 Quant Refinements & Decomposition (2026-06-08)</b></summary>
+
+- **REF-1: Dynamic TCA Slippage Feedback** — Fed realized slippage from `fills` and `broker_orders` tables back to dynamically scale down HRP target weights if realized slippage exceeds threshold (42 bps).
+- **REF-2: Replay Engine Drift Detection** — Set up `drift_detector.py` comparing live DB signals vs. Replay Engine outcomes using point-in-time snapshots and updated it to copy signal metadata to verify parity and catch data pipeline/logical drift.
+- **REF-3: Dynamic Cross-Sleeve Capital Sizing** — Refined the cross-sleeve allocator (`alpha_sleeves.py`) to size sleeve allocations dynamically using rolling 30-day simulated and real out-of-sample Sharpe ratios.
+- **REF-4: Causal Cohort Analytics Dashboard** — Added the `/cohort-analytics` API endpoint in `admin.py` to compare empirical win rates, average returns, and Brier scores across randomized cohort groups.
+- **REF-5: HRP Scanner Loop Integration** — Wired HRP batch portfolio execution directly into the scanner scan/execution path and implemented `execute_portfolio_for_user()` inside `broker_svc.py` to calculate target sizes, enforce limits, and execute orders.
+- **REF-6: Meta-Labeling Feature Hardening** — Expanded the XGBoost meta-label model features with VIX ratio, VIX9D ratio, and sector momentum. Updated `train_metalabel_model.py`, `signal_ml.py`, and `assembler.py` to support 14-feature schemas, and retrained the meta-label model on the new dataset.
+- **BE-1. Decompose signal_engine.py** — Decomposed the massive `generate_signal()` sequential scorer into a scoring-context object `ScoringContext` (in `services/engines/context.py`) and scoring blocks (in `services/engines/scorers.py`) to handle state safely with zero regression.
+- **R10-15: Signal Engine / Gate Stack (8.5 → 10)** — Completed BE-1, decomposing `generate_signal()` with parity tests and zero behavior change.
+</details>
 
 <details>
 <summary><b>v8.0 Quant Engine (QENG) Implementation (2026-06-08)</b></summary>

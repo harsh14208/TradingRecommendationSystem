@@ -17,7 +17,7 @@ from typing import Dict, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
-from models import Instrument, Position, Fill, BrokerOrder
+from models import Instrument, Position, Fill, BrokerOrder, PnlDaily
 
 from services.market_data import get_histories_batch
 
@@ -252,6 +252,7 @@ async def allocate_portfolio(
     QENG-4a: Portfolio allocator service.
     Translates signals into size-optimized orders utilizing HRP,
     honoring constraints (max sector, max single stock) and cost-aware turnover bands.
+    Optimized with Drawdown Throttle, L7 Sizing Nudge, and Volatility Sizing Penalty.
     """
     if not active_signals or total_cash <= 0:
         return []
@@ -262,20 +263,84 @@ async def allocate_portfolio(
     cov = await fetch_historical_covariance(db, tickers)
     hrp_weights = compute_hrp_weights(cov, tickers)
     
+    # Fetch histories for Volatility Sizing Penalty (ATR%)
+    histories = await get_histories_batch(tickers, period="6mo", interval="1d")
+    
+    atr_pcts = {}
+    for t in tickers:
+        df = histories.get(t)
+        if df is not None and len(df) >= 20:
+            high = df["High"].astype(float).values
+            low = df["Low"].astype(float).values
+            close = df["Close"].astype(float).values
+            
+            # Compute rolling ATR (20)
+            tr = np.zeros(len(close))
+            tr[0] = high[0] - low[0]
+            for i in range(1, len(close)):
+                tr[i] = max(
+                    high[i] - low[i],
+                    abs(high[i] - close[i-1]),
+                    abs(low[i] - close[i-1])
+                )
+            atr_20 = np.mean(tr[-20:])
+            latest_close = close[-1]
+            if latest_close > 0:
+                atr_pcts[t] = float(atr_20 / latest_close) * 100.0
+            else:
+                atr_pcts[t] = 2.0
+        else:
+            atr_pcts[t] = 2.0
+            
+    # Volatility Sizing Penalty: top 33% (67th percentile) threshold
+    if len(atr_pcts) >= 3:
+        atr_threshold = np.percentile(list(atr_pcts.values()), 67)
+    else:
+        atr_threshold = 3.0
+    
     # Fetch historical realized slippage for feedback (REF-1)
     realized_slippage = await fetch_realized_slippage_avg(db)
     
-    # 2. Apply constraints (Max single stock limit & realized slippage feedback)
+    # Fetch current positions to map current weights and identify if ticker is new
+    res_pos = await db.execute(
+        select(Position).where(Position.user_id == user_id).where(Position.qty > 0)
+    )
+    current_positions = res_pos.scalars().all()
+    
+    current_weights = {}
+    for p in current_positions:
+        res_inst = await db.execute(select(Instrument).where(Instrument.id == p.instrument_id))
+        inst = res_inst.scalar_one_or_none()
+        if inst:
+            pos_value = p.qty * (p.average_entry_price or 100.0)
+            current_weights[inst.ticker] = pos_value / total_cash
+            
+    # 2. Apply constraints (Max single stock limit, slippage, L7, and vol-scaled penalty)
     constrained_weights = {}
     for t, w in hrp_weights.items():
         weight = w
         if t in realized_slippage:
             slippage_bps = realized_slippage[t]
             slippage_threshold = 42.0  # 35% of 120 bps edge
-            # Apply dynamic penalty multiplier based on actual execution slippage
             penalty_multiplier = max(0.0, 1.0 - (slippage_bps / slippage_threshold))
             weight *= penalty_multiplier
             log.info(f"TCA feedback: {t} weight scaled by {penalty_multiplier:.2f} due to {slippage_bps:.1f} bps average realized slippage.")
+            
+        # L7 Score-Weighted Sizing (Inv2)
+        score = 50.0
+        sig = next((s for s in active_signals if s["ticker"] == t), None)
+        if sig:
+            score = sig.get("raw_score") or sig.get("score") or sig.get("confidence") or 50.0
+        scale_l7 = max(0.85, min(1.15, 0.85 + (score - 50) / 100))
+        
+        # Volatility Sizing Penalty (R10-8)
+        atr_val = atr_pcts.get(t, 2.0)
+        vol_mult = 0.7 if atr_val >= atr_threshold else 1.0
+        
+        weight *= scale_l7 * vol_mult
+        
+        log.info(f"Allocator weight adjustment for {t}: base_w={w:.4f}, L7={scale_l7:.2f}, vol_mult={vol_mult:.2f} (ATR%={atr_val:.2f}%), adjusted_w={weight:.4f}")
+        
         constrained_weights[t] = min(weight, MAX_SINGLE_STOCK)
         
     # Renormalize
@@ -308,24 +373,6 @@ async def allocate_portfolio(
             constrained_weights = {t: w / w_sum for t, w in constrained_weights.items()}
             
     # 4. Cost-aware turnover control (QENG-4c: no-trade bands)
-    # Fetch current positions for comparison
-    res_pos = await db.execute(
-        select(Position).where(Position.user_id == user_id).where(Position.qty > 0)
-    )
-    current_positions = res_pos.scalars().all()
-    
-    # Map current position weights relative to total cash
-    current_weights = {}
-    for p in current_positions:
-        # Fetch current instrument ticker
-        res_inst = await db.execute(select(Instrument).where(Instrument.id == p.instrument_id))
-        inst = res_inst.scalar_one_or_none()
-        if inst:
-            # Estimate position value (notional or based on signal entry)
-            # In production, we'd fetch the live broker quote.
-            pos_value = p.qty * (p.average_entry_price or 100.0)
-            current_weights[inst.ticker] = pos_value / total_cash
-            
     # Apply turnover control (no-trade band check)
     final_weights = {}
     for t in constrained_weights:
@@ -339,7 +386,31 @@ async def allocate_portfolio(
         else:
             final_weights[t] = target
             
-    # Renormalize final weights
+    # 5. Drawdown Throttle (R7)
+    # If the user is in >3% drawdown from historical peak equity, scale new positions by 0.5
+    dd_mult = 1.0
+    dd_pct = 0.0
+    try:
+        stmt = select(func.max(PnlDaily.equity)).where(PnlDaily.user_id == user_id)
+        res = await db.execute(stmt)
+        peak_equity = res.scalar()
+        if peak_equity is not None and peak_equity > 0:
+            dd_pct = (peak_equity - total_cash) / peak_equity * 100.0
+            if dd_pct > 3.0:
+                dd_mult = 0.5
+                log.info(f"Drawdown Throttle active: user={user_id} is in {dd_pct:.2f}% drawdown (peak=${peak_equity:,.2f}, current=${total_cash:,.2f}). Scaling new trades by 0.5.")
+    except Exception as e:
+        log.warning(f"Failed to query peak equity for drawdown throttle: {e}")
+        
+    if dd_mult < 1.0:
+        for t in list(final_weights.keys()):
+            is_new = (t not in current_weights or current_weights[t] <= 0.0)
+            if is_new:
+                old_w = final_weights[t]
+                final_weights[t] *= dd_mult
+                log.info(f"Drawdown Throttle: scaled new position {t} target weight from {old_w:.4f} to {final_weights[t]:.4f}")
+            
+    # Renormalize final weights (only cap leverage at 1.0, do not force sum to 1.0 if we scaled down)
     w_sum = sum(final_weights.values())
     if w_sum > 1.0:  # leverage cap
         final_weights = {t: w / w_sum for t, w in final_weights.items()}

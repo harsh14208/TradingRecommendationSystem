@@ -938,7 +938,7 @@ async def _maybe_auto_execute_portfolio(delivered_signals: list[tuple[dict, int]
                     continue
 
                 min_conf = user.auto_execute_min_conf or 75.0
-                
+
                 # Filter delivered signals that meet the user's min_conf threshold
                 user_signals = []
                 for sig, signal_id in delivered_signals:
@@ -947,7 +947,7 @@ async def _maybe_auto_execute_portfolio(delivered_signals: list[tuple[dict, int]
                     conf = float(enriched_sig.get("confidence") or 0.0)
                     if conf >= min_conf:
                         user_signals.append(enriched_sig)
-                        
+
                 if user_signals:
                     # Execute portfolio-level allocation and orders for this user
                     await execute_portfolio_for_user(user, user_signals, exec_db)
@@ -1612,43 +1612,56 @@ async def _persist_scan_signals(
             )
             db.add(row)
             await db.flush()
-            # Save gate traces (TSYS-6a)
-            for trace in sig.get("gate_traces", []):
-                trace_row = SignalGateTrace(
-                    signal_id=row.id,
-                    gate_id=trace["gate_id"],
-                    version=trace["version"],
-                    input_values=trace["input_values"],
-                    score_delta=trace["score_delta"],
-                    confidence_delta=trace["confidence_delta"],
-                    passed=trace["passed"],
-                    reason=trace["reason"],
-                )
-                db.add(trace_row)
-            # Save shadow scores (TSYS-7c)
-            shadow = sig.get("shadow_scores")
-            if shadow:
-                shadow_row = ModelShadowScore(
-                    signal_id=row.id,
-                    model_id=shadow["model_id"],
-                    score=shadow["score"],
-                    confidence=shadow["confidence"],
-                    champion_score=shadow["champion_score"],
-                    champion_confidence=shadow["champion_confidence"],
-                )
-            # Save feature snapshots (QENG-2a)
-            if "features" in sig:
-                from services.feature_store import save_feature_snapshot
-                from services.lineage import DATA_LINEAGE_VERSION
-                await save_feature_snapshot(
-                    db=db,
-                    ticker=sig["ticker"],
-                    ts=datetime.utcnow(),
-                    features=sig["features"],
-                    signal_id=row.id,
-                    effective_time=datetime.utcnow(),
-                    provider="polygon",
-                    signal_policy_version=DATA_LINEAGE_VERSION,
+            # R10-16: persist auxiliary analytics (gate traces, shadow scores,
+            # feature snapshot) inside a SAVEPOINT so one bad payload (e.g. a
+            # NaN in a json column, a constraint violation) rolls back only the
+            # aux data for this ticker — the core Signal row still commits and
+            # the scan cycle continues instead of aborting wholesale.
+            try:
+                async with db.begin_nested():
+                    # Save gate traces (TSYS-6a)
+                    for trace in sig.get("gate_traces", []):
+                        trace_row = SignalGateTrace(
+                            signal_id=row.id,
+                            gate_id=trace["gate_id"],
+                            version=trace["version"],
+                            input_values=trace["input_values"],
+                            score_delta=trace["score_delta"],
+                            confidence_delta=trace["confidence_delta"],
+                            passed=trace["passed"],
+                            reason=trace["reason"],
+                        )
+                        db.add(trace_row)
+                    # Save shadow scores (TSYS-7c)
+                    shadow = sig.get("shadow_scores")
+                    if shadow:
+                        shadow_row = ModelShadowScore(
+                            signal_id=row.id,
+                            model_id=shadow["model_id"],
+                            score=shadow["score"],
+                            confidence=shadow["confidence"],
+                            champion_score=shadow["champion_score"],
+                            champion_confidence=shadow["champion_confidence"],
+                        )
+                        db.add(shadow_row)
+                    # Save feature snapshots (QENG-2a)
+                    if "features" in sig:
+                        from services.feature_store import save_feature_snapshot
+                        from services.lineage import DATA_LINEAGE_VERSION
+                        await save_feature_snapshot(
+                            db=db,
+                            ticker=sig["ticker"],
+                            ts=datetime.utcnow(),
+                            features=sig["features"],
+                            signal_id=row.id,
+                            effective_time=datetime.utcnow(),
+                            provider="polygon",
+                            signal_policy_version=DATA_LINEAGE_VERSION,
+                        )
+            except Exception as aux_err:
+                log.warning(
+                    f"[scanner] aux-data persist skipped for {sig['ticker']} "
+                    f"(signal still saved): {type(aux_err).__name__}: {aux_err}"
                 )
 
             new_signals.append((sig, row, force_resend))
@@ -1688,7 +1701,7 @@ async def _deliver_scan_signals(
             for sig, row, label, force in candidates:
                 cohort = sig.get("cohort", "delivered")
                 merged = await db.merge(row)
-                
+
                 if cohort == "delivered":
                     await _maybe_send(
                         sig, merged, settings, db, label, force_resend=force, scan_started_at=scan_cycle_started_at
@@ -1998,19 +2011,19 @@ async def _run_scan_impl(broadcast_fn=None):
             histories={t: histories[t] for t in active_tickers if t in histories},
             infos={t: infos.get(t, {}) for t in active_tickers},
         )
-        
+
         # QENG-6a/b/c: Enrich signals with Meta-Label probability and Cohort assignment
         for sig in signals:
             try:
                 from services.signal_ml import predict_meta_prob
                 from services.cohort_service import build_policy_version_meta
-                
+
                 feats = sig.get("features", {})
                 entry_prob = sig.get("confidence", 50.0) / 100.0
                 hmm_regime = sig.get("hmmRegime", "")
                 vix_val = sig.get("vix")
                 sector_etf = sig.get("sectorEtf")
-                
+
                 meta_prob = predict_meta_prob(
                     tech=feats,
                     entry_prob=entry_prob,
@@ -2018,7 +2031,7 @@ async def _run_scan_impl(broadcast_fn=None):
                     vix=vix_val,
                     sector_etf=sector_etf
                 )
-                
+
                 cohort_meta = build_policy_version_meta(
                     ticker=sig["ticker"],
                     ts=datetime.utcnow(),
@@ -2028,7 +2041,7 @@ async def _run_scan_impl(broadcast_fn=None):
                 sig["cohort"] = cohort_meta["cohort"]
             except Exception as e_cohort:
                 log.warning(f"Failed to enrich signal with cohort/meta metadata: {e_cohort}")
-                
+
     except Exception as e:
         log.info(f" scan_all failed: {e}")
         raise RuntimeError(f"scan_all failed: {e}") from e

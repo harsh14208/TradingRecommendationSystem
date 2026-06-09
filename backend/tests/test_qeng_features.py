@@ -236,6 +236,74 @@ async def test_portfolio_hrp_allocations():
 
 
 @pytest.mark.asyncio
+async def test_portfolio_allocator_optimizations():
+    """Verify L7 nudge, Volatility sizing penalty, and Drawdown throttle logic."""
+    from services.portfolio_allocator import allocate_portfolio
+    from models import PnlDaily, User
+    import datetime
+    from sqlalchemy import select
+    
+    async with AsyncSessionLocal() as db:
+        # Create a test user with a high unique ID
+        user_id = 9999
+        res_u = await db.execute(select(User).where(User.id == user_id))
+        user = res_u.scalar_one_or_none()
+        if not user:
+            user = User(id=user_id, email="test_opt@signal.trade", password_hash="hash")
+            db.add(user)
+            await db.flush()
+            
+        # 1. Setup Drawdown Throttle (Peak equity = 20,000, current cash = 10,000 -> 50% DD)
+        today = datetime.date.today()
+        peak_pnl = PnlDaily(
+            user_id=user_id,
+            date=today - datetime.timedelta(days=1),
+            equity=20000.0,
+            cash=20000.0,
+            realized_pnl=0.0,
+            unrealized_pnl=0.0,
+            n_positions=0
+        )
+        db.add(peak_pnl)
+        await db.flush()
+        
+        # AAPL and MSFT signals (AAPL has higher raw_score -> should get higher L7 nudge weight)
+        active_signals = [
+            {"ticker": "AAPL", "sectorEtf": "XLK", "id": 1, "entry": 150.0, "raw_score": 80.0},
+            {"ticker": "MSFT", "sectorEtf": "XLK", "id": 2, "entry": 300.0, "raw_score": 50.0}
+        ]
+        
+        # Test Case A: AAPL raw_score = 80, MSFT raw_score = 50
+        orders_diff = await allocate_portfolio(db, user_id=user_id, active_signals=active_signals, total_cash=10000.0)
+        assert len(orders_diff) > 0
+        aapl_diff = next(o["target_weight"] for o in orders_diff if o["ticker"] == "AAPL")
+        msft_diff = next(o["target_weight"] for o in orders_diff if o["ticker"] == "MSFT")
+        ratio_diff = aapl_diff / msft_diff
+        
+        # Test Case B: Both have raw_score = 50
+        active_signals_eq = [
+            {"ticker": "AAPL", "sectorEtf": "XLK", "id": 1, "entry": 150.0, "raw_score": 50.0},
+            {"ticker": "MSFT", "sectorEtf": "XLK", "id": 2, "entry": 300.0, "raw_score": 50.0}
+        ]
+        orders_eq = await allocate_portfolio(db, user_id=user_id, active_signals=active_signals_eq, total_cash=10000.0)
+        aapl_eq = next(o["target_weight"] for o in orders_eq if o["ticker"] == "AAPL")
+        msft_eq = next(o["target_weight"] for o in orders_eq if o["ticker"] == "MSFT")
+        ratio_eq = aapl_eq / msft_eq
+        
+        # 2. Verify L7 nudge: AAPL ratio should be higher when it has a higher score
+        assert ratio_diff > ratio_eq
+        
+        # 3. Verify Drawdown throttle: total target weights should be scaled down by 0.5
+        total_target_w = aapl_diff + msft_diff
+        assert total_target_w < 0.6  # HRP baseline sums to ~1.0, scaled down to ~0.5 under drawdown
+            
+        # Clean up
+        await db.delete(peak_pnl)
+        await db.delete(user)
+        await db.commit()
+
+
+@pytest.mark.asyncio
 async def test_alpha_sleeves_logic():
     """Verify that stat-arb OLS residuals, TS momentum, factor ranks, and cross-sleeve allocator operate correctly."""
     from services.alpha_sleeves import (

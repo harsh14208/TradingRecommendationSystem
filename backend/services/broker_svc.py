@@ -491,6 +491,39 @@ async def execute_portfolio_for_user(
         equity = float(account.get("equity") or 0.0)
         if equity > 0:
             total_cash = equity
+            # Persist daily equity/PL mark (TSYS-8a / RISK-2 / Drawdown Throttle)
+            try:
+                from models import PnlDaily
+                from sqlalchemy import select
+                import datetime
+                
+                today = datetime.date.today()
+                stmt = select(PnlDaily).where(PnlDaily.user_id == user.id, PnlDaily.date == today)
+                res = await db.execute(stmt)
+                pnl_row = res.scalar_one_or_none()
+                
+                unrealized_pl = float(account.get("unrealized_pl") or 0.0)
+                cash = float(account.get("cash") or 0.0)
+                
+                if pnl_row:
+                    pnl_row.equity = equity
+                    pnl_row.cash = cash
+                    pnl_row.unrealized_pnl = unrealized_pl
+                else:
+                    pnl_row = PnlDaily(
+                        user_id=user.id,
+                        date=today,
+                        equity=equity,
+                        cash=cash,
+                        unrealized_pnl=unrealized_pl,
+                        realized_pnl=0.0,
+                        n_positions=len(active_signals)
+                    )
+                    db.add(pnl_row)
+                await db.flush()
+                log.info("broker_svc: user=%d — recorded daily PnL mark: equity=$%.2f", user.id, equity)
+            except Exception as mark_err:
+                log.warning("broker_svc: user=%d — failed to record daily PnL mark: %s", user.id, mark_err)
     except Exception as e:
         log.warning("broker_svc: user=%d — could not fetch account equity, using fallback: %s", user.id, e)
         total_cash = (user.auto_execute_qty_dollars or 100.0) * 10.0

@@ -1347,7 +1347,43 @@ def _supervise(name: str, coro_fn, restart: bool = True):
     return asyncio.create_task(_wrapper(), name=name)
 
 
+def _async_exception_handler(loop, context):
+    """R10-16: global handler for exceptions in fire-and-forget asyncio tasks.
+
+    Without this, an exception in a task scheduled via create_task() that is
+    never awaited (e.g. the startup one-shot run_scan, manual scan triggers)
+    surfaces only as Python's default 'Task exception was never retrieved' and
+    is otherwise swallowed. Here we log it with the task name and full
+    traceback so such failures are always visible (and alertable).
+    """
+    exc = context.get("exception")
+    if isinstance(exc, asyncio.CancelledError):
+        return  # normal on shutdown
+    task = context.get("future") or context.get("task")
+    name = None
+    try:
+        if task is not None and hasattr(task, "get_name"):
+            name = task.get_name()
+    except Exception:
+        name = None
+    if exc is not None:
+        log.error(
+            "[async] Unhandled exception in task %r: %s: %s",
+            name or "<unknown>",
+            type(exc).__name__,
+            exc,
+            exc_info=exc,
+        )
+    else:
+        log.error("[async] Async error in task %r: %s", name or "<unknown>", context.get("message"))
+
+
 async def lifespan(app: FastAPI):
+    # R10-16: never silently swallow fire-and-forget task exceptions.
+    try:
+        asyncio.get_running_loop().set_exception_handler(_async_exception_handler)
+    except Exception as _eh_err:  # pragma: no cover - defensive
+        log.warning(f"[startup] Could not install async exception handler: {_eh_err}")
     # ── Security boot checks ──────────────────────────────────────────────────
     _s = get_settings()
     _is_local = _s.app_url.startswith("http://localhost") or _s.app_url.startswith("http://127.")

@@ -55,7 +55,111 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+def cached_yf_download(ticker_or_tickers, start: str, end: str, interval: str = "1d", auto_adjust: bool = True, progress: bool = False) -> pd.DataFrame:
+    import os
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_ohlcv"))
+    os.makedirs(cache_dir, exist_ok=True)
+
+    if not isinstance(ticker_or_tickers, str) and hasattr(ticker_or_tickers, "__iter__"):
+        ticker_str = "_".join(sorted(list(ticker_or_tickers)))
+    else:
+        ticker_str = str(ticker_or_tickers)
+
+    ticker_clean = ticker_str.replace("^", "_").replace("-", "_").replace(" ", "_")
+    filename = f"{ticker_clean}_{start}_{end}_{interval}_adj{auto_adjust}.csv"
+    cache_path = os.path.join(cache_dir, filename)
+
+    if os.path.exists(cache_path):
+        try:
+            return pd.read_csv(cache_path, header=[0, 1], index_col=0, parse_dates=True)
+        except Exception:
+            pass
+
+    raw = yf.download(ticker_or_tickers, start=start, end=end, interval=interval, auto_adjust=auto_adjust, progress=progress, threads=False)
+    if not raw.empty:
+        raw.to_csv(cache_path)
+    return raw
+
 warnings.filterwarnings("ignore")
+
+_CONSTITUENTS_MAP = None
+
+def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
+    global _CONSTITUENTS_MAP
+    if _CONSTITUENTS_MAP is None:
+        import json
+        import os
+        _HERE = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.abspath(os.path.join(_HERE, "..", "data", "sp500_historical_constituents.json"))
+        if not os.path.exists(path):
+            try:
+                start_all = "2003-01-01"
+                end_all = "2026-06-08"
+                default_map = {
+                    # Delisted
+                    "LEH": [["2003-01-01", "2008-09-17"]],
+                    "BSC": [["2003-01-01", "2008-05-30"]],
+                    "WM": [["2003-01-01", "2008-09-25"]],
+                    "SHLD": [["2003-01-01", "2012-09-04"]],
+                    # Additions
+                    "AMZN": [["2005-11-18", end_all]],
+                    "GOOG": [["2006-04-27", end_all]],
+                    "META": [["2013-12-23", end_all]],
+                    "NFLX": [["2010-12-20", end_all]],
+                    "TSLA": [["2020-12-21", end_all]],
+                    "BRK-B": [["2010-02-16", end_all]],
+                    "CRM": [["2008-09-15", end_all]],
+                    "V": [["2009-12-21", end_all]],
+                    "MA": [["2008-07-18", end_all]],
+                    "PYPL": [["2015-07-20", end_all]],
+                    "AVGO": [["2014-05-08", end_all]],
+                    "NOW": [["2019-11-21", end_all]],
+                    "LULU": [["2023-12-18", end_all]],
+                    "PANW": [["2023-06-20", end_all]],
+                    "WDAY": [["2023-12-18", end_all]],
+                    "CRWD": [["2024-06-24", end_all]],
+                    "PLTR": [["2024-09-23", end_all]],
+                    "SMCI": [["2024-03-18", end_all]],
+                }
+                
+                # Combine all tickers from script
+                tickers_list = globals().get("TICKERS", [])
+                held_out_list = globals().get("HELD_OUT_TICKERS", [])
+                curated_list = globals().get("_CURATED_OUT_TICKERS", [])
+                graduated_list = globals().get("_GRADUATED_TICKERS", [])
+                
+                all_scr_tickers = set(tickers_list + held_out_list + curated_list + graduated_list)
+                for t in all_scr_tickers:
+                    if t not in default_map:
+                        default_map[t] = [[start_all, end_all]]
+                        
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    json.dump(default_map, f, indent=4)
+                print(f"\n[PIT Constituents] Generated default index membership database: {path}\n")
+            except Exception as e:
+                print(f"Failed to generate constituents file: {e}")
+                
+        try:
+            with open(path, "r") as f:
+                _CONSTITUENTS_MAP = json.load(f)
+        except Exception as e:
+            print(f"Failed to load constituents file: {e}")
+            _CONSTITUENTS_MAP = {}
+            
+    intervals = _CONSTITUENTS_MAP.get(ticker)
+    if not intervals:
+        return True
+        
+    date_dt = date.date()
+    for start_str, end_str in intervals:
+        start = datetime.strptime(start_str, "%Y-%m-%d").date()
+        end = datetime.strptime(end_str, "%Y-%m-%d").date()
+        if start <= date_dt <= end:
+            return True
+            
+    return False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Config
@@ -220,11 +324,14 @@ TICKERS = [
     # XLP Consumer Staples (live delivery_gates blocks; §10 does not — research only)
     "PG",  # Procter & Gamble — ultra-stable staples; very tight MR oscillator
     "KO",  # Coca-Cola — range-bound staples compounder; classic MR instrument
-    # ── §ETF-EXP Research note (2026-05-29): sector ETFs EXCLUDED from IS universe ──
-    # Tested SPY/QQQ/IWM/XLK/XLY/XLB/XLI: all showed WR 33–50%, avg −0.51 to −0.96%.
     # ETFs are too efficiently arbed — BB%B/IBS/VWAP% MR signals calibrated on individual
     # stock volatility do not persist at index level. XLF/XLV/XLE showed positive results
     # (WR 80–100%) but N=1–5 is not significant. ETF MR requires separate signal calibration.
+    # ── Historical Delisted Constituents (Survivorship correction §84) ───────
+    "LEH",
+    "BSC",
+    "WM",
+    "SHLD",
 ]
 
 # ── Graduated tickers — EXCLUDED from both IS and OOS ────────────────────────
@@ -569,6 +676,11 @@ TICKER_TO_SECTOR: dict[str, str] = {
     "CAT": "XLI",
     "DE": "XLI",
     "LMT": "XLI",
+    # Delisted constituents
+    "LEH": "XLF",
+    "BSC": "XLF",
+    "WM": "XLF",
+    "SHLD": "XLY",
 }
 # §10 sector filter: matches ACTUAL delivery_gates.py BLOCKED_SECTORS.
 # delivery_gates.py: frozenset({"XLF", "XLP", "XLU"}) — XLV/XLI/XLE are allowed.
@@ -925,28 +1037,34 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # 64 bars gives lag=32 exactly 2 sub-windows (n2=64), enabling 4-point regression.
     _lr_all = np.diff(np.log(np.maximum(c.values.astype(float), 1e-10)))
     _hurst_arr = np.full(len(df), np.nan)
+    _lags = np.array([4, 8, 16, 32])
+    _log_lags = np.log(_lags)
     for _k in range(64, len(df)):
         _seg = _lr_all[_k - 64 : _k]
         _rs_pts = []
-        for _lag in (4, 8, 16, 32):
-            _n2 = (len(_seg) // _lag) * _lag
-            if _n2 < _lag * 2:
-                continue
-            _sub = _seg[:_n2].reshape(-1, _lag)
-            _rs_row = []
-            for _row in _sub:
-                _mu = _row.mean()
-                _cd = np.cumsum(_row - _mu)
-                _R = float(_cd.max() - _cd.min())
-                _S = float(_row.std(ddof=1)) or 1e-10
-                if _R > 0:
-                    _rs_row.append(_R / _S)
-            if _rs_row:
-                _rs_pts.append((np.log(_lag), np.log(float(np.mean(_rs_row)))))
+        for _idx, _lag in enumerate(_lags):
+            _sub = _seg.reshape(-1, _lag)
+            _mu = _sub.mean(axis=1, keepdims=True)
+            _cd = np.cumsum(_sub - _mu, axis=1)
+            _R = _cd.max(axis=1) - _cd.min(axis=1)
+            _S = _sub.std(axis=1, ddof=1)
+            _S[_S == 0.0] = 1e-10
+            _valid = _R > 0
+            if np.any(_valid):
+                _mean_rs = np.mean(_R[_valid] / _S[_valid])
+                _rs_pts.append((_log_lags[_idx], np.log(_mean_rs)))
         if len(_rs_pts) >= 3:
             _xh = np.array([v[0] for v in _rs_pts])
             _yh = np.array([v[1] for v in _rs_pts])
-            _hurst_arr[_k] = float(np.clip(np.polyfit(_xh, _yh, 1)[0], 0.0, 1.0))
+            _n_pts = len(_xh)
+            _sum_x = _xh.sum()
+            _sum_y = _yh.sum()
+            _sum_xx = (_xh**2).sum()
+            _sum_xy = (_xh * _yh).sum()
+            _denom = _n_pts * _sum_xx - _sum_x**2
+            if abs(_denom) > 1e-12:
+                _slope = (_n_pts * _sum_xy - _sum_x * _sum_y) / _denom
+                _hurst_arr[_k] = float(np.clip(_slope, 0.0, 1.0))
     df.loc[:, "hurst"] = _hurst_arr
 
     # ── §61 Realized volatility (63-day annualized) ───────────────────────────
@@ -1808,6 +1926,62 @@ def atr_levels(
         return price + s * atr, price - t * atr
 
 
+def simulate_alt_exit(df, fill_bar, hold_days, entry, atr, action, stop0, target, friction, ratchet=True):
+    """R1/R4: mechanical exit simulator for A/B vs the live exit stack.
+
+    ratchet=True (R1): arm once +1 ATR favorable → ratchet stop to breakeven+0.1%, then
+    trail 1 ATR below the high-water mark (tests "don't let a winner become a loser").
+    ratchet=False (R4): pure fixed stop (stop0) + hard target + time exit — vary stop0 to
+    test stop width (1.5 ATR baseline vs 2.5 ATR wide vs none). Returns net % (gross −
+    friction); None if atr unusable.
+    """
+    if atr <= 0:
+        return None
+    n = len(df)
+    stop = stop0
+    armed = False
+    hw = lw = entry
+    exit_price = None
+    for j in range(hold_days):
+        if fill_bar + j >= n:
+            break
+        bar = df.iloc[fill_bar + j]
+        hi, lo, op = float(bar["High"]), float(bar["Low"]), float(bar["Open"])
+        if action == "BUY":
+            hw = max(hw, hi)
+            if ratchet and not armed and hi >= entry + atr:
+                armed = True
+                stop = max(stop, entry * 1.001)
+            if ratchet and armed:
+                stop = max(stop, hw - atr)
+            if lo <= stop:
+                slip = GAP_STOP_SLIP_PCT if op < stop else NORMAL_STOP_SLIP_PCT
+                exit_price = (min(op, stop) if op < stop else stop) * (1 - slip / 100)
+                break
+            if hi >= target:
+                exit_price = target
+                break
+        else:  # SELL / short
+            lw = min(lw, lo)
+            if ratchet and not armed and lo <= entry - atr:
+                armed = True
+                stop = min(stop, entry * 0.999)
+            if ratchet and armed:
+                stop = min(stop, lw + atr)
+            if hi >= stop:
+                slip = GAP_STOP_SLIP_PCT if op > stop else NORMAL_STOP_SLIP_PCT
+                exit_price = (max(op, stop) if op > stop else stop) * (1 + slip / 100)
+                break
+            if lo <= target:
+                exit_price = target
+                break
+    if exit_price is None:
+        idx = min(fill_bar + hold_days - 1, n - 1)
+        exit_price = float(df.iloc[idx]["Close"])
+    gross = (exit_price - entry) / entry * 100 if action == "BUY" else (entry - exit_price) / entry * 100
+    return round(gross - friction, 3)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Trade simulation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1919,6 +2093,10 @@ def simulate_ticker(
             continue
 
         if date <= in_trade_until:
+            continue
+
+        # Check point-in-time constituent membership (Survivorship bias correction §84)
+        if "--no-pit" not in sys.argv and not is_index_constituent(ticker, date):
             continue
 
         score = float(row["score"])
@@ -2475,6 +2653,24 @@ def simulate_ticker(
 
         net_pct = gross_pct - FRICTION_PCT - (BETA_HEDGE_FRICTION if beta_hedge else 0.0)
 
+        # R1: parallel breakeven-ratchet exit for A/B comparison (read-only research column).
+        _net_alt = simulate_alt_exit(
+            df, _fill_bar, _hold_days, entry_price, atr, action, stop_price, target_price, FRICTION_PCT
+        )
+        # R4: mechanical fixed-stop variants (no ratchet) to isolate stop-WIDTH effect.
+        _stop_15 = stop_price  # baseline 1.5 ATR (same as live)
+        _stop_25 = (entry_price - 2.5 * atr) if action == "BUY" else (entry_price + 2.5 * atr)
+        _stop_none = 0.0 if action == "BUY" else 1e9
+        _net_stop15 = simulate_alt_exit(
+            df, _fill_bar, _hold_days, entry_price, atr, action, _stop_15, target_price, FRICTION_PCT, ratchet=False
+        )
+        _net_stop25 = simulate_alt_exit(
+            df, _fill_bar, _hold_days, entry_price, atr, action, _stop_25, target_price, FRICTION_PCT, ratchet=False
+        )
+        _net_nostop = simulate_alt_exit(
+            df, _fill_bar, _hold_days, entry_price, atr, action, _stop_none, target_price, FRICTION_PCT, ratchet=False
+        )
+
         # ── §QuantEngine: continuous forecast sizing (Carver FDM) ─────────────
         # Position size scales linearly with score above threshold.
         # Score at threshold (50) → FORECAST_FLOOR×; score 60 → 1.0×; score 70 → 2.0×.
@@ -2503,6 +2699,10 @@ def simulate_ticker(
                 "exit_day": exit_day,
                 "gross_pct": round(gross_pct, 3),
                 "net_pct": round(net_pct, 3),
+                "net_pct_alt": _net_alt,  # R1: breakeven-ratchet exit variant
+                "net_pct_stop15": _net_stop15,  # R4: mechanical 1.5-ATR stop
+                "net_pct_stop25": _net_stop25,  # R4: mechanical 2.5-ATR stop
+                "net_pct_nostop": _net_nostop,  # R4: no hard stop (target/time only)
                 "spy_leg_pct": round(_spy_leg_pct, 3) if beta_hedge else None,
                 "size_mult": round(_size_mult, 3) if forecast_sizing else None,
                 "mr_trigger": _mr_trigger_label,
@@ -2614,6 +2814,135 @@ def stats_weighted(rets: list[float], scores: list[float]) -> dict:
         "avg_win": None,
         "avg_loss": None,
         "pf": None,
+        "sharpe": sharpe,
+        "max_dd": round(max_dd, 2),
+    }
+
+
+# R10-7 deployable live L7 curve — convex half-Kelly over raw score, clamped to
+# the unchanged [0.85, 1.15] envelope. b and neutral are baked from the IS §Inv-K
+# fit so the live engine reproduces the validated curve without the full sample.
+_KELLY_PAYOFF_B = 0.83  # realized avg_win/avg_loss of the MR strategy (IS §Inv-K)
+_KELLY_NEUTRAL = 0.2283  # Kelly fraction at the neutral score=65 (normaliser)
+
+
+def kelly_size_mult(score: float, lo: float = 0.85, hi: float = 1.15) -> float:
+    """R10-7 per-signal half-Kelly sizing multiplier (the exact live L7 formula).
+
+    p ≈ score→win-prob (linear, anchored at 0.5 for score=50); f = max(0, p −
+    (1−p)/b); normalised to 1.0× at the neutral score=65 and clamped to the
+    unchanged [lo, hi] envelope so total position risk is identical to the prior
+    linear L7 — only the *shape* (convex vs linear) changes.
+    """
+    p = min(0.95, max(0.05, 0.5 + (score - 50.0) / 100.0))
+    kelly = max(0.0, p - (1.0 - p) / _KELLY_PAYOFF_B)
+    return min(hi, max(lo, kelly / _KELLY_NEUTRAL))
+
+
+def stats_explicit_weights(rets: list[float], weights: list[float]) -> dict:
+    """Weighted stats using caller-supplied per-trade weights AS-IS (mean-normalised
+    only) — unlike stats_weighted, it does not min-max rescale, so a deployable
+    sizing curve is evaluated exactly as it would size live."""
+    if not rets or not weights or len(rets) != len(weights):
+        return dict(_EMPTY_STATS)
+    arr = np.array(rets, dtype=float)
+    w = np.array(weights, dtype=float)
+    if w.mean() <= 0:
+        return stats(rets)
+    w = w / w.mean()
+    mu = float(np.average(arr, weights=w))
+    var = float(np.average((arr - mu) ** 2, weights=w))
+    std = math.sqrt(var) if var > 0 else 0.0
+    sharpe = round(mu / std, 4) if std > 0 and len(rets) >= 10 else None
+    wr_w = float(np.sum(w[arr > 0])) / float(np.sum(w)) * 100 if np.sum(w) > 0 else 0.0
+    cap, peak, max_dd = 10_000.0, 10_000.0, 0.0
+    for r, wi in zip(rets, w.tolist()):
+        cap += cap * POSITION_SIZE * wi * (r / 100)
+        peak = max(peak, cap)
+        max_dd = max(max_dd, (peak - cap) / peak * 100)
+    return {
+        "n": len(rets), "wr": round(wr_w, 1), "avg": round(mu, 2),
+        "avg_win": None, "avg_loss": None, "pf": None,
+        "sharpe": sharpe, "max_dd": round(max_dd, 2),
+    }
+
+
+def stats_kelly(
+    rets: list[float],
+    scores: list[float],
+    frac: float = 0.5,
+    lo: float = 0.70,
+    hi: float = 1.30,
+) -> dict:
+    """R10-7: per-signal half-Kelly position sizing.
+
+    The strategy uses a universal 1.5-ATR stop / 2.0-ATR target, so the *planned*
+    reward:risk is constant — per-signal Kelly therefore has no per-signal payoff
+    term and reduces to a confidence-conditional sizing curve. Here:
+      - p (per-trade win prob) is read off an in-sample score→WR calibration
+        (monotone-smoothed quintile win rates) — the empirical answer to "what
+        does the score predict about win probability";
+      - b (payoff ratio) is the realized avg_win / avg_loss of the sample (the
+        effective edge of a 10-day-hold MR trade, not the 1.33 target ratio);
+      - f_i = frac · max(0, p_i − (1−p_i)/b), normalized to mean 1.0 and clamped
+        to [lo, hi] so it stays inside the live sizing risk envelope.
+
+    Compare its Sharpe to stats_weighted (linear L7) and stats (equal-weight) to
+    decide whether the convex Kelly shape beats the current linear nudge.
+    """
+    if not rets or not scores or len(rets) != len(scores):
+        return dict(_EMPTY_STATS)
+    arr = np.array(rets, dtype=float)
+    sc = np.array(scores, dtype=float)
+    wins = arr[arr > 0]
+    losses = arr[arr <= 0]
+    if len(wins) < 5 or len(losses) < 5 or sc.max() == sc.min():
+        return stats(rets)
+    b = float(wins.mean() / abs(losses.mean())) if losses.mean() != 0 else 1.33
+
+    # In-sample score→WR calibration via quantile bins, monotone-smoothed (isotonic-lite).
+    order = np.argsort(sc)
+    n = len(sc)
+    nbins = min(5, max(2, n // 20))
+    edges = np.linspace(0, n, nbins + 1).astype(int)
+    bin_wr = []
+    for i in range(nbins):
+        idx = order[edges[i] : edges[i + 1]]
+        bin_wr.append(float((arr[idx] > 0).mean()) if len(idx) else float((arr > 0).mean()))
+    for i in range(1, nbins):  # enforce non-decreasing WR in score
+        bin_wr[i] = max(bin_wr[i], bin_wr[i - 1])
+    p = np.empty(n)
+    for i in range(nbins):
+        p[order[edges[i] : edges[i + 1]]] = bin_wr[i]
+    p = np.clip(p, 0.05, 0.95)
+
+    kelly = np.clip(p - (1 - p) / b, 0.0, None)  # full Kelly fraction per trade
+    f = frac * kelly
+    if f.max() <= 0:
+        return stats(rets)
+    neutral = float(np.mean(f[f > 0]))
+    w = np.clip(f / neutral, lo, hi)
+    w = w / w.mean()
+
+    mu = float(np.average(arr, weights=w))
+    var = float(np.average((arr - mu) ** 2, weights=w))
+    std = math.sqrt(var) if var > 0 else 0.0
+    sharpe = round(mu / std, 4) if std > 0 and n >= 10 else None
+    wr_w = float(np.sum(w[arr > 0])) / float(np.sum(w)) * 100 if np.sum(w) > 0 else 0.0
+
+    cap, peak, max_dd = 10_000.0, 10_000.0, 0.0
+    for r, wi in zip(rets, w.tolist()):
+        cap += cap * POSITION_SIZE * wi * (r / 100)
+        peak = max(peak, cap)
+        max_dd = max(max_dd, (peak - cap) / peak * 100)
+
+    return {
+        "n": n,
+        "wr": round(wr_w, 1),
+        "avg": round(mu, 2),
+        "avg_win": None,
+        "avg_loss": None,
+        "pf": round(b, 2),
         "sharpe": sharpe,
         "max_dd": round(max_dd, 2),
     }
@@ -2778,7 +3107,7 @@ def fetch_spy_trend(start: str, end: str) -> dict[pd.Timestamp, int]:
     August-2022 bear-bounce and late-2018 collapse both live in the neutral zone.
     """
     try:
-        raw = yf.download("SPY", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
+        raw = cached_yf_download("SPY", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = raw.columns.get_level_values(0)
         closes = raw["Close"].ffill()
@@ -2804,7 +3133,7 @@ def fetch_spy_trend(start: str, end: str) -> dict[pd.Timestamp, int]:
 def fetch_spy_prices(start: str, end: str) -> dict[pd.Timestamp, float]:
     """Return {date: adjusted_close} for SPY — used by the beta-hedge computation."""
     try:
-        raw = yf.download("SPY", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
+        raw = cached_yf_download("SPY", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = raw.columns.get_level_values(0)
         closes = raw["Close"].ffill()
@@ -2832,9 +3161,16 @@ def fetch_cross_asset_composite(start: str, end: str) -> dict[pd.Timestamp, int]
     if "--pbo" in sys.argv:
         return {}
     try:
-        tlt_raw = yf.download("TLT", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
-        uup_raw = yf.download("UUP", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
-        xle_raw = yf.download("XLE", start=start, end=end, interval="1d", auto_adjust=True, progress=False)
+        _HERE = os.path.dirname(os.path.abspath(__file__))
+        cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_ohlcv"))
+        
+        tlt_path = os.path.join(cache_dir, f"TLT_{start}_{end}_1d_adjTrue.csv")
+        uup_path = os.path.join(cache_dir, f"UUP_{start}_{end}_1d_adjTrue.csv")
+        xle_path = os.path.join(cache_dir, f"XLE_{start}_{end}_1d_adjTrue.csv")
+        
+        tlt_raw = pd.read_csv(tlt_path, header=[0, 1], index_col=0, parse_dates=True)
+        uup_raw = pd.read_csv(uup_path, header=[0, 1], index_col=0, parse_dates=True)
+        xle_raw = pd.read_csv(xle_path, header=[0, 1], index_col=0, parse_dates=True)
 
         def _close(df):
             if df is None or df.empty:
@@ -2877,6 +3213,21 @@ def fetch_earnings_dates_polygon(ticker: str, api_key: str, start: str) -> set:
     Uses filing_date as the earnings-event proxy (SEC 10-Q/10-K submission).
     Covers 2003-2022 — the gap yfinance cannot reach.
     """
+    import os
+    import json
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_earnings"))
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"{ticker}.json")
+    
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path) as f:
+                date_strs = json.load(f)
+                return {pd.Timestamp(ds) for ds in date_strs}
+        except Exception:
+            pass
+
     dates: set = set()
     if not api_key:
         return dates
@@ -2907,6 +3258,12 @@ def fetch_earnings_dates_polygon(ticker: str, api_key: str, start: str) -> set:
                 break
             url = next_url + f"&apiKey={api_key}"
             params = {}
+        if dates:
+            try:
+                with open(cache_path, "w") as f:
+                    json.dump([str(d)[:10] for d in sorted(list(dates))], f)
+            except Exception:
+                pass
     except Exception:
         pass
     return dates
@@ -3165,8 +3522,20 @@ def gate_sensitivity_sweep(
 _T_BILL_ANN = 0.035  # 3.5% historical average T-bill rate (conservative for 2003-2026)
 
 
-def run_portfolio_simulation(trades_df: pd.DataFrame, max_concurrent: int = MAX_PORTFOLIO_SLOTS) -> None:
+def run_portfolio_simulation(
+    trades_df: pd.DataFrame,
+    max_concurrent: int = MAX_PORTFOLIO_SLOTS,
+    dd_throttle: bool = False,
+    dd_trig: float = 3.0,
+    throttle_mult: float = 0.5,
+    quiet: bool = False,
+) -> dict | None:
     """Concurrent-position portfolio equity-curve simulation.
+
+    R7: when ``dd_throttle`` is set, a new slot opened while the portfolio is more than
+    ``dd_trig`` % below its equity peak is sized at ``throttle_mult``× (graduated de-risk,
+    causal — the drawdown is measured from already-closed capital). Returns
+    {cagr, max_dd, ann_sharpe} so callers can A/B the throttle.
 
     Models:
       1. Position overlap — multiple tickers open simultaneously (greedy slot allocation)
@@ -3181,7 +3550,7 @@ def run_portfolio_simulation(trades_df: pd.DataFrame, max_concurrent: int = MAX_
     assumption for uninvested capital (QE4).
     """
     if trades_df is None or trades_df.empty:
-        return
+        return None
 
     df = trades_df.copy().sort_values("date").reset_index(drop=True)
 
@@ -3193,7 +3562,7 @@ def run_portfolio_simulation(trades_df: pd.DataFrame, max_concurrent: int = MAX_
     capital = 10_000.0
     peak = capital
     max_dd = 0.0
-    open_slots: list = []  # [(exit_dt, net_pct)]
+    open_slots: list = []  # [(exit_dt, net_pct, size_mult)]
     equity_log: list = [(df["_entry_dt"].iloc[0], capital)]
     skipped = 0
     last_event_dt = df["_entry_dt"].iloc[0]
@@ -3221,31 +3590,34 @@ def run_portfolio_simulation(trades_df: pd.DataFrame, max_concurrent: int = MAX_
 
         # Close expired slots
         still_open = []
-        for slot_exit, slot_pct in sorted(open_slots, key=lambda x: x[0]):
+        for slot_exit, slot_pct, slot_mult in sorted(open_slots, key=lambda x: x[0]):
             if slot_exit <= entry_dt:
-                capital += capital * slot_size * (slot_pct / 100)
+                capital += capital * slot_size * slot_mult * (slot_pct / 100)
                 peak = max(peak, capital)
                 max_dd = max(max_dd, (peak - capital) / peak * 100)
                 equity_log.append((slot_exit, round(capital, 4)))
             else:
-                still_open.append((slot_exit, slot_pct))
+                still_open.append((slot_exit, slot_pct, slot_mult))
         open_slots = still_open
 
         if len(open_slots) < max_concurrent:
-            open_slots.append((exit_dt, net_pct))
+            # R7: graduated de-risk — size down a new slot opened during a drawdown.
+            _dd_now = (peak - capital) / peak * 100 if peak > 0 else 0.0
+            _mult = throttle_mult if (dd_throttle and _dd_now > dd_trig) else 1.0
+            open_slots.append((exit_dt, net_pct, _mult))
         else:
             skipped += 1
 
     # Drain remaining slots
-    for slot_exit, slot_pct in sorted(open_slots, key=lambda x: x[0]):
+    for slot_exit, slot_pct, slot_mult in sorted(open_slots, key=lambda x: x[0]):
         _apply_tbill(slot_exit)
-        capital += capital * slot_size * (slot_pct / 100)
+        capital += capital * slot_size * slot_mult * (slot_pct / 100)
         peak = max(peak, capital)
         max_dd = max(max_dd, (peak - capital) / peak * 100)
         equity_log.append((slot_exit, round(capital, 4)))
 
     if len(equity_log) < 10:
-        return
+        return None
 
     # Annualized Sharpe via daily-equivalent event returns.
     # Industry standard (hedge funds / quant firms): annualize with √252 trading days.
@@ -3263,7 +3635,7 @@ def run_portfolio_simulation(trades_df: pd.DataFrame, max_concurrent: int = MAX_
             event_days_td.append(max(cal_days * 252 / 365.25, 1.0))
 
     if not event_rets:
-        return
+        return None
 
     daily_equiv = [r / d for r, d in zip(event_rets, event_days_td)]
     mu_d = np.mean(daily_equiv)
@@ -3280,26 +3652,28 @@ def run_portfolio_simulation(trades_df: pd.DataFrame, max_concurrent: int = MAX_
     n_events = len(equity_log) - 1
     n_input = len(df)
 
-    print(f"\n## §QuantEngine: Portfolio Equity-Curve Simulation ({max_concurrent} concurrent slots)\n")
-    print_table(
-        ["Metric", "Value", "Note"],
-        [
-            ["Input trades", str(n_input), "signal-level"],
-            ["Skipped (slots full)", str(skipped), f"{skipped / n_input * 100:.1f}%"],
-            ["Exit events", str(n_events), "slot close events"],
-            ["Final capital", f"${capital:,.0f}", "from $10,000 start (incl. T-bill on idle)"],
-            ["CAGR", f"{cagr:+.1f}%", f"over {n_years:.1f} years"],
-            ["T-bill benchmark", f"+{tbill_cagr:.1f}%", f"{_T_BILL_ANN * 100:.1f}% annual on idle (QE4)"],
-            ["Portfolio Max DD", f"-{max_dd:.2f}%", "concurrent-position compound DD"],
-            ["Annualized Sharpe", fmt_sharpe(ann_sharpe) if ann_sharpe else "—", "event-time (see note)"],
-        ],
-    )
-    print(
-        f"\n> Idle capital earns {_T_BILL_ANN * 100:.1f}%/yr T-bill rate (QE4: 3.5% historical 2003-2026 avg).\n"
-        "> Ann. Sharpe from event-time daily-equivalent returns — use CAGR as the primary metric.\n"
-        f"> Concurrent DD compounding: {max_concurrent} simultaneous losing trades → "
-        f"{max_concurrent * POSITION_SIZE * 100:.0f}% max concurrent exposure.\n"
-    )
+    if not quiet:
+        print(f"\n## §QuantEngine: Portfolio Equity-Curve Simulation ({max_concurrent} concurrent slots)\n")
+        print_table(
+            ["Metric", "Value", "Note"],
+            [
+                ["Input trades", str(n_input), "signal-level"],
+                ["Skipped (slots full)", str(skipped), f"{skipped / n_input * 100:.1f}%"],
+                ["Exit events", str(n_events), "slot close events"],
+                ["Final capital", f"${capital:,.0f}", "from $10,000 start (incl. T-bill on idle)"],
+                ["CAGR", f"{cagr:+.1f}%", f"over {n_years:.1f} years"],
+                ["T-bill benchmark", f"+{tbill_cagr:.1f}%", f"{_T_BILL_ANN * 100:.1f}% annual on idle (QE4)"],
+                ["Portfolio Max DD", f"-{max_dd:.2f}%", "concurrent-position compound DD"],
+                ["Annualized Sharpe", fmt_sharpe(ann_sharpe) if ann_sharpe else "—", "event-time (see note)"],
+            ],
+        )
+        print(
+            f"\n> Idle capital earns {_T_BILL_ANN * 100:.1f}%/yr T-bill rate (QE4: 3.5% historical 2003-2026 avg).\n"
+            "> Ann. Sharpe from event-time daily-equivalent returns — use CAGR as the primary metric.\n"
+            f"> Concurrent DD compounding: {max_concurrent} simultaneous losing trades → "
+            f"{max_concurrent * POSITION_SIZE * 100:.0f}% max concurrent exposure.\n"
+        )
+    return {"cagr": cagr, "max_dd": round(max_dd, 2), "ann_sharpe": ann_sharpe, "skipped": skipped}
 
 
 def run_walk_forward_with_opt(
@@ -3568,6 +3942,24 @@ def run_oos_validation(vix, spy_trend, stlfsi4):
         ],
     )
 
+    # ── R7 OOS check: DD-scaled exposure on the held-out clean set ─────────────
+    if "date" in oos_clean.columns and len(oos_clean) >= 20:
+        _ob = run_portfolio_simulation(oos_clean, dd_throttle=False, quiet=True)
+        _ot = run_portfolio_simulation(oos_clean, dd_throttle=True, dd_trig=3.0, throttle_mult=0.5, quiet=True)
+        if _ob and _ot:
+            print("\n### R7 OOS — DD-Throttle on Held-Out Set (concurrent portfolio)\n")
+            print_table(
+                ["Policy (OOS clean)", "CAGR", "Ann.Sharpe", "Max DD"],
+                [
+                    ["Full exposure", f"{_ob['cagr']:+.1f}%", fmt_sharpe(_ob["ann_sharpe"]), f"-{_ob['max_dd']:.2f}%"],
+                    ["DD-throttle 0.5× >3% off peak", f"{_ot['cagr']:+.1f}%", fmt_sharpe(_ot["ann_sharpe"]), f"-{_ot['max_dd']:.2f}%"],
+                ],
+            )
+            _dmd_o = _ob["max_dd"] - _ot["max_dd"]
+            _dsa_o = (_ot["ann_sharpe"] or 0.0) - (_ob["ann_sharpe"] or 0.0)
+            print(f"\n> OOS: ΔAnn.Sharpe {_dsa_o:+.3f}, MaxDD reduction {_dmd_o:+.2f}pp "
+                  f"(N={len(oos_clean)} — small; directional only).\n")
+
     # Per-ticker breakdown
     print("\n### OOS Per-Ticker\n")
     rows = []
@@ -3697,27 +4089,45 @@ def process_ticker(args):
     ) = args
     print(f"Processing {ticker}…", flush=True)
     try:
-        raw = yf.download(ticker, start=START, end=END, interval="1d", auto_adjust=True, progress=False)
-        if raw.empty or len(raw) < 250:
-            print(f"{ticker}: insufficient data — skipped", flush=True)
-            return ticker, None, None, None
+        # Check indicator cache first
+        _HERE = os.path.dirname(os.path.abspath(__file__))
+        cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_indicators"))
+        os.makedirs(cache_dir, exist_ok=True)
+        ticker_clean = ticker.replace("^", "_").replace("-", "_").replace(" ", "_")
+        indicator_cache_path = os.path.join(cache_dir, f"{ticker_clean}_{START}_{END}.csv")
+        
+        loaded_from_cache = False
+        if os.path.exists(indicator_cache_path):
+            try:
+                df = pd.read_csv(indicator_cache_path, index_col=0, parse_dates=True)
+                loaded_from_cache = True
+            except Exception as e:
+                print(f"Failed to read indicator cache for {ticker}: {e}, computing fresh...", flush=True)
 
-        # Flatten MultiIndex columns if present
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = raw.columns.get_level_values(0)
+        if not loaded_from_cache:
+            raw = cached_yf_download(ticker, start=START, end=END, interval="1d", auto_adjust=True, progress=False)
+            if raw.empty or len(raw) < 250:
+                print(f"{ticker}: insufficient data — skipped", flush=True)
+                return ticker, None, None, None
 
-        df = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
-        df = df.ffill().dropna(subset=["Close", "Volume"])
+            # Flatten MultiIndex columns if present
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
+
+            df = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
+            df = df.ffill().dropna(subset=["Close", "Volume"])
+
+            # Wrap indicator computation: missing columns should not crash per-ticker.
+            try:
+                compute_indicators(df)
+                # Cache the computed dataframe
+                df.to_csv(indicator_cache_path)
+            except Exception as e:
+                print(f"\n{ticker} compute_indicators error — {e}", flush=True)
+                df["score"] = 0.0
+                return ticker, None, None, None
 
         bh_return = (float(df["Close"].iloc[-1]) / float(df["Close"].iloc[0]) - 1) * 100
-
-        # Wrap indicator computation: missing columns should not crash per-ticker.
-        try:
-            compute_indicators(df)
-        except Exception as e:
-            print(f"\n{ticker} compute_indicators error — {e}", flush=True)
-            df["score"] = 0.0
-            return ticker, None, None, None
 
         if "vwap_pct" not in df.columns:
             df["vwap_pct"] = np.nan
@@ -3729,14 +4139,6 @@ def process_ticker(args):
         df["score"] = compute_scores(df)
 
         # ── Fetch earnings dates: Polygon only (full point-in-time history) ────
-        # Polygon vX/reference/financials covers SEC filing dates back to 2003.
-        # yfinance.get_earnings_dates() was intentionally REMOVED: it returns
-        # the *current* forward-looking calendar (up to ~4yr ahead) which, when
-        # used in a historical backtest, constitutes lookahead bias — a signal
-        # blocked at 2015-01-20 would have used 2026's version of the earnings
-        # calendar, not what was known in January 2015. Polygon SEC filing dates
-        # are point-in-time (the actual announcement date is in the past when the
-        # record is written) and do not suffer from this problem.
         _poly_key = os.getenv("MASSIVE_API_KEY", "")
         if not _poly_key:
             _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
@@ -3748,25 +4150,7 @@ def process_ticker(args):
             except Exception:
                 pass
         earnings_dates: set = fetch_earnings_dates_polygon(ticker, _poly_key, START)
-
-        t = simulate_ticker(
-            ticker,
-            df,
-            vix,
-            spy_trend,
-            stlfsi4,
-            mr_only=mr_only,
-            earnings_dates=earnings_dates,
-            beta_hedge=beta_hedge,
-            spy_prices=spy_prices,
-            forecast_sizing=forecast_sizing,
-        )
-        if not t.empty:
-            print(f"{ticker}: {len(t)} trades", flush=True)
-            return ticker, t, bh_return, df
-        else:
-            print(f"{ticker}: 0 trades", flush=True)
-            return ticker, None, bh_return, df
+        return ticker, bh_return, df, earnings_dates
     except Exception as e:
         print(f"{ticker} error — {e}", flush=True)
         return ticker, None, None, None
@@ -3779,7 +4163,7 @@ def process_ticker(args):
 
 def main():
     global HOLD_DAYS, MAX_LOSS_DAYS, TICKERS
-    if "--pbo" in sys.argv:
+    if "--pbo" in sys.argv or "--quick" in sys.argv:
         TICKERS = TICKERS[:15]
     # --hold N : override hold period (e.g. --hold 5 for short-horizon MR validation)
     if "--hold" in sys.argv:
@@ -3814,7 +4198,7 @@ def main():
     # ── Download VIX ─────────────────────────────────────────────────────────
     print("Fetching VIX…", end=" ", flush=True)
     try:
-        vix_df = yf.download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
+        vix_df = cached_yf_download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
         if isinstance(vix_df.columns, pd.MultiIndex):
             vix_df.columns = vix_df.columns.get_level_values(0)
         vix_series = vix_df["Close"] if "Close" in vix_df.columns else pd.Series(dtype=float)
@@ -3897,17 +4281,13 @@ def main():
             results = p.map(process_ticker, args_list)
 
 
-    for ticker, t_df, bh_ret, df in results:
+    all_earnings_dates = {}
+    for ticker, bh_ret, df, earnings_dates in results:
         if bh_ret is not None:
             bh_returns.append(bh_ret)
         if df is not None:
             all_dfs[ticker] = df
-        if t_df is not None and not t_df.empty:
-            all_trades.append(t_df)
-
-    if not all_trades:
-        print("\n[error] No trades generated.")
-        return
+            all_earnings_dates[ticker] = earnings_dates
 
     # ── §63 Sector cointegration Z-score (post-pool, pure numpy) ─────────────
     # For each ticker, compute rolling 252-day cointegration Z-score vs its
@@ -3916,7 +4296,7 @@ def main():
     print("Computing §63 sector cointegration Z-scores…", end=" ", flush=True)
     try:
         _sector_etfs = list({TICKER_TO_SECTOR.get(t, "XLK") for t in all_dfs})
-        _etf_raw = yf.download(_sector_etfs, start=START, end=END, interval="1d", auto_adjust=True, progress=False)
+        _etf_raw = cached_yf_download(_sector_etfs, start=START, end=END, interval="1d", auto_adjust=True, progress=False)
         if isinstance(_etf_raw.columns, pd.MultiIndex):
             _etf_close = _etf_raw["Close"]
         else:
@@ -3925,17 +4305,32 @@ def main():
 
         def _coint_z_series(ticker_prices: pd.Series, etf_prices: pd.Series, window: int = 252) -> pd.Series:
             combined = pd.DataFrame({"s": ticker_prices, "e": etf_prices}).dropna()
-            n_comb = len(combined)
-            out = np.full(n_comb, np.nan)
-            for i in range(60, n_comb):
-                w = combined.iloc[max(0, i - window) : i + 1]
-                s_w, e_w = w["s"].values.astype(float), w["e"].values.astype(float)
-                beta, alpha = np.polyfit(e_w, s_w, 1)
-                resid = s_w - (beta * e_w + alpha)
-                mu, sigma = resid.mean(), resid.std(ddof=1)
-                if sigma > 1e-8:
-                    out[i] = (resid[-1] - mu) / sigma
-            return pd.Series(out, index=combined.index)
+            if len(combined) < 60:
+                return pd.Series(dtype=float, index=combined.index)
+            W = window + 1
+            s_col = combined["s"]
+            e_col = combined["e"]
+
+            sum_s = s_col.rolling(W, min_periods=60).sum()
+            sum_e = e_col.rolling(W, min_periods=60).sum()
+            sum_se = (s_col * e_col).rolling(W, min_periods=60).sum()
+            sum_ee = (e_col**2).rolling(W, min_periods=60).sum()
+            sum_ss = (s_col**2).rolling(W, min_periods=60).sum()
+            N = s_col.rolling(W, min_periods=60).count()
+
+            denom = N * sum_ee - sum_e**2
+            denom_valid = denom.abs() > 1e-12
+
+            beta = np.where(denom_valid, (N * sum_se - sum_s * sum_e) / denom, np.nan)
+            alpha = np.where(denom_valid, (sum_s - beta * sum_e) / N, np.nan)
+
+            resid_last = s_col - (beta * e_col + alpha)
+            ss = sum_ss + beta**2 * sum_ee + N * alpha**2 - 2 * beta * sum_se - 2 * alpha * sum_s + 2 * beta * alpha * sum_e
+            var = np.maximum(ss / (N - 1), 0.0)
+            sigma = np.sqrt(var)
+
+            z_score = np.where((sigma > 1e-8) & denom_valid, resid_last / sigma, np.nan)
+            return pd.Series(z_score, index=combined.index)
 
         _coint_added = 0
         for ticker, df in all_dfs.items():
@@ -3948,10 +4343,34 @@ def main():
                 continue
             cz = _coint_z_series(df["Close"], etf_p)
             df["coint_z"] = cz.reindex(df.index)
+            # Recompute scores so they include cointegration adjustments!
+            df["score"] = compute_scores(df)
             _coint_added += 1
         print(f"ok ({_coint_added}/{len(all_dfs)} tickers)")
     except Exception as _coint_err:
         print(f"skipped ({_coint_err})")
+
+    # Generate trades now that cointegration and scores are final!
+    all_trades = []
+    for ticker, df in all_dfs.items():
+        t = simulate_ticker(
+            ticker,
+            df,
+            vix,
+            spy_trend,
+            stlfsi4,
+            mr_only=BACKTEST_MR_DEFAULT,
+            earnings_dates=all_earnings_dates.get(ticker),
+            beta_hedge=_beta_hedge_flag,
+            spy_prices=spy_prices,
+            forecast_sizing=_forecast_sizing_flag,
+        )
+        if t is not None and not t.empty:
+            all_trades.append(t)
+
+    if not all_trades:
+        print("\n[error] No trades generated.")
+        return
 
     trades = pd.concat(all_trades, ignore_index=True)
     trades["year"] = trades["date"].dt.year
@@ -4569,6 +4988,252 @@ def main():
             )
             print(f"> ΔSharpe = {_d_sh_l8:+.3f}  {verdict_l8}\n")
 
+    # Sleeve-correlation support: dump MR monthly returns for backtest_sleeves --corr.
+    if trades is not None and not trades.empty and {"date", "net_pct"}.issubset(trades.columns):
+        try:
+            _mrm = trades.copy()
+            _mrm["_m"] = pd.to_datetime(_mrm["date"]).dt.to_period("M").astype(str)
+            _mrm.groupby("_m")["net_pct"].mean().to_csv("data/mr_monthly.csv")
+        except Exception:
+            pass
+
+    # ── R1. Exit / MFE-Capture Analysis ──────────────────────────────────────
+    if trades is not None and not trades.empty and {"mfe_pct", "gross_pct", "exit_reason"}.issubset(trades.columns):
+        print("\n## R1. Exit / MFE-Capture Analysis\n")
+        print("> MFE = max favorable excursion during the hold. Capture = avg gross / avg MFE.")
+        print("> Low capture on winners ⇒ headroom for partial scale-out / trailing exits.\n")
+
+        def _cap_row(label, sub):
+            if sub.empty:
+                return [label, "0", "—", "—", "—", "—"]
+            _mfe = float(sub["mfe_pct"].mean())
+            _gr = float(sub["gross_pct"].mean())
+            return [
+                label, str(len(sub)), f"{_mfe:+.2f}%", f"{_gr:+.2f}%",
+                f"{_gr / _mfe * 100:.0f}%" if _mfe > 0 else "—", f"{_mfe - _gr:+.2f}%",
+            ]
+
+        print_table(
+            ["Cohort", "N", "Avg MFE", "Avg Gross", "Capture", "Left on table"],
+            [
+                _cap_row("All trades", trades),
+                _cap_row("Winners", trades[trades["net_pct"] > 0]),
+                _cap_row("Losers", trades[trades["net_pct"] <= 0]),
+            ],
+        )
+        print("\n> Exit-reason distribution (avg MFE shows upside present at each exit type):\n")
+        _er_rows = []
+        for _r, _c in trades["exit_reason"].value_counts().items():
+            _sub = trades[trades["exit_reason"] == _r]
+            _s = stats(_sub["net_pct"].tolist())
+            _er_rows.append([
+                str(_r), str(_c), f"{_c / len(trades) * 100:.0f}%", f"{_s['wr']:.1f}%",
+                f"{_s['avg']:+.2f}%", f"{float(_sub['mfe_pct'].mean()):+.2f}%",
+            ])
+        print_table(["Exit reason", "N", "% of total", "WR", "Avg Net", "Avg MFE"], _er_rows)
+
+        # ── R1b. Breakeven-Ratchet Exit A/B (deployable) ──────────────────────
+        if "net_pct_alt" in trades.columns and trades["net_pct_alt"].notna().any():
+            _cur = stats(trades["net_pct"].tolist())
+            _altt = trades.dropna(subset=["net_pct_alt"])
+            _alt = stats(_altt["net_pct_alt"].tolist())
+            _dsh = (_alt.get("sharpe") or 0.0) - (_cur.get("sharpe") or 0.0)
+            print("\n## R1b. Breakeven-Ratchet Exit — A/B vs Live Exit Stack\n")
+            print("> Alt: arm at +1 ATR favorable → stop ratchets to breakeven+0.1%, then trails 1 ATR "
+                  "below high-water. Hard target + time exit unchanged. Same 0.50% friction.\n")
+            print_table(
+                ["Exit policy", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"],
+                [
+                    ["Current (stop/target/adaptive/time)", str(_cur["n"]), f"{_cur['wr']:.1f}%",
+                     f"{_cur['avg']:+.2f}%", fmt_sharpe(_cur["sharpe"]), f"-{_cur['max_dd']:.2f}%"],
+                    ["Breakeven-ratchet + ATR trail", str(_alt["n"]), f"{_alt['wr']:.1f}%",
+                     f"{_alt['avg']:+.2f}%", f"{fmt_sharpe(_alt['sharpe'])} ({_dsh:+.2f})", f"-{_alt['max_dd']:.2f}%"],
+                ],
+            )
+            _v = (
+                "✅ Ratchet beats current exits — convert losers' MFE to small wins"
+                if _dsh > 0.01
+                else "➖ Ratchet ≈ current (adaptive exits already capture most upside)"
+                if _dsh > -0.01
+                else "⚠ Ratchet worse — current exit stack superior"
+            )
+            print(f"\n> ΔSharpe = {_dsh:+.3f}  {_v}\n")
+
+        # ── R4. Stop-Width Study (mechanical, no ratchet) ─────────────────────
+        if {"net_pct_stop15", "net_pct_stop25", "net_pct_nostop"}.issubset(trades.columns):
+            print("\n## R4. Stop-Width Study (mechanical: fixed stop + target + time)\n")
+            print("> Isolates stop WIDTH: 1.5 ATR (live) vs 2.5 ATR vs none. MR theory says oversold "
+                  "bounces need room — does a tighter stop cut recoveries? (no adaptive exits here)\n")
+            _r4 = []
+            for _lbl, _col in [
+                ("1.5-ATR stop (live width)", "net_pct_stop15"),
+                ("2.5-ATR stop (wide)", "net_pct_stop25"),
+                ("No hard stop (target/time only)", "net_pct_nostop"),
+            ]:
+                _sub = trades.dropna(subset=[_col])
+                _s = stats(_sub[_col].tolist())
+                _r4.append([_lbl, str(_s["n"]), f"{_s['wr']:.1f}%", f"{_s['avg']:+.2f}%",
+                            fmt_sharpe(_s["sharpe"]), f"-{_s['max_dd']:.2f}%"])
+            print_table(["Stop policy", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"], _r4)
+            _s15 = stats(trades.dropna(subset=["net_pct_stop15"])["net_pct_stop15"].tolist())
+            _sno = stats(trades.dropna(subset=["net_pct_nostop"])["net_pct_nostop"].tolist())
+            _d = (_sno.get("sharpe") or 0.0) - (_s15.get("sharpe") or 0.0)
+            print(f"\n> No-stop − 1.5-ATR ΔSharpe = {_d:+.3f}  "
+                  + ("✅ stop HURTS — widen/remove" if _d > 0.02
+                     else "➖ stop ~neutral on mechanical core" if _d > -0.02
+                     else "⚠ stop HELPS — keep it") + "\n")
+
+    # ── R2. Regime-Conditional Edge (VIX / SPY trend at entry) ────────────────
+    if trades is not None and not trades.empty and "vix_entry" in trades.columns:
+        print("\n## R2. Regime-Conditional Edge\n")
+        print("> Edge by VIX regime at entry — tests whether thresholds/sizing should be regime-aware.\n")
+        _vd = trades["vix_entry"].dropna()
+        print(f"> vix_entry diag: non-null {len(_vd)}/{len(trades)}, "
+              f"min={_vd.min() if len(_vd) else float('nan'):.1f} "
+              f"mean={_vd.mean() if len(_vd) else float('nan'):.1f} "
+              f"max={_vd.max() if len(_vd) else float('nan'):.1f}\n")
+        _vt = trades.dropna(subset=["vix_entry"])
+        _vb = [
+            ("VIX<15 (calm)", _vt[_vt["vix_entry"] < 15]),
+            ("15–20", _vt[(_vt["vix_entry"] >= 15) & (_vt["vix_entry"] < 20)]),
+            ("20–30 (stress)", _vt[(_vt["vix_entry"] >= 20) & (_vt["vix_entry"] < 30)]),
+            ("VIX≥30 (panic)", _vt[_vt["vix_entry"] >= 30]),
+        ]
+        print_table(
+            ["VIX regime", "N", "WR", "Avg Ret", "Sharpe"],
+            [
+                [_lbl, str(stats(_g["net_pct"].tolist())["n"]),
+                 f"{stats(_g['net_pct'].tolist())['wr']:.1f}%",
+                 f"{stats(_g['net_pct'].tolist())['avg']:+.2f}%",
+                 fmt_sharpe(stats(_g["net_pct"].tolist())["sharpe"])]
+                for _lbl, _g in _vb
+            ],
+        )
+        if "spy_trend_entry" in trades.columns:
+            print("\n> Edge by SPY trend at entry:\n")
+            _tb = [
+                ("SPY down-trend", trades[trades["spy_trend_entry"] < 0]),
+                ("SPY flat", trades[trades["spy_trend_entry"] == 0]),
+                ("SPY up-trend", trades[trades["spy_trend_entry"] > 0]),
+            ]
+            print_table(
+                ["SPY trend", "N", "WR", "Avg Ret", "Sharpe"],
+                [
+                    [_lbl, str(stats(_g["net_pct"].tolist())["n"]),
+                     f"{stats(_g['net_pct'].tolist())['wr']:.1f}%",
+                     f"{stats(_g['net_pct'].tolist())['avg']:+.2f}%",
+                     fmt_sharpe(stats(_g["net_pct"].tolist())["sharpe"])]
+                    for _lbl, _g in _tb
+                ],
+            )
+
+    # ── R3. Score → Win-Probability Calibration ───────────────────────────────
+    if trades is not None and not trades.empty and "score" in trades.columns:
+        print("\n## R3. Score → Win-Probability Calibration\n")
+        print("> Is raw score a calibrated win-prob? Decile WR should rise monotonically with score.\n")
+        _ts = trades.dropna(subset=["score"]).copy()
+        if len(_ts) >= 30:
+            _ts["win"] = (_ts["net_pct"] > 0).astype(int)
+            _ndec = min(10, max(3, len(_ts) // 20))
+            _ts["dec"] = pd.qcut(_ts["score"].rank(method="first"), _ndec, labels=False)
+            _rows, _prev, _mono = [], None, True
+            for d in range(_ndec):
+                g = _ts[_ts["dec"] == d]
+                wr = float(g["win"].mean()) * 100
+                if _prev is not None and wr < _prev - 1e-9:
+                    _mono = False
+                _prev = wr
+                _rows.append([f"D{d + 1}", f"{g['score'].min():.0f}–{g['score'].max():.0f}", str(len(g)), f"{wr:.1f}%"])
+            print_table(["Decile", "Score range", "N", "Win rate"], _rows)
+            _rho = float(_ts["score"].corr(_ts["win"], method="spearman"))
+            print(f"\n> Spearman(score, win) = {_rho:+.3f}; deciles monotonic: {_mono}.")
+            print("> Flat/non-monotone ⇒ score is NOT a usable win-prob; needs isotonic calibration "
+                  "before it can drive Kelly sizing or honest confidence display.\n")
+
+    # ── R5. Cross-Sectional Relative-Value Ranking ────────────────────────────
+    if trades is not None and not trades.empty and {"date", "score"}.issubset(trades.columns):
+        print("\n## R5. Cross-Sectional Relative-Value Ranking\n")
+        print("> On days with ≥3 candidates, does within-day score rank predict outcome?\n")
+        _td = trades.dropna(subset=["score"]).copy()
+        _sizes = _td.groupby("date").size()
+        _multi = _sizes[_sizes >= 3].index
+        _md = _td[_td["date"].isin(_multi)].copy()
+        if not _md.empty:
+            _md["rank"] = _md.groupby("date")["score"].rank(pct=True)
+            _top = _md[_md["rank"] >= 0.67]
+            _bot = _md[_md["rank"] <= 0.33]
+            _st, _sb = stats(_top["net_pct"].tolist()), stats(_bot["net_pct"].tolist())
+            print(f"> {len(_multi)} multi-candidate days, {len(_md)} trades.\n")
+            print_table(
+                ["Within-day rank", "N", "WR", "Avg Ret", "Sharpe"],
+                [
+                    ["Top third (most oversold rel.)", str(_st["n"]), f"{_st['wr']:.1f}%", f"{_st['avg']:+.2f}%", fmt_sharpe(_st["sharpe"])],
+                    ["Bottom third", str(_sb["n"]), f"{_sb['wr']:.1f}%", f"{_sb['avg']:+.2f}%", fmt_sharpe(_sb["sharpe"])],
+                ],
+            )
+            print("\n> If top-rank Sharpe >> bottom, a daily top-K cross-sectional filter adds value.\n")
+        else:
+            print("> Not enough multi-candidate days for cross-sectional analysis.\n")
+
+    # ── R7. Portfolio Drawdown-Scaled Exposure ────────────────────────────────
+    if trades is not None and not trades.empty and {"date", "net_pct"}.issubset(trades.columns):
+        print("\n## R7. Portfolio Drawdown-Scaled Exposure\n")
+        print("> Causal de-risk: when the strategy equity is >DD_TRIG below its peak, halve exposure "
+              "on subsequent trades until recovery. Tests risk-adjusted improvement (MaxDD vs Sharpe).\n")
+        _seq = trades.dropna(subset=["net_pct"]).sort_values("date")["net_pct"].to_numpy(dtype=float) / 100.0
+
+        def _dd_overlay(scaled, dd_trig=0.03):
+            eq, peak, maxdd, rets = 1.0, 1.0, 0.0, []
+            for x in _seq:
+                dd = (peak - eq) / peak  # drawdown BEFORE this trade (causal)
+                expo = 0.5 if (scaled and dd > dd_trig) else 1.0
+                step = expo * x
+                rets.append(step * 100)
+                eq *= 1 + step
+                peak = max(peak, eq)
+                maxdd = max(maxdd, (peak - eq) / peak)
+            return rets, maxdd * 100
+
+        _u_rets, _u_dd = _dd_overlay(False)
+        _s_rets, _s_dd = _dd_overlay(True)
+        _su, _ss = stats(_u_rets), stats(_s_rets)
+        print_table(
+            ["Exposure policy", "N", "WR", "Avg Ret", "Sharpe", "Equity MaxDD"],
+            [
+                ["Full exposure (baseline)", str(_su["n"]), f"{_su['wr']:.1f}%", f"{_su['avg']:+.2f}%",
+                 fmt_sharpe(_su["sharpe"]), f"-{_u_dd:.2f}%"],
+                ["DD-scaled (0.5× when >3% off peak)", str(_ss["n"]), f"{_ss['wr']:.1f}%", f"{_ss['avg']:+.2f}%",
+                 fmt_sharpe(_ss["sharpe"]), f"-{_s_dd:.2f}%"],
+            ],
+        )
+        _dsh7 = (_ss.get("sharpe") or 0.0) - (_su.get("sharpe") or 0.0)
+        _ddr = _u_dd - _s_dd
+        print(f"\n> Sequential ΔSharpe = {_dsh7:+.3f}, MaxDD reduction = {_ddr:+.2f}pp  "
+              + ("✅ better risk-adjusted — cuts DD without killing Sharpe" if (_ddr > 0.2 and _dsh7 > -0.02)
+                 else "➖ neutral — DD overlay adds little at this sequential scale"
+                 if abs(_dsh7) < 0.03 else "⚠ hurts Sharpe more than it helps DD") + "\n")
+
+        # Realistic concurrent-portfolio A/B (5-slot, T-bill on idle) — addresses the
+        # sequential overstatement of MaxDD. This is the deployment-relevant test.
+        _pb = run_portfolio_simulation(trades, dd_throttle=False, quiet=True)
+        _pt = run_portfolio_simulation(trades, dd_throttle=True, dd_trig=3.0, throttle_mult=0.5, quiet=True)
+        if _pb and _pt:
+            print("> Concurrent-portfolio A/B (5 slots, T-bill on idle) — deployment-relevant:\n")
+            print_table(
+                ["Portfolio policy", "CAGR", "Ann.Sharpe", "Max DD"],
+                [
+                    ["Full exposure", f"{_pb['cagr']:+.1f}%", fmt_sharpe(_pb["ann_sharpe"]), f"-{_pb['max_dd']:.2f}%"],
+                    ["DD-throttle 0.5× >3% off peak", f"{_pt['cagr']:+.1f}%", fmt_sharpe(_pt["ann_sharpe"]), f"-{_pt['max_dd']:.2f}%"],
+                ],
+            )
+            _dca = _pt["cagr"] - _pb["cagr"]
+            _dmd = _pb["max_dd"] - _pt["max_dd"]
+            _dsa = (_pt["ann_sharpe"] or 0.0) - (_pb["ann_sharpe"] or 0.0)
+            print(f"\n> Concurrent: ΔCAGR {_dca:+.1f}pp, ΔAnn.Sharpe {_dsa:+.3f}, MaxDD reduction {_dmd:+.2f}pp  "
+                  + ("✅ deploy graduated DD-throttle in allocator" if (_dmd > 0.2 and _dsa > -0.03)
+                     else "➖ neutral on concurrent path — DD already small" if abs(_dsa) < 0.05
+                     else "⚠ concurrent path: throttle costs more CAGR than DD saved") + "\n")
+
     # ── §Inv1. MR Trigger Quality Split ──────────────────────────────────────
     # Which MR condition (IBS / BB / VWAP / RSI / multi) drives the best alpha?
     if trades is not None and not trades.empty and "mr_trigger" in trades.columns:
@@ -4646,6 +5311,118 @@ def main():
             )
         )
         print(f"\n> ΔSharpe = {_delta_sh:+.3f}  {verdict}\n")
+
+        # ── §Inv-K. R10-7 Per-Signal Half-Kelly vs Linear L7 ──────────────────
+        # Constant 1.5s/2.0t R:R → Kelly has no per-signal payoff term and reduces
+        # to a confidence-conditional convex sizing curve. Tests whether that convex
+        # shape (sized off empirical score→WR + realized payoff) beats the linear L7.
+        _kelly = stats_kelly(_rets_l7, trades["score"].fillna(50).tolist())
+        if _kelly.get("sharpe") is not None:
+            _dk_l7 = (_kelly.get("sharpe") or 0.0) - (sw_l7.get("sharpe") or 0.0)
+            _dk_eq = (_kelly.get("sharpe") or 0.0) - (eq_l7.get("sharpe") or 0.0)
+            print("\n## §Inv-K. R10-7 Per-Signal Half-Kelly Sizing Validation\n")
+            print("> f = 0.5·max(0, p − (1−p)/b); p = in-sample score→WR calibration, "
+                  "b = realized avg_win/avg_loss; clamped [0.70, 1.30].")
+            print(f"> Realized payoff ratio b = {_kelly.get('pf')} (vs 1.33 planned R:R).\n")
+            print_table(
+                ["Config", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"],
+                [
+                    [
+                        "Equal-weight (baseline)",
+                        str(eq_l7["n"]), f"{eq_l7['wr']:.1f}%", f"{eq_l7['avg']:+.2f}%",
+                        fmt_sharpe(eq_l7["sharpe"]), f"-{eq_l7['max_dd']:.2f}%",
+                    ],
+                    [
+                        "L7 score-weighted (linear ±15%)",
+                        str(sw_l7["n"]), f"{sw_l7['wr']:.1f}%", f"{sw_l7['avg']:+.2f}%",
+                        fmt_sharpe(sw_l7["sharpe"]), f"-{sw_l7['max_dd']:.2f}%",
+                    ],
+                    [
+                        "Half-Kelly exploratory (empirical p, [0.70,1.30])",
+                        str(_kelly["n"]), f"{_kelly['wr']:.1f}%", f"{_kelly['avg']:+.2f}%",
+                        f"{fmt_sharpe(_kelly['sharpe'])} ({_dk_l7:+.2f} vs L7)",
+                        f"-{_kelly['max_dd']:.2f}%",
+                    ],
+                ],
+            )
+            # The DEPLOYABLE live formula: convex Kelly over raw score, clamped to the
+            # unchanged [0.85,1.15] envelope (kelly_size_mult — identical to assembler.py L7).
+            _kw = [kelly_size_mult(float(s)) for s in trades["score"].fillna(50).tolist()]
+            _kelly_live = stats_explicit_weights(_rets_l7, _kw)
+            _dkl = (_kelly_live.get("sharpe") or 0.0) - (sw_l7.get("sharpe") or 0.0)
+            print_table(
+                ["Deployable live L7", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"],
+                [
+                    [
+                        "Convex Kelly [0.85,1.15] (ships live)",
+                        str(_kelly_live["n"]), f"{_kelly_live['wr']:.1f}%", f"{_kelly_live['avg']:+.2f}%",
+                        f"{fmt_sharpe(_kelly_live['sharpe'])} ({_dkl:+.2f} vs L7)",
+                        f"-{_kelly_live['max_dd']:.2f}%",
+                    ],
+                ],
+            )
+            _kv = (
+                "✅ Deployable convex Kelly beats linear L7 — ship it"
+                if _dkl > 0.005
+                else "➖ Deployable Kelly ≈ linear L7 within the conservative envelope — keep linear"
+                if _dkl > -0.005
+                else "⚠ Deployable Kelly worse than L7 — keep linear nudge"
+            )
+            print(
+                f"\n> Exploratory ΔSharpe vs L7 = {_dk_l7:+.3f} (vs eq {_dk_eq:+.3f}); "
+                f"DEPLOYABLE ΔSharpe vs L7 = {_dkl:+.3f}  {_kv}\n"
+            )
+
+        # ── §R10-8. Per-Ticker (Vol-Scaled) Friction vs Flat 0.50% ────────────
+        # The backtest has no historical fills, so we proxy spread/slippage from
+        # realized volatility: wider quotes on higher-ATR names. Round-trip
+        # friction_i = clamp(0.10 + 0.06·atr_pct, 0.12, 0.80)%. This is a realism
+        # check (is flat 0.50% conservative?) and an edge-robustness check by
+        # liquidity/vol tercile — NOT a Sharpe-maximisation knob.
+        if "atr_pct" in trades.columns and "gross_pct" in trades.columns:
+            _atr = trades["atr_pct"].fillna(2.0).to_numpy(dtype=float)  # atr as % of price
+            _fric_pt = np.clip(0.10 + 0.06 * _atr, 0.12, 0.80)
+            _gross = trades["gross_pct"].fillna(0.0).to_numpy(dtype=float)
+            _net_pt = (_gross - _fric_pt).tolist()
+            _flat = stats(trades["net_pct"].tolist())
+            _pt = stats(_net_pt)
+            print("\n## §R10-8. Per-Ticker Vol-Scaled Friction Validation\n")
+            print("> friction_i = clamp(0.10 + 0.06·atr_pct, 0.12, 0.80)% round-trip "
+                  f"(mean {_fric_pt.mean():.2f}% vs flat {FRICTION_PCT:.2f}%).\n")
+            print_table(
+                ["Friction model", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"],
+                [
+                    [
+                        f"Flat {FRICTION_PCT:.2f}% (current)",
+                        str(_flat["n"]), f"{_flat['wr']:.1f}%", f"{_flat['avg']:+.2f}%",
+                        fmt_sharpe(_flat["sharpe"]), f"-{_flat['max_dd']:.2f}%",
+                    ],
+                    [
+                        f"Per-ticker vol-scaled (μ={_fric_pt.mean():.2f}%)",
+                        str(_pt["n"]), f"{_pt['wr']:.1f}%", f"{_pt['avg']:+.2f}%",
+                        fmt_sharpe(_pt["sharpe"]), f"-{_pt['max_dd']:.2f}%",
+                    ],
+                ],
+            )
+            # Edge robustness by ATR tercile under per-ticker friction.
+            _t = trades.assign(_net_pt=_net_pt, _atr=_atr)
+            _q1, _q2 = np.percentile(_atr, [33, 67])
+            _buckets = [
+                ("Low-vol (tight spread)", _t[_t["_atr"] <= _q1]),
+                ("Mid-vol", _t[(_t["_atr"] > _q1) & (_t["_atr"] <= _q2)]),
+                ("High-vol (wide spread)", _t[_t["_atr"] > _q2]),
+            ]
+            _rows = []
+            for _lbl, _grp in _buckets:
+                _s = stats(_grp["_net_pt"].tolist())
+                _rows.append([_lbl, str(_s["n"]), f"{_s['wr']:.1f}%", f"{_s['avg']:+.2f}%", fmt_sharpe(_s["sharpe"])])
+            print("\n> Edge by volatility tercile (net of per-ticker friction):\n")
+            print_table(["Vol tercile", "N", "WR", "Avg Ret", "Sharpe"], _rows)
+            print(
+                "\n> Read: if high-vol Sharpe survives the wider modeled friction, the edge is "
+                "robust to spread; the live allocator should still size DOWN wide-NBBO-spread "
+                "names (§80 already penalises score; R10-8 adds the sizing lever).\n"
+            )
 
     if all_dfs and trades is not None and not trades.empty:
         _allowed = [t for t in trades["ticker"].unique() if TICKER_TO_SECTOR.get(t, "XLK") not in _BLOCKED_SECTORS]
@@ -5416,21 +6193,21 @@ def main():
                 _all_trial_trades[_bt] = pd.concat(_trades_list, ignore_index=True)
             else:
                 _all_trial_trades[_bt] = pd.DataFrame(columns=["entry_date", "net_pct"])
-        
+
         # Determine the global min/max dates across all trials to split chronologically
         _all_dates = []
         for _bt, _df_trades in _all_trial_trades.items():
             if not _df_trades.empty:
                 _col = "entry" if "entry" in _df_trades.columns else "entry_date"
                 _all_dates.extend(pd.to_datetime(_df_trades[_col]).tolist())
-        
+
         if not _all_dates:
             print("No trades found across any trials to compute PBO.")
         else:
             _min_date = min(_all_dates)
             _max_date = max(_all_dates)
             _duration = _max_date - _min_date
-            
+
             # Divide timeline into S=8 slices
             S = 8
             _slice_duration = _duration / S
@@ -5439,7 +6216,7 @@ def main():
                 _start = _min_date + i * _slice_duration
                 _end = _min_date + (i + 1) * _slice_duration
                 _slices.append((_start, _end))
-                
+
             # Helper to calculate Sharpe of a list of returns
             def _calc_raw_sharpe(returns: list[float]) -> float:
                 if len(returns) < 3:
@@ -5472,12 +6249,12 @@ def main():
             _all_combos = list(_combinations(range(S), S // 2))
             _overfit_count = 0
             _total_combos = len(_all_combos)
-            
+
             _rank_distribution = []
-            
+
             for _train_indices in _all_combos:
                 _test_indices = [idx for idx in range(S) if idx not in _train_indices]
-                
+
                 # Evaluate all trials on training set
                 _train_sharpes = {}
                 for _bt in _trials:
@@ -5485,10 +6262,10 @@ def main():
                     for idx in _train_indices:
                         _train_rets.extend(_trial_slice_rets[_bt][idx])
                     _train_sharpes[_bt] = _calc_raw_sharpe(_train_rets)
-                
+
                 # Identify optimal trial on training set:
                 _best_train_bt = max(_trials, key=lambda _bt: _train_sharpes[_bt])
-                
+
                 # Evaluate all trials on testing set
                 _test_sharpes = {}
                 for _bt in _trials:
@@ -5496,7 +6273,7 @@ def main():
                     for idx in _test_indices:
                         _test_rets.extend(_trial_slice_rets[_bt][idx])
                     _test_sharpes[_bt] = _calc_raw_sharpe(_test_rets)
-                
+
                 # Rank the selected parameter on testing set.
                 _sorted_test_sharpes = sorted([(_test_sharpes[_bt], _bt) for _bt in _trials])
                 _rank_idx = -1
@@ -5504,10 +6281,10 @@ def main():
                     if _bt == _best_train_bt:
                         _rank_idx = rank_i
                         break
-                
+
                 _rel_rank = (_rank_idx + 1) / len(_trials)
                 _rank_distribution.append(_rel_rank)
-                
+
                 if _rel_rank <= 0.50:
                     _overfit_count += 1
 
@@ -5515,12 +6292,12 @@ def main():
             print(f"Combinations evaluated: {_total_combos} (S={S} slices, S//2 train)")
             print(f"Overfit instances (test rank <= median): {_overfit_count}")
             print(f"Probability of Backtest Overfitting (PBO): {_pbo:.4f} ({_pbo * 100:.1f}%)")
-            
+
             _threshold = 0.15
             _passed = _pbo < _threshold
             _status_str = "PASS" if _passed else "WARNING"
             print(f"STATUS: {_status_str} (PBO {_pbo:.4f} vs limit {_threshold})")
-            
+
             # Print relative rank distribution
             _p10 = float(_np.percentile(_rank_distribution, 10))
             _p50 = float(_np.percentile(_rank_distribution, 50))
@@ -5537,7 +6314,7 @@ def main():
                     import subprocess
                     from database import AsyncSessionLocal
                     from models import ResearchExperiment
-                    
+
                     try:
                         git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
                     except Exception:

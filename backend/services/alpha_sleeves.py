@@ -324,7 +324,20 @@ async def get_dynamic_sleeve_sharpes(db: AsyncSession, lookback_days: int = 30) 
     except Exception as e:
         log.warning(f"Failed to calculate dynamic Factor Sharpe: {e}")
 
-    log.info(f"Dynamic cross-sleeve Sharpe ratios: {sharpes}")
+    # 2026-06-08 standalone validation (scripts/backtest_sleeves.py, 23yr IS): the
+    # non-MR sleeves do NOT carry deployable alpha and must not draw capital on the
+    # toy/rolling estimates above —
+    #   • StatArb: non-viable on this universe (cumulative-spread gross edge < 2-leg
+    #     friction; the live daily-return formulation also churns at a 1-day half-life);
+    #   • Trend: apparent Sharpe is multi-asset *basket beta* (buy-hold beats the SMA
+    #     timing) inflated by the 2003-21 bond bull — not repeatable timing alpha;
+    #   • Factor: never validated.
+    # Force them to 0.0 so allocate_cross_sleeve_capital concentrates on the only
+    # validated sleeve (MR). Re-enable a sleeve only after a standalone + correlation
+    # backtest proves a positive, MR-diversifying edge.
+    for _unvalidated in ("StatArb", "Trend", "Factor"):
+        sharpes[_unvalidated] = 0.0
+    log.info(f"Dynamic cross-sleeve Sharpe ratios (non-MR sleeves disabled pending validation): {sharpes}")
     return sharpes
 
 def allocate_cross_sleeve_capital(
@@ -333,13 +346,17 @@ def allocate_cross_sleeve_capital(
 ) -> Dict[str, float]:
     """
     QENG-5d: Cross-sleeve capital allocator.
-    Allocates capital across sleeves (MR, StatArb, Trend, Factor) proportional to their
-    positive Sharpe confidence, capping each sleeve between 10% and 50% exposure.
+    Allocates capital proportional to positive Sharpe, capping each ACTIVE sleeve
+    between 10% and 50%. Sleeves with Sharpe <= 0 (disabled/money-losing — e.g. the
+    non-MR sleeves pending re-validation) receive 0 and are NOT floored to 10% (the
+    old behaviour funded validated money-losers). Falls back to equal weight only if
+    no sleeve is active.
     """
-    # Keep Sharpe positive for weights
-    adjusted = {}
-    for name, sh in sleeve_sharpes.items():
-        adjusted[name] = max(sh, 0.1)  # floor at 0.1
+    active = {name: sh for name, sh in sleeve_sharpes.items() if sh > 0}
+    if not active:
+        n = max(len(sleeve_sharpes), 1)
+        return {name: total_capital / n for name in sleeve_sharpes}
+    adjusted = dict(active)
         
     total_adj = sum(adjusted.values())
     raw_alloc = {name: (val / total_adj) * total_capital for name, val in adjusted.items()}
