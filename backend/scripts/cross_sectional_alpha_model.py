@@ -74,7 +74,14 @@ _EARNINGS_DIR = os.path.join(_DATA, "cache_earnings")
 _CONSTITUENTS = os.path.join(_DATA, "sp500_historical_constituents.json")
 _MEMBERSHIP_CSV = os.path.join(_DATA, "sp500_ticker_start_end.csv")  # full PIT history
 
-HORIZON = 5  # forward-return horizon in trading days; also the rebalance period
+# Forward-return horizon = rebalance period in trading days. Was 5 (weekly);
+# raised to 21 (~monthly) 2026-06-09 after the horizon sweep: net Sharpe goes
+# -0.058 (h=5) -> +0.347 (h=21), because fewer/larger rebalances slash annual
+# turnover cost (the binding constraint — per-rebalance turnover is flat ~1.34,
+# but ~12 rebalances/yr vs ~50 cuts total cost drag ~4x). h=21 is cost-robust to
+# ~20bps one-way and 11/15 OOS folds are net-positive. h=25 is a lower-drawdown
+# variant (net +0.322, MaxDD -24.7% vs -30.9%) — run `--horizon 25` for it.
+HORIZON = 21  # forward-return horizon in trading days; also the rebalance period
 MIN_NAMES_PER_DAY = 20  # don't z-score / trade a thin cross-section
 TRADING_DAYS = 252
 FWD_RET_CAP = 0.50  # data-error guard: clip |5d forward return| beyond this
@@ -986,8 +993,9 @@ def main() -> None:
         "--horizon",
         type=int,
         default=HORIZON,
-        help="forward-return horizon = rebalance period in trading days (default 5). "
-        "Longer horizons cut turnover (the binding constraint on net Sharpe).",
+        help="forward-return horizon = rebalance period in trading days (default 21). "
+        "Longer horizons cut annual turnover cost (the binding constraint on net Sharpe); "
+        "use 25 for the lower-drawdown variant.",
     )
     args = ap.parse_args()
 
@@ -995,7 +1003,7 @@ def main() -> None:
     # rebalance step, embargo, and the annualization factor all read these).
     HORIZON = args.horizon
     PERIODS_PER_YEAR = TRADING_DAYS / HORIZON
-    if HORIZON != 5:
+    if args.horizon != 21:
         print(f"Horizon override: {HORIZON}d rebalance (PERIODS_PER_YEAR={PERIODS_PER_YEAR:.1f})")
 
     panel = build_panel(
