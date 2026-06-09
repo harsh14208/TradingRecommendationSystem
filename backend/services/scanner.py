@@ -2035,9 +2035,22 @@ async def _run_scan_impl(broadcast_fn=None):
                 hmm_regime = sig.get("hmmRegime", "")
                 vix_val = sig.get("vix")
                 sector_etf = sig.get("sectorEtf")
+                _macro = (market_ctx or {}).get("macro") or {}
 
+                # dte is REQUIRED (REF-6, commit 49712cd added it to the signature).
+                # It was missing here, so this call raised on every signal and the
+                # cohort/shadow-control enrichment below never ran. Mirror the values
+                # assembler._pred_meta() passes (sector_momentum=sector_5d_ret isn't
+                # carried on the sig at this stage → left to its None default).
                 meta_prob = predict_meta_prob(
-                    tech=feats, entry_prob=entry_prob, hmm_regime=hmm_regime, vix=vix_val, sector_etf=sector_etf
+                    tech=feats,
+                    entry_prob=entry_prob,
+                    hmm_regime=hmm_regime,
+                    vix=vix_val,
+                    sector_etf=sector_etf,
+                    dte=sig.get("daysToEarnings"),
+                    vix_term_ratio=_macro.get("vix_term_ratio"),
+                    vix_9d_ratio=_macro.get("vix_9d_ratio"),
                 )
 
                 cohort_meta = build_policy_version_meta(ticker=sig["ticker"], ts=datetime.utcnow(), meta_prob=meta_prob)
