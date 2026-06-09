@@ -45,6 +45,7 @@ if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
 import socket
+
 socket.setdefaulttimeout(10)
 
 import warnings
@@ -55,8 +56,12 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-def cached_yf_download(ticker_or_tickers, start: str, end: str, interval: str = "1d", auto_adjust: bool = True, progress: bool = False) -> pd.DataFrame:
+
+def cached_yf_download(
+    ticker_or_tickers, start: str, end: str, interval: str = "1d", auto_adjust: bool = True, progress: bool = False
+) -> pd.DataFrame:
     import os
+
     _HERE = os.path.dirname(os.path.abspath(__file__))
     cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_ohlcv"))
     os.makedirs(cache_dir, exist_ok=True)
@@ -76,20 +81,31 @@ def cached_yf_download(ticker_or_tickers, start: str, end: str, interval: str = 
         except Exception:
             pass
 
-    raw = yf.download(ticker_or_tickers, start=start, end=end, interval=interval, auto_adjust=auto_adjust, progress=progress, threads=False)
+    raw = yf.download(
+        ticker_or_tickers,
+        start=start,
+        end=end,
+        interval=interval,
+        auto_adjust=auto_adjust,
+        progress=progress,
+        threads=False,
+    )
     if not raw.empty:
         raw.to_csv(cache_path)
     return raw
 
+
 warnings.filterwarnings("ignore")
 
 _CONSTITUENTS_MAP = None
+
 
 def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
     global _CONSTITUENTS_MAP
     if _CONSTITUENTS_MAP is None:
         import json
         import os
+
         _HERE = os.path.dirname(os.path.abspath(__file__))
         path = os.path.abspath(os.path.join(_HERE, "..", "data", "sp500_historical_constituents.json"))
         if not os.path.exists(path):
@@ -122,44 +138,45 @@ def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
                     "PLTR": [["2024-09-23", end_all]],
                     "SMCI": [["2024-03-18", end_all]],
                 }
-                
+
                 # Combine all tickers from script
                 tickers_list = globals().get("TICKERS", [])
                 held_out_list = globals().get("HELD_OUT_TICKERS", [])
                 curated_list = globals().get("_CURATED_OUT_TICKERS", [])
                 graduated_list = globals().get("_GRADUATED_TICKERS", [])
-                
+
                 all_scr_tickers = set(tickers_list + held_out_list + curated_list + graduated_list)
                 for t in all_scr_tickers:
                     if t not in default_map:
                         default_map[t] = [[start_all, end_all]]
-                        
+
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 with open(path, "w") as f:
                     json.dump(default_map, f, indent=4)
                 print(f"\n[PIT Constituents] Generated default index membership database: {path}\n")
             except Exception as e:
                 print(f"Failed to generate constituents file: {e}")
-                
+
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 _CONSTITUENTS_MAP = json.load(f)
         except Exception as e:
             print(f"Failed to load constituents file: {e}")
             _CONSTITUENTS_MAP = {}
-            
+
     intervals = _CONSTITUENTS_MAP.get(ticker)
     if not intervals:
         return True
-        
+
     date_dt = date.date()
     for start_str, end_str in intervals:
         start = datetime.strptime(start_str, "%Y-%m-%d").date()
         end = datetime.strptime(end_str, "%Y-%m-%d").date()
         if start <= date_dt <= end:
             return True
-            
+
     return False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Config
@@ -2861,9 +2878,14 @@ def stats_explicit_weights(rets: list[float], weights: list[float]) -> dict:
         peak = max(peak, cap)
         max_dd = max(max_dd, (peak - cap) / peak * 100)
     return {
-        "n": len(rets), "wr": round(wr_w, 1), "avg": round(mu, 2),
-        "avg_win": None, "avg_loss": None, "pf": None,
-        "sharpe": sharpe, "max_dd": round(max_dd, 2),
+        "n": len(rets),
+        "wr": round(wr_w, 1),
+        "avg": round(mu, 2),
+        "avg_win": None,
+        "avg_loss": None,
+        "pf": None,
+        "sharpe": sharpe,
+        "max_dd": round(max_dd, 2),
     }
 
 
@@ -3163,11 +3185,11 @@ def fetch_cross_asset_composite(start: str, end: str) -> dict[pd.Timestamp, int]
     try:
         _HERE = os.path.dirname(os.path.abspath(__file__))
         cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_ohlcv"))
-        
+
         tlt_path = os.path.join(cache_dir, f"TLT_{start}_{end}_1d_adjTrue.csv")
         uup_path = os.path.join(cache_dir, f"UUP_{start}_{end}_1d_adjTrue.csv")
         xle_path = os.path.join(cache_dir, f"XLE_{start}_{end}_1d_adjTrue.csv")
-        
+
         tlt_raw = pd.read_csv(tlt_path, header=[0, 1], index_col=0, parse_dates=True)
         uup_raw = pd.read_csv(uup_path, header=[0, 1], index_col=0, parse_dates=True)
         xle_raw = pd.read_csv(xle_path, header=[0, 1], index_col=0, parse_dates=True)
@@ -3215,11 +3237,12 @@ def fetch_earnings_dates_polygon(ticker: str, api_key: str, start: str) -> set:
     """
     import os
     import json
+
     _HERE = os.path.dirname(os.path.abspath(__file__))
     cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_earnings"))
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, f"{ticker}.json")
-    
+
     if os.path.exists(cache_path):
         try:
             with open(cache_path) as f:
@@ -3952,13 +3975,20 @@ def run_oos_validation(vix, spy_trend, stlfsi4):
                 ["Policy (OOS clean)", "CAGR", "Ann.Sharpe", "Max DD"],
                 [
                     ["Full exposure", f"{_ob['cagr']:+.1f}%", fmt_sharpe(_ob["ann_sharpe"]), f"-{_ob['max_dd']:.2f}%"],
-                    ["DD-throttle 0.5× >3% off peak", f"{_ot['cagr']:+.1f}%", fmt_sharpe(_ot["ann_sharpe"]), f"-{_ot['max_dd']:.2f}%"],
+                    [
+                        "DD-throttle 0.5× >3% off peak",
+                        f"{_ot['cagr']:+.1f}%",
+                        fmt_sharpe(_ot["ann_sharpe"]),
+                        f"-{_ot['max_dd']:.2f}%",
+                    ],
                 ],
             )
             _dmd_o = _ob["max_dd"] - _ot["max_dd"]
             _dsa_o = (_ot["ann_sharpe"] or 0.0) - (_ob["ann_sharpe"] or 0.0)
-            print(f"\n> OOS: ΔAnn.Sharpe {_dsa_o:+.3f}, MaxDD reduction {_dmd_o:+.2f}pp "
-                  f"(N={len(oos_clean)} — small; directional only).\n")
+            print(
+                f"\n> OOS: ΔAnn.Sharpe {_dsa_o:+.3f}, MaxDD reduction {_dmd_o:+.2f}pp "
+                f"(N={len(oos_clean)} — small; directional only).\n"
+            )
 
     # Per-ticker breakdown
     print("\n### OOS Per-Ticker\n")
@@ -4095,7 +4125,7 @@ def process_ticker(args):
         os.makedirs(cache_dir, exist_ok=True)
         ticker_clean = ticker.replace("^", "_").replace("-", "_").replace(" ", "_")
         indicator_cache_path = os.path.join(cache_dir, f"{ticker_clean}_{START}_{END}.csv")
-        
+
         loaded_from_cache = False
         if os.path.exists(indicator_cache_path):
             try:
@@ -4273,13 +4303,13 @@ def main():
         results = [process_ticker(args) for args in args_list]
     else:
         import multiprocessing as _mp
+
         try:
             _mp.set_start_method("fork", force=True)  # macOS Python 3.14 spawn→fork
         except Exception:
             pass
         with Pool(8) as p:
             results = p.map(process_ticker, args_list)
-
 
     all_earnings_dates = {}
     for ticker, bh_ret, df, earnings_dates in results:
@@ -4296,7 +4326,9 @@ def main():
     print("Computing §63 sector cointegration Z-scores…", end=" ", flush=True)
     try:
         _sector_etfs = list({TICKER_TO_SECTOR.get(t, "XLK") for t in all_dfs})
-        _etf_raw = cached_yf_download(_sector_etfs, start=START, end=END, interval="1d", auto_adjust=True, progress=False)
+        _etf_raw = cached_yf_download(
+            _sector_etfs, start=START, end=END, interval="1d", auto_adjust=True, progress=False
+        )
         if isinstance(_etf_raw.columns, pd.MultiIndex):
             _etf_close = _etf_raw["Close"]
         else:
@@ -4325,7 +4357,14 @@ def main():
             alpha = np.where(denom_valid, (sum_s - beta * sum_e) / N, np.nan)
 
             resid_last = s_col - (beta * e_col + alpha)
-            ss = sum_ss + beta**2 * sum_ee + N * alpha**2 - 2 * beta * sum_se - 2 * alpha * sum_s + 2 * beta * alpha * sum_e
+            ss = (
+                sum_ss
+                + beta**2 * sum_ee
+                + N * alpha**2
+                - 2 * beta * sum_se
+                - 2 * alpha * sum_s
+                + 2 * beta * alpha * sum_e
+            )
             var = np.maximum(ss / (N - 1), 0.0)
             sigma = np.sqrt(var)
 
@@ -4994,6 +5033,9 @@ def main():
             _mrm = trades.copy()
             _mrm["_m"] = pd.to_datetime(_mrm["date"]).dt.to_period("M").astype(str)
             _mrm.groupby("_m")["net_pct"].mean().to_csv("data/mr_monthly.csv")
+            # Per-trade dump for the short-volume alt-data alpha check.
+            _cols = [c for c in ("date", "ticker", "score", "net_pct", "atr_pct", "vix_entry") if c in trades.columns]
+            trades[_cols].to_csv("data/mr_trades.csv", index=False)
         except Exception:
             pass
 
@@ -5009,8 +5051,12 @@ def main():
             _mfe = float(sub["mfe_pct"].mean())
             _gr = float(sub["gross_pct"].mean())
             return [
-                label, str(len(sub)), f"{_mfe:+.2f}%", f"{_gr:+.2f}%",
-                f"{_gr / _mfe * 100:.0f}%" if _mfe > 0 else "—", f"{_mfe - _gr:+.2f}%",
+                label,
+                str(len(sub)),
+                f"{_mfe:+.2f}%",
+                f"{_gr:+.2f}%",
+                f"{_gr / _mfe * 100:.0f}%" if _mfe > 0 else "—",
+                f"{_mfe - _gr:+.2f}%",
             ]
 
         print_table(
@@ -5026,10 +5072,16 @@ def main():
         for _r, _c in trades["exit_reason"].value_counts().items():
             _sub = trades[trades["exit_reason"] == _r]
             _s = stats(_sub["net_pct"].tolist())
-            _er_rows.append([
-                str(_r), str(_c), f"{_c / len(trades) * 100:.0f}%", f"{_s['wr']:.1f}%",
-                f"{_s['avg']:+.2f}%", f"{float(_sub['mfe_pct'].mean()):+.2f}%",
-            ])
+            _er_rows.append(
+                [
+                    str(_r),
+                    str(_c),
+                    f"{_c / len(trades) * 100:.0f}%",
+                    f"{_s['wr']:.1f}%",
+                    f"{_s['avg']:+.2f}%",
+                    f"{float(_sub['mfe_pct'].mean()):+.2f}%",
+                ]
+            )
         print_table(["Exit reason", "N", "% of total", "WR", "Avg Net", "Avg MFE"], _er_rows)
 
         # ── R1b. Breakeven-Ratchet Exit A/B (deployable) ──────────────────────
@@ -5039,15 +5091,29 @@ def main():
             _alt = stats(_altt["net_pct_alt"].tolist())
             _dsh = (_alt.get("sharpe") or 0.0) - (_cur.get("sharpe") or 0.0)
             print("\n## R1b. Breakeven-Ratchet Exit — A/B vs Live Exit Stack\n")
-            print("> Alt: arm at +1 ATR favorable → stop ratchets to breakeven+0.1%, then trails 1 ATR "
-                  "below high-water. Hard target + time exit unchanged. Same 0.50% friction.\n")
+            print(
+                "> Alt: arm at +1 ATR favorable → stop ratchets to breakeven+0.1%, then trails 1 ATR "
+                "below high-water. Hard target + time exit unchanged. Same 0.50% friction.\n"
+            )
             print_table(
                 ["Exit policy", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"],
                 [
-                    ["Current (stop/target/adaptive/time)", str(_cur["n"]), f"{_cur['wr']:.1f}%",
-                     f"{_cur['avg']:+.2f}%", fmt_sharpe(_cur["sharpe"]), f"-{_cur['max_dd']:.2f}%"],
-                    ["Breakeven-ratchet + ATR trail", str(_alt["n"]), f"{_alt['wr']:.1f}%",
-                     f"{_alt['avg']:+.2f}%", f"{fmt_sharpe(_alt['sharpe'])} ({_dsh:+.2f})", f"-{_alt['max_dd']:.2f}%"],
+                    [
+                        "Current (stop/target/adaptive/time)",
+                        str(_cur["n"]),
+                        f"{_cur['wr']:.1f}%",
+                        f"{_cur['avg']:+.2f}%",
+                        fmt_sharpe(_cur["sharpe"]),
+                        f"-{_cur['max_dd']:.2f}%",
+                    ],
+                    [
+                        "Breakeven-ratchet + ATR trail",
+                        str(_alt["n"]),
+                        f"{_alt['wr']:.1f}%",
+                        f"{_alt['avg']:+.2f}%",
+                        f"{fmt_sharpe(_alt['sharpe'])} ({_dsh:+.2f})",
+                        f"-{_alt['max_dd']:.2f}%",
+                    ],
                 ],
             )
             _v = (
@@ -5062,8 +5128,10 @@ def main():
         # ── R4. Stop-Width Study (mechanical, no ratchet) ─────────────────────
         if {"net_pct_stop15", "net_pct_stop25", "net_pct_nostop"}.issubset(trades.columns):
             print("\n## R4. Stop-Width Study (mechanical: fixed stop + target + time)\n")
-            print("> Isolates stop WIDTH: 1.5 ATR (live) vs 2.5 ATR vs none. MR theory says oversold "
-                  "bounces need room — does a tighter stop cut recoveries? (no adaptive exits here)\n")
+            print(
+                "> Isolates stop WIDTH: 1.5 ATR (live) vs 2.5 ATR vs none. MR theory says oversold "
+                "bounces need room — does a tighter stop cut recoveries? (no adaptive exits here)\n"
+            )
             _r4 = []
             for _lbl, _col in [
                 ("1.5-ATR stop (live width)", "net_pct_stop15"),
@@ -5072,26 +5140,43 @@ def main():
             ]:
                 _sub = trades.dropna(subset=[_col])
                 _s = stats(_sub[_col].tolist())
-                _r4.append([_lbl, str(_s["n"]), f"{_s['wr']:.1f}%", f"{_s['avg']:+.2f}%",
-                            fmt_sharpe(_s["sharpe"]), f"-{_s['max_dd']:.2f}%"])
+                _r4.append(
+                    [
+                        _lbl,
+                        str(_s["n"]),
+                        f"{_s['wr']:.1f}%",
+                        f"{_s['avg']:+.2f}%",
+                        fmt_sharpe(_s["sharpe"]),
+                        f"-{_s['max_dd']:.2f}%",
+                    ]
+                )
             print_table(["Stop policy", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"], _r4)
             _s15 = stats(trades.dropna(subset=["net_pct_stop15"])["net_pct_stop15"].tolist())
             _sno = stats(trades.dropna(subset=["net_pct_nostop"])["net_pct_nostop"].tolist())
             _d = (_sno.get("sharpe") or 0.0) - (_s15.get("sharpe") or 0.0)
-            print(f"\n> No-stop − 1.5-ATR ΔSharpe = {_d:+.3f}  "
-                  + ("✅ stop HURTS — widen/remove" if _d > 0.02
-                     else "➖ stop ~neutral on mechanical core" if _d > -0.02
-                     else "⚠ stop HELPS — keep it") + "\n")
+            print(
+                f"\n> No-stop − 1.5-ATR ΔSharpe = {_d:+.3f}  "
+                + (
+                    "✅ stop HURTS — widen/remove"
+                    if _d > 0.02
+                    else "➖ stop ~neutral on mechanical core"
+                    if _d > -0.02
+                    else "⚠ stop HELPS — keep it"
+                )
+                + "\n"
+            )
 
     # ── R2. Regime-Conditional Edge (VIX / SPY trend at entry) ────────────────
     if trades is not None and not trades.empty and "vix_entry" in trades.columns:
         print("\n## R2. Regime-Conditional Edge\n")
         print("> Edge by VIX regime at entry — tests whether thresholds/sizing should be regime-aware.\n")
         _vd = trades["vix_entry"].dropna()
-        print(f"> vix_entry diag: non-null {len(_vd)}/{len(trades)}, "
-              f"min={_vd.min() if len(_vd) else float('nan'):.1f} "
-              f"mean={_vd.mean() if len(_vd) else float('nan'):.1f} "
-              f"max={_vd.max() if len(_vd) else float('nan'):.1f}\n")
+        print(
+            f"> vix_entry diag: non-null {len(_vd)}/{len(trades)}, "
+            f"min={_vd.min() if len(_vd) else float('nan'):.1f} "
+            f"mean={_vd.mean() if len(_vd) else float('nan'):.1f} "
+            f"max={_vd.max() if len(_vd) else float('nan'):.1f}\n"
+        )
         _vt = trades.dropna(subset=["vix_entry"])
         _vb = [
             ("VIX<15 (calm)", _vt[_vt["vix_entry"] < 15]),
@@ -5102,10 +5187,13 @@ def main():
         print_table(
             ["VIX regime", "N", "WR", "Avg Ret", "Sharpe"],
             [
-                [_lbl, str(stats(_g["net_pct"].tolist())["n"]),
-                 f"{stats(_g['net_pct'].tolist())['wr']:.1f}%",
-                 f"{stats(_g['net_pct'].tolist())['avg']:+.2f}%",
-                 fmt_sharpe(stats(_g["net_pct"].tolist())["sharpe"])]
+                [
+                    _lbl,
+                    str(stats(_g["net_pct"].tolist())["n"]),
+                    f"{stats(_g['net_pct'].tolist())['wr']:.1f}%",
+                    f"{stats(_g['net_pct'].tolist())['avg']:+.2f}%",
+                    fmt_sharpe(stats(_g["net_pct"].tolist())["sharpe"]),
+                ]
                 for _lbl, _g in _vb
             ],
         )
@@ -5119,10 +5207,13 @@ def main():
             print_table(
                 ["SPY trend", "N", "WR", "Avg Ret", "Sharpe"],
                 [
-                    [_lbl, str(stats(_g["net_pct"].tolist())["n"]),
-                     f"{stats(_g['net_pct'].tolist())['wr']:.1f}%",
-                     f"{stats(_g['net_pct'].tolist())['avg']:+.2f}%",
-                     fmt_sharpe(stats(_g["net_pct"].tolist())["sharpe"])]
+                    [
+                        _lbl,
+                        str(stats(_g["net_pct"].tolist())["n"]),
+                        f"{stats(_g['net_pct'].tolist())['wr']:.1f}%",
+                        f"{stats(_g['net_pct'].tolist())['avg']:+.2f}%",
+                        fmt_sharpe(stats(_g["net_pct"].tolist())["sharpe"]),
+                    ]
                     for _lbl, _g in _tb
                 ],
             )
@@ -5147,8 +5238,10 @@ def main():
             print_table(["Decile", "Score range", "N", "Win rate"], _rows)
             _rho = float(_ts["score"].corr(_ts["win"], method="spearman"))
             print(f"\n> Spearman(score, win) = {_rho:+.3f}; deciles monotonic: {_mono}.")
-            print("> Flat/non-monotone ⇒ score is NOT a usable win-prob; needs isotonic calibration "
-                  "before it can drive Kelly sizing or honest confidence display.\n")
+            print(
+                "> Flat/non-monotone ⇒ score is NOT a usable win-prob; needs isotonic calibration "
+                "before it can drive Kelly sizing or honest confidence display.\n"
+            )
 
     # ── R5. Cross-Sectional Relative-Value Ranking ────────────────────────────
     if trades is not None and not trades.empty and {"date", "score"}.issubset(trades.columns):
@@ -5167,8 +5260,20 @@ def main():
             print_table(
                 ["Within-day rank", "N", "WR", "Avg Ret", "Sharpe"],
                 [
-                    ["Top third (most oversold rel.)", str(_st["n"]), f"{_st['wr']:.1f}%", f"{_st['avg']:+.2f}%", fmt_sharpe(_st["sharpe"])],
-                    ["Bottom third", str(_sb["n"]), f"{_sb['wr']:.1f}%", f"{_sb['avg']:+.2f}%", fmt_sharpe(_sb["sharpe"])],
+                    [
+                        "Top third (most oversold rel.)",
+                        str(_st["n"]),
+                        f"{_st['wr']:.1f}%",
+                        f"{_st['avg']:+.2f}%",
+                        fmt_sharpe(_st["sharpe"]),
+                    ],
+                    [
+                        "Bottom third",
+                        str(_sb["n"]),
+                        f"{_sb['wr']:.1f}%",
+                        f"{_sb['avg']:+.2f}%",
+                        fmt_sharpe(_sb["sharpe"]),
+                    ],
                 ],
             )
             print("\n> If top-rank Sharpe >> bottom, a daily top-K cross-sectional filter adds value.\n")
@@ -5178,8 +5283,10 @@ def main():
     # ── R7. Portfolio Drawdown-Scaled Exposure ────────────────────────────────
     if trades is not None and not trades.empty and {"date", "net_pct"}.issubset(trades.columns):
         print("\n## R7. Portfolio Drawdown-Scaled Exposure\n")
-        print("> Causal de-risk: when the strategy equity is >DD_TRIG below its peak, halve exposure "
-              "on subsequent trades until recovery. Tests risk-adjusted improvement (MaxDD vs Sharpe).\n")
+        print(
+            "> Causal de-risk: when the strategy equity is >DD_TRIG below its peak, halve exposure "
+            "on subsequent trades until recovery. Tests risk-adjusted improvement (MaxDD vs Sharpe).\n"
+        )
         _seq = trades.dropna(subset=["net_pct"]).sort_values("date")["net_pct"].to_numpy(dtype=float) / 100.0
 
         def _dd_overlay(scaled, dd_trig=0.03):
@@ -5200,18 +5307,37 @@ def main():
         print_table(
             ["Exposure policy", "N", "WR", "Avg Ret", "Sharpe", "Equity MaxDD"],
             [
-                ["Full exposure (baseline)", str(_su["n"]), f"{_su['wr']:.1f}%", f"{_su['avg']:+.2f}%",
-                 fmt_sharpe(_su["sharpe"]), f"-{_u_dd:.2f}%"],
-                ["DD-scaled (0.5× when >3% off peak)", str(_ss["n"]), f"{_ss['wr']:.1f}%", f"{_ss['avg']:+.2f}%",
-                 fmt_sharpe(_ss["sharpe"]), f"-{_s_dd:.2f}%"],
+                [
+                    "Full exposure (baseline)",
+                    str(_su["n"]),
+                    f"{_su['wr']:.1f}%",
+                    f"{_su['avg']:+.2f}%",
+                    fmt_sharpe(_su["sharpe"]),
+                    f"-{_u_dd:.2f}%",
+                ],
+                [
+                    "DD-scaled (0.5× when >3% off peak)",
+                    str(_ss["n"]),
+                    f"{_ss['wr']:.1f}%",
+                    f"{_ss['avg']:+.2f}%",
+                    fmt_sharpe(_ss["sharpe"]),
+                    f"-{_s_dd:.2f}%",
+                ],
             ],
         )
         _dsh7 = (_ss.get("sharpe") or 0.0) - (_su.get("sharpe") or 0.0)
         _ddr = _u_dd - _s_dd
-        print(f"\n> Sequential ΔSharpe = {_dsh7:+.3f}, MaxDD reduction = {_ddr:+.2f}pp  "
-              + ("✅ better risk-adjusted — cuts DD without killing Sharpe" if (_ddr > 0.2 and _dsh7 > -0.02)
-                 else "➖ neutral — DD overlay adds little at this sequential scale"
-                 if abs(_dsh7) < 0.03 else "⚠ hurts Sharpe more than it helps DD") + "\n")
+        print(
+            f"\n> Sequential ΔSharpe = {_dsh7:+.3f}, MaxDD reduction = {_ddr:+.2f}pp  "
+            + (
+                "✅ better risk-adjusted — cuts DD without killing Sharpe"
+                if (_ddr > 0.2 and _dsh7 > -0.02)
+                else "➖ neutral — DD overlay adds little at this sequential scale"
+                if abs(_dsh7) < 0.03
+                else "⚠ hurts Sharpe more than it helps DD"
+            )
+            + "\n"
+        )
 
         # Realistic concurrent-portfolio A/B (5-slot, T-bill on idle) — addresses the
         # sequential overstatement of MaxDD. This is the deployment-relevant test.
@@ -5223,16 +5349,28 @@ def main():
                 ["Portfolio policy", "CAGR", "Ann.Sharpe", "Max DD"],
                 [
                     ["Full exposure", f"{_pb['cagr']:+.1f}%", fmt_sharpe(_pb["ann_sharpe"]), f"-{_pb['max_dd']:.2f}%"],
-                    ["DD-throttle 0.5× >3% off peak", f"{_pt['cagr']:+.1f}%", fmt_sharpe(_pt["ann_sharpe"]), f"-{_pt['max_dd']:.2f}%"],
+                    [
+                        "DD-throttle 0.5× >3% off peak",
+                        f"{_pt['cagr']:+.1f}%",
+                        fmt_sharpe(_pt["ann_sharpe"]),
+                        f"-{_pt['max_dd']:.2f}%",
+                    ],
                 ],
             )
             _dca = _pt["cagr"] - _pb["cagr"]
             _dmd = _pb["max_dd"] - _pt["max_dd"]
             _dsa = (_pt["ann_sharpe"] or 0.0) - (_pb["ann_sharpe"] or 0.0)
-            print(f"\n> Concurrent: ΔCAGR {_dca:+.1f}pp, ΔAnn.Sharpe {_dsa:+.3f}, MaxDD reduction {_dmd:+.2f}pp  "
-                  + ("✅ deploy graduated DD-throttle in allocator" if (_dmd > 0.2 and _dsa > -0.03)
-                     else "➖ neutral on concurrent path — DD already small" if abs(_dsa) < 0.05
-                     else "⚠ concurrent path: throttle costs more CAGR than DD saved") + "\n")
+            print(
+                f"\n> Concurrent: ΔCAGR {_dca:+.1f}pp, ΔAnn.Sharpe {_dsa:+.3f}, MaxDD reduction {_dmd:+.2f}pp  "
+                + (
+                    "✅ deploy graduated DD-throttle in allocator"
+                    if (_dmd > 0.2 and _dsa > -0.03)
+                    else "➖ neutral on concurrent path — DD already small"
+                    if abs(_dsa) < 0.05
+                    else "⚠ concurrent path: throttle costs more CAGR than DD saved"
+                )
+                + "\n"
+            )
 
     # ── §Inv1. MR Trigger Quality Split ──────────────────────────────────────
     # Which MR condition (IBS / BB / VWAP / RSI / multi) drives the best alpha?
@@ -5321,25 +5459,35 @@ def main():
             _dk_l7 = (_kelly.get("sharpe") or 0.0) - (sw_l7.get("sharpe") or 0.0)
             _dk_eq = (_kelly.get("sharpe") or 0.0) - (eq_l7.get("sharpe") or 0.0)
             print("\n## §Inv-K. R10-7 Per-Signal Half-Kelly Sizing Validation\n")
-            print("> f = 0.5·max(0, p − (1−p)/b); p = in-sample score→WR calibration, "
-                  "b = realized avg_win/avg_loss; clamped [0.70, 1.30].")
+            print(
+                "> f = 0.5·max(0, p − (1−p)/b); p = in-sample score→WR calibration, "
+                "b = realized avg_win/avg_loss; clamped [0.70, 1.30]."
+            )
             print(f"> Realized payoff ratio b = {_kelly.get('pf')} (vs 1.33 planned R:R).\n")
             print_table(
                 ["Config", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"],
                 [
                     [
                         "Equal-weight (baseline)",
-                        str(eq_l7["n"]), f"{eq_l7['wr']:.1f}%", f"{eq_l7['avg']:+.2f}%",
-                        fmt_sharpe(eq_l7["sharpe"]), f"-{eq_l7['max_dd']:.2f}%",
+                        str(eq_l7["n"]),
+                        f"{eq_l7['wr']:.1f}%",
+                        f"{eq_l7['avg']:+.2f}%",
+                        fmt_sharpe(eq_l7["sharpe"]),
+                        f"-{eq_l7['max_dd']:.2f}%",
                     ],
                     [
                         "L7 score-weighted (linear ±15%)",
-                        str(sw_l7["n"]), f"{sw_l7['wr']:.1f}%", f"{sw_l7['avg']:+.2f}%",
-                        fmt_sharpe(sw_l7["sharpe"]), f"-{sw_l7['max_dd']:.2f}%",
+                        str(sw_l7["n"]),
+                        f"{sw_l7['wr']:.1f}%",
+                        f"{sw_l7['avg']:+.2f}%",
+                        fmt_sharpe(sw_l7["sharpe"]),
+                        f"-{sw_l7['max_dd']:.2f}%",
                     ],
                     [
                         "Half-Kelly exploratory (empirical p, [0.70,1.30])",
-                        str(_kelly["n"]), f"{_kelly['wr']:.1f}%", f"{_kelly['avg']:+.2f}%",
+                        str(_kelly["n"]),
+                        f"{_kelly['wr']:.1f}%",
+                        f"{_kelly['avg']:+.2f}%",
                         f"{fmt_sharpe(_kelly['sharpe'])} ({_dk_l7:+.2f} vs L7)",
                         f"-{_kelly['max_dd']:.2f}%",
                     ],
@@ -5355,7 +5503,9 @@ def main():
                 [
                     [
                         "Convex Kelly [0.85,1.15] (ships live)",
-                        str(_kelly_live["n"]), f"{_kelly_live['wr']:.1f}%", f"{_kelly_live['avg']:+.2f}%",
+                        str(_kelly_live["n"]),
+                        f"{_kelly_live['wr']:.1f}%",
+                        f"{_kelly_live['avg']:+.2f}%",
                         f"{fmt_sharpe(_kelly_live['sharpe'])} ({_dkl:+.2f} vs L7)",
                         f"-{_kelly_live['max_dd']:.2f}%",
                     ],
@@ -5387,20 +5537,28 @@ def main():
             _flat = stats(trades["net_pct"].tolist())
             _pt = stats(_net_pt)
             print("\n## §R10-8. Per-Ticker Vol-Scaled Friction Validation\n")
-            print("> friction_i = clamp(0.10 + 0.06·atr_pct, 0.12, 0.80)% round-trip "
-                  f"(mean {_fric_pt.mean():.2f}% vs flat {FRICTION_PCT:.2f}%).\n")
+            print(
+                "> friction_i = clamp(0.10 + 0.06·atr_pct, 0.12, 0.80)% round-trip "
+                f"(mean {_fric_pt.mean():.2f}% vs flat {FRICTION_PCT:.2f}%).\n"
+            )
             print_table(
                 ["Friction model", "N", "WR", "Avg Ret", "Sharpe", "MaxDD"],
                 [
                     [
                         f"Flat {FRICTION_PCT:.2f}% (current)",
-                        str(_flat["n"]), f"{_flat['wr']:.1f}%", f"{_flat['avg']:+.2f}%",
-                        fmt_sharpe(_flat["sharpe"]), f"-{_flat['max_dd']:.2f}%",
+                        str(_flat["n"]),
+                        f"{_flat['wr']:.1f}%",
+                        f"{_flat['avg']:+.2f}%",
+                        fmt_sharpe(_flat["sharpe"]),
+                        f"-{_flat['max_dd']:.2f}%",
                     ],
                     [
                         f"Per-ticker vol-scaled (μ={_fric_pt.mean():.2f}%)",
-                        str(_pt["n"]), f"{_pt['wr']:.1f}%", f"{_pt['avg']:+.2f}%",
-                        fmt_sharpe(_pt["sharpe"]), f"-{_pt['max_dd']:.2f}%",
+                        str(_pt["n"]),
+                        f"{_pt['wr']:.1f}%",
+                        f"{_pt['avg']:+.2f}%",
+                        fmt_sharpe(_pt["sharpe"]),
+                        f"-{_pt['max_dd']:.2f}%",
                     ],
                 ],
             )
@@ -6322,7 +6480,11 @@ def main():
 
                     # Find best global trial
                     # (simulate original or current)
-                    _orig_sv = stats(_all_trial_trades[_orig_bt]["net_pct"].tolist()) if not _all_trial_trades[_orig_bt].empty else {"sharpe": 0.0, "wr": 0.0, "avg": 0.0}
+                    _orig_sv = (
+                        stats(_all_trial_trades[_orig_bt]["net_pct"].tolist())
+                        if not _all_trial_trades[_orig_bt].empty
+                        else {"sharpe": 0.0, "wr": 0.0, "avg": 0.0}
+                    )
 
                     async with AsyncSessionLocal() as db:
                         exp = ResearchExperiment(
@@ -6336,22 +6498,12 @@ def main():
                             is_metrics={
                                 "original_sharpe": _orig_sv.get("sharpe", 0.0),
                                 "original_win_rate": _orig_sv.get("wr", 0.0),
-                                "original_avg_ret": _orig_sv.get("avg", 0.0)
+                                "original_avg_ret": _orig_sv.get("avg", 0.0),
                             },
-                            oos_metrics={
-                                "rank_distribution": {
-                                    "p10": _p10,
-                                    "p50": _p50,
-                                    "p90": _p90
-                                }
-                            },
-                            dsr_pbo={
-                                "pbo": _pbo,
-                                "S": S,
-                                "combos": _total_combos
-                            },
+                            oos_metrics={"rank_distribution": {"p10": _p10, "p50": _p50, "p90": _p90}},
+                            dsr_pbo={"pbo": _pbo, "S": S, "combos": _total_combos},
                             decision="shadow" if _passed else "rejected",
-                            promotion_status="pending"
+                            promotion_status="pending",
                         )
                         db.add(exp)
                         await db.commit()
@@ -6360,7 +6512,6 @@ def main():
                     print(f"Failed to write experiment to DB: {db_err}")
 
             _asyncio.run(_save_experiment_in_db())
-
 
 
 if __name__ == "__main__":

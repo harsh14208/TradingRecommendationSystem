@@ -25,10 +25,22 @@ _DIV_TTL = 86_400
 
 def _get_api_key() -> str:
     """
-    Resolve Polygon.io API key from env.
-    Checks POLYGON_API_KEY first, then MASSIVE_API_KEY (same provider, different env var name).
+    Resolve Polygon.io API key. Checks the process env (POLYGON_API_KEY, then
+    MASSIVE_API_KEY — same provider) first, then falls back to pydantic settings
+    (which loads .env). The fallback matters: the live server's launchd plist sets
+    only PATH, so os.getenv() is empty there and Polygon was silently falling back
+    to yfinance engine-wide. Reading settings makes the configured .env key work.
     """
-    return os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY") or ""
+    key = os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY")
+    if not key:
+        try:
+            from config import get_settings
+
+            s = get_settings()
+            key = s.polygon_api_key or s.massive_api_key
+        except Exception:
+            key = ""
+    return key or ""
 
 
 async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = "1d") -> pd.DataFrame | None:
@@ -433,6 +445,109 @@ async def get_polygon_dividends(ticker: str) -> list[dict]:
         return results
     except Exception as e:
         log.debug("[polygon] dividends %s: %s", t, e)
+        return []
+
+
+_short_vol_cache: dict[str, tuple[list, float]] = {}
+_SHORT_VOL_TTL = 3600  # 1 h — FINRA short volume updates once per day
+
+
+async def get_polygon_short_volume(ticker: str, limit: int = 30) -> list[dict]:
+    """Fetch daily FINRA short-volume from Polygon (/stocks/v1/short-volume).
+
+    Alt-data, orthogonal to OHLCV: ``short_volume_ratio`` (% of consolidated volume
+    that was short-marked) measures intraday short pressure. On an oversold MR name a
+    high ratio is ambiguous (squeeze fuel vs. falling-knife conviction), so it is worth
+    testing/gating. Returns list of {date, short_volume_ratio, short_volume,
+    total_volume} sorted ascending by date. ``limit`` rows (most recent first from the
+    API, re-sorted ascending). History available ~2024-02 onward.
+    """
+    api_key = _get_api_key()
+    if not api_key:
+        return []
+    t = ticker.upper()
+    cached, ts = _short_vol_cache.get(t, (None, 0.0))
+    if cached is not None and time.monotonic() - ts < _SHORT_VOL_TTL:
+        return cached
+    url = f"{_BASE}/stocks/v1/short-volume"
+    params = {"ticker": t, "limit": limit, "apiKey": api_key}
+    try:
+        async with shared_session() as session:
+            async with session.get(url, params=params, timeout=15) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+        rows = []
+        for r in data.get("results") or []:
+            d = r.get("date")
+            svr = r.get("short_volume_ratio")
+            if d is None or svr is None:
+                continue
+            rows.append(
+                {
+                    "date": d,
+                    "short_volume_ratio": float(svr),
+                    "short_volume": int(r.get("short_volume") or 0),
+                    "total_volume": int(r.get("total_volume") or 0),
+                }
+            )
+        rows.sort(key=lambda x: x["date"])
+        _short_vol_cache[t] = (rows, time.monotonic())
+        return rows
+    except Exception as e:
+        log.debug("[polygon] short_volume %s: %s", t, e)
+        return []
+
+
+_short_int_cache: dict[str, tuple[list, float]] = {}
+_SHORT_INT_TTL = 21_600  # 6 h — FINRA short interest settles bi-weekly
+
+
+async def get_polygon_short_interest(ticker: str, limit: int = 1000) -> list[dict]:
+    """Fetch bi-weekly FINRA short-interest from Polygon (/stocks/v1/short-interest).
+
+    Alt-data, orthogonal to OHLCV and to daily short-volume: ``short_interest`` is the
+    aggregate settled short position (shares) reported by FINRA twice a month, and
+    ``days_to_cover`` = short_interest / avg_daily_volume is the squeeze-fuel metric.
+    On an oversold MR name a rising days-to-cover is ambiguous (squeeze potential vs.
+    falling-knife conviction), so it is worth testing/gating. Returns list of
+    {date, short_interest, days_to_cover, avg_daily_volume} sorted ascending by date
+    (``date`` is the FINRA settlement_date). History available ~2017-12 onward.
+    """
+    api_key = _get_api_key()
+    if not api_key:
+        return []
+    t = ticker.upper()
+    cached, ts = _short_int_cache.get(t, (None, 0.0))
+    if cached is not None and time.monotonic() - ts < _SHORT_INT_TTL:
+        return cached
+    url = f"{_BASE}/stocks/v1/short-interest"
+    params = {"ticker": t, "limit": limit, "sort": "settlement_date.asc", "apiKey": api_key}
+    try:
+        async with shared_session() as session:
+            async with session.get(url, params=params, timeout=15) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+        rows = []
+        for r in data.get("results") or []:
+            d = r.get("settlement_date")
+            si = r.get("short_interest")
+            if d is None or si is None:
+                continue
+            rows.append(
+                {
+                    "date": d,
+                    "short_interest": int(si),
+                    "days_to_cover": float(r["days_to_cover"]) if r.get("days_to_cover") is not None else None,
+                    "avg_daily_volume": int(r.get("avg_daily_volume") or 0),
+                }
+            )
+        rows.sort(key=lambda x: x["date"])
+        _short_int_cache[t] = (rows, time.monotonic())
+        return rows
+    except Exception as e:
+        log.debug("[polygon] short_interest %s: %s", t, e)
         return []
 
 

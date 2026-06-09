@@ -313,7 +313,6 @@ class BrokerOrder(Base):
     final_execution_status = Column(String(20), nullable=True)
 
 
-
 class PerformanceSnapshot(Base):
     """Immutable point-in-time record of system performance metrics.
 
@@ -420,7 +419,6 @@ class FeatureSnapshot(Base):
     signal_policy_version = Column(String(20), nullable=True, index=True)  # active policy version
     created_at = Column(DateTime, server_default=func.now())
     __table_args__ = (Index("ix_feature_snapshots_instrument_ts", "instrument_id", "ts"),)
-
 
 
 class Fill(Base):
@@ -597,9 +595,7 @@ class ProviderHealthScorecard(Base):
     """Provider health metrics scorecard per endpoint (TSYS-5a)."""
 
     __tablename__ = "provider_health_scorecards"
-    __table_args__ = (
-        UniqueConstraint("provider", "endpoint", name="uq_provider_endpoint"),
-    )
+    __table_args__ = (UniqueConstraint("provider", "endpoint", name="uq_provider_endpoint"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
     provider = Column(String(50), nullable=False)
     endpoint = Column(String(255), nullable=False)
@@ -610,6 +606,49 @@ class ProviderHealthScorecard(Base):
     health_score = Column(Float, default=100.0, nullable=False, server_default="100.0")
     is_active = Column(Boolean, default=True, nullable=False, server_default="1")
     last_updated = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ShortVolumeDaily(Base):
+    """Daily FINRA short-volume alt-data from Polygon (/stocks/v1/short-volume).
+
+    Backfilled + reused as an orthogonal-to-OHLCV positioning signal:
+    short_volume_ratio = short-marked % of consolidated daily volume. History ~2024-02+.
+    """
+
+    __tablename__ = "short_volume_daily"
+    __table_args__ = (
+        UniqueConstraint("ticker", "date", name="uq_short_volume_ticker_date"),
+        Index("ix_short_volume_ticker_date", "ticker", "date"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(12), nullable=False)
+    date = Column(Date, nullable=False)
+    short_volume_ratio = Column(Float, nullable=True)  # percent (0-100)
+    short_volume = Column(Integer, nullable=True)
+    total_volume = Column(Integer, nullable=True)
+    fetched_at = Column(DateTime, server_default=func.now())
+
+
+class ShortInterestBiweekly(Base):
+    """Bi-weekly FINRA short-interest alt-data from Polygon (/stocks/v1/short-interest).
+
+    Orthogonal to OHLCV and to daily short-volume: ``short_interest`` is the aggregate
+    settled short position (shares); ``days_to_cover`` = short_interest / avg_daily_volume
+    is the squeeze-fuel metric. ``date`` is the FINRA settlement_date. History ~2017-12+.
+    """
+
+    __tablename__ = "short_interest_biweekly"
+    __table_args__ = (
+        UniqueConstraint("ticker", "date", name="uq_short_interest_ticker_date"),
+        Index("ix_short_interest_ticker_date", "ticker", "date"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(12), nullable=False)
+    date = Column(Date, nullable=False)  # FINRA settlement_date
+    short_interest = Column(Integer, nullable=True)  # shares short
+    days_to_cover = Column(Float, nullable=True)  # short_interest / avg_daily_volume
+    avg_daily_volume = Column(Integer, nullable=True)
+    fetched_at = Column(DateTime, server_default=func.now())
 
 
 class CorporateActionValidation(Base):
@@ -788,7 +827,9 @@ class ResearchExperiment(Base):
 
     __tablename__ = "research_experiments"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    experiment_type = Column(String(50), nullable=False, index=True)  # "screener" | "parameter_sweep" | "gate_ablation" | "ml_training" | "factor_mining"
+    experiment_type = Column(
+        String(50), nullable=False, index=True
+    )  # "screener" | "parameter_sweep" | "gate_ablation" | "ml_training" | "factor_mining"
     hypothesis = Column(Text, nullable=False)
     universe = Column(JSON, nullable=True)  # list of tickers or description
     data_version = Column(String(50), nullable=False)
@@ -798,8 +839,11 @@ class ResearchExperiment(Base):
     is_metrics = Column(JSON, nullable=True)
     oos_metrics = Column(JSON, nullable=True)
     dsr_pbo = Column(JSON, nullable=True)  # e.g., {"dsr": 0.25, "pbo": 0.05}
-    decision = Column(String(20), default="pending", nullable=False, index=True)  # "promoted" | "rejected" | "shadow" | "pending"
-    promotion_status = Column(String(20), default="pending", nullable=False, index=True)  # "pending" | "live" | "rolled_back" | "expired"
+    decision = Column(
+        String(20), default="pending", nullable=False, index=True
+    )  # "promoted" | "rejected" | "shadow" | "pending"
+    promotion_status = Column(
+        String(20), default="pending", nullable=False, index=True
+    )  # "pending" | "live" | "rolled_back" | "expired"
     created_at = Column(DateTime, server_default=func.now(), index=True)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-

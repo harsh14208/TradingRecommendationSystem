@@ -447,6 +447,33 @@ async def _nightly_outcome_resolution():
                 log.info("[nightly] analytics cache cleared")
             except Exception as ce:
                 log.warning(f"[nightly] failed to clear analytics cache: {ce}")
+            # Refresh Polygon short-volume alt-data for the live watchlist so the
+            # SVR gate stays current and short_volume_daily accrues for forward
+            # re-validation of the alpha (currently provisional at N=25).
+            try:
+                from sqlalchemy import select as _sel
+
+                from database import AsyncSessionLocal as _ASL
+                from models import WatchlistItem
+                from scripts.backfill_short_volume import backfill_ticker
+
+                async with _ASL() as _svdb:
+                    _wl = (
+                        (await _svdb.execute(_sel(WatchlistItem.ticker).where(WatchlistItem.is_active.is_(True))))
+                        .scalars()
+                        .all()
+                    )
+                    _sv_rows = 0
+                    for _t in _wl:
+                        try:
+                            _sv_rows += await backfill_ticker(_svdb, _t)
+                        except Exception:
+                            await _svdb.rollback()
+                log.info(
+                    f"[nightly] short-volume refreshed for {len(_wl)} watchlist tickers ({_sv_rows} rows upserted)"
+                )
+            except Exception as _sve:
+                log.warning(f"[nightly] short-volume refresh failed: {_sve}")
         except Exception as e:
             log.warning(f"[nightly] outcome resolution failed: {e}")
 

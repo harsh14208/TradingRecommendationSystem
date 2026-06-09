@@ -42,7 +42,6 @@ from services.quiverquant import get_congress_signal
 from services.signal_scoring import (
     score_ema_cross,
     score_macd,
-    score_moving_averages,
     score_obv_adx,
     score_oscillators,
 )
@@ -729,7 +728,7 @@ async def generate_signal(
         ctx._atr_pct_pre = _atr_pct_pre
         ctx._is_low_atr = _is_low_atr
         ctx._is_lev_etf = _is_lev_etf
-        
+
         ctx.score = score
         ctx.rationale = rationale
         ctx.sources = sources
@@ -994,6 +993,54 @@ async def generate_signal(
         score, _si_cards, _si_srcs = _si_vel_fn(score, info)
         rationale.extend(_si_cards)
         sources.update(_si_srcs)
+
+        # ── Short-Volume Pressure (Polygon alt-data, T-1) ────────────────────
+        # Alpha check (2026-06-09, scripts/check_short_volume_alpha.py): MR-BUY
+        # outcomes fall monotonically with the entry short-volume ratio — Low(<41%)
+        # WR 75%/+0.56%, Mid 67%/+0.43%, High(>52%) WR 37.5%/-0.79%. High short
+        # conviction on an oversold name = falling-knife (corroborates the §R5
+        # cross-sectional finding). Conservative penalty (small N=25 — provisional;
+        # short_volume_daily backfilled for forward re-validation). Uses T-1 to avoid
+        # look-ahead (FINRA short volume finalises after the close).
+        if score > 0:
+            try:
+                from datetime import date as _date
+
+                from sqlalchemy import select as _sel
+
+                from database import AsyncSessionLocal as _ASL
+                from models import ShortVolumeDaily as _SVD
+
+                # Latest T-1 short-volume from the backfilled table (kept current by the
+                # nightly refresh). DB read, not an API call in the hot scan path.
+                async with _ASL() as _svdb:
+                    _row = (
+                        await _svdb.execute(
+                            _sel(_SVD.short_volume_ratio)
+                            .where(_SVD.ticker == ticker, _SVD.date < _date.today())
+                            .order_by(_SVD.date.desc())
+                            .limit(1)
+                        )
+                    ).first()
+                _svr = float(_row[0]) if _row and _row[0] is not None else None
+                if _svr is not None and _svr >= 55.0:
+                    score -= 4
+                    sources.add("Alt-Data")
+                    rationale.append(
+                        {
+                            "src": "Alt-Data",
+                            "head": f"Elevated Short Volume — {_svr:.0f}% short-marked",
+                            "body": (
+                                f"{_svr:.0f}% of recent consolidated volume was short-marked (FINRA via Polygon). "
+                                "Oversold names with >55% short volume historically keep falling (MR win rate "
+                                "37.5% vs 75% for low short pressure) — institutional short conviction, not a bounce."
+                            ),
+                            "sentiment": "neg",
+                            "meta": f"short_volume_ratio={_svr:.1f}% (>55% = falling-knife risk)",
+                        }
+                    )
+            except Exception as _sv_err:
+                log.debug("[short_volume] %s: %s", ticker, _sv_err)
 
         # ── 52-Week Range Position ───────────────────────────────────────────
         # George & Hwang (2004): stocks within 5% of their 52wk high outperform
