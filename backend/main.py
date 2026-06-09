@@ -641,16 +641,36 @@ async def _weekly_factor_mining():
             log.warning(f"[calibration] weekly run failed: {e}")
 
 
-async def _run_weekly_digest():
+async def _run_weekly_digest(force: bool = False):
     ET = pytz.timezone("America/New_York")
     try:
         from database import AsyncSessionLocal
-        from models import Signal
+        from models import BackgroundJobRun, Signal
         from sqlalchemy import select
 
         now = datetime.utcnow()
         week_ago = now - timedelta(days=7)
         two_weeks_ago = now - timedelta(days=14)
+
+        # ── Once-per-week idempotency guard ──────────────────────────────────────
+        # The digest must fire at most once per week no matter how many times this
+        # coroutine is reached (server restarts, an accidental admin click, a future
+        # cron). We persist a marker row on every successful send and skip if one
+        # was written in the last 6 days. force=True (manual admin trigger) bypasses
+        # the read check but still records the marker so it shifts the weekly window.
+        if not force:
+            async with AsyncSessionLocal() as db_guard:
+                already = (
+                    await db_guard.execute(
+                        select(BackgroundJobRun.id)
+                        .where(BackgroundJobRun.job_name == "weekly_digest_sent")
+                        .where(BackgroundJobRun.start_time >= now - timedelta(days=6))
+                        .limit(1)
+                    )
+                ).first()
+            if already:
+                log.info("[digest] already sent within the last 6 days — skipping (weekly idempotency guard)")
+                return
 
         async with AsyncSessionLocal() as db:
             sent_this_week = (
@@ -815,6 +835,24 @@ async def _run_weekly_digest():
                     log.warning(f"[digest] email to {email} failed: {e_mail}")
         except Exception as e_email:
             log.warning(f"[digest] email digest error: {e_email}")
+
+        # ── Record the weekly idempotency marker ─────────────────────────────────
+        # Written after the send attempt so the once-per-week guard above can skip
+        # any subsequent trigger this week. Non-critical: a failure here only risks
+        # an extra digest, never a missed one.
+        try:
+            async with AsyncSessionLocal() as db_marker:
+                db_marker.add(
+                    BackgroundJobRun(
+                        job_name="weekly_digest_sent",
+                        start_time=now,
+                        end_time=datetime.utcnow(),
+                        status="completed",
+                    )
+                )
+                await db_marker.commit()
+        except Exception as e_marker:
+            log.warning(f"[digest] failed to record weekly marker (non-critical): {e_marker}")
 
         # ── Auto performance snapshot (weekly baseline) ───────────────────────
         try:
@@ -1719,7 +1757,8 @@ async def admin_trigger_weekly_digest(background_tasks: BackgroundTasks, user: U
     """Manually trigger the weekly digest to be sent immediately."""
     if not user.is_owner:
         raise HTTPException(status_code=403, detail="Owner access required.")
-    background_tasks.add_task(_run_weekly_digest)
+    # force=True: a manual owner trigger always sends, bypassing the weekly guard.
+    background_tasks.add_task(_run_weekly_digest, force=True)
     return {"status": "ok", "message": "Weekly digest triggered and sending in the background."}
 
 
@@ -1808,8 +1847,27 @@ app.mount("/", StaticFiles(directory=str(ROOT)), name="static")
 
 
 if __name__ == "__main__":
+    import os
+
     import uvicorn
 
     print("\n  Signal.Trade backend starting…")
     print("  Open → http://localhost:8000\n")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Auto-reload is a DEV-ONLY feature and must stay OFF on the live server.
+    # The running app writes to data/, logs/, and the dist bundle inside the
+    # watched tree, so watchfiles fires "change detected" constantly → the child
+    # process is killed and respawned many times a minute. That restart storm
+    # drops the scanner mid-cycle (signals queue up and breach the ≤5min delivery
+    # SLA) and tears down WS feeds and in-memory caches. Opt in for local dev with
+    # DEV_RELOAD=1; the launchd service runs without it and therefore stays stable.
+    dev_reload = os.getenv("DEV_RELOAD", "").strip().lower() in ("1", "true", "yes")
+    # reload_excludes (dev only): also skip research scripts (scripts/) and tests/
+    # that parallel sessions/jobs churn. Bare dir names are resolved by uvicorn into
+    # recursive directory excludes (covers scripts/research/*).
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=dev_reload,
+        reload_excludes=["scripts", "scripts/*", "tests", "tests/*"] if dev_reload else None,
+    )
