@@ -19,6 +19,7 @@ from services.engines.helpers import (
     _make_plain_english,
     _score_to_action,
 )
+from services.sector import SECTOR_MAP
 
 log = logging.getLogger("signal.trade.engine")
 
@@ -1238,7 +1239,11 @@ def _assemble_signal(
         "daysToEarnings": days_to_earnings,
         "daysToExDiv": days_to_exdiv,
         "nextEarningsDate": earnings_cal.get("next_earnings_date"),
-        "sectorEtf": sector_rs["sector_etf"] if sector_rs else None,
+        # sector_etf is a static SECTOR_MAP lookup — always populate it even when
+        # the relative-strength fetch failed (sector_rs is None). Decoupling these
+        # keeps the audit tag and the BLOCKED_SECTORS delivery gate working; only
+        # the RS *metrics* below go null when live data is unavailable.
+        "sectorEtf": (sector_rs["sector_etf"] if sector_rs else SECTOR_MAP.get(ticker.upper())),
         "rsVsSector": sector_rs["rs_vs_sector"] if sector_rs else None,
         "plain_english": plain_english,
         "beta": info.get("beta"),

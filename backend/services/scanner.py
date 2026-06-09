@@ -20,6 +20,7 @@ from sqlalchemy import desc, select, update
 
 from services.aaii import get_aaii_sentiment
 from services.breadth import get_market_breadth
+from services.cohort_service import GATES_POLICY_VERSION, SCORING_POLICY_VERSION
 from services.cot import get_cot_signal
 from services.fear_greed import get_fear_greed, get_put_call_ratio
 from services.macro import get_macro_context
@@ -1609,6 +1610,10 @@ async def _persist_scan_signals(
                 expires_at=_expires,
                 extra_data=_gate_extra,
                 cycle_id=current_cycle_id.get(),
+                # QENG-6c: stamp the scoring/gate policy version on every signal so
+                # the row is traceable to the exact engine version that produced it.
+                # (Column existed but was never written — 100% null before this.)
+                policy_version=f"{SCORING_POLICY_VERSION}/{GATES_POLICY_VERSION}",
             )
             db.add(row)
             await db.flush()
@@ -1648,6 +1653,7 @@ async def _persist_scan_signals(
                     if "features" in sig:
                         from services.feature_store import save_feature_snapshot
                         from services.lineage import DATA_LINEAGE_VERSION
+
                         await save_feature_snapshot(
                             db=db,
                             ticker=sig["ticker"],
@@ -1709,10 +1715,16 @@ async def _deliver_scan_signals(
                     await _maybe_paper_trade(sig, positions_map, settings, db_settings)
                     delivered_signals.append((sig, merged.id))
                 elif cohort == "shadow":
-                    log.info("Cohort: Ticker %s routed to SHADOW (paper-only). Skipping notifications/live orders.", sig["ticker"])
+                    log.info(
+                        "Cohort: Ticker %s routed to SHADOW (paper-only). Skipping notifications/live orders.",
+                        sig["ticker"],
+                    )
                     await _maybe_paper_trade(sig, positions_map, settings, db_settings)
                 elif cohort == "withheld":
-                    log.info("Cohort: Ticker %s routed to WITHHELD (control). Skipping all executions/notifications.", sig["ticker"])
+                    log.info(
+                        "Cohort: Ticker %s routed to WITHHELD (control). Skipping all executions/notifications.",
+                        sig["ticker"],
+                    )
 
             if delivered_signals:
                 await _maybe_auto_execute_portfolio(delivered_signals, db)
@@ -2025,18 +2037,10 @@ async def _run_scan_impl(broadcast_fn=None):
                 sector_etf = sig.get("sectorEtf")
 
                 meta_prob = predict_meta_prob(
-                    tech=feats,
-                    entry_prob=entry_prob,
-                    hmm_regime=hmm_regime,
-                    vix=vix_val,
-                    sector_etf=sector_etf
+                    tech=feats, entry_prob=entry_prob, hmm_regime=hmm_regime, vix=vix_val, sector_etf=sector_etf
                 )
 
-                cohort_meta = build_policy_version_meta(
-                    ticker=sig["ticker"],
-                    ts=datetime.utcnow(),
-                    meta_prob=meta_prob
-                )
+                cohort_meta = build_policy_version_meta(ticker=sig["ticker"], ts=datetime.utcnow(), meta_prob=meta_prob)
                 sig["cohort_meta"] = cohort_meta
                 sig["cohort"] = cohort_meta["cohort"]
             except Exception as e_cohort:
