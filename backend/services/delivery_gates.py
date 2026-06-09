@@ -191,10 +191,17 @@ async def check_delivery_gates(
     ticker_as_sector = sig_dict.get("ticker", "")
     if (sector and sector in BLOCKED_SECTORS) or (ticker_as_sector in BLOCKED_SECTORS):
         _blocked_key = sector if (sector and sector in BLOCKED_SECTORS) else ticker_as_sector
-        return (
-            f"sector {_blocked_key} blocked (low PF) — awaiting retraining",
-            sig_dict,
-        )
+        
+        # Check if the sector-specific model exists. If so, unblock dynamically.
+        from pathlib import Path
+        data_dir = Path(__file__).parent.parent / "data"
+        model_file = data_dir / f"backtest_ml_model_{_blocked_key}.json"
+        
+        if not model_file.exists():
+            return (
+                f"sector {_blocked_key} blocked (low PF) — awaiting retraining",
+                sig_dict,
+            )
 
     # ── §54 VIX<15 suspension (ultra-low vol — MR setups statistically fail) ───
     # Backtest §54: VIX<15 regime shows mean-reversion entries cluster at bottom

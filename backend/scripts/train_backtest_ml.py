@@ -119,6 +119,107 @@ def _build_dataset(all_results: list, vix_dict: dict) -> tuple[np.ndarray, np.nd
     return np.array(X_rows, dtype=float), np.array(y_rows, dtype=int)
 
 
+def simulate_and_process_trades(raw_results: list, vix: dict, spy_trend: dict, stlfsi4: dict) -> list:
+    """
+    Takes a list of (ticker, bh_return, df, earnings_dates) from process_ticker
+    and runs cointegration + simulate_ticker to return list of (ticker, trades_df, bh_return, df).
+    """
+    from scripts.backtest_technicals import (
+        TICKER_TO_SECTOR,
+        START,
+        END,
+        cached_yf_download,
+        compute_scores,
+        simulate_ticker,
+    )
+    
+    # Filter out empty results
+    valid_results = [r for r in raw_results if r is not None and r[2] is not None]
+    if not valid_results:
+        return []
+        
+    all_dfs = {r[0]: r[2] for r in valid_results}
+    all_earnings_dates = {r[0]: r[3] for r in valid_results}
+    bh_returns_map = {r[0]: r[1] for r in valid_results}
+    
+    # ── Cointegration calculation ──
+    try:
+        _sector_etfs = list({TICKER_TO_SECTOR.get(t, "XLK") for t in all_dfs})
+        _etf_raw = cached_yf_download(
+            _sector_etfs, start=START, end=END, interval="1d", auto_adjust=True, progress=False
+        )
+        if isinstance(_etf_raw.columns, pd.MultiIndex):
+            _etf_close = _etf_raw["Close"]
+        else:
+            _etf_close = _etf_raw[["Close"]] if "Close" in _etf_raw.columns else _etf_raw
+        _etf_close.index = pd.to_datetime([str(i)[:10] for i in _etf_close.index])
+
+        def _coint_z_series(ticker_prices: pd.Series, etf_prices: pd.Series, window: int = 252) -> pd.Series:
+            combined = pd.DataFrame({"s": ticker_prices, "e": etf_prices}).dropna()
+            if len(combined) < 60:
+                return pd.Series(dtype=float, index=combined.index)
+            W = window + 1
+            s_col = combined["s"]
+            e_col = combined["e"]
+
+            sum_s = s_col.rolling(W, min_periods=60).sum()
+            sum_e = e_col.rolling(W, min_periods=60).sum()
+            sum_se = (s_col * e_col).rolling(W, min_periods=60).sum()
+            sum_ee = (e_col**2).rolling(W, min_periods=60).sum()
+            sum_ss = (s_col**2).rolling(W, min_periods=60).sum()
+            N = s_col.rolling(W, min_periods=60).count()
+
+            denom = N * sum_ee - sum_e**2
+            denom_valid = denom.abs() > 1e-12
+
+            beta = np.where(denom_valid, (N * sum_se - sum_s * sum_e) / denom, np.nan)
+            alpha = np.where(denom_valid, (sum_s - beta * sum_e) / N, np.nan)
+
+            resid_last = s_col - (beta * e_col + alpha)
+            ss = (
+                sum_ss
+                + beta**2 * sum_ee
+                + N * alpha**2
+                - 2 * beta * sum_se
+                - 2 * alpha * sum_s
+                + 2 * beta * alpha * sum_e
+            )
+            var = np.maximum(ss / (N - 1), 0.0)
+            sigma = np.sqrt(var)
+
+            z_score = np.where((sigma > 1e-8) & denom_valid, resid_last / sigma, np.nan)
+            return pd.Series(z_score, index=combined.index)
+
+        for ticker, df in all_dfs.items():
+            etf = TICKER_TO_SECTOR.get(ticker, "XLK")
+            if etf in _etf_close.columns:
+                etf_p = _etf_close[etf]
+            elif len(_sector_etfs) == 1 and etf == _sector_etfs[0]:
+                etf_p = _etf_close.iloc[:, 0]
+            else:
+                continue
+            cz = _coint_z_series(df["Close"], etf_p)
+            df["coint_z"] = cz.reindex(df.index)
+            df["score"] = compute_scores(df)
+    except Exception as _coint_err:
+        print(f"Cointegration step failed: {_coint_err}")
+
+    # ── Simulate tickers and build final list ──
+    final_results = []
+    for ticker, df in all_dfs.items():
+        trades = simulate_ticker(
+            ticker,
+            df,
+            vix,
+            spy_trend,
+            stlfsi4,
+            mr_only=True,
+            earnings_dates=all_earnings_dates.get(ticker),
+        )
+        final_results.append((ticker, trades, bh_returns_map[ticker], df))
+    return final_results
+
+
 def main():
     print("\n# Backtest Entry Model Training — Signal.Trade\n")
 
@@ -137,11 +238,9 @@ def main():
         END,
         START,
         TICKERS,
-        fetch_ad_breadth,
         fetch_spy_trend,
         fetch_stlfsi4,
-        fetch_t10y,
-        fetch_trin,
+        fetch_spy_prices,
         process_ticker,
     )
     import yfinance as yf
@@ -149,7 +248,7 @@ def main():
     print(f"IS universe: {len(TICKERS)} tickers  |  {START} → {END}\n")
 
     # ── Fetch shared market data (same as main backtest) ─────────────────────
-    print("Fetching macro data (VIX, SPY, STLFSI4, T10Y, TRIN, A/D)…")
+    print("Fetching macro data (VIX, SPY, STLFSI4)…")
 
     raw_vix = yf.download("^VIX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
     if isinstance(raw_vix.columns, pd.MultiIndex):
@@ -162,50 +261,31 @@ def main():
             pass
 
     spy_trend = fetch_spy_trend(START, END)
+    spy_prices = {}
+    try:
+        spy_prices = fetch_spy_prices(START, END)
+    except Exception:
+        pass
     stlfsi4 = {}
-    t10y_data = {}
-    trin_data = {}
-    ad_data = {}
     try:
         _api_key = os.getenv("MASSIVE_API_KEY", "")
         stlfsi4 = fetch_stlfsi4(START, END, _api_key)
     except Exception as e:
         print(f"  STLFSI4 fetch skipped: {e}")
-    try:
-        t10y_data = fetch_t10y(START, END)
-    except Exception as e:
-        print(f"  T10Y fetch skipped: {e}")
-    try:
-        trin_data = fetch_trin(START, END)
-    except Exception as e:
-        print(f"  TRIN fetch skipped: {e}")
-    try:
-        ad_data = fetch_ad_breadth(START, END)
-    except Exception as e:
-        print(f"  A/D fetch skipped: {e}")
 
     print(f"  VIX: {len(vix_dict)} days | SPY trend: {len(spy_trend)} days\n")
-
-    # ── FOMC dates ─────────────────────────────────────────────────────────────
-    fomc_dates: frozenset | None = None
-    try:
-        _fomc_path = Path(__file__).parent.parent / "data" / "fomc_dates.json"
-        if _fomc_path.exists():
-            fomc_dates = frozenset(json.loads(_fomc_path.read_text()))
-    except Exception:
-        pass
 
     # ── Run backtest for all IS tickers in parallel ───────────────────────────
     print(f"Running IS backtest on {len(TICKERS)} tickers…")
     args_list = [
-        (ticker, vix_dict, spy_trend, stlfsi4, True, fomc_dates, t10y_data, trin_data, ad_data) for ticker in TICKERS
+        (ticker, vix_dict, spy_trend, stlfsi4, True, False, spy_prices, False) for ticker in TICKERS
     ]
     n_cpu = max(1, multiprocessing.cpu_count() - 1)
     with multiprocessing.Pool(n_cpu) as pool:
-        all_results = pool.map(process_ticker, args_list)
+        raw_results = pool.map(process_ticker, args_list)
 
-    # process_ticker returns (ticker, trades_df, bh_return, indicator_df)
-    # but it uses mr_only=True from the args tuple (index 4)
+    all_results = simulate_and_process_trades(raw_results, vix_dict, spy_trend, stlfsi4)
+
     total_trades = sum(len(t) for _, t, _, _ in all_results if t is not None)
     print(f"Total IS trades: {total_trades}\n")
 
@@ -527,6 +607,7 @@ _SECTOR_TICKER_SETS: dict[str, set[str]] = {
     "XLF": {"JPM", "BAC", "WFC", "C", "BK", "V", "AXP", "SPGI", "MS", "GS", "BLK", "SCHW"},
     "XLP": {"PG", "KO", "PEP", "CL", "KMB", "GIS", "MO", "PM", "COST", "WMT", "TGT"},
     "XLU": {"NEE", "DUK", "SO", "D", "AEP", "EXC", "XEL", "SRE", "ED", "AWK"},
+    "XLI": {"HON", "CAT", "DE", "RTX", "LMT", "UNP", "CSX", "ETN", "XYL", "GE", "WM"},
 }
 
 
@@ -537,18 +618,16 @@ if __name__ == "__main__":
     # Train after the global model so we can reuse all_results from main().
     # This is a standalone invocation path — re-run the backtest for sector models.
     print("\n## Sector-Specific Model Training\n")
-    print("Re-running IS backtest to build sector models (XLF, XLP, XLU)...\n")
+    print("Re-running IS backtest to build sector models (XLF, XLP, XLU, XLI)...\n")
 
     try:
         from scripts.backtest_technicals import (
             END,
             START,
             TICKERS,
-            fetch_ad_breadth,
             fetch_spy_trend,
             fetch_stlfsi4,
-            fetch_t10y,
-            fetch_trin,
+            fetch_spy_prices,
             process_ticker,
         )
         import yfinance as yf
@@ -565,24 +644,14 @@ if __name__ == "__main__":
                 pass
 
         spy_trend_s = fetch_spy_trend(START, END)
+        spy_prices_s = {}
+        try:
+            spy_prices_s = fetch_spy_prices(START, END)
+        except Exception:
+            pass
         stlfsi4_s = {}
-        t10y_s = {}
-        trin_s = {}
-        ad_s = {}
         try:
             stlfsi4_s = fetch_stlfsi4(START, END, os.getenv("MASSIVE_API_KEY", ""))
-        except Exception:
-            pass
-        try:
-            t10y_s = fetch_t10y(START, END)
-        except Exception:
-            pass
-        try:
-            trin_s = fetch_trin(START, END)
-        except Exception:
-            pass
-        try:
-            ad_s = fetch_ad_breadth(START, END)
         except Exception:
             pass
 
@@ -593,21 +662,22 @@ if __name__ == "__main__":
         if _sector_train_tickers:
             print(f"Fetching {len(_sector_train_tickers)} additional sector tickers: {_sector_train_tickers}\n")
             sector_args = [
-                (t, vix_dict_s, spy_trend_s, stlfsi4_s, True, None, t10y_s, trin_s, ad_s) for t in _sector_train_tickers
+                (t, vix_dict_s, spy_trend_s, stlfsi4_s, True, False, spy_prices_s, False) for t in _sector_train_tickers
             ]
             n_cpu_s = max(1, multiprocessing.cpu_count() - 1)
             with multiprocessing.Pool(n_cpu_s) as pool:
-                sector_results = pool.map(process_ticker, sector_args)
+                sector_raw_results = pool.map(process_ticker, sector_args)
         else:
-            sector_results = []
+            sector_raw_results = []
 
         # Combine: re-run main tickers + sector tickers
-        main_args_s = [(t, vix_dict_s, spy_trend_s, stlfsi4_s, True, None, t10y_s, trin_s, ad_s) for t in TICKERS]
+        main_args_s = [(t, vix_dict_s, spy_trend_s, stlfsi4_s, True, False, spy_prices_s, False) for t in TICKERS]
         n_cpu_s = max(1, multiprocessing.cpu_count() - 1)
         with multiprocessing.Pool(n_cpu_s) as pool:
-            main_results_s = pool.map(process_ticker, main_args_s)
+            main_raw_results = pool.map(process_ticker, main_args_s)
 
-        all_results_s = main_results_s + sector_results
+        all_raw_results_s = main_raw_results + sector_raw_results
+        all_results_s = simulate_and_process_trades(all_raw_results_s, vix_dict_s, spy_trend_s, stlfsi4_s)
 
         for sector_etf, sector_tickers in _SECTOR_TICKER_SETS.items():
             champion_auc_s: float | None = None

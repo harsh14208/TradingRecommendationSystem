@@ -164,7 +164,13 @@ def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
             print(f"Failed to load constituents file: {e}")
             _CONSTITUENTS_MAP = {}
 
-    intervals = _CONSTITUENTS_MAP.get(ticker)
+    lookup_ticker = ticker
+    if ticker == "LEH":
+        lookup_ticker = "LEHMQ"
+    elif ticker == "WM":
+        lookup_ticker = "WAMUQ"
+
+    intervals = _CONSTITUENTS_MAP.get(lookup_ticker)
     if not intervals:
         return True
 
@@ -2038,6 +2044,7 @@ def simulate_ticker(
     beta_hedge: bool = False,
     spy_prices: dict | None = None,
     forecast_sizing: bool = False,
+    fred_panel: dict | None = None,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -2190,6 +2197,32 @@ def simulate_ticker(
             if stress_today > 1.5 and vix_today > 30:
                 continue
             if stress_today > 1.0 and vix_today > 25 and score < 50:
+                continue
+
+        # ── Gate 2b: §13 FRED macro-regime panel (research — active only when supplied) ──
+        # MR bounces weaken when financial conditions tighten, credit stress rises, or
+        # the curve inverts (recession regime). Each sub-gate hard-blocks BUYs in its
+        # extreme regime and blocks only marginal (low-conviction) BUYs in its elevated
+        # regime; high-conviction signals pass. Point-in-time via observation-dated,
+        # forward-filled FRED series (last KNOWN value only — no look-ahead). Orthogonal
+        # to VIX+STLFSI4. Only active when fred_panel is provided (mirrors cross_asset).
+        if is_buy_signal and fred_panel:
+            _fd = pd.Timestamp(str(date)[:10])
+            _nfci = fred_panel.get("nfci", {}).get(_fd)
+            _baa = fred_panel.get("baa10y", {}).get(_fd)
+            _t10y3m = fred_panel.get("t10y3m", {}).get(_fd)
+            # NFCI: >0 = tighter-than-average conditions; >0.5 = clear tightening
+            if _nfci is not None and _nfci > 0.5:
+                continue
+            if _nfci is not None and _nfci > 0.0 and score < 50:
+                continue
+            # Baa-10Y credit spread (normal ~1.5-2.5%): >4% crisis (hard); >3% elevated (marginal)
+            if _baa is not None and _baa > 4.0:
+                continue
+            if _baa is not None and _baa > 3.0 and score < 50:
+                continue
+            # Inverted curve (10Y<3M) = recession regime: require conviction
+            if _t10y3m is not None and _t10y3m < 0.0 and score < 55:
                 continue
 
         # ── Gate 3: SPY macro trend ───────────────────────────────────────────
@@ -3292,11 +3325,15 @@ def fetch_earnings_dates_polygon(ticker: str, api_key: str, start: str) -> set:
     return dates
 
 
-def fetch_stlfsi4(start: str, end: str, api_key: str) -> dict[pd.Timestamp, float]:
+def fetch_fred_series(series_id: str, start: str, end: str, api_key: str) -> dict[pd.Timestamp, float]:
     """
-    Fetch the St. Louis Fed Financial Stress Index (STLFSI4) from FRED.
-    Weekly series → forward-filled to daily so every trading day has a value.
-    Values: negative = below-average stress; > 1.0 = elevated; > 1.5 = crisis.
+    Fetch any FRED series → forward-filled to daily so every trading day has a value.
+
+    Point-in-time safe for backtest date joins: each observation is keyed to its own
+    observation date, and the ffill only ever carries the *last known* value forward
+    (no look-ahead). Weekly/monthly series (NFCI, STLFSI4) are ffilled to daily;
+    genuinely-daily series (HY OAS, T10Y3M) are unaffected except across weekends/holidays.
+    FRED encodes missing values as ".", which float() rejects and we skip.
     """
     if not api_key:
         return {}
@@ -3305,7 +3342,7 @@ def fetch_stlfsi4(start: str, end: str, api_key: str) -> dict[pd.Timestamp, floa
 
         url = "https://api.stlouisfed.org/fred/series/observations"
         params = {
-            "series_id": "STLFSI4",
+            "series_id": series_id,
             "api_key": api_key,
             "file_type": "json",
             "observation_start": start,
@@ -3315,22 +3352,48 @@ def fetch_stlfsi4(start: str, end: str, api_key: str) -> dict[pd.Timestamp, floa
         obs = r.json().get("observations", [])
         if not obs:
             return {}
-        # Build weekly series
-        weekly = {}
+        raw = {}
         for o in obs:
             try:
-                weekly[pd.Timestamp(o["date"])] = float(o["value"])
+                raw[pd.Timestamp(o["date"])] = float(o["value"])
             except (ValueError, KeyError):
-                pass
-        if not weekly:
+                pass  # "." = FRED missing-value marker
+        if not raw:
             return {}
-        # Forward-fill weekly → daily using a date range
-        idx = pd.date_range(start=min(weekly), end=max(weekly), freq="D")
-        series = pd.Series(weekly).reindex(idx).ffill()
+        idx = pd.date_range(start=min(raw), end=max(raw), freq="D")
+        series = pd.Series(raw).reindex(idx).ffill()
         return {pd.Timestamp(str(k)[:10]): float(v) for k, v in series.items() if pd.notna(v)}
     except Exception as e:
         print(f"failed ({e})")
         return {}
+
+
+def fetch_stlfsi4(start: str, end: str, api_key: str) -> dict[pd.Timestamp, float]:
+    """
+    St. Louis Fed Financial Stress Index (STLFSI4) from FRED — see fetch_fred_series.
+    Values: negative = below-average stress; > 1.0 = elevated; > 1.5 = crisis.
+    """
+    return fetch_fred_series("STLFSI4", start, end, api_key)
+
+
+def fetch_fred_panel(start: str, end: str, api_key: str) -> dict[str, dict]:
+    """
+    FRED macro-regime panel for the §14 regime-gate ablation. All free, FRED-key-gated,
+    decades deep — and orthogonal to the VIX+STLFSI4 the backtest already gates on:
+      nfci    — Chicago Fed National Financial Conditions Index (>0 = tighter than avg), 1971+
+      baa10y  — Moody's Baa corporate yield minus 10Y Treasury, % (credit stress), 1986+
+      t10y3m  — 10Y minus 3M Treasury spread, % (<0 = inverted curve = recession regime), 1982+
+    Each value is a daily-ffilled {date: float} dict; empty if no key / fetch fails.
+
+    NB: ICE BofA HY-OAS (BAMLH0A0HYM2) was the obvious credit gauge but FRED now only
+    serves ~2yr of it publicly (ICE licensing change → 2023+ only), too shallow for the
+    23yr backtest. BAA10Y is the deep, free, non-ICE substitute (Moody's, daily, 1986+).
+    """
+    return {
+        "nfci": fetch_fred_series("NFCI", start, end, api_key),
+        "baa10y": fetch_fred_series("BAA10Y", start, end, api_key),
+        "t10y3m": fetch_fred_series("T10Y3M", start, end, api_key),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4422,6 +4485,95 @@ def main():
         _save_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "data", "backtest_trades_is.csv")
         trades.to_csv(_save_path, index=False)
         print(f"[--save-trades] Saved {len(trades)} IS trades to {_save_path}\n")
+
+    # ── --exit-sweep: grid over the exit-timing knobs (max_loss_days × no_progress) ──
+    # Per the entry-alpha-exhausted finding, entry ranking is saturated (5-fold
+    # CV-AUC ≈ 0.50 predicting wins; engine score↔outcome ρ≈0.03), so the only
+    # remaining Sharpe lever is the EXIT. This sweeps the two existing exit knobs
+    # and ranks by the CAPITAL-AWARE portfolio annualised Sharpe — an exit that
+    # frees its slot sooner recycles capital into T-bills / new trades, so cutting
+    # hold time WITHOUT hurting per-trade return lifts annualised Sharpe even when
+    # per-trade Sharpe is flat. Per-trade Sharpe + mean hold are shown for context.
+    if "--exit-sweep" in sys.argv:
+        print("\n## Exit-Timing Sweep — max_loss_days × no_progress_days\n")
+        print("> Objective: portfolio ANN Sharpe (capital-aware, frees-slot-sooner rewarded).")
+        print("> Baseline = live defaults: max_loss_days=4, no_progress=OFF.")
+        print("> pSh = per-trade Sharpe (N-blind); hold = mean exit_day; TL/NP = % time_loss/no_progress exits.\n")
+
+        def _exit_run(**ov) -> pd.DataFrame:
+            _lst = []
+            for _t, _df in all_dfs.items():
+                _tr = simulate_ticker(_t, _df, vix, spy_trend, stlfsi4, mr_only=True, **ov)
+                if _tr is not None and not _tr.empty:
+                    _lst.append(_tr)
+            return pd.concat(_lst, ignore_index=True) if _lst else pd.DataFrame()
+
+        def _exit_metrics(label: str, **ov) -> dict | None:
+            tr = _exit_run(**ov)
+            if tr.empty:
+                return None
+            s = stats(tr["net_pct"].tolist())
+            ps = run_portfolio_simulation(tr, quiet=True) or {}
+            er = tr["exit_reason"] if "exit_reason" in tr else pd.Series(dtype=str)
+            return {
+                "label": label,
+                "n": s["n"],
+                "wr": s["wr"],
+                "avg": s["avg"],
+                "sharpe": s["sharpe"],
+                "hold": float(tr["exit_day"].mean()),
+                "tl_pct": float((er == "time_loss").mean() * 100) if len(er) else 0.0,
+                "np_pct": float((er == "no_progress").mean() * 100) if len(er) else 0.0,
+                "cagr": ps.get("cagr"),
+                "maxdd": ps.get("max_dd"),
+                "ann": ps.get("ann_sharpe"),
+            }
+
+        _exit_configs = [
+            ("BASELINE max_loss=4 np=OFF", dict()),
+            ("max_loss=2", dict(max_loss_days_override=2)),
+            ("max_loss=3", dict(max_loss_days_override=3)),
+            ("max_loss=5", dict(max_loss_days_override=5)),
+            ("max_loss=6", dict(max_loss_days_override=6)),
+            ("max_loss=OFF(99)", dict(max_loss_days_override=99)),
+            ("np=3 (max_loss=4)", dict(no_progress_days=3)),
+            ("np=4 (max_loss=4)", dict(no_progress_days=4)),
+            ("np=5 (max_loss=4)", dict(no_progress_days=5)),
+            ("max_loss=3 + np=3", dict(max_loss_days_override=3, no_progress_days=3)),
+            ("max_loss=3 + np=4", dict(max_loss_days_override=3, no_progress_days=4)),
+            ("max_loss=5 + np=4", dict(max_loss_days_override=5, no_progress_days=4)),
+        ]
+        _exit_rows = []
+        for _lbl, _ov in _exit_configs:
+            _m = _exit_metrics(_lbl, **_ov)
+            if _m is None:
+                continue
+            _exit_rows.append(_m)
+            print(
+                f"  {_lbl:<28} N={_m['n']:>4}  WR={_m['wr']:>5.1f}%  avg={_m['avg']:+.3f}%  "
+                f"pSh={fmt_sharpe(_m['sharpe'])}  hold={_m['hold']:.2f}d  "
+                f"TL={_m['tl_pct']:>4.1f}%  NP={_m['np_pct']:>4.1f}%  "
+                f"CAGR={_m['cagr']:+.1f}%  DD=-{_m['maxdd']:.1f}%  ANN={fmt_sharpe(_m['ann'])}"
+            )
+
+        if _exit_rows:
+            _eb = _exit_rows[0]
+            _base_ann = _eb["ann"] or 0.0
+            print(
+                f"\n> Ranked by portfolio ANN Sharpe (baseline ANN={fmt_sharpe(_eb['ann'])}, hold={_eb['hold']:.2f}d):"
+            )
+            for _r in sorted(_exit_rows, key=lambda x: x["ann"] or -99, reverse=True):
+                _d = (_r["ann"] or 0.0) - _base_ann
+                _flag = " ✅" if _d > 0.05 else (" ⚠" if _d > 0.0 else "")
+                print(
+                    f"    {_r['label']:<28} ANN={fmt_sharpe(_r['ann'])}  Δ={_d:+.3f}  "
+                    f"pSh={fmt_sharpe(_r['sharpe'])}  N={_r['n']}  hold={_r['hold']:.2f}d{_flag}"
+                )
+            print(
+                "\n> Read: a config wins only if ANN Δ>0 with N roughly intact — per-trade Sharpe gains\n"
+                "> that come purely from dropping trades (N collapse) do NOT lift ANN (the ATR≤70 trap).\n"
+            )
+        return
 
     _vg_only = "--validate-live-gates" in sys.argv and not any(
         a for a in sys.argv[1:] if a.startswith("--") and a != "--validate-live-gates"
@@ -5793,7 +5945,73 @@ def main():
         print()
 
     # ─────────────────────────────────────────────────────────────────────────
-    # §14. §65 Research — TRIN Capitulation Split
+    # §14. FRED Macro-Regime Panel (NFCI + BAA10Y + T10Y3M) — regime-gate ablation
+    # ─────────────────────────────────────────────────────────────────────────
+    # Free, FRED-key-gated, decades deep, orthogonal to the VIX+STLFSI4 the backtest
+    # already gates on. A/B: baseline vs. +panel BUY gate. Same gate-validation
+    # discipline as §55 — measure ΔSharpe before any live deploy.
+    if all_dfs and BACKTEST_MR_DEFAULT and "--validate-live-gates" not in sys.argv:
+        print("\n## 14. FRED Macro-Regime Panel (NFCI + BAA10Y + T10Y3M)\n")
+        print(
+            "> Blocks marginal BUYs (score<50/55) when NFCI>0 / Baa-10Y>3% / 10Y<3M; "
+            "hard-blocks at NFCI>0.5 / Baa-10Y>4%. Backtest previously gated only on VIX+STLFSI4."
+        )
+        print("Fetching FRED NFCI / BAA10Y / T10Y3M…", end=" ", flush=True)
+        fred_panel_data = fetch_fred_panel(START, END, _fred_key)
+        _have = {k: len(v) for k, v in fred_panel_data.items() if v}
+        if not _have:
+            print("failed — §14 skipped (no FRED_API_KEY?).\n")
+        else:
+            print(f"ok ({', '.join(f'{k}={n}' for k, n in _have.items())} daily obs)\n")
+            fp_list = []
+            for ticker_k, df_k in all_dfs.items():
+                t_fp = simulate_ticker(
+                    ticker_k,
+                    df_k,
+                    vix,
+                    spy_trend,
+                    stlfsi4,
+                    mr_only=True,
+                    fred_panel=fred_panel_data,
+                )
+                if not t_fp.empty:
+                    fp_list.append(t_fp)
+            if not fp_list:
+                print("[no §14 trades generated]\n")
+            else:
+                fp_trades = pd.concat(fp_list, ignore_index=True)
+                sfp = stats(fp_trades["net_pct"].tolist())
+                print_table(
+                    ["Metric", "Baseline (§1-§8)", "+FRED panel", "Δ"],
+                    [
+                        ["N Trades", str(s["n"]), str(sfp["n"]), f"{sfp['n'] - s['n']:+d}"],
+                        ["Win Rate", f"{s['wr']:.1f}%", f"{sfp['wr']:.1f}%", f"{sfp['wr'] - s['wr']:+.1f}pp"],
+                        ["Avg Return", f"{s['avg']:+.2f}%", f"{sfp['avg']:+.2f}%", f"{sfp['avg'] - s['avg']:+.2f}pp"],
+                        [
+                            "Sharpe",
+                            fmt_sharpe(s["sharpe"]),
+                            fmt_sharpe(sfp["sharpe"]),
+                            f"{(sfp['sharpe'] or 0) - (s['sharpe'] or 0):+.2f}",
+                        ],
+                        ["Max DD", f"-{s['max_dd']:.2f}%", f"-{sfp['max_dd']:.2f}%", ""],
+                    ],
+                )
+                _blk = s["n"] - sfp["n"]
+                _blkpct = _blk / s["n"] * 100 if s["n"] > 0 else 0.0
+                _dsh = (sfp["sharpe"] or 0) - (s["sharpe"] or 0)
+                print(f"\n> {_blk} trades blocked ({_blkpct:.1f}%) by the FRED regime panel.")
+                _v = (
+                    "✅ panel adds value — regime gating removes false positives"
+                    if _dsh > 0.01
+                    else "➖ panel neutral"
+                    if _dsh > -0.01
+                    else "⚠ panel harmful — regime gates cut too many recoverable dips"
+                )
+                print(f"> §14 verdict: ΔSharpe = {_dsh:+.2f}  {_v}\n")
+                monte_carlo(fp_trades)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # §15. §65 Research — TRIN Capitulation Split
     # ─────────────────────────────────────────────────────────────────────────
     # Arms Index > 2.0 = market-wide panic selling. MR BUY entries during
     # capitulation context should show higher WR (classic MR hypothesis).

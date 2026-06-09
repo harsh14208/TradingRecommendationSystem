@@ -359,13 +359,35 @@ async def allocate_portfolio(
         sect = sector_map[t]
         sector_exposure[sect] = sector_exposure.get(sect, 0.0) + w
         
+    # Calculate dynamic sector limits using covariance-based HRP weights
+    # Base HRP weights are already correlation-aware.
+    # We define limit per sector = hrp_sector_weight + 0.10, clamped between 20% and 40%
+    hrp_sector_weights = {}
+    for t, w in hrp_weights.items():
+        sect = sector_map[t]
+        hrp_sector_weights[sect] = hrp_sector_weights.get(sect, 0.0) + w
+
+    dynamic_sector_limits = {}
+    for sect in sector_exposure:
+        hrp_w = hrp_sector_weights.get(sect, 0.0)
+        # Limit scales off HRP weight, allowing a buffer but capping at 40%
+        dynamic_limit = max(0.20, min(0.40, hrp_w + 0.10))
+        dynamic_sector_limits[sect] = dynamic_limit
+        log.info(f"Dynamic sector limit for {sect}: HRP weight = {hrp_w:.4f} -> Limit = {dynamic_limit:.2f}")
+
     # Scale down weights of overallocated sectors
-    over_allocated = {s: w for s, w in sector_exposure.items() if w > MAX_SECTOR_EXPOSURE}
+    over_allocated = {}
+    for sect, w in sector_exposure.items():
+        limit = dynamic_sector_limits.get(sect, MAX_SECTOR_EXPOSURE)
+        if w > limit:
+            over_allocated[sect] = (w, limit)
+
     if over_allocated:
         for t in list(constrained_weights.keys()):
             sect = sector_map[t]
             if sect in over_allocated:
-                scale_factor = MAX_SECTOR_EXPOSURE / over_allocated[sect]
+                curr_w, limit = over_allocated[sect]
+                scale_factor = limit / curr_w
                 constrained_weights[t] *= scale_factor
         # Renormalize
         w_sum = sum(constrained_weights.values())

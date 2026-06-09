@@ -30,6 +30,7 @@ cd backend && python scripts/backtest_technicals.py --portfolio        # concurr
 cd backend && python scripts/backtest_technicals.py --walk-forward     # BUY_THRESH OOS re-select (WF avg 0.455)
 cd backend && python scripts/backtest_technicals.py --inv2             # VIX<20 gate ablation (2022-present epoch)
 cd backend && python scripts/backtest_technicals.py --inv5             # legacy ablation flag (§59/§60/§61/§78 removed 2026-06-02; use --validate-live-gates instead)
+cd backend && python scripts/backtest_technicals.py --exit-sweep --sequential  # grid over exit knobs (max_loss_days × no_progress); ranks by capital-aware portfolio ANN Sharpe. RESULT 2026-06-08: no real edge — top-ANN config (np=3) is a turnover artifact (CAGR flat 3.4 vs 3.3, WR 67→56%); max_loss=OFF dominates on every robust axis but within 1 SE of baseline. Exit lever exhausted; confirms OHLCV+macro structural ceiling.
 # §Inv-B quality_score tier analysis runs automatically in every IS backtest (no flag needed)
 # §Inv-C L8 quality_score-weighted sizing validation runs automatically after §Inv-B
 cd backend && python scripts/backtest_technicals.py --quality-sweep  # 14-config entry quality gate sweep
