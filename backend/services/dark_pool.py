@@ -23,6 +23,13 @@ log = logging.getLogger("signal.trade.dark_pool")
 # ── Raw flow accumulator ($ millions per ticker) ──────────────────────────────
 _flow_data: dict[str, float] = {}
 
+# Liveness heartbeat for the stream watchdog. handle_messages() stamps this on
+# every batch the Massive client delivers; the watchdog in start_dark_pool_stream
+# treats "no heartbeat for _STALL_SEC" as a dead connection. (Previously the
+# watchdog read a local that nothing ever updated, so it tripped unconditionally
+# every 60s and restarted the stream forever.)
+_last_msg_monotonic: list[float] = [time.monotonic()]
+
 # ── Rolling print buffer for reconstruction (last 30 minutes of prints) ───────
 _MAX_BUFFER_AGE_S = 1800  # 30 minutes
 _print_buffer: deque = deque(maxlen=100_000)  # (ts, symbol, price, size, notional)
@@ -40,6 +47,9 @@ class _Print:
 
 def handle_messages(messages: list):
     now = time.time()
+    # Watchdog heartbeat — any delivered batch means the connection is alive,
+    # even if no print clears the off-exchange size/notional filter below.
+    _last_msg_monotonic[0] = time.monotonic()
     try:
         from massive.websocket.models import EquityTrade
 
@@ -72,7 +82,10 @@ def _run_darkpool_scanner():
         client.run(handle_messages)
     except Exception as e:
         err = str(e).lower()
-        if "plan" in err or "upgrade" in err or "subscription" in err:
+        # 1008 (policy violation) = server rejecting the subscription/entitlement —
+        # same class as a plan limit, so propagate it to the outer long-backoff loop
+        # instead of letting it fall through to the 10s hammer-retry.
+        if any(k in err for k in ("plan", "upgrade", "subscription", "1008", "policy violation")):
             raise  # let outer loop apply long backoff
         log.warning(f"[dark_pool] Massive WebSocket error: {e}")
 
@@ -86,34 +99,57 @@ async def start_dark_pool_stream():
     if not os.getenv("MASSIVE_API_KEY"):
         return
 
-    import time as _t
-
-    _last_msg = [_t.monotonic()]
     _STALL_SEC = 60
-    _PLAN_LIMIT_BACKOFF = 6 * 3600  # 6 hours — plan won't change sooner
+    _PLAN_LIMIT_BACKOFF = 6 * 3600  # 6 hours — plan/entitlement won't change sooner
+    _MAX_CONSEC_STALLS = 3  # after this many empty stalls, treat feed as dead → long backoff
+    consec_stalls = 0
 
     while True:
         try:
+            # Fresh liveness window per attempt — otherwise a stale heartbeat makes
+            # the next connection "stall" within one 10s tick instead of _STALL_SEC.
+            _last_msg_monotonic[0] = time.monotonic()
             stream_task = asyncio.create_task(asyncio.to_thread(_run_darkpool_scanner))
             stalled = False
             while not stream_task.done():
                 await asyncio.sleep(10)
-                if _t.monotonic() - _last_msg[0] > _STALL_SEC:
-                    log.warning("[dark_pool] stream stalled (%ds no messages) — restarting", _STALL_SEC)
+                if time.monotonic() - _last_msg_monotonic[0] > _STALL_SEC:
                     stream_task.cancel()
                     stalled = True
                     break
-            if not stalled:
+
+            if stalled:
+                consec_stalls += 1
+                if consec_stalls >= _MAX_CONSEC_STALLS:
+                    # Connects but never delivers — almost always a plan/entitlement
+                    # gap (the firehose just isn't sent). Stop hammering every ~15s.
+                    log.warning(
+                        "[dark_pool] %d consecutive stalls with no messages — feed not "
+                        "delivering (likely plan/entitlement); pausing 6h",
+                        consec_stalls,
+                    )
+                    consec_stalls = 0
+                    await asyncio.sleep(_PLAN_LIMIT_BACKOFF)
+                else:
+                    log.warning(
+                        "[dark_pool] stream stalled (%ds no messages) — restarting (%d/%d)",
+                        _STALL_SEC,
+                        consec_stalls,
+                        _MAX_CONSEC_STALLS,
+                    )
+                    await asyncio.sleep(5)
+            else:
                 await stream_task  # surface any exception (e.g. plan-limit AuthError)
-            await asyncio.sleep(5)
+                consec_stalls = 0  # clean exit without stall → reset the counter
+                await asyncio.sleep(5)
         except asyncio.CancelledError:
             return
         except Exception as e:
             err = str(e).lower()
-            if "plan" in err or "upgrade" in err or "subscription" in err or "auth" in err:
+            if any(k in err for k in ("plan", "upgrade", "subscription", "auth", "1008", "policy violation")):
                 log.warning(
-                    "[dark_pool] plan does not include WebSocket access — "
-                    "pausing for 6h (upgrade at massive.com/pricing)"
+                    "[dark_pool] WebSocket access rejected (plan/entitlement or 1008 "
+                    "policy violation) — pausing for 6h (upgrade at massive.com/pricing)"
                 )
                 await asyncio.sleep(_PLAN_LIMIT_BACKOFF)
             else:
