@@ -64,6 +64,14 @@ cd backend && python scripts/screen_russell2000_mr_candidates.py --adv 20 # rais
 cd backend && python scripts/cross_sectional_mr_screen.py                 # IS analysis + ranked scores
 cd backend && python scripts/cross_sectional_mr_screen.py --oos-validate  # + OOS validation on HELD_OUT_TICKERS
 
+# §86 Market-neutral cross-sectional alpha model (Qlib-style ranking; research artifact — see Research baseline)
+cd backend && python scripts/cross_sectional_alpha_model.py                                   # single chronological split
+cd backend && python scripts/cross_sectional_alpha_model.py --walk-forward --cost-sweep       # purged expanding-window CV + bootstrap Sharpe CI + cost curve
+cd backend && python scripts/cross_sectional_alpha_model.py --universe curated                # restrict to backtest_technicals.TICKERS (the edge-bearing IS set); 'full' = complete S&P 500
+cd backend && python scripts/cross_sectional_alpha_model.py --short-interest                  # add SI level+velocity features (Postgres short_interest_biweekly, 2017-12+)
+cd backend && python scripts/cross_sectional_alpha_model.py --exit-decile 0.25                # Qlib TopkDropout hold-until-dropout hysteresis (turnover lever)
+cd backend && python scripts/fetch_sp500_ohlcv.py                                             # backfill full S&P 500 OHLCV cache (membership: data/sp500_ticker_start_end.csv from fja05680/sp500)
+
 # Hold-period research
 cd backend && python scripts/backtest_technicals.py --hold 5   # test 5-day hold (confirmed worse: Sh 0.27 vs 0.31)
 
@@ -146,11 +154,17 @@ Steps: install deps → syntax check → import smoke → pytest → accuracy ga
 
 ## Research baseline (§59–§83 + gate validation + EDGAR Tier-3 as of 2026-06-03)
 
-All §47–§83 implemented. **v10.5 (2026-06-03):** §63 sector cointegration added to IS backtest scoring (rolling 252d Engle-Granger coint_z); §76 Altman removed from live engine (74% false-positive rate); dead gate cleanup complete; IS N=230, Sh=0.20. **v10.3 (2026-06-02, math-audit fixes):** ADX>35 ATR branch removed; Hurst window 63→64 bars; portfolio ann.Sharpe denominators fixed. **v10.2/v10.1:** ATR≤70 REVERTED, L9 removed, L8 quality_score recalibrated. Backtest canon (v10.5, 2026-06-03):
+All §47–§83 implemented. **v10.6 (2026-06-09):** S&P 500 survivorship-bias correction enforced (point-in-time constituents from fja05680/sp500.git) — trims universe to historically-valid members; IS N=189, Sh=0.27 (higher quality than uncorrected v10.5). Also fixed a broken `--oos`/`--full-universe` path: `process_ticker` was refactored to return scored indicator frames instead of trades, but `run_oos_validation`/`run_full_universe_curation_bias` still unpacked the old tuple order and skipped `simulate_ticker` — they now call `simulate_ticker` on each frame. **v10.5 (2026-06-03):** §63 sector cointegration added to IS backtest scoring (rolling 252d Engle-Granger coint_z); §76 Altman removed from live engine (74% false-positive rate); dead gate cleanup complete; IS N=230, Sh=0.20. **v10.3 (2026-06-02, math-audit fixes):** ADX>35 ATR branch removed; Hurst window 63→64 bars; portfolio ann.Sharpe denominators fixed. **v10.2/v10.1:** ATR≤70 REVERTED, L9 removed, L8 quality_score recalibrated. Backtest canon (v10.6, 2026-06-09):
 
 | Universe | N | WR | Avg Ret | Sharpe | MC P5 | 95% CI |
 |---|---|---|---|---|---|---|
-| **IS (v10.5, 107 tickers, 2026-06-03 — §63 coint + dead gate cleanup)** | **230** | **66.1%** | — | **0.20** | — | — |
+| **IS (v10.6, survivorship-corrected, 2026-06-09)** | **189** | **69.8%** | — | **0.27** | **0.17** ✅ | **[0.13, 0.42] ✅** |
+| IS L7 / L8 sizing (v10.6, each +0.03) | 189 | ~71% | — | **0.31** | — | — |
+| IS sector-filtered (live-equivalent, v10.6) | 183 | 70.5% | — | **0.29** | — | — |
+| **OOS CLEAN (ex live-blocked, v10.6)** | **91** | **62.6%** | **+0.50%** | **0.13** ⚠ | — | **[−0.07, 0.34] ⚠** |
+| OOS ALL (incl. blocked, v10.6) | 105 | 58.1% | +0.16% | 0.04 | — | [−0.15, 0.23] |
+| Curation gap (IS sector-filt 0.24 − OOS clean 0.13, v10.6) | — | — | — | **0.11** | — | — |
+| IS (v10.5, 107 tickers, 2026-06-03 — §63 coint + dead gate cleanup) | 230 | 66.1% | — | 0.20 | — | — |
 | IS (v10.4, 107 tickers, 2026-06-02 — dead gates removed, §59/§60 not yet restored) | 241 | 65.6% | — | 0.19 | — | — |
 | **IS (v10.3, 107 tickers, 2026-06-02)** | **217** | **68.2%** | **+0.88%** | **0.24** | **0.14** ✅ | **[0.11, 0.38] ✅** |
 | IS L7+L8 combined sizing (§Inv2+§Inv-C, v10.3) | 217 | 70.1% | +0.96% | **0.28** | — | — |
@@ -177,13 +191,17 @@ All §47–§83 implemented. **v10.5 (2026-06-03):** §63 sector cointegration a
 
 **OOS v6 (2026-05-31):** CLEAN N=51, Sharpe=0.16, curation gap −0.08 (smallest ever ✅). SR=0 still inside CI at N=51.
 
-**§QuantEngine decomposition (2026-05-31):** Beta hedge strips IS Sharpe 0.29→0.12 (pure MR alpha). Phantom wins corrected (88 signals + 112 outcome_14d) → live WR 42.5%, live Sharpe 1.32. Calibration v4 (2026-06-01): Brier 0.2641, 18,656 signals updated avg −1pp, all signals now <55% confidence (min_confidence=40%). Cal v3 val-Brier was 0.2432; v4 uses pre-A19 data — next recal after ≥50 post-A19 resolved signals. Portfolio CAGR +1.1%/yr; concurrent MaxDD −7.06%. **Honest forward Sharpe: 0.13–0.18** (v10.5 IS baseline N=230, Sh=0.20; with L7+L8 sizing ~0.26; applying 55% OOS haircut: midpoint 0.14. Technical gate ceiling confirmed: pure OHLCV+macro path tops out at IS ~0.28 without external alpha data. v10.4 lesson: individual gate ablation ΔSh≈0 does not mean zero combined effect — §59/§60 restored after v10.4 regression showed 24 marginal trades hurt aggregate WR).
+**§QuantEngine decomposition (2026-05-31):** Beta hedge strips IS Sharpe 0.29→0.12 (pure MR alpha). Phantom wins corrected (88 signals + 112 outcome_14d) → live WR 42.5%, live Sharpe 1.32. Calibration v4 (2026-06-01): Brier 0.2641, 18,656 signals updated avg −1pp, all signals now <55% confidence (min_confidence=40%). Cal v3 val-Brier was 0.2432; v4 uses pre-A19 data — next recal after ≥50 post-A19 resolved signals. Portfolio CAGR +1.1%/yr; concurrent MaxDD −7.06%. **Honest forward Sharpe: 0.13–0.18** (v10.6 survivorship-corrected IS baseline N=189, Sh=0.27; with L7/L8 sizing ~0.31; OOS CLEAN N=91 Sh=0.13 confirms the haircut — midpoint ~0.15. Technical gate ceiling confirmed: pure OHLCV+macro path tops out at IS ~0.28 without external alpha data. v10.4 lesson: individual gate ablation ΔSh≈0 does not mean zero combined effect — §59/§60 restored after v10.4 regression showed 24 marginal trades hurt aggregate WR).
 
 **Russell 1000 screener + §31 validation (2026-06-01):** MCO added (N=3, WR=66.7%, XLF live-eligible). HAL added (N=2, WR=100%, XLE research-only). PASS (fast mode, 2006-2016): GOOGL (Alphabet duplicate of GOOG — skip), AMP (already in IS — skip). No new IS additions from fast screen. Healthcare now moved to _MR_SECTORS (was _RESEARCH_ONLY_SECTORS) in screener — cross-sectional model confirmed t=+2.12**. OOS v7 pre-specified 2026-06-01 (see below).
 
 **OOS v7 pre-specified (2026-06-01):** 10 tickers locked before any IS research. Amenability-model screened: healthcare/consumer/tech emphasis. See HELD_OUT_TICKERS in backtest_technicals.py (v7 block). Sectors: XLV healthcare (SYK, RMD, IDXX, ZBH), XLY consumer (RL, DECK, POOL), XLF exchange operators (NDAQ, CBOE, BR). Never mentioned in any prior IS research or backtest comment. Run `--oos` after ≥30 new live trades to evaluate.
 
 **OOS v8 pre-specified (2026-06-01, Russell 2000 screener):** 5 tickers from R2000 fast-mode screen. R2000 pass rate: 1/440 (0.2%) vs R1000 1.6% — confirms large-cap quality essential for 10d MR. LNC (PASS: N=11, WR=73%, Sh=0.76); AMG, PAYC, SIG, AEO (WATCH: WR≥75%, N=4-8). Excluded data artifacts: BILL/FND (IPO post-2016), GAP (ticker ambiguity). Total HELD_OUT_TICKERS: 63.
+
+**§86 Market-neutral cross-sectional alpha model (2026-06-09, `scripts/cross_sectional_alpha_model.py`):** Qlib-style daily cross-sectional ranking → dollar-neutral top/bottom decile L/S, target = 5d forward return minus cross-sectional mean. Built to break the ~0.28 ceiling via beta-neutrality; CONCLUSION: **ceiling is IC/data-bound, not architecture-bound.** Curated IS universe (110 names) WF net Sharpe ≈ 0.0–0.42 (mean IC ~0.011–0.016). Confirmed dead-ends, each validated per-fold (aggregate numbers repeatedly sold false dawns the per-fold view killed): (1) **Full S&P 500 expansion HURT** — net 0.42→−0.02; pulled in recycled/delisted tickers (free-yfinance maps historical symbols to today's owners → spurious ±1000% prints; needed ±50% `FWD_RET_CAP` winsorizer) + signal dilution + turnover rise. Irreducible without paid PIT security master (§84). (2) **Qlib TopkDropout** (`--exit-decile`) couldn't cut turnover — hysteresis only helps when rankings persist; at IC~0.013 they re-randomize every 5d. (3) **Short-interest velocity** (`--short-interest`) aggregate net −0.05→+0.26 was a single 2025-squeeze fold; worse in 5/9 folds; SI ranks below all price features. Harness is reusable for any new signal: survivorship-free universe, purged walk-forward CV, block-bootstrap Sharpe CI, cost-sensitivity sweep, per-fold stability. Only real levers left: new ORTHOGONAL data (§62 options-IV/flow) or accept honest ~0.2–0.4. See docs/TODO.md §86 for full step log.
+
+**Live ML retrain status (2026-06-09):** N≥300 deploy threshold reached (566 resolved signals: 495 BUY / 71 SELL, 101 tickers). `train_model()` run: OOS AUC 0.6872 (95% CI [0.607,0.767]) vs champion 0.6883 → **rejected** (Δ−0.0011 < +0.005 required); champion kept, live model untouched. Top features structural (`has_fundamentals_source`/`target_pct`/`n_rationale`), not alpha. Caveat: all 566 in one ~7-week window → effective independent N ≪ 566, Δ in noise. Auto-retrain already live: `_weekly_ml_retrain` (main.py:588) Sun 11am ET, same self-gating `train_model()` — promotes a challenger only on ≥0.005 AUC beat. No manual action needed.
 
 **Gate changes (2026-05-31):**
 - §77 Tax-Loss: inverted from +4pp boost → −4pp penalty (live WR 31% near 52-wk low)
@@ -239,7 +257,7 @@ See `docs/Stats.md` §47–§52 for full per-strategy results. Monte Carlo MR-On
 | ✅ | Execution quality | §81 block prints | `get_recent_block_prints()` in `polygon_client.py`; ≥3 block buys→+5pp |
 | ✅ | Portfolio construction | §82 trailingStopPct | Added to `_assemble_signal()` return dict |
 | ✅ | Portfolio construction | §83 cross-signal correlation | avg pairwise corr in `scan_all()`; avg_corr>0.75→positionSizeScale cut |
-| ⏳ | Portfolio construction | §84 survivorship bias | Paid Norgate/Sharadar point-in-time constituent data |
+| ⏳ | Portfolio construction | §84 survivorship bias | Paid Norgate/Sharadar PIT data. Free path tried 2026-06-09 (§86): membership from fja05680/sp500 is clean, but free-yfinance PRICES for delisted/recycled tickers are corrupt (symbol reuse) → still need a paid security master |
 
 ## MCP servers (when Node.js is available)
 

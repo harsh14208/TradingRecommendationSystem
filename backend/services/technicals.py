@@ -821,6 +821,12 @@ def batch_calculate_indicators(
     return results
 
 
+# Engle-Granger residual ADF p-value ceiling — residuals must be stationary
+# (p below this) for the pair to count as cointegrated. 0.10 balances rigor
+# against coverage on 252-obs windows (0.05 is the strict textbook value).
+_COINT_ADF_PMAX = 0.10
+
+
 def compute_cointegration_zscore(
     stock_prices: "pd.Series",
     etf_prices: "pd.Series",
@@ -834,7 +840,9 @@ def compute_cointegration_zscore(
     Positive Z → stock above long-run relationship with sector (overbought vs peers).
     Negative Z → stock below long-run relationship (oversold vs peers — MR signal).
 
-    Returns None when there are fewer than 60 usable overlapping points.
+    Returns None when there are fewer than 60 usable overlapping points, or when
+    the residuals fail the Engle-Granger step-2 ADF stationarity test (i.e. the
+    pair is not actually cointegrated — see _COINT_ADF_PMAX).
     """
     try:
         import numpy as np
@@ -852,6 +860,20 @@ def compute_cointegration_zscore(
         # OLS: stock ~ beta * etf + alpha  (Engle-Granger step 1)
         beta, alpha = np.polyfit(e, s, 1)
         residuals = s - (beta * e + alpha)
+
+        # Engle-Granger step 2: the residual spread must be STATIONARY, otherwise
+        # the regression is spurious and the z-score does not mean-revert. Gate on
+        # an ADF unit-root test (p < _COINT_ADF_PMAX ⇒ stationary ⇒ cointegrated).
+        # Without this, §63 awarded +4pp on non-cointegrated pairs. If statsmodels
+        # is unavailable we fall back to the ungated z-score rather than breaking.
+        try:
+            from statsmodels.tsa.stattools import adfuller
+
+            adf_p = float(adfuller(residuals, maxlag=1, autolag=None)[1])
+            if adf_p >= _COINT_ADF_PMAX:
+                return None  # not cointegrated → no §63 signal
+        except Exception:
+            pass
 
         # Z-score of latest residual vs residual distribution
         mu = float(np.mean(residuals))

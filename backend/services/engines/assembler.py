@@ -1332,6 +1332,9 @@ def _assemble_signal(
         ),
         "vix": vix,
         "crossAssetHeadwinds": macro.get("cross_asset_headwinds"),
+        "nfci": macro.get("nfci"),
+        "baa10y": macro.get("baa10y"),
+        "t10y3m": macro.get("t10y3m"),
         # §82: trailing stop as % of entry — 2× ATR provides dynamic stop that adapts
         # to realized vol and avoids being stopped out by normal intraday noise.
         "trailingStopPct": round(atr / price * 200, 2) if (price and atr and price > 0) else None,

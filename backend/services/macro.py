@@ -251,7 +251,7 @@ async def get_macro_context() -> dict:
 
         key = get_settings().fred_api_key
         if key:
-            fed_rate, cpi, hy_spread, ig_spread, stlfsi, icsa, umcsent, t10y3m = await asyncio.gather(
+            fed_rate, cpi, hy_spread, ig_spread, stlfsi, icsa, umcsent, t10y3m, nfci, baa10y = await asyncio.gather(
                 _fred("FEDFUNDS", key),
                 _fred("CPIAUCSL", key),
                 _fred("BAMLH0A0HYM2", key),  # ICE BofA US HY OAS spread (%)
@@ -260,7 +260,13 @@ async def get_macro_context() -> dict:
                 _fred("ICSA", key),  # Weekly initial jobless claims
                 _fred("UMCSENT", key),  # U. Michigan Consumer Sentiment
                 _fred("T10Y3M", key),  # 10-Year minus 3-Month yield spread
+                _fred("NFCI", key),  # Chicago Fed National Financial Conditions Index
+                _fred("BAA10Y", key),  # Moody's Baa Corporate Bond Yield Relative to 10-Year Treasury
             )
+            if hy_spread is not None:
+                hy_spread *= 100
+            if ig_spread is not None:
+                ig_spread *= 100
             if fed_rate is not None:
                 result["fed_funds"] = fed_rate
                 if fed_rate > 5.0:
@@ -531,6 +537,10 @@ async def get_macro_context() -> dict:
                             "meta": f"T10Y3M = {t10y3m:+.2f}%",
                         }
                     )
+            if nfci is not None:
+                result["nfci"] = nfci
+            if baa10y is not None:
+                result["baa10y"] = baa10y
     except Exception as e:
         log.warning(f"[macro] FRED: {e}")
 

@@ -8,7 +8,8 @@ States:
   0 = Risk-On  (low VIX, positive momentum, steep yield curve)
   1 = Risk-Off (high VIX, negative momentum, flat/inverted curve)
 
-Algorithm: Baum-Welch EM (pure numpy — no external ML dependency)
+Algorithm: 2-state Gaussian HMM via hmmlearn (tested Baum-Welch fit + Viterbi
+decode). Replaced the prior hand-rolled numpy EM 2026-06-09 — see CLAUDE.md.
 
 Output per scan:
   {
@@ -24,6 +25,7 @@ Output per scan:
 import asyncio
 import logging
 import time
+import warnings
 from typing import Optional
 
 import numpy as np
@@ -34,152 +36,49 @@ log = logging.getLogger("signal.trade.macro_regime")
 _cache: dict = {"result": None, "ts": 0.0}
 _CACHE_TTL = 3600  # re-fit once per hour (data moves slowly)
 
-# ── HMM helpers (pure numpy) ─────────────────────────────────────────────────
+# ── HMM fit + decode (hmmlearn) ──────────────────────────────────────────────
 
 
-def _safe_chol(M: np.ndarray) -> np.ndarray:
-    """Cholesky with jitter to handle near-singular matrices."""
-    for jitter in (0.0, 1e-6, 1e-4, 1e-2):
-        try:
-            return np.linalg.cholesky(M + np.eye(M.shape[0]) * jitter)
-        except np.linalg.LinAlgError:
-            continue
-    return np.eye(M.shape[0])
+def _fit_and_decode(X: np.ndarray, n_states: int = 2, n_iter: int = 25) -> dict:
+    """Fit a Gaussian HMM and decode the Viterbi path + smoothed posteriors.
 
+    Uses hmmlearn's GaussianHMM (tested Baum-Welch + forward-backward) instead
+    of a hand-rolled EM. A sticky transition prior (high self-transition) keeps
+    regimes from flickering; the fixed random_state makes hourly refits
+    reproducible so the bull/bear label is stable across scans.
 
-def _log_gauss(x: np.ndarray, mean: np.ndarray, cov: np.ndarray) -> float:
-    """Log probability under multivariate Gaussian."""
-    d = len(mean)
-    L = _safe_chol(cov)
-    diff = x - mean
-    v = np.linalg.solve(L, diff)
-    log_det = 2.0 * np.sum(np.log(np.maximum(np.diag(L), 1e-10)))
-    return -0.5 * (d * np.log(2.0 * np.pi) + log_det + float(v @ v))
-
-
-def _forward_scaled(
-    X: np.ndarray, pi: np.ndarray, A: np.ndarray, means: list, covs: list
-) -> tuple[np.ndarray, np.ndarray]:
-    T, K = len(X), len(pi)
-    alpha = np.zeros((T, K))
-    scales = np.zeros(T)
-
-    log_b = np.array([[_log_gauss(X[t], means[k], covs[k]) for k in range(K)] for t in range(T)])
-    b = np.exp(log_b - log_b.max(axis=1, keepdims=True))  # stable exp
-
-    alpha[0] = pi * b[0]
-    scales[0] = alpha[0].sum() or 1e-300
-    alpha[0] /= scales[0]
-
-    for t in range(1, T):
-        alpha[t] = (alpha[t - 1] @ A) * b[t]
-        scales[t] = alpha[t].sum() or 1e-300
-        alpha[t] /= scales[t]
-
-    return alpha, scales
-
-
-def _backward_scaled(X: np.ndarray, A: np.ndarray, means: list, covs: list, scales: np.ndarray) -> np.ndarray:
-    T, K = len(X), A.shape[0]
-    beta = np.ones((T, K))
-
-    log_b = np.array([[_log_gauss(X[t], means[k], covs[k]) for k in range(K)] for t in range(T)])
-    b = np.exp(log_b - log_b.max(axis=1, keepdims=True))
-
-    for t in range(T - 2, -1, -1):
-        beta[t] = (A * b[t + 1][np.newaxis, :] * beta[t + 1][np.newaxis, :]).sum(axis=1)
-        beta[t] /= scales[t + 1] or 1e-300
-
-    return beta
-
-
-def _fit_hmm(X: np.ndarray, n_states: int = 2, n_iter: int = 30) -> dict:
+    Returns dict with: path, posteriors, means, transmat.
     """
-    Fit a Gaussian HMM via Baum-Welch EM.
-    Returns dict with pi, A, means, covs.
-    """
-    T, D = X.shape
-    K = n_states
-    rng = np.random.default_rng(42)
+    from hmmlearn.hmm import GaussianHMM
 
-    # ── Initialise with deterministic percentile split on first feature (VIX) ─
-    pi = np.ones(K) / K
-    A = np.full((K, K), 0.05 / (K - 1))
-    np.fill_diagonal(A, 0.95)  # high self-transition — regimes are sticky
+    model = GaussianHMM(
+        n_components=n_states,
+        covariance_type="full",
+        n_iter=n_iter,
+        tol=1e-4,
+        random_state=42,
+        init_params="mc",  # init means + covars from data…
+        params="stmc",  # …but train all of startprob/transmat/means/covars
+        min_covar=1e-4,
+    )
+    # Sticky regime prior (regimes persist) as the EM starting point.
+    model.startprob_ = np.full(n_states, 1.0 / n_states)
+    transmat = np.full((n_states, n_states), 0.05 / max(n_states - 1, 1))
+    np.fill_diagonal(transmat, 0.95)
+    model.transmat_ = transmat
 
-    sorted_idx = np.argsort(X[:, 0])
-    split = T // K
-    means = [X[sorted_idx[k * split : (k + 1) * split]].mean(axis=0) for k in range(K)]
-    covs = [np.cov(X[sorted_idx[k * split : (k + 1) * split]].T) + np.eye(D) * 1e-4 for k in range(K)]
-    # Ensure 2D covs
-    covs = [c if c.ndim == 2 else np.diag(np.atleast_1d(c)) for c in covs]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # silence non-convergence chatter on noisy windows
+        model.fit(X)
+        path = model.predict(X)  # Viterbi
+        posteriors = model.predict_proba(X)  # smoothed state probabilities
 
-    for iteration in range(n_iter):
-        # ── E-step ────────────────────────────────────────────────────────────
-        alpha, scales = _forward_scaled(X, pi, A, means, covs)
-        beta = _backward_scaled(X, A, means, covs, scales)
-
-        gamma = alpha * beta
-        row_sums = gamma.sum(axis=1, keepdims=True)
-        gamma /= np.where(row_sums > 0, row_sums, 1.0)
-
-        log_b = np.array([[_log_gauss(X[t], means[k], covs[k]) for k in range(K)] for t in range(T)])
-        b = np.exp(log_b - log_b.max(axis=1, keepdims=True))
-
-        xi = np.zeros((T - 1, K, K))
-        for t in range(T - 1):
-            xi[t] = alpha[t][:, np.newaxis] * A * b[t + 1][np.newaxis, :] * beta[t + 1][np.newaxis, :]
-            xi_sum = xi[t].sum()
-            if xi_sum > 0:
-                xi[t] /= xi_sum
-
-        # ── M-step ────────────────────────────────────────────────────────────
-        pi = gamma[0]
-        pi /= pi.sum() or 1.0
-
-        A_new = xi.sum(axis=0)
-        row_sums = A_new.sum(axis=1, keepdims=True)
-        A = A_new / np.where(row_sums > 0, row_sums, 1.0)
-
-        gamma_sum = gamma.sum(axis=0)
-        for k in range(K):
-            g = gamma[:, k]
-            gsum = g.sum() or 1.0
-            means[k] = (g[:, np.newaxis] * X).sum(axis=0) / gsum
-            diff = X - means[k]
-            covs[k] = (g[:, np.newaxis, np.newaxis] * diff[:, :, np.newaxis] * diff[:, np.newaxis, :]).sum(
-                axis=0
-            ) / gsum
-            covs[k] += np.eye(D) * 1e-4  # numerical jitter
-
-    return {"pi": pi, "A": A, "means": means, "covs": covs}
-
-
-def _viterbi(X: np.ndarray, pi: np.ndarray, A: np.ndarray, means: list, covs: list) -> tuple[np.ndarray, np.ndarray]:
-    """Viterbi decode — returns (state_seq, state_probs)."""
-    T, K = len(X), len(pi)
-    log_b = np.array([[_log_gauss(X[t], means[k], covs[k]) for k in range(K)] for t in range(T)])
-    log_A = np.log(A + 1e-300)
-    log_pi = np.log(pi + 1e-300)
-
-    delta = np.full((T, K), -np.inf)
-    psi = np.zeros((T, K), dtype=int)
-
-    delta[0] = log_pi + log_b[0]
-    for t in range(1, T):
-        for k in range(K):
-            scores = delta[t - 1] + log_A[:, k]
-            psi[t, k] = scores.argmax()
-            delta[t, k] = scores[psi[t, k]] + log_b[t, k]
-
-    path = np.zeros(T, dtype=int)
-    path[-1] = delta[-1].argmax()
-    for t in range(T - 2, -1, -1):
-        path[t] = psi[t + 1, path[t + 1]]
-
-    # Soft probabilities via final alpha (smoothed posteriors)
-    alpha, _ = _forward_scaled(X, pi, A, means, covs)
-    return path, alpha
+    return {
+        "path": np.asarray(path, dtype=int),
+        "posteriors": np.asarray(posteriors, dtype=float),
+        "means": np.asarray(model.means_, dtype=float),
+        "transmat": np.asarray(model.transmat_, dtype=float),
+    }
 
 
 # ── Feature engineering ───────────────────────────────────────────────────────
@@ -275,26 +174,23 @@ async def get_macro_regime() -> dict:
         # Limit training window to last 252 trading days
         X_train = X_norm[-252:] if T > 252 else X_norm
 
-        # Fit 2-state HMM
-        hmm = await asyncio.to_thread(_fit_hmm, X_train, 2, 25)
-
-        # Decode full sequence
-        path, alpha = _viterbi(X_train, hmm["pi"], hmm["A"], hmm["means"], hmm["covs"])
+        # Fit 2-state HMM + decode (hmmlearn) off the event loop.
+        hmm = await asyncio.to_thread(_fit_and_decode, X_train, 2, 25)
+        path = hmm["path"]
+        posteriors = hmm["posteriors"]
 
         # ── Identify which state is "bull" (lower VIX mean = risk-on) ─────────
-        # State with lower VIX feature mean = risk-on = bull
-        vix_means = [hmm["means"][k][0] for k in range(2)]
+        vix_means = [float(hmm["means"][k][0]) for k in range(2)]
         bull_state = int(np.argmin(vix_means))
         bear_state = 1 - bull_state
 
         current_path = int(path[-1])
-        current_probs = alpha[-1]  # posterior at last observation
+        current_probs = posteriors[-1]  # posterior at last observation
         bull_prob = float(current_probs[bull_state])
         bear_prob = float(current_probs[bear_state])
 
-        # ── Transition risk: P(state changes at t+1) ─────────────────────────
-        # = 1 - A[current_state, current_state]
-        transition_risk = float(1.0 - hmm["A"][current_path, current_path])
+        # ── Transition risk: P(state changes at t+1) = 1 - A[s, s] ───────────
+        transition_risk = float(1.0 - hmm["transmat"][current_path, current_path])
 
         # ── Regime label with hysteresis (transition zone = 40%–60%) ─────────
         if bull_prob >= 0.60:
@@ -328,7 +224,7 @@ async def get_macro_regime() -> dict:
                 "yield_curve": round(float(last_raw[2]), 2),
                 "rvol_30d": round(float(last_raw[3]) * 100, 2),
             },
-            "model": "2-state Gaussian HMM (Baum-Welch)",
+            "model": "2-state Gaussian HMM (hmmlearn)",
             "train_obs": len(X_train),
         }
 

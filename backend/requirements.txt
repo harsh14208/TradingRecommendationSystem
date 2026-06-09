@@ -30,8 +30,11 @@ pywebpush>=2.0.0            # web push notifications (VAPID)
 # ── ML ──
 xgboost>=2.0.0
 scikit-learn>=1.4.0
-scipy>=1.11.0       # exact t-distribution p-values in calc_tbd_metrics
+scipy>=1.11.0,<1.16   # exact t-distribution p-values in calc_tbd_metrics; <1.16 keeps numpy-1.26 compat (1.16+ needs numpy 2.x → ModuleNotFoundError: numpy.char)
 shap>=0.45.0        # SHAP feature audit (eval_ml.py §7; offline analysis only)
+arch>=7.0,<9.0      # GARCH(1,1) conditional-vol forecast for triple-barrier widths (train_metalabel_model.py --barriers garch); numpy-1.26 safe
+statsmodels>=0.14   # Engle-Granger step-2 ADF cointegration test (§63, services/technicals.py); numpy-1.26 safe
+hmmlearn>=0.3       # 2-state Gaussian HMM for macro regime (services/macro_regime.py); numpy-1.26 safe
 
 # ── Migrations ──
 alembic>=1.13.0

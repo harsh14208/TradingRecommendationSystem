@@ -1,75 +1,79 @@
 {
-  "trained_at": "2026-06-08T04:10:16.794695",
+  "trained_at": "2026-06-09T17:15:16.551052",
   "n_train": 396,
   "n_test": 170,
   "n_total": 566,
   "oos_accuracy": 0.6059,
-  "oos_auc": 0.6883,
+  "oos_auc": 0.6872,
   "oos_auc_ci_95": [
-    0.6085,
-    0.7681
+    0.6073,
+    0.7671
   ],
-  "oos_precision": 0.6744,
-  "oos_recall": 0.3537,
+  "oos_precision": 0.6596,
+  "oos_recall": 0.378,
   "top_features": [
     "has_fundamentals_source",
-    "is_buy",
     "target_pct",
     "n_rationale",
-    "n_pos_rationale"
+    "is_buy",
+    "stop_pct"
   ],
   "feature_importances": [
     {
       "feature": "has_fundamentals_source",
-      "importance": 0.15494
-    },
-    {
-      "feature": "is_buy",
-      "importance": 0.09811
+      "importance": 0.15155
     },
     {
       "feature": "target_pct",
-      "importance": 0.09705
+      "importance": 0.09587
     },
     {
       "feature": "n_rationale",
-      "importance": 0.09165
+      "importance": 0.09214
     },
     {
-      "feature": "n_pos_rationale",
-      "importance": 0.08396
+      "feature": "is_buy",
+      "importance": 0.07615
     },
     {
       "feature": "stop_pct",
-      "importance": 0.07951
+      "importance": 0.07547
     },
     {
-      "feature": "n_neg_rationale",
-      "importance": 0.07043
+      "feature": "n_pos_rationale",
+      "importance": 0.07413
     },
     {
       "feature": "n_sources",
-      "importance": 0.07011
+      "importance": 0.07233
+    },
+    {
+      "feature": "n_neg_rationale",
+      "importance": 0.06846
     },
     {
       "feature": "price_log",
-      "importance": 0.06948
+      "importance": 0.06774
     },
     {
       "feature": "change_pct",
-      "importance": 0.06012
-    },
-    {
-      "feature": "month",
-      "importance": 0.04657
+      "importance": 0.05705
     },
     {
       "feature": "day_of_week",
-      "importance": 0.04618
+      "importance": 0.05261
     },
     {
       "feature": "has_options_source",
-      "importance": 0.03189
+      "importance": 0.04866
+    },
+    {
+      "feature": "month",
+      "importance": 0.03749
+    },
+    {
+      "feature": "has_macro_source",
+      "importance": 0.03034
     },
     {
       "feature": "rr_numeric",
@@ -81,10 +85,6 @@
     },
     {
       "feature": "has_institutional_source",
-      "importance": 0.0
-    },
-    {
-      "feature": "has_macro_source",
       "importance": 0.0
     },
     {
@@ -114,7 +114,7 @@
   ],
   "deployed": false,
   "training_only": false,
-  "champion_auc": 0.7007,
+  "champion_auc": 0.6883,
   "min_live_n_for_deployment": 300,
   "min_auc_delta_to_deploy": 0.005
 }

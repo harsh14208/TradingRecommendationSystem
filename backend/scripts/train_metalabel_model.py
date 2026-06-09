@@ -5,13 +5,17 @@ Usage:
     cd backend && python scripts/train_metalabel_model.py
     cd backend && python scripts/train_metalabel_model.py --check    # dry run
     cd backend && python scripts/train_metalabel_model.py --apply    # save model
+    cd backend && python scripts/train_metalabel_model.py --barriers compare  # ablate ATR vs GARCH vol-unit
+    cd backend && python scripts/train_metalabel_model.py --barriers garch --apply  # adopt GARCH barriers
 
 Pipeline:
   1. Load IS backtest trades CSV produced by backtest_technicals.py.
   2. Relabel each trade with Triple Barrier Method (López de Prado, Ch. 3):
-       upper barrier: +2.0×ATR above entry  →  label 1  (target hit first)
-       lower barrier: −1.5×ATR below entry  →  label 0  (stop hit first)
-       vertical bar:  day-10 close          →  label 1/0 by sign of return
+       upper barrier: +2.0×vol-unit above entry  →  label 1  (target hit first)
+       lower barrier: −1.5×vol-unit below entry  →  label 0  (stop hit first)
+       vertical bar:  day-10 close              →  label 1/0 by sign of return
+     vol-unit is the static entry ATR (default) or a GARCH(1,1) forward-vol
+     forecast (--barriers garch). Run `--barriers compare` to ablate first.
   3. Extract 11-feature meta-label vector (entry_prob is the key feature).
   4. Train XGBoost on triple-barrier labels.
   5. Evaluate with purged expanding-window CV (K=5, embargo=20d).
@@ -46,9 +50,17 @@ _META_FEATURE_FILE = _DATA_DIR / "meta_label_features.json"
 _IS_TRADES_FILE = _DATA_DIR / "backtest_trades_is.csv"  # output of backtest_technicals.py --save-trades
 
 # Triple barrier parameters — must match live backtest config
-_UPPER_MULT = 2.0  # ×ATR above entry (target)
-_LOWER_MULT = 1.5  # ×ATR below entry (stop)
+_UPPER_MULT = 2.0  # ×vol-unit above entry (target)
+_LOWER_MULT = 1.5  # ×vol-unit below entry (stop)
 _HOLD_DAYS = 10  # vertical barrier
+
+# Vol-unit for the barriers. "atr" = the engine's static entry ATR snapshot.
+# "garch" = a GARCH(1,1) forecast of the mean daily vol over the hold horizon,
+# fitted on log-returns up to (not including) the entry bar — no lookahead.
+# EXP2 (awesome-quant test, 2026-06-09): GARCH forecast forward-vol beats
+# trailing realized (Spearman ρ +0.027, RMSE −0.050). Default stays "atr";
+# run `--barriers compare` to ablate before adopting.
+_GARCH_MIN_HISTORY = 252  # min bars of returns required to fit GARCH
 
 # Meta-label feature names (must match signal_ml._META_FEATURE_NAMES)
 _META_FEATURE_NAMES = [
@@ -86,9 +98,38 @@ _SECTOR_ORD = {
 # ── Triple Barrier labeling ───────────────────────────────────────────────────
 
 
+def _garch_forward_sigma(close: pd.Series, idx_pos: int, horizon: int = _HOLD_DAYS) -> float:
+    """Mean daily vol (as a price fraction) forecast over the next `horizon`
+    bars by a GARCH(1,1)-t fitted on log-returns strictly before the entry bar.
+
+    Returns NaN if arch is missing, history is too short, or the fit fails —
+    callers fall back to the ATR vol-unit.
+    """
+    try:
+        from arch import arch_model
+    except ImportError:
+        return float("nan")
+    if idx_pos < _GARCH_MIN_HISTORY:
+        return float("nan")
+    px = pd.to_numeric(close.iloc[:idx_pos], errors="coerce").dropna()
+    if len(px) < _GARCH_MIN_HISTORY:
+        return float("nan")
+    rets = np.log(px / px.shift(1)).dropna() * 100.0  # arch prefers ~O(1) scale
+    if len(rets) < _GARCH_MIN_HISTORY:
+        return float("nan")
+    try:
+        res = arch_model(rets, vol="GARCH", p=1, q=1, dist="t", rescale=False).fit(disp="off")
+        fc = res.forecast(horizon=horizon, reindex=False)
+        sigma_pct = float(np.sqrt(fc.variance.values[-1].mean()))  # mean daily vol in %
+        return sigma_pct / 100.0 if np.isfinite(sigma_pct) and sigma_pct > 0 else float("nan")
+    except Exception:
+        return float("nan")
+
+
 def apply_triple_barrier(
     trades: pd.DataFrame,
     price_data: dict[str, pd.DataFrame],
+    vol_mode: str = "atr",
 ) -> pd.DataFrame:
     """
     Relabel each IS backtest trade using the Triple Barrier Method.
@@ -96,11 +137,14 @@ def apply_triple_barrier(
     Args:
         trades:     DataFrame with columns: ticker, entry_date, entry_price, atr
         price_data: {ticker: OHLCV DataFrame}
+        vol_mode:   "atr" (static entry ATR) or "garch" (GARCH(1,1) forward-vol
+                    forecast; falls back to ATR per-trade if the fit is unavailable)
 
     Returns:
         DataFrame with an additional 'tb_label' column (1=winner, 0=loser).
     """
     labels = []
+    garch_used = 0
     for _, row in trades.iterrows():
         ticker = str(row.get("ticker", ""))
         try:
@@ -120,9 +164,6 @@ def apply_triple_barrier(
             labels.append(np.nan)
             continue
 
-        upper = entry_price * (1 + _UPPER_MULT * atr / entry_price)
-        lower = entry_price * (1 - _LOWER_MULT * atr / entry_price)
-
         # Forward price window: days 1–10 after entry
         try:
             if df_t.index.tz is not None:
@@ -139,6 +180,19 @@ def apply_triple_barrier(
         except Exception as e_idx:
             labels.append(np.nan)
             continue
+
+        # Vol-unit (price terms) for the barriers: static ATR or GARCH forecast.
+        vol_unit = atr
+        if vol_mode == "garch":
+            close_col = "Close" if "Close" in df_t.columns else ("close" if "close" in df_t.columns else None)
+            if close_col is not None:
+                sigma_frac = _garch_forward_sigma(df_t[close_col], idx_pos, _HOLD_DAYS)
+                if np.isfinite(sigma_frac):
+                    vol_unit = sigma_frac * entry_price  # daily σ in price terms
+                    garch_used += 1
+
+        upper = entry_price + _UPPER_MULT * vol_unit
+        lower = entry_price - _LOWER_MULT * vol_unit
 
         if fwd.empty:
             labels.append(np.nan)
@@ -167,6 +221,8 @@ def apply_triple_barrier(
 
     trades = trades.copy()
     trades["tb_label"] = labels
+    if vol_mode == "garch":
+        log.info("GARCH barrier vol-unit used on %d/%d trades (rest fell back to ATR)", garch_used, len(trades))
     return trades
 
 
@@ -253,6 +309,35 @@ def purged_expanding_cv(
     return splits
 
 
+def cv_auc_for_labels(X_all, y, dates_all) -> tuple[list[float], float, float]:
+    """Purged expanding-window CV-AUC for a given label set. Returns
+    (per-fold aucs, mean, std). Used by --barriers compare to ablate vol-units."""
+    import xgboost as xgb
+    from sklearn.metrics import roc_auc_score
+
+    splits = purged_expanding_cv(X_all, y, dates_all, n_splits=5, embargo_days=20)
+    aucs = []
+    for train_idx, test_idx in splits:
+        y_tr, y_te = y[train_idx], y[test_idx]
+        if len(np.unique(y_tr)) < 2 or len(np.unique(y_te)) < 2:
+            continue
+        m = xgb.XGBClassifier(
+            n_estimators=100,
+            max_depth=3,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            use_label_encoder=False,
+            eval_metric="logloss",
+            random_state=42,
+        )
+        m.fit(X_all[train_idx], y_tr)
+        aucs.append(roc_auc_score(y_te, m.predict_proba(X_all[test_idx])[:, 1]))
+    mean = float(np.mean(aucs)) if aucs else float("nan")
+    std = float(np.std(aucs)) if aucs else float("nan")
+    return aucs, mean, std
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
@@ -264,6 +349,13 @@ def main():
         "--trades",
         default=str(_IS_TRADES_FILE),
         help="Path to IS trades CSV (default: data/backtest_trades_is.csv)",
+    )
+    parser.add_argument(
+        "--barriers",
+        choices=["atr", "garch", "compare"],
+        default="atr",
+        help="Triple-barrier vol-unit: atr (default), garch (GARCH(1,1) forward-vol), "
+        "or compare (ablate both, report label agreement + CV-AUC, no save)",
     )
     args = parser.parse_args()
 
@@ -331,11 +423,35 @@ def main():
         log.warning("Could not fetch live price data (%s) — using net_pct for labeling", e)
         price_data = {}
 
+    if price_data and args.barriers == "compare":
+        # ── Ablate ATR vs GARCH barrier vol-unit (no model saved) ──────────────
+        t_atr = apply_triple_barrier(trades, price_data, vol_mode="atr")
+        t_g = apply_triple_barrier(trades, price_data, vol_mode="garch")
+        valid = t_atr["tb_label"].notna() & t_g["tb_label"].notna()
+        y_atr = t_atr.loc[valid, "tb_label"].values.astype(int)
+        y_g = t_g.loc[valid, "tb_label"].values.astype(int)
+        X_all = extract_meta_features(t_atr[valid])
+        dates_all = pd.DatetimeIndex(t_atr.loc[valid, "entry_date"])
+        agree = (y_atr == y_g).mean() * 100
+        _, atr_mean, atr_std = cv_auc_for_labels(X_all, y_atr, dates_all)
+        _, g_mean, g_std = cv_auc_for_labels(X_all, y_g, dates_all)
+        log.info("─" * 60)
+        log.info("BARRIER ABLATION (N=%d valid trades)", int(valid.sum()))
+        log.info("  label agreement ATR vs GARCH: %.1f%% (%d flips)", agree, int((y_atr != y_g).sum()))
+        log.info("  pos_rate  ATR=%.1f%%  GARCH=%.1f%%", y_atr.mean() * 100, y_g.mean() * 100)
+        log.info("  CV-AUC    ATR  =%.4f ± %.4f", atr_mean, atr_std)
+        log.info("  CV-AUC    GARCH=%.4f ± %.4f", g_mean, g_std)
+        log.info("  ΔAUC (GARCH − ATR) = %+.4f", g_mean - atr_mean)
+        log.info("─" * 60)
+        log.info("[compare] No model saved. Adopt GARCH only if ΔAUC > deploy threshold.")
+        return
+
     if price_data:
-        trades = apply_triple_barrier(trades, price_data)
+        trades = apply_triple_barrier(trades, price_data, vol_mode=args.barriers)
         valid = trades["tb_label"].notna()
         log.info(
-            "Triple-barrier labels: %d valid / %d total  (target=%.0f%%, stop=%.0f%%)",
+            "Triple-barrier labels (%s): %d valid / %d total  (target=%.0f%%, stop=%.0f%%)",
+            args.barriers,
             valid.sum(),
             len(trades),
             (trades.loc[valid, "tb_label"] == 1).mean() * 100,
@@ -432,6 +548,7 @@ def main():
             "upper_mult": _UPPER_MULT,
             "lower_mult": _LOWER_MULT,
             "hold_days": _HOLD_DAYS,
+            "barrier_vol_mode": args.barriers,
         }
         with open(_META_FEATURE_FILE, "w") as f:
             json.dump(meta, f, indent=2)

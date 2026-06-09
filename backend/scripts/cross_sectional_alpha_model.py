@@ -72,17 +72,41 @@ _DATA = os.path.join(_BACKEND, "data")
 _OHLCV_DIR = os.path.join(_DATA, "cache_ohlcv")
 _EARNINGS_DIR = os.path.join(_DATA, "cache_earnings")
 _CONSTITUENTS = os.path.join(_DATA, "sp500_historical_constituents.json")
+_MEMBERSHIP_CSV = os.path.join(_DATA, "sp500_ticker_start_end.csv")  # full PIT history
 
 HORIZON = 5  # forward-return horizon in trading days; also the rebalance period
 MIN_NAMES_PER_DAY = 20  # don't z-score / trade a thin cross-section
 TRADING_DAYS = 252
+FWD_RET_CAP = 0.50  # data-error guard: clip |5d forward return| beyond this
 
 # Tickers in the OHLCV cache that are ETFs/indices, not single-name equities.
 # They must never enter the stock cross-section (they'd dominate the ranks).
 _ETF_LIKE = {
-    "SPY", "QQQ", "DIA", "IWM", "HYG", "TLT", "UUP", "GLD", "SLV", "USO",
-    "XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY",
-    "VXX", "UVXY", "EEM", "EFA",
+    "SPY",
+    "QQQ",
+    "DIA",
+    "IWM",
+    "HYG",
+    "TLT",
+    "UUP",
+    "GLD",
+    "SLV",
+    "USO",
+    "XLB",
+    "XLC",
+    "XLE",
+    "XLF",
+    "XLI",
+    "XLK",
+    "XLP",
+    "XLRE",
+    "XLU",
+    "XLV",
+    "XLY",
+    "VXX",
+    "UVXY",
+    "EEM",
+    "EFA",
 }
 BENCHMARK = "SPY"  # used only for reporting / sanity, not for the neutral target
 
@@ -128,34 +152,73 @@ def load_ohlcv(ticker: str) -> pd.DataFrame | None:
     return df[["Open", "High", "Low", "Close", "Volume"]] if not df.empty else None
 
 
-def load_universe() -> dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]]:
-    """Load survivorship-bias-free S&P membership intervals.
+def _norm_ticker(ticker: str) -> str:
+    """Match the cache filename convention (BF.B -> BF-B, same as yfinance)."""
+    return ticker.replace(".", "-")
 
-    Returns {ticker: [(start, end), ...]} where each interval is the window the
-    ticker was an index member. We later mask the panel so a name only trades on
-    days it was actually in the index — this is the §84 point-in-time fix.
-    Only tickers that ALSO have an OHLCV cache and are not ETFs survive.
+
+def load_universe(source: str = "full") -> dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]]:
+    """Load the survivorship-bias-free S&P membership intervals.
+
+    Returns {ticker: [(start, end), ...]} where each interval is a window the
+    ticker was an index member. The panel is masked so a name only trades on days
+    it was actually in the index — the §84 point-in-time fix.
+
+    source="full"    -> FULL constituent history (`sp500_ticker_start_end.csv`,
+                        from github.com/fja05680/sp500 — 1200+ names). Wide but
+                        diluted/contaminated by recycled tickers (see §86 Step 6).
+    source="curated" -> the live engine's VALIDATED IS universe
+                        (`backtest_technicals.TICKERS`, ~110 large/liquid names) —
+                        the set that actually produced the 0.42 baseline and where
+                        the edge lives. PIT intervals are still taken from the full
+                        membership history; we just restrict to these names.
+
+    Only tickers that ALSO have an OHLCV cache and are not ETFs survive, so the
+    live universe = (constituents ∩ fetchable prices).
     """
-    with open(_CONSTITUENTS) as f:
-        raw = json.load(f)
+    cached = {os.path.basename(p).split("_")[0] for p in glob.glob(os.path.join(_OHLCV_DIR, "*_1d_adjTrue.csv"))}
 
-    cached = {
-        os.path.basename(p).split("_")[0]
-        for p in glob.glob(os.path.join(_OHLCV_DIR, "*_1d_adjTrue.csv"))
-    }
+    allowed: set[str] | None = None
+    if source == "curated":
+        try:  # works whether run as a file (scripts/ on path) or as a module
+            import backtest_technicals as bt  # type: ignore
+        except ModuleNotFoundError:
+            import scripts.backtest_technicals as bt
+        allowed = {_norm_ticker(str(t)) for t in bt.TICKERS}  # the live IS universe
 
     universe: dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]] = {}
+
+    def _eligible(ticker: str) -> bool:
+        return bool(ticker) and ticker not in _ETF_LIKE and ticker in cached and (allowed is None or ticker in allowed)
+
+    if os.path.exists(_MEMBERSHIP_CSV):
+        df = pd.read_csv(_MEMBERSHIP_CSV)
+        for _, row in df.iterrows():
+            ticker = _norm_ticker(str(row["ticker"]))
+            if not _eligible(ticker):
+                continue
+            start = pd.to_datetime(row["start_date"], errors="coerce")
+            end = pd.to_datetime(row.get("end_date"), errors="coerce")
+            if pd.isna(start):
+                continue
+            if pd.isna(end):  # blank end = still a current member
+                end = pd.Timestamp("2100-01-01")
+            universe.setdefault(ticker, []).append((start, end))
+        if universe:
+            return universe
+
+    # Fallback: legacy JSON {ticker: [[start, end], ...]}.
+    with open(_CONSTITUENTS) as f:
+        raw = json.load(f)
     for ticker, intervals in raw.items():
-        if not ticker or ticker in _ETF_LIKE or ticker not in cached:
+        ticker = _norm_ticker(ticker)
+        if not _eligible(ticker):
             continue
-        spans: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+        spans = []
         for span in intervals:
             start = pd.to_datetime(span[0])
-            # An open-ended / current membership may be null or a sentinel; treat
-            # anything missing as "still a member today".
             end_raw = span[1] if len(span) > 1 and span[1] else "2100-01-01"
-            end = pd.to_datetime(end_raw)
-            spans.append((start, end))
+            spans.append((start, pd.to_datetime(end_raw)))
         if spans:
             universe[ticker] = spans
     return universe
@@ -194,15 +257,13 @@ def load_short_interest(tickers: list[str]) -> pd.DataFrame:
     try:
         from sqlalchemy import create_engine, text
 
-        from config import settings  # type: ignore
+        from database import DATABASE_URL  # resolved from .env / env
 
-        url = str(settings.DATABASE_URL)
         # The app uses an async driver; strip it for a plain sync read here.
-        url = url.replace("+asyncpg", "").replace("postgresql+asyncpg", "postgresql")
+        url = DATABASE_URL.replace("+asyncpg", "").replace("+aiosqlite", "")
         engine = create_engine(url)
         q = text(
-            "SELECT ticker, date, short_interest, days_to_cover "
-            "FROM short_interest_biweekly WHERE ticker = ANY(:tk)"
+            "SELECT ticker, date, short_interest, days_to_cover FROM short_interest_biweekly WHERE ticker = ANY(:tk)"
         )
         with engine.connect() as conn:
             df = pd.read_sql(q, conn, params={"tk": list(tickers)})
@@ -221,13 +282,13 @@ def load_short_interest(tickers: list[str]) -> pd.DataFrame:
 
 # Columns produced below that should be cross-sectionally z-scored each day.
 RAW_FEATURE_COLS = [
-    "mom_12_1",      # 12-1 month momentum (skip last month) — classic XS factor
-    "rev_5",         # 5-day short-term reversal
-    "rev_21",        # 21-day reversal / mean-reversion pressure
-    "vol_21",        # 21-day realized volatility (low-vol anomaly)
-    "dollar_vol_21", # liquidity / size proxy
-    "dist_ma50",     # price distance from 50d MA (stretch)
-    "rsi_14",        # Wilder RSI (overbought/oversold)
+    "mom_12_1",  # 12-1 month momentum (skip last month) — classic XS factor
+    "rev_5",  # 5-day short-term reversal
+    "rev_21",  # 21-day reversal / mean-reversion pressure
+    "vol_21",  # 21-day realized volatility (low-vol anomaly)
+    "dollar_vol_21",  # liquidity / size proxy
+    "dist_ma50",  # price distance from 50d MA (stretch)
+    "rsi_14",  # Wilder RSI (overbought/oversold)
     "days_since_earn",  # earnings proximity (no surprise data available)
 ]
 
@@ -282,43 +343,76 @@ def add_earnings_features(df: pd.DataFrame, earnings: list[pd.Timestamp]) -> pd.
     return out
 
 
-def add_short_interest_features(panel: pd.DataFrame, si: pd.DataFrame) -> pd.DataFrame:
-    """Merge bi-weekly short interest, forward-filled to daily, into the panel.
+# Short-interest feature columns (level + VELOCITY). Velocity is the hypothesis
+# under test: a rising short base (crowding) vs a falling one (covering) should
+# carry cross-sectional information that the static level does not.
+_SI_COLS = [
+    "days_to_cover",  # level: short_interest / ADV (squeeze fuel)
+    "si_chg_1",  # velocity: % change in shares-short vs prior settlement (~2wk)
+    "si_chg_3",  # velocity: % change vs 3 settlements ago (~6wk, smoother)
+    "dtc_chg_1",  # change in days-to-cover vs prior settlement
+]
 
-    Short interest is reported with a lag and changes slowly, so forward-filling
-    the last *settled* value to each trading day is correct and lookahead-free.
-    Adds 'days_to_cover' to the feature set (squeeze-fuel factor) when present.
+
+def add_short_interest_features(panel: pd.DataFrame, si: pd.DataFrame) -> pd.DataFrame:
+    """Merge short-interest LEVEL + VELOCITY, as-of-joined to daily rows.
+
+    Velocity is computed on the native bi-weekly cadence (pct/diff vs the prior
+    *settlement*, not vs the forward-filled daily value) so it reflects real
+    reporting-to-reporting change. We then merge_asof BACKWARD, attaching to each
+    trading day only the most recent settlement on or before it — point-in-time
+    correct (FINRA reports with a lag), zero lookahead. History is ~2017-12+, so
+    pre-2018 rows get NaN → neutralized to 0 in the cross-sectional z-score.
     """
     if si.empty:
         return panel
-    si = si.sort_values(["ticker", "date"])
+    si = si.sort_values(["ticker", "date"]).copy()
+    g = si.groupby("ticker")
+    si["si_chg_1"] = g["short_interest"].pct_change(1)
+    si["si_chg_3"] = g["short_interest"].pct_change(3)
+    si["dtc_chg_1"] = g["days_to_cover"].diff(1)
+    si = si.replace([np.inf, -np.inf], np.nan)  # guard div-by-zero in pct_change
+
     merged = []
     for ticker, grp in panel.groupby("ticker", sort=False):
-        s = si[si["ticker"] == ticker][["date", "days_to_cover"]].dropna()
+        s = si[si["ticker"] == ticker][["date", *_SI_COLS]].dropna(subset=["days_to_cover"])
         grp = grp.sort_values("date")
         if s.empty:
-            grp["days_to_cover"] = np.nan
+            for c in _SI_COLS:
+                grp[c] = np.nan
         else:
-            grp = pd.merge_asof(
-                grp, s.rename(columns={"date": "date"}),
-                on="date", direction="backward",
-            )
+            grp = pd.merge_asof(grp, s, on="date", direction="backward")
         merged.append(grp)
     panel = pd.concat(merged, ignore_index=True)
-    if "days_to_cover" in panel.columns and "days_to_cover" not in RAW_FEATURE_COLS:
-        RAW_FEATURE_COLS.append("days_to_cover")
+
+    for c in _SI_COLS:
+        if c in panel.columns and c not in RAW_FEATURE_COLS:
+            RAW_FEATURE_COLS.append(c)
     return panel
 
 
-def build_panel(use_short_interest: bool = False) -> pd.DataFrame:
+def build_panel(
+    use_short_interest: bool = False,
+    min_price: float = 5.0,
+    min_dollar_vol: float = 1e7,
+    universe_source: str = "full",
+) -> pd.DataFrame:
     """Step 1 assembled: long panel [date, ticker, features..., fwd_ret].
 
     One row per (ticker, trading-day). Membership-masked so each name only
     appears on days it was an actual S&P member. Includes the HORIZON-day forward
     return per ticker (the raw ingredient of the market-neutral target).
+
+    LIQUIDITY FILTER (critical for a wide universe): a decile L/S book is driven
+    entirely by the tails of the cross-section, so penny/illiquid names — whose
+    weekly moves are enormous and untradable, and whose data is often dirty near
+    delisting — will hijack both legs and explode the vol if left in. We drop any
+    ticker-day below `min_price` or `min_dollar_vol` (21d avg). Both use trailing
+    data only, so the filter is point-in-time and lookahead-free.
     """
-    universe = load_universe()
-    print(f"Universe: {len(universe)} survivorship-bias-free single names")
+    universe = load_universe(source=universe_source)
+    print(f"Universe [{universe_source}]: {len(universe)} survivorship-bias-free single names")
+    print(f"Liquidity filter: price >= ${min_price:.0f}, 21d $vol >= ${min_dollar_vol / 1e6:.0f}M")
 
     frames = []
     for i, (ticker, spans) in enumerate(sorted(universe.items()), 1):
@@ -332,8 +426,9 @@ def build_panel(use_short_interest: bool = False) -> pd.DataFrame:
         # the label and is never used as an input feature).
         feats["fwd_ret"] = feats["Close"].shift(-HORIZON) / feats["Close"] - 1.0
 
-        # Apply point-in-time index membership.
+        # Apply point-in-time index membership, then the liquidity screen.
         feats = feats[_membership_mask(feats.index, spans)]
+        feats = feats[(feats["Close"] >= min_price) & (feats["dollar_vol_21"] >= min_dollar_vol)]
         if feats.empty:
             continue
 
@@ -377,6 +472,14 @@ def cross_sectional_zscore(panel: pd.DataFrame, feature_cols: list[str]) -> pd.D
     # Drop thin cross-sections before normalizing.
     counts = panel.groupby("date")["ticker"].transform("count")
     panel = panel[counts >= MIN_NAMES_PER_DAY].copy()
+
+    # DATA-INTEGRITY GUARD. With a free-yfinance universe, recycled/delisted ticker
+    # symbols splice unrelated companies into one series, yielding spurious multi-
+    # hundred-percent 5-day "returns" that would otherwise detonate the short leg
+    # (vol → 400%, equity → negative). A genuine S&P member with >$10M ADV almost
+    # never moves ±50% in a week, so we treat anything beyond as a data error and
+    # winsorize the forward return to ±FWD_RET_CAP before it reaches target or P&L.
+    panel["fwd_ret"] = panel["fwd_ret"].clip(-FWD_RET_CAP, FWD_RET_CAP)
 
     # Vectorized per-day standardization (transform avoids the apply-on-groups
     # deprecation and is far faster than a Python-level group loop). Winsorize to
@@ -440,7 +543,7 @@ def train_model(panel: pd.DataFrame, feature_cols: list[str], split: str, quiet:
         max_depth=4,
         subsample=0.8,
         colsample_bytree=0.8,
-        min_child_weight=20,      # regularize: each leaf needs many names
+        min_child_weight=20,  # regularize: each leaf needs many names
         reg_lambda=2.0,
         objective="reg:squarederror",
         eval_metric="rmse",
@@ -449,15 +552,13 @@ def train_model(panel: pd.DataFrame, feature_cols: list[str], split: str, quiet:
         random_state=42,
     )
     model.fit(
-        tr[z_cols], tr["fwd_ret_rel"],
+        tr[z_cols],
+        tr["fwd_ret_rel"],
         eval_set=[(va[z_cols], va["fwd_ret_rel"])],
         verbose=False,
     )
     if not quiet:
-        print(
-            f"Trained on {len(tr):,} rows (val {len(va):,}); "
-            f"best_iteration={model.best_iteration}"
-        )
+        print(f"Trained on {len(tr):,} rows (val {len(va):,}); best_iteration={model.best_iteration}")
         # Feature importance — sanity check signal isn't coming from one column.
         imp = sorted(zip(z_cols, model.feature_importances_), key=lambda x: -x[1])
         print("Top features:", ", ".join(f"{n}={v:.2f}" for n, v in imp[:6]))
@@ -472,16 +573,26 @@ def train_model(panel: pd.DataFrame, feature_cols: list[str], split: str, quiet:
 PERIODS_PER_YEAR = TRADING_DAYS / HORIZON
 
 
-def _simulate(test: pd.DataFrame, model, z_cols: list[str], decile: float) -> dict:
+def _simulate(test: pd.DataFrame, model, z_cols: list[str], decile: float, exit_decile: float | None = None) -> dict:
     """Cost-FREE simulation core: build the decile L/S book over a test slice and
     return per-rebalance gross returns + turnover, plus the IC and quintile
     diagnostic. Cost is applied downstream so cost-sensitivity is free (re-running
     the booker per cost level would be wasteful and is unnecessary — gross P&L and
     turnover don't depend on the cost assumption).
 
-    Decile baskets are picked on NON-OVERLAPPING rebalance dates (every HORIZON
-    days). Both `model` and `z_cols` are passed explicitly so walk-forward folds
-    can each supply their own freshly-trained model.
+    Baskets are rebalanced on NON-OVERLAPPING dates (every HORIZON days). Both
+    `model` and `z_cols` are passed explicitly so walk-forward folds can each
+    supply their own freshly-trained model.
+
+    TURNOVER MODE (`exit_decile`):
+      * None  -> classic full-refresh: each period the book is exactly the top/
+        bottom `decile`. Maximum responsiveness, maximum turnover.
+      * >decile -> Qlib TopkDropout-style HYSTERESIS: a name ENTERS the long book
+        when it ranks in the top `decile`, but is only SOLD once it falls out of
+        the wider top `exit_decile` band (symmetric for shorts). Names flickering
+        around the entry boundary no longer churn in and out, which is the whole
+        point — our cost sweep showed net Sharpe is turnover-bound, so widening
+        the exit band trades a little signal freshness for a lot less cost.
     """
     test = test.dropna(subset=["fwd_ret_rel"]).copy()
     if test.empty:
@@ -496,29 +607,48 @@ def _simulate(test: pd.DataFrame, model, z_cols: list[str], decile: float) -> di
             ics.append(g["pred"].corr(g["fwd_ret_rel"], method="spearman"))
     ics = [x for x in ics if pd.notna(x)]
 
-    all_dates = np.sort(test["date"].unique())
-    rebal_dates = all_dates[::HORIZON]
-    grouped = {d: g for d, g in test.groupby("date")}
+    # groupby returns date-sorted groups; step by HORIZON for non-overlapping
+    # rebalances. (Iterating groups avoids datetime64-vs-Timestamp key mismatches.)
+    groups = list(test.groupby("date"))
 
     prev_long: set[str] = set()
     prev_short: set[str] = set()
     gross_list, turn_list, used_dates = [], [], []
     decile_rows: list[list[float]] = []
 
-    for d in rebal_dates:
-        g = grouped.get(d)
-        if g is None or len(g) < MIN_NAMES_PER_DAY:
+    for i in range(0, len(groups), HORIZON):
+        d, g = groups[i]
+        if len(g) < MIN_NAMES_PER_DAY:
             continue
-        g = g.sort_values("pred", ascending=False)
-        k = max(1, int(round(len(g) * decile)))
-        longs, shorts = g.head(k), g.tail(k)
-        gross = longs["fwd_ret"].mean() - shorts["fwd_ret"].mean()
+        g = g.sort_values("pred", ascending=False).reset_index(drop=True)
+        n = len(g)
+        k = max(1, int(round(n * decile)))
 
-        long_set, short_set = set(longs["ticker"]), set(shorts["ticker"])
-        turnover = (
-            len(long_set ^ prev_long) / max(1, 2 * k)
-            + len(short_set ^ prev_short) / max(1, 2 * k)
-        )
+        if exit_decile is None or exit_decile <= decile:
+            # Classic full-refresh decile book.
+            long_set = set(g["ticker"].iloc[:k])
+            short_set = set(g["ticker"].iloc[n - k :])
+        else:
+            # Hysteresis: hold until a name leaves the wider exit band.
+            frac = np.arange(n) / max(1, n - 1)  # 0 = best pred ... 1 = worst
+            ranks = dict(zip(g["ticker"], frac))
+            present = set(g["ticker"])
+            entry_long = set(g["ticker"][frac <= decile])
+            keep_long = {t for t in prev_long if t in present and ranks[t] <= exit_decile}
+            long_set = entry_long | keep_long
+            entry_short = set(g["ticker"][frac >= 1 - decile])
+            keep_short = {t for t in prev_short if t in present and ranks[t] >= 1 - exit_decile}
+            short_set = entry_short | keep_short
+
+        ret = dict(zip(g["ticker"], g["fwd_ret"]))
+        long_ret = np.mean([ret[t] for t in long_set]) if long_set else 0.0
+        short_ret = np.mean([ret[t] for t in short_set]) if short_set else 0.0
+        gross = long_ret - short_ret
+
+        # One-way turnover per leg as a fraction of the target leg size (2k name-
+        # slots both ways), kept on the same scale as the full-refresh baseline so
+        # cost comparisons across modes are apples-to-apples.
+        turnover = len(long_set ^ prev_long) / max(1, 2 * k) + len(short_set ^ prev_short) / max(1, 2 * k)
         gross_list.append(gross)
         turn_list.append(turnover)
         used_dates.append(d)
@@ -536,12 +666,9 @@ def _simulate(test: pd.DataFrame, model, z_cols: list[str], decile: float) -> di
         "dates": np.asarray(used_dates),
         "mean_ic": float(np.mean(ics)) if ics else float("nan"),
         "ic_ir": (
-            float(np.mean(ics) / np.std(ics) * np.sqrt(TRADING_DAYS))
-            if ics and np.std(ics) > 0 else float("nan")
+            float(np.mean(ics) / np.std(ics) * np.sqrt(TRADING_DAYS)) if ics and np.std(ics) > 0 else float("nan")
         ),
-        "decile_means": (
-            np.nanmean(np.array(decile_rows), axis=0).tolist() if decile_rows else []
-        ),
+        "decile_means": (np.nanmean(np.array(decile_rows), axis=0).tolist() if decile_rows else []),
     }
 
 
@@ -552,7 +679,8 @@ def _stats(gross: np.ndarray, turnover: np.ndarray, cost_bps: float) -> dict:
     def _sh(x):
         return (
             float(x.mean() * PERIODS_PER_YEAR / (x.std(ddof=1) * np.sqrt(PERIODS_PER_YEAR)))
-            if len(x) > 2 and x.std(ddof=1) > 0 else float("nan")
+            if len(x) > 2 and x.std(ddof=1) > 0
+            else float("nan")
         )
 
     equity = np.cumprod(1 + net)
@@ -569,18 +697,24 @@ def _stats(gross: np.ndarray, turnover: np.ndarray, cost_bps: float) -> dict:
     }
 
 
-def single_split_backtest(panel: pd.DataFrame, tm: TrainedModel, decile: float, cost_bps: float) -> dict:
+def single_split_backtest(
+    panel: pd.DataFrame, tm: TrainedModel, decile: float, cost_bps: float, exit_decile: float | None = None
+) -> dict:
     """One chronological train/test split (the original default mode)."""
     test = panel[panel["date"] >= tm.split_date]
-    sim = _simulate(test, tm.model, tm.z_cols, decile)
+    sim = _simulate(test, tm.model, tm.z_cols, decile, exit_decile)
     if len(sim["gross"]) < 3:
         raise SystemExit("Too few rebalance periods in test window — widen the split.")
     res = _stats(sim["gross"], sim["turnover"], cost_bps)
-    res.update({
-        "mean_ic": sim["mean_ic"], "ic_ir": sim["ic_ir"], "decile_means": sim["decile_means"],
-        "test_start": pd.Timestamp(sim["dates"].min()).date(),
-        "test_end": pd.Timestamp(sim["dates"].max()).date(),
-    })
+    res.update(
+        {
+            "mean_ic": sim["mean_ic"],
+            "ic_ir": sim["ic_ir"],
+            "decile_means": sim["decile_means"],
+            "test_start": pd.Timestamp(sim["dates"].min()).date(),
+            "test_end": pd.Timestamp(sim["dates"].max()).date(),
+        }
+    )
     return res
 
 
@@ -611,8 +745,13 @@ def _block_bootstrap_sharpe_ci(net: np.ndarray, block: int = 4, n_boot: int = 20
 
 
 def walk_forward(
-    panel: pd.DataFrame, feature_cols: list[str], decile: float, cost_bps: float,
-    start_year: int, test_years: int = 1,
+    panel: pd.DataFrame,
+    feature_cols: list[str],
+    decile: float,
+    cost_bps: float,
+    start_year: int,
+    test_years: int = 1,
+    exit_decile: float | None = None,
 ) -> dict:
     """Purged, expanding-window walk-forward CV.
 
@@ -629,8 +768,9 @@ def walk_forward(
 
     all_gross, all_turn, all_dates = [], [], []
     fold_summ: list[tuple] = []
-    print(f"\nWalk-forward CV: {len(fold_starts)} expanding folds "
-          f"({start_year}→{last_year}, {test_years}y test windows)")
+    print(
+        f"\nWalk-forward CV: {len(fold_starts)} expanding folds ({start_year}→{last_year}, {test_years}y test windows)"
+    )
 
     for y in fold_starts:
         split = f"{y}-01-01"
@@ -640,7 +780,7 @@ def walk_forward(
         except SystemExit:
             continue  # not enough history yet for this fold
         test = panel[(panel["date"] >= tm.split_date) & (panel["date"] < test_end)]
-        sim = _simulate(test, tm.model, tm.z_cols, decile)
+        sim = _simulate(test, tm.model, tm.z_cols, decile, exit_decile)
         if len(sim["gross"]) < 3:
             continue
         fs = _stats(sim["gross"], sim["turnover"], cost_bps)
@@ -658,14 +798,17 @@ def walk_forward(
     res = _stats(gross, turn, cost_bps)
     net = gross - turn * (cost_bps / 1e4)
     lo, hi = _block_bootstrap_sharpe_ci(net)
-    res.update({
-        "fold_summary": fold_summ,
-        "sharpe_ci": (lo, hi),
-        "test_start": pd.Timestamp(dates.min()).date(),
-        "test_end": pd.Timestamp(dates.max()).date(),
-        "gross_series": gross, "turnover_series": turn,
-        "mean_ic": float(np.nanmean([f[2] for f in fold_summ])),
-    })
+    res.update(
+        {
+            "fold_summary": fold_summ,
+            "sharpe_ci": (lo, hi),
+            "test_start": pd.Timestamp(dates.min()).date(),
+            "test_end": pd.Timestamp(dates.max()).date(),
+            "gross_series": gross,
+            "turnover_series": turn,
+            "mean_ic": float(np.nanmean([f[2] for f in fold_summ])),
+        }
+    )
     return res
 
 
@@ -692,7 +835,8 @@ def report(res: dict, decile: float, cost_bps: float, mode: str) -> None:
     pct = lambda x: f"{x * 100:+.2f}%"  # noqa: E731
     title = (
         "WALK-FORWARD CV (purged, expanding, retrained per fold)"
-        if mode == "wf" else "CROSS-SECTIONAL MARKET-NEUTRAL BACKTEST (single split)"
+        if mode == "wf"
+        else "CROSS-SECTIONAL MARKET-NEUTRAL BACKTEST (single split)"
     )
     print("\n" + "=" * 64)
     print(f"  {title}")
@@ -728,10 +872,7 @@ def report(res: dict, decile: float, cost_bps: float, mode: str) -> None:
     if res.get("decile_means"):
         cells = "  ".join(pct(x) for x in res["decile_means"])
         print(f"  Quintile fwd-ret (low->high pred): {cells}")
-        mono = all(
-            res["decile_means"][i] <= res["decile_means"][i + 1]
-            for i in range(len(res["decile_means"]) - 1)
-        )
+        mono = all(res["decile_means"][i] <= res["decile_means"][i + 1] for i in range(len(res["decile_means"]) - 1))
         print(f"  Monotonic in prediction: {'YES ✅' if mono else 'no (signal is noisy)'}")
     print("=" * 64)
     if res["sharpe_net"] < 0.5:
@@ -752,29 +893,59 @@ def main() -> None:
     ap.add_argument("--decile", type=float, default=0.10, help="fraction per long/short leg")
     ap.add_argument("--cost-bps", type=float, default=10.0, help="one-way turnover cost in bps")
     ap.add_argument("--short-interest", action="store_true", help="merge Postgres short interest")
-    ap.add_argument("--walk-forward", action="store_true",
-                    help="purged expanding-window CV with retraining per fold + bootstrap Sharpe CI")
+    ap.add_argument(
+        "--walk-forward",
+        action="store_true",
+        help="purged expanding-window CV with retraining per fold + bootstrap Sharpe CI",
+    )
     ap.add_argument("--wf-start", type=int, default=2012, help="first walk-forward test year")
     ap.add_argument("--wf-test-years", type=int, default=1, help="length of each test window in years")
     ap.add_argument("--cost-sweep", action="store_true", help="print net Sharpe across a cost-bps sweep")
+    ap.add_argument("--min-price", type=float, default=5.0, help="min share price for the liquidity screen")
+    ap.add_argument("--min-dollar-vol", type=float, default=1e7, help="min 21d avg dollar volume")
+    ap.add_argument(
+        "--exit-decile",
+        type=float,
+        default=None,
+        help="Qlib TopkDropout hysteresis: hold a name until it leaves this wider "
+        "band (e.g. --decile 0.10 --exit-decile 0.25). Omit for full-refresh.",
+    )
+    ap.add_argument(
+        "--universe",
+        choices=["full", "curated"],
+        default="full",
+        help="'full' = complete S&P 500 history; 'curated' = legacy large-cap set (0.42 baseline)",
+    )
     args = ap.parse_args()
 
-    panel = build_panel(use_short_interest=args.short_interest)
+    panel = build_panel(
+        use_short_interest=args.short_interest,
+        min_price=args.min_price,
+        min_dollar_vol=args.min_dollar_vol,
+        universe_source=args.universe,
+    )
     feature_cols = [c for c in RAW_FEATURE_COLS if c in panel.columns]
     panel = cross_sectional_zscore(panel, feature_cols)
 
     if args.walk_forward:
-        res = walk_forward(panel, feature_cols, args.decile, args.cost_bps,
-                           start_year=args.wf_start, test_years=args.wf_test_years)
+        res = walk_forward(
+            panel,
+            feature_cols,
+            args.decile,
+            args.cost_bps,
+            start_year=args.wf_start,
+            test_years=args.wf_test_years,
+            exit_decile=args.exit_decile,
+        )
         report(res, args.decile, args.cost_bps, mode="wf")
         if args.cost_sweep:
             cost_sensitivity(res["gross_series"], res["turnover_series"])
     else:
         tm = train_model(panel, feature_cols, args.split)
-        res = single_split_backtest(panel, tm, args.decile, args.cost_bps)
+        res = single_split_backtest(panel, tm, args.decile, args.cost_bps, exit_decile=args.exit_decile)
         report(res, args.decile, args.cost_bps, mode="single")
         if args.cost_sweep:
-            sim = _simulate(panel[panel["date"] >= tm.split_date], tm.model, tm.z_cols, args.decile)
+            sim = _simulate(panel[panel["date"] >= tm.split_date], tm.model, tm.z_cols, args.decile, args.exit_decile)
             cost_sensitivity(sim["gross"], sim["turnover"])
 
 

@@ -59,7 +59,8 @@ async def test_gate_blocks_xli_sector():
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(sectorEtf="XLI"), db, _Settings())
+    with patch("pathlib.Path.exists", return_value=False):
+        reason, _ = await check_delivery_gates(_sig(sectorEtf="XLI"), db, _Settings())
     assert reason is not None
     assert "XLI" in reason
 
@@ -204,7 +205,8 @@ async def test_gate_blocks_restricted_sectors(sector):
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(sectorEtf=sector), db, _Settings())
+    with patch("pathlib.Path.exists", return_value=False):
+        reason, _ = await check_delivery_gates(_sig(sectorEtf=sector), db, _Settings())
     assert reason is not None
     assert "blocked" in reason
 
@@ -839,3 +841,47 @@ async def test_pre_long_weekend_haircut_applied():
 
     if reason is None:
         assert out_sig.get("confidence", 65.0) <= 60.1  # 65 - 5 = 60
+
+
+@pytest.mark.asyncio
+async def test_gate_blocks_fred_macro_regime_panel():
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+
+    # 1. NFCI > 0.5 (hard block)
+    reason, _ = await check_delivery_gates(_sig(nfci=0.6), db, _Settings())
+    assert reason is not None
+    assert "NFCI" in reason
+
+    # 2. NFCI > 0.0 and score < 50 (marginal block)
+    reason, _ = await check_delivery_gates(_sig(nfci=0.1, score=45), db, _Settings())
+    assert reason is not None
+    assert "NFCI" in reason
+
+    # 3. NFCI > 0.0 and score >= 50 (passes)
+    reason, _ = await check_delivery_gates(_sig(nfci=0.1, score=55), db, _Settings())
+    assert reason is None
+
+    # 4. Baa-10Y > 4.0% (hard block)
+    reason, _ = await check_delivery_gates(_sig(baa10y=4.5), db, _Settings())
+    assert reason is not None
+    assert "Baa-10Y" in reason
+
+    # 5. Baa-10Y > 3.0% and score < 50 (marginal block)
+    reason, _ = await check_delivery_gates(_sig(baa10y=3.5, score=45), db, _Settings())
+    assert reason is not None
+    assert "Baa-10Y" in reason
+
+    # 6. Baa-10Y > 3.0% and score >= 50 (passes)
+    reason, _ = await check_delivery_gates(_sig(baa10y=3.5, score=55), db, _Settings())
+    assert reason is None
+
+    # 7. T10Y3M < 0.0% (inverted) and score < 55 (marginal block)
+    reason, _ = await check_delivery_gates(_sig(t10y3m=-0.1, score=50), db, _Settings())
+    assert reason is not None
+    assert "Yield Curve Inverted" in reason
+
+    # 8. T10Y3M < 0.0% (inverted) and score >= 55 (passes)
+    reason, _ = await check_delivery_gates(_sig(t10y3m=-0.1, score=60), db, _Settings())
+    assert reason is None

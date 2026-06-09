@@ -745,6 +745,13 @@ SELL_THRESH = -100  # SELLs disabled. §32 validation (2026-05-26): −45 thresh
 # (60.8% raw WR) is entirely alt-data driven — absent on OHLCV alone.
 POSITION_SIZE = 0.05  # 5% of capital per trade (for drawdown sim)
 
+# §63 Engle-Granger step-2 gate: only count a pair as cointegrated (and apply the
+# coint_z scoring modifier) when its residual spread is stationary. Mirrors
+# services/technicals.py::_COINT_ADF_PMAX. Flip _COINT_REQUIRE_STATIONARY to False
+# to ablate the gate (reproduces the pre-2026-06-09 ungated §63 behaviour).
+_COINT_ADF_PMAX = 0.10
+_COINT_REQUIRE_STATIONARY = True
+
 # ── §QuantEngine research constants ──────────────────────────────────────────
 BETA_HEDGE_RATIO = 0.90  # short 90% of position value in SPY to neutralize beta
 BETA_HEDGE_FRICTION = 0.10  # extra round-trip friction for the SPY hedge leg (%)
@@ -3502,7 +3509,12 @@ def run_full_universe_curation_bias(vix, spy_trend, stlfsi4):
         results = p.map(process_ticker, args_list)
 
     removed_trades: list[pd.DataFrame] = []
-    for ticker, t_df, _bh, _df in results:
+    curated_trades: dict[str, pd.DataFrame] = {}
+    for ticker, _bh, ind_df, _ed in results:
+        if ind_df is None or ind_df.empty:
+            continue
+        t_df = simulate_ticker(ticker, ind_df, vix, spy_trend, stlfsi4, mr_only=True)
+        curated_trades[ticker] = t_df
         if t_df is not None and not t_df.empty:
             removed_trades.append(t_df)
 
@@ -3525,7 +3537,8 @@ def run_full_universe_curation_bias(vix, spy_trend, stlfsi4):
 
     # Per-ticker breakdown
     rows = []
-    for ticker, t_df, _bh, _df in results:
+    for ticker, _bh, _ind, _ed in results:
+        t_df = curated_trades.get(ticker)
         if t_df is None or t_df.empty:
             rows.append([ticker, "0", "—", "—", "—"])
             continue
@@ -3994,7 +4007,14 @@ def run_oos_validation(vix, spy_trend, stlfsi4):
 
     oos_trades: list[pd.DataFrame] = []
     clean_trades: list[pd.DataFrame] = []
-    for ticker, t_df, _bh, _df in results:
+    per_ticker_trades: dict[str, pd.DataFrame] = {}
+    for ticker, _bh, ind_df, _ed in results:
+        if ind_df is None or ind_df.empty:
+            continue
+        # process_ticker returns the scored indicator frame; turn it into the
+        # MR-only trades frame (net_pct etc.) exactly like the IS pipeline.
+        t_df = simulate_ticker(ticker, ind_df, vix, spy_trend, stlfsi4, mr_only=True)
+        per_ticker_trades[ticker] = t_df
         if t_df is not None and not t_df.empty:
             oos_trades.append(t_df)
             if ticker not in _OOS_BLOCKED_TICKERS:
@@ -4056,7 +4076,8 @@ def run_oos_validation(vix, spy_trend, stlfsi4):
     # Per-ticker breakdown
     print("\n### OOS Per-Ticker\n")
     rows = []
-    for ticker, t_df, _bh, _df in results:
+    for ticker, _bh, _ind, _ed in results:
+        t_df = per_ticker_trades.get(ticker)
         blocked_flag = " ★" if ticker in _OOS_BLOCKED_TICKERS else ""
         if t_df is None or t_df.empty:
             rows.append([ticker + blocked_flag, "0", "—", "—", "—"])
@@ -4427,6 +4448,34 @@ def main():
             sigma = np.sqrt(var)
 
             z_score = np.where((sigma > 1e-8) & denom_valid, resid_last / sigma, np.nan)
+
+            # Engle-Granger step 2: gate the z-score on residual STATIONARITY,
+            # mirroring the live engine (services/technicals.py). Per-bar ADF over
+            # 23y is too slow, so we test cointegration at quarterly cadence over
+            # the trailing `window` and apply the verdict to the NEXT quarter only
+            # (test on trailing data, apply forward → no lookahead). Pairs that
+            # aren't cointegrated get coint_z=NaN, which every scorer already skips.
+            if _COINT_REQUIRE_STATIONARY:
+                z_arr = np.asarray(z_score, dtype=float)
+                sv = s_col.values
+                ev = e_col.values
+                ok = np.zeros(len(combined), dtype=bool)
+                step = 63
+                try:
+                    from statsmodels.tsa.stattools import coint
+
+                    for end in range(window, len(combined), step):
+                        try:
+                            pval = coint(sv[end - window : end], ev[end - window : end])[1]
+                        except Exception:
+                            pval = 1.0
+                        if pval < _COINT_ADF_PMAX:
+                            ok[end : end + step] = True
+                    z_arr = np.where(ok, z_arr, np.nan)
+                except Exception:
+                    pass  # statsmodels unavailable → leave z ungated
+                return pd.Series(z_arr, index=combined.index)
+
             return pd.Series(z_score, index=combined.index)
 
         _coint_added = 0
