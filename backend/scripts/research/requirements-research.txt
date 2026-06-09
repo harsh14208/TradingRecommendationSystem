@@ -1,0 +1,18 @@
+# Isolated research deps for the awesome-quant Tier-1 experiments.
+#
+# DO NOT install these into backend/venv — skfolio (via cvxpy) needs numpy>=2.0,
+# which conflicts with the pinned numpy==1.26.4 the live engine runs on, and
+# alphalens drags empyrical-reloaded -> peewee<3.17.4 (breaks the `massive` client).
+#
+# Run in a throwaway env instead:
+#   python3.11 -m venv /tmp/venv_quant
+#   source /tmp/venv_quant/bin/activate
+#   pip install -r backend/scripts/research/requirements-research.txt
+#   cd backend/scripts/research && python exp3_alphalens_ic.py
+#
+# (`arch` alone IS numpy-1.26 safe and is already in backend/requirements.txt —
+#  it's listed here too only so this env can run exp2 standalone.)
+
+skfolio>=0.20
+alphalens-reloaded>=0.4
+arch>=7.0
