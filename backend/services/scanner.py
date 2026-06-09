@@ -179,9 +179,14 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
                 if _secs and sig_dict.get("sectorEtf") not in _secs:
                     log.info(f" [fanout] user={user.id} sector {sig_dict.get('sectorEtf')} not in {_secs} — skipped")
                     continue
+                # score_min is a STRENGTH threshold, so compare |raw_score|. raw_score
+                # is signed (BUY positive, SELL negative); a naive `raw_score < score_min`
+                # silently dropped every SELL for any user with score_min>0 (the 2026-06-09
+                # "no signals since May 31" bug — the recalibration pushed SELL raw_scores
+                # negative, below the user's score_min=50).
                 _smin = _prefs.get("score_min")
-                if _smin is not None and (sig_dict.get("raw_score") or 0) < _smin:
-                    log.info(f" [fanout] user={user.id} raw_score < score_min {_smin} — skipped")
+                if _smin is not None and abs(sig_dict.get("raw_score") or 0) < _smin:
+                    log.info(f" [fanout] user={user.id} |raw_score| < score_min {_smin} — skipped")
                     continue
                 _acts = _prefs.get("actions") or []
                 if _acts and sig_dict.get("action") not in _acts:
