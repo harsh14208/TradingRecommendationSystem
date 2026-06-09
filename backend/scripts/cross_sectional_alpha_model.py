@@ -411,7 +411,7 @@ class TrainedModel:
     split_date: pd.Timestamp
 
 
-def train_model(panel: pd.DataFrame, feature_cols: list[str], split: str) -> TrainedModel:
+def train_model(panel: pd.DataFrame, feature_cols: list[str], split: str, quiet: bool = False) -> TrainedModel:
     """Train XGBoost to predict the market-neutral relative forward return.
 
     Split is strictly chronological with an EMBARGO of HORIZON days: the last
@@ -453,14 +453,14 @@ def train_model(panel: pd.DataFrame, feature_cols: list[str], split: str) -> Tra
         eval_set=[(va[z_cols], va["fwd_ret_rel"])],
         verbose=False,
     )
-    print(
-        f"Trained on {len(tr):,} rows (val {len(va):,}); "
-        f"best_iteration={model.best_iteration}"
-    )
-
-    # Feature importance — sanity check that signal isn't coming from one column.
-    imp = sorted(zip(z_cols, model.feature_importances_), key=lambda x: -x[1])
-    print("Top features:", ", ".join(f"{n}={v:.2f}" for n, v in imp[:6]))
+    if not quiet:
+        print(
+            f"Trained on {len(tr):,} rows (val {len(va):,}); "
+            f"best_iteration={model.best_iteration}"
+        )
+        # Feature importance — sanity check signal isn't coming from one column.
+        imp = sorted(zip(z_cols, model.feature_importances_), key=lambda x: -x[1])
+        print("Top features:", ", ".join(f"{n}={v:.2f}" for n, v in imp[:6]))
     return TrainedModel(model=model, z_cols=z_cols, split_date=split_date)
 
 
@@ -469,142 +469,218 @@ def train_model(panel: pd.DataFrame, feature_cols: list[str], split: str) -> Tra
 # ---------------------------------------------------------------------------
 
 
-def backtest(panel: pd.DataFrame, tm: TrainedModel, decile: float, cost_bps: float) -> dict:
-    """Dollar-neutral decile long/short backtest on the out-of-sample period.
+PERIODS_PER_YEAR = TRADING_DAYS / HORIZON
 
-    For each NON-OVERLAPPING rebalance date (every HORIZON days), score the
-    cross-section, go long the top `decile`, short the bottom `decile`, equal
-    weight within each leg, dollar-neutral across legs. Hold HORIZON days, then
-    rebalance. Period P&L = mean(long fwd_ret) - mean(short fwd_ret). Costs are
-    charged on name turnover between consecutive baskets (one-way `cost_bps`).
 
-    Returns gross/net annualized Sharpe, vol, IC, decile monotonicity, max DD.
+def _simulate(test: pd.DataFrame, model, z_cols: list[str], decile: float) -> dict:
+    """Cost-FREE simulation core: build the decile L/S book over a test slice and
+    return per-rebalance gross returns + turnover, plus the IC and quintile
+    diagnostic. Cost is applied downstream so cost-sensitivity is free (re-running
+    the booker per cost level would be wasteful and is unnecessary — gross P&L and
+    turnover don't depend on the cost assumption).
+
+    Decile baskets are picked on NON-OVERLAPPING rebalance dates (every HORIZON
+    days). Both `model` and `z_cols` are passed explicitly so walk-forward folds
+    can each supply their own freshly-trained model.
     """
-    test = panel[panel["date"] >= tm.split_date].dropna(subset=["fwd_ret_rel"]).copy()
-    test["pred"] = tm.model.predict(test[tm.z_cols])
+    test = test.dropna(subset=["fwd_ret_rel"]).copy()
+    if test.empty:
+        return {"gross": np.array([]), "turnover": np.array([]), "dates": np.array([])}
+    test["pred"] = model.predict(test[z_cols])
 
-    # Information coefficient: daily rank corr between prediction and realized
-    # relative return. This is the model's edge BEFORE any portfolio/cost effects
-    # — a positive, stable IC is the precondition for everything downstream.
+    # IC: daily rank corr between prediction and realized relative return — the
+    # model's raw edge before any portfolio/cost effects.
     ics = []
     for _, g in test.groupby("date"):
         if len(g) >= MIN_NAMES_PER_DAY:
             ics.append(g["pred"].corr(g["fwd_ret_rel"], method="spearman"))
     ics = [x for x in ics if pd.notna(x)]
-    mean_ic = float(np.mean(ics)) if ics else float("nan")
-    ir = mean_ic / np.std(ics) * np.sqrt(TRADING_DAYS) if ics and np.std(ics) > 0 else float("nan")
 
-    # Non-overlapping rebalance dates.
     all_dates = np.sort(test["date"].unique())
     rebal_dates = all_dates[::HORIZON]
+    grouped = {d: g for d, g in test.groupby("date")}
 
     prev_long: set[str] = set()
     prev_short: set[str] = set()
-    period_rets: list[float] = []
-    decile_rows: list[list[float]] = []  # per-rebalance mean fwd_ret by quantile bucket
+    gross_list, turn_list, used_dates = [], [], []
+    decile_rows: list[list[float]] = []
 
     for d in rebal_dates:
-        g = test[test["date"] == d]
-        if len(g) < MIN_NAMES_PER_DAY:
+        g = grouped.get(d)
+        if g is None or len(g) < MIN_NAMES_PER_DAY:
             continue
         g = g.sort_values("pred", ascending=False)
-        n = len(g)
-        k = max(1, int(round(n * decile)))
-        longs = g.head(k)
-        shorts = g.tail(k)
-
-        # Equal-weight, dollar-neutral period return (gross).
+        k = max(1, int(round(len(g) * decile)))
+        longs, shorts = g.head(k), g.tail(k)
         gross = longs["fwd_ret"].mean() - shorts["fwd_ret"].mean()
 
-        # Turnover cost: fraction of each leg's names that changed × cost_bps.
         long_set, short_set = set(longs["ticker"]), set(shorts["ticker"])
-        long_to = len(long_set ^ prev_long) / max(1, 2 * k)
-        short_to = len(short_set ^ prev_short) / max(1, 2 * k)
-        turnover = long_to + short_to  # both legs trade
-        cost = turnover * (cost_bps / 1e4)
-        period_rets.append(gross - cost)
+        turnover = (
+            len(long_set ^ prev_long) / max(1, 2 * k)
+            + len(short_set ^ prev_short) / max(1, 2 * k)
+        )
+        gross_list.append(gross)
+        turn_list.append(turnover)
+        used_dates.append(d)
         prev_long, prev_short = long_set, short_set
 
-        # Decile monotonicity diagnostic (do higher-ranked buckets earn more?).
         try:
             buckets = pd.qcut(g["pred"], 5, labels=False, duplicates="drop")
             decile_rows.append([g["fwd_ret"][buckets == b].mean() for b in range(5)])
         except ValueError:
             pass
 
-    rets = np.asarray(period_rets, dtype=float)
-    if len(rets) < 3:
-        raise SystemExit("Too few rebalance periods in test window — widen the split.")
-
-    periods_per_year = TRADING_DAYS / HORIZON
-    ann_ret = rets.mean() * periods_per_year
-    ann_vol = rets.std(ddof=1) * np.sqrt(periods_per_year)
-    sharpe = ann_ret / ann_vol if ann_vol > 0 else float("nan")
-
-    equity = np.cumprod(1 + rets)
-    peak = np.maximum.accumulate(equity)
-    max_dd = float((equity / peak - 1).min())
-
-    decile_means = (
-        np.nanmean(np.array(decile_rows), axis=0).tolist() if decile_rows else []
-    )
-
     return {
-        "n_periods": len(rets),
-        "mean_ic": mean_ic,
-        "ic_ir": ir,
-        "ann_ret_net": ann_ret,
-        "ann_vol": ann_vol,
-        "sharpe_net": sharpe,
-        "max_dd": max_dd,
-        "decile_means": decile_means,
-        "test_start": pd.Timestamp(all_dates[0]).date(),
-        "test_end": pd.Timestamp(all_dates[-1]).date(),
+        "gross": np.asarray(gross_list, dtype=float),
+        "turnover": np.asarray(turn_list, dtype=float),
+        "dates": np.asarray(used_dates),
+        "mean_ic": float(np.mean(ics)) if ics else float("nan"),
+        "ic_ir": (
+            float(np.mean(ics) / np.std(ics) * np.sqrt(TRADING_DAYS))
+            if ics and np.std(ics) > 0 else float("nan")
+        ),
+        "decile_means": (
+            np.nanmean(np.array(decile_rows), axis=0).tolist() if decile_rows else []
+        ),
     }
 
 
-def backtest_with_gross(panel: pd.DataFrame, tm: TrainedModel, decile: float, cost_bps: float) -> dict:
-    """Wrapper that also computes the gross (pre-cost) Sharpe so the cost drag is
-    explicit. Re-runs the loop tracking gross and net side by side."""
-    test = panel[panel["date"] >= tm.split_date].dropna(subset=["fwd_ret_rel"]).copy()
-    test["pred"] = tm.model.predict(test[tm.z_cols])
+def _stats(gross: np.ndarray, turnover: np.ndarray, cost_bps: float) -> dict:
+    """Annualized gross/net stats from per-period gross returns + turnover."""
+    net = gross - turnover * (cost_bps / 1e4)
 
-    all_dates = np.sort(test["date"].unique())
-    rebal_dates = all_dates[::HORIZON]
-    prev_long: set[str] = set()
-    prev_short: set[str] = set()
-    gross_list, net_list = [], []
+    def _sh(x):
+        return (
+            float(x.mean() * PERIODS_PER_YEAR / (x.std(ddof=1) * np.sqrt(PERIODS_PER_YEAR)))
+            if len(x) > 2 and x.std(ddof=1) > 0 else float("nan")
+        )
 
-    for d in rebal_dates:
-        g = test[test["date"] == d]
-        if len(g) < MIN_NAMES_PER_DAY:
+    equity = np.cumprod(1 + net)
+    peak = np.maximum.accumulate(equity)
+    return {
+        "n_periods": len(net),
+        "sharpe_gross": _sh(gross),
+        "sharpe_net": _sh(net),
+        "ann_ret_gross": float(gross.mean() * PERIODS_PER_YEAR),
+        "ann_ret_net": float(net.mean() * PERIODS_PER_YEAR),
+        "ann_vol": float(net.std(ddof=1) * np.sqrt(PERIODS_PER_YEAR)) if len(net) > 2 else float("nan"),
+        "max_dd": float((equity / peak - 1).min()) if len(net) else float("nan"),
+        "avg_turnover": float(turnover.mean()) if len(turnover) else float("nan"),
+    }
+
+
+def single_split_backtest(panel: pd.DataFrame, tm: TrainedModel, decile: float, cost_bps: float) -> dict:
+    """One chronological train/test split (the original default mode)."""
+    test = panel[panel["date"] >= tm.split_date]
+    sim = _simulate(test, tm.model, tm.z_cols, decile)
+    if len(sim["gross"]) < 3:
+        raise SystemExit("Too few rebalance periods in test window — widen the split.")
+    res = _stats(sim["gross"], sim["turnover"], cost_bps)
+    res.update({
+        "mean_ic": sim["mean_ic"], "ic_ir": sim["ic_ir"], "decile_means": sim["decile_means"],
+        "test_start": pd.Timestamp(sim["dates"].min()).date(),
+        "test_end": pd.Timestamp(sim["dates"].max()).date(),
+    })
+    return res
+
+
+def _block_bootstrap_sharpe_ci(net: np.ndarray, block: int = 4, n_boot: int = 2000) -> tuple[float, float]:
+    """5/95 CI on the net Sharpe via a circular block bootstrap.
+
+    Plain bootstrap assumes i.i.d. periods; L/S spread returns have mild serial
+    structure, so we resample contiguous blocks (size ~`block` periods ≈ a month)
+    to preserve it. If the 5th percentile clears 0, the Sharpe is unlikely to be
+    a single-window fluke.
+    """
+    if len(net) < block * 3:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(42)
+    n = len(net)
+    n_blocks = int(np.ceil(n / block))
+    sharpes = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, n, size=n_blocks)
+        idx = np.concatenate([(np.arange(s, s + block) % n) for s in starts])[:n]
+        sample = net[idx]
+        sd = sample.std(ddof=1)
+        if sd > 0:
+            sharpes.append(sample.mean() * PERIODS_PER_YEAR / (sd * np.sqrt(PERIODS_PER_YEAR)))
+    if not sharpes:
+        return float("nan"), float("nan")
+    return float(np.percentile(sharpes, 5)), float(np.percentile(sharpes, 95))
+
+
+def walk_forward(
+    panel: pd.DataFrame, feature_cols: list[str], decile: float, cost_bps: float,
+    start_year: int, test_years: int = 1,
+) -> dict:
+    """Purged, expanding-window walk-forward CV.
+
+    For each fold the model is retrained ONLY on data strictly before the test
+    window (with a HORIZON-day embargo at the seam, since the target is forward-
+    looking), then scored on the held-out window. Folds' out-of-sample period
+    returns are concatenated into one continuous OOS track — this is the number
+    that mirrors how the strategy would actually have traded, retraining as it
+    went. Reports the aggregate net Sharpe, a block-bootstrap CI, and per-fold
+    Sharpe so you can see whether the edge is stable or driven by one regime.
+    """
+    last_year = pd.Timestamp(panel["date"].max()).year
+    fold_starts = list(range(start_year, last_year + 1, test_years))
+
+    all_gross, all_turn, all_dates = [], [], []
+    fold_summ: list[tuple] = []
+    print(f"\nWalk-forward CV: {len(fold_starts)} expanding folds "
+          f"({start_year}→{last_year}, {test_years}y test windows)")
+
+    for y in fold_starts:
+        split = f"{y}-01-01"
+        test_end = pd.Timestamp(f"{y + test_years}-01-01")
+        try:
+            tm = train_model(panel, feature_cols, split, quiet=True)
+        except SystemExit:
+            continue  # not enough history yet for this fold
+        test = panel[(panel["date"] >= tm.split_date) & (panel["date"] < test_end)]
+        sim = _simulate(test, tm.model, tm.z_cols, decile)
+        if len(sim["gross"]) < 3:
             continue
-        g = g.sort_values("pred", ascending=False)
-        n = len(g)
-        k = max(1, int(round(n * decile)))
-        longs, shorts = g.head(k), g.tail(k)
-        gross = longs["fwd_ret"].mean() - shorts["fwd_ret"].mean()
-        long_set, short_set = set(longs["ticker"]), set(shorts["ticker"])
-        turnover = len(long_set ^ prev_long) / max(1, 2 * k) + len(short_set ^ prev_short) / max(1, 2 * k)
-        net = gross - turnover * (cost_bps / 1e4)
-        gross_list.append(gross)
-        net_list.append(net)
-        prev_long, prev_short = long_set, short_set
+        fs = _stats(sim["gross"], sim["turnover"], cost_bps)
+        fold_summ.append((y, fs["n_periods"], sim["mean_ic"], fs["sharpe_net"]))
+        all_gross.append(sim["gross"])
+        all_turn.append(sim["turnover"])
+        all_dates.append(sim["dates"])
 
-    ppy = TRADING_DAYS / HORIZON
-    g = np.asarray(gross_list)
-    nt = np.asarray(net_list)
+    if not all_gross:
+        raise SystemExit("Walk-forward produced no usable folds — lower --wf-start.")
 
-    def _sharpe(x):
-        return float(x.mean() * ppy / (x.std(ddof=1) * np.sqrt(ppy))) if x.std(ddof=1) > 0 else float("nan")
+    gross = np.concatenate(all_gross)
+    turn = np.concatenate(all_turn)
+    dates = np.concatenate(all_dates)
+    res = _stats(gross, turn, cost_bps)
+    net = gross - turn * (cost_bps / 1e4)
+    lo, hi = _block_bootstrap_sharpe_ci(net)
+    res.update({
+        "fold_summary": fold_summ,
+        "sharpe_ci": (lo, hi),
+        "test_start": pd.Timestamp(dates.min()).date(),
+        "test_end": pd.Timestamp(dates.max()).date(),
+        "gross_series": gross, "turnover_series": turn,
+        "mean_ic": float(np.nanmean([f[2] for f in fold_summ])),
+    })
+    return res
 
-    base = backtest(panel, tm, decile, cost_bps)
-    base["sharpe_gross"] = _sharpe(g)
-    base["ann_ret_gross"] = float(g.mean() * ppy)
-    base["avg_turnover"] = float(np.mean([
-        1.0  # decile baskets typically turn over near-fully each rebalance
-    ])) if len(net_list) else float("nan")
-    return base
+
+def cost_sensitivity(gross: np.ndarray, turnover: np.ndarray, levels=(0, 5, 10, 20, 40)) -> None:
+    """Print net Sharpe across a sweep of one-way cost assumptions (bps).
+
+    The crossover point — where net Sharpe falls below ~0.5 or below 0 — tells you
+    how much execution slippage this strategy can tolerate. A daily/decile book
+    that only works at 0 bps is not a strategy, it's a backtest artifact.
+    """
+    print("-" * 64)
+    print("  Cost sensitivity (one-way bps -> net Sharpe):")
+    for bps in levels:
+        s = _stats(gross, turnover, bps)["sharpe_net"]
+        print(f"    {bps:>3} bps : {s:+.3f}")
 
 
 # ---------------------------------------------------------------------------
@@ -612,26 +688,44 @@ def backtest_with_gross(panel: pd.DataFrame, tm: TrainedModel, decile: float, co
 # ---------------------------------------------------------------------------
 
 
-def report(res: dict, decile: float, cost_bps: float) -> None:
+def report(res: dict, decile: float, cost_bps: float, mode: str) -> None:
     pct = lambda x: f"{x * 100:+.2f}%"  # noqa: E731
+    title = (
+        "WALK-FORWARD CV (purged, expanding, retrained per fold)"
+        if mode == "wf" else "CROSS-SECTIONAL MARKET-NEUTRAL BACKTEST (single split)"
+    )
     print("\n" + "=" * 64)
-    print("  CROSS-SECTIONAL MARKET-NEUTRAL BACKTEST (out-of-sample)")
+    print(f"  {title}")
     print("=" * 64)
-    print(f"  Test window      : {res['test_start']} -> {res['test_end']}")
+    print(f"  OOS window       : {res['test_start']} -> {res['test_end']}")
     print(f"  Rebalances       : {res['n_periods']} (every {HORIZON} trading days)")
     print(f"  Decile / leg     : top/bottom {decile:.0%}")
     print(f"  Cost (one-way)   : {cost_bps:.1f} bps on turnover")
+    print(f"  Avg turnover     : {res.get('avg_turnover', float('nan')):.2f} per rebalance (1.0 = full)")
     print("-" * 64)
-    print(f"  Mean IC (rank)   : {res['mean_ic']:+.4f}   (IC-IR {res['ic_ir']:+.2f})")
+
+    if res.get("fold_summary"):
+        print("  Per-fold (year | rebals | IC | net Sharpe):")
+        for y, n, ic, sh in res["fold_summary"]:
+            print(f"    {y}  |  {n:>3}  |  IC {ic:+.4f}  |  Sh {sh:+.3f}")
+        pos = sum(1 for *_, sh in res["fold_summary"] if sh > 0)
+        print(f"  Folds with positive net Sharpe: {pos}/{len(res['fold_summary'])}")
+        print("-" * 64)
+
+    print(f"  Mean IC (rank)   : {res['mean_ic']:+.4f}")
     print(f"  Ann. return  net : {pct(res['ann_ret_net'])}")
-    print(f"  Ann. return gross: {pct(res.get('ann_ret_gross', float('nan')))}")
+    print(f"  Ann. return gross: {pct(res['ann_ret_gross'])}")
     print(f"  Ann. volatility  : {pct(res['ann_vol'])}")
     print(f"  Max drawdown     : {pct(res['max_dd'])}")
     print("-" * 64)
-    print(f"  SHARPE  (gross)  : {res.get('sharpe_gross', float('nan')):.3f}")
+    print(f"  SHARPE  (gross)  : {res['sharpe_gross']:.3f}")
     print(f"  SHARPE  (NET)    : {res['sharpe_net']:.3f}   <-- the only one that counts")
+    if res.get("sharpe_ci"):
+        lo, hi = res["sharpe_ci"]
+        clears = "✅ clears 0" if lo > 0 else "⚠ includes 0 — could be a fluke"
+        print(f"  Net Sharpe 90% CI: [{lo:+.3f}, {hi:+.3f}]   {clears}")
     print("-" * 64)
-    if res["decile_means"]:
+    if res.get("decile_means"):
         cells = "  ".join(pct(x) for x in res["decile_means"])
         print(f"  Quintile fwd-ret (low->high pred): {cells}")
         mono = all(
@@ -654,18 +748,34 @@ def report(res: dict, decile: float, cost_bps: float) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Cross-sectional market-neutral alpha model")
-    ap.add_argument("--split", default="2019-01-01", help="train/test split date (chronological)")
+    ap.add_argument("--split", default="2019-01-01", help="single-split train/test boundary (chronological)")
     ap.add_argument("--decile", type=float, default=0.10, help="fraction per long/short leg")
     ap.add_argument("--cost-bps", type=float, default=10.0, help="one-way turnover cost in bps")
     ap.add_argument("--short-interest", action="store_true", help="merge Postgres short interest")
+    ap.add_argument("--walk-forward", action="store_true",
+                    help="purged expanding-window CV with retraining per fold + bootstrap Sharpe CI")
+    ap.add_argument("--wf-start", type=int, default=2012, help="first walk-forward test year")
+    ap.add_argument("--wf-test-years", type=int, default=1, help="length of each test window in years")
+    ap.add_argument("--cost-sweep", action="store_true", help="print net Sharpe across a cost-bps sweep")
     args = ap.parse_args()
 
     panel = build_panel(use_short_interest=args.short_interest)
     feature_cols = [c for c in RAW_FEATURE_COLS if c in panel.columns]
     panel = cross_sectional_zscore(panel, feature_cols)
-    tm = train_model(panel, feature_cols, args.split)
-    res = backtest_with_gross(panel, tm, args.decile, args.cost_bps)
-    report(res, args.decile, args.cost_bps)
+
+    if args.walk_forward:
+        res = walk_forward(panel, feature_cols, args.decile, args.cost_bps,
+                           start_year=args.wf_start, test_years=args.wf_test_years)
+        report(res, args.decile, args.cost_bps, mode="wf")
+        if args.cost_sweep:
+            cost_sensitivity(res["gross_series"], res["turnover_series"])
+    else:
+        tm = train_model(panel, feature_cols, args.split)
+        res = single_split_backtest(panel, tm, args.decile, args.cost_bps)
+        report(res, args.decile, args.cost_bps, mode="single")
+        if args.cost_sweep:
+            sim = _simulate(panel[panel["date"] >= tm.split_date], tm.model, tm.z_cols, args.decile)
+            cost_sensitivity(sim["gross"], sim["turnover"])
 
 
 if __name__ == "__main__":
