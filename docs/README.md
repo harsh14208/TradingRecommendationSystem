@@ -2,7 +2,7 @@
 
 **Quantitative mean-reversion trading signals — 70+ independent indicators, 23-year backtested MR strategy (IS Sharpe 0.37 with L7+L8 sizing), multi-user Telegram delivery, full subscription stack, and institutional performance analytics.**
 
-> **v10.5+v8.0** · 1871 tests passing (ex-e2e) · PostgreSQL primary · TSYS-1→13 complete · QENG roadmap complete · IS N=230 trades/23yr (Sh=0.20), OOS Sharpe=0.16 · Forward Sharpe est. 0.13–0.18
+> **v10.7+v8.1** · 1871 tests passing (ex-e2e) · PostgreSQL primary · TSYS-1→13 complete · QENG roadmap complete · IS N=205 trades/23yr (Sh=0.23, survivorship-corrected + §63 ADF gate), OOS Sharpe=0.16 · Forward Sharpe est. 0.13–0.18 · cross-sectional L/S net +0.347 (h=21, SHADOW)
 > Not financial advice. For informational and educational purposes only.
 
 ---
