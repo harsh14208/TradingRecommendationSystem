@@ -1,0 +1,27 @@
+{
+  "feature_cols": [
+    "mom_12_1",
+    "rev_5",
+    "rev_21",
+    "vol_21",
+    "dollar_vol_21",
+    "dist_ma50",
+    "rsi_14",
+    "days_since_earn"
+  ],
+  "z_cols": [
+    "mom_12_1_z",
+    "rev_5_z",
+    "rev_21_z",
+    "vol_21_z",
+    "dollar_vol_21_z",
+    "dist_ma50_z",
+    "rsi_14_z",
+    "days_since_earn_z"
+  ],
+  "horizon": 21,
+  "decile": 0.1,
+  "trained_at": "2026-06-09T15:08:17.418485",
+  "n_rows": 2179045,
+  "note": "SHADOW-only live scorer; do not use to alter actions until forward-validated"
+}

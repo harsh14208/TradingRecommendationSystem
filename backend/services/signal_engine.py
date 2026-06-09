@@ -5776,6 +5776,58 @@ async def scan_all(
     except Exception:
         pass
 
+    # ── Cross-sectional alpha model (SHADOW — observability only) ─────────────
+    # Attach the persisted h=21 cross-sectional model's batch percentile to each
+    # directional signal for forward validation + logging. Deliberately does NOT
+    # change action / confidence / positionSizeScale: the edge is thin (mean
+    # IC ~0.002, 90% CI grazes 0) and was validated at a 21-day rebalance vs the
+    # live ~10-day hold and on the full S&P vs this watchlist batch. Flip to active
+    # sizing only after live shadow data confirms it transfers. See
+    # services/cross_sectional_shadow.py and CLAUDE.md §86.
+    try:
+        from services import cross_sectional_shadow as _css
+
+        _xs = _css.score_batch(histories)
+        if _xs:
+            _scored = 0
+            for _sig in signals:
+                if _sig.get("action") not in ("BUY", "SELL"):
+                    continue
+                _pct = _xs.get(_sig["ticker"])
+                if _pct is None:
+                    continue
+                _sig["crossSectionalShadowPct"] = _pct  # raw metadata for logging/analysis
+                _band = (
+                    "bottom decile"
+                    if _pct <= 10
+                    else "bottom quartile"
+                    if _pct <= 25
+                    else "top decile"
+                    if _pct >= 90
+                    else "top quartile"
+                    if _pct >= 75
+                    else "mid-pack"
+                )
+                _sig["rationale"] = list(_sig.get("rationale", [])) + [
+                    {
+                        "src": "Cross-Sectional Alpha (shadow)",
+                        "head": f"XS alpha model: {_pct:.0f}th percentile ({_band}) — SHADOW, no action impact",
+                        "body": (
+                            "Independent h=21 cross-sectional alpha model's predicted relative-return rank "
+                            "within today's scan batch (100 = strongest predicted relative performer). "
+                            "SHADOW MODE: logged for forward validation only — does not alter this "
+                            "recommendation (thin, horizon-mismatched edge; see CLAUDE.md §86)."
+                        ),
+                        "sentiment": "neu",
+                        "meta": f"xs_shadow_pct={_pct} band={_band}",
+                    }
+                ]
+                _scored += 1
+            if _scored:
+                log.info("[scan_all] cross-sectional SHADOW scored %d directional signals", _scored)
+    except Exception as _xs_err:
+        log.debug(f"[scan_all] cross-sectional shadow skipped: {_xs_err}")
+
     # ── §83 Cross-Signal Correlation Penalty ─────────────────────────────────
     # Grinold & Kahn (2000): IR degrades as √(1 − ρ) where ρ is average pairwise
     # return correlation of simultaneous BUY positions. When multiple correlated

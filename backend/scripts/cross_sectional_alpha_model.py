@@ -893,6 +893,36 @@ def cost_sensitivity(gross: np.ndarray, turnover: np.ndarray, levels=(0, 5, 10, 
         print(f"    {bps:>3} bps : {s:+.3f}")
 
 
+def borrow_sensitivity(
+    gross: np.ndarray,
+    turnover: np.ndarray,
+    cost_bps: float = 10.0,
+    levels=(0, 50, 100, 200, 300, 500, 1000),
+) -> None:
+    """Print net Sharpe across short-leg STOCK-BORROW fee assumptions.
+
+    A dollar-neutral decile L/S book shorts the bottom-ranked names, and the
+    backtest's flat turnover cost ignores borrow fees entirely — the cost most
+    likely to kill an L/S strategy. Borrow is annualized bps charged on the $1
+    short notional, accrued over each HORIZON-day hold, on top of `cost_bps`
+    execution. The BREAKEVEN borrow (net Sharpe -> 0) vs. realistic large-cap
+    borrow (~30-150 bps/yr general-collateral; a hard-to-borrow tail runs higher)
+    is the test of whether the edge is real or a no-borrow-cost artifact.
+    """
+    exec_drag = turnover * (cost_bps / 1e4)
+    print("-" * 64)
+    print(f"  Short-borrow sensitivity (annualized bps -> net Sharpe, @ {cost_bps:.0f}bps exec):")
+    for bps in levels:
+        net = gross - exec_drag - (bps / 1e4) * (HORIZON / 252.0)
+        sd = net.std(ddof=1)
+        sh = (
+            float(net.mean() * PERIODS_PER_YEAR / (sd * np.sqrt(PERIODS_PER_YEAR)))
+            if len(net) > 2 and sd > 0
+            else float("nan")
+        )
+        print(f"    {bps:>4} bps/yr : {sh:+.3f}")
+
+
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
@@ -969,6 +999,11 @@ def main() -> None:
     ap.add_argument("--wf-start", type=int, default=2012, help="first walk-forward test year")
     ap.add_argument("--wf-test-years", type=int, default=1, help="length of each test window in years")
     ap.add_argument("--cost-sweep", action="store_true", help="print net Sharpe across a cost-bps sweep")
+    ap.add_argument(
+        "--borrow-sweep",
+        action="store_true",
+        help="print net Sharpe across a short-leg stock-borrow fee sweep (the cost an L/S backtest omits)",
+    )
     ap.add_argument("--min-price", type=float, default=5.0, help="min share price for the liquidity screen")
     ap.add_argument("--min-dollar-vol", type=float, default=1e7, help="min 21d avg dollar volume")
     ap.add_argument(
@@ -988,6 +1023,12 @@ def main() -> None:
         "--wq-alphas",
         action="store_true",
         help="add the orthogonal WorldQuant-101 alphas (wq002, wq026) as extra features",
+    )
+    ap.add_argument(
+        "--save-model",
+        action="store_true",
+        help="train on ALL data and persist the model + feature list to data/ "
+        "(consumed by services/cross_sectional_shadow.py for live SHADOW scoring)",
     )
     ap.add_argument(
         "--horizon",
@@ -1021,6 +1062,30 @@ def main() -> None:
         print(f"  feature set now {len(feature_cols)}: {feature_cols}")
     panel = cross_sectional_zscore(panel, feature_cols)
 
+    if args.save_model:
+        # Train on ALL available data (split past the last date → embargo leaves
+        # only the final incomplete-forward-return rows out) and persist for the
+        # live SHADOW scorer. Array-based predict on z_cols → no feature-name deps.
+        last = pd.Timestamp(panel["date"].max())
+        tm = train_model(panel, feature_cols, (last + pd.Timedelta(days=2)).strftime("%Y-%m-%d"))
+        model_path = os.path.join(_DATA, "cross_sectional_model.json")
+        tm.model.save_model(model_path)
+        meta = {
+            "feature_cols": feature_cols,
+            "z_cols": tm.z_cols,
+            "horizon": HORIZON,
+            "decile": args.decile,
+            "trained_at": pd.Timestamp.now().isoformat(),
+            "n_rows": int(len(panel)),
+            "note": "SHADOW-only live scorer; do not use to alter actions until forward-validated",
+        }
+        with open(os.path.join(_DATA, "cross_sectional_features.json"), "w") as f:
+            json.dump(meta, f, indent=2)
+        print(f"Saved cross-sectional model → {model_path}")
+        print(f"Saved feature spec     → {os.path.join(_DATA, 'cross_sectional_features.json')}")
+        print(f"  features={feature_cols}  horizon={HORIZON}")
+        return
+
     if args.walk_forward:
         res = walk_forward(
             panel,
@@ -1034,13 +1099,18 @@ def main() -> None:
         report(res, args.decile, args.cost_bps, mode="wf")
         if args.cost_sweep:
             cost_sensitivity(res["gross_series"], res["turnover_series"])
+        if args.borrow_sweep:
+            borrow_sensitivity(res["gross_series"], res["turnover_series"], args.cost_bps)
     else:
         tm = train_model(panel, feature_cols, args.split)
         res = single_split_backtest(panel, tm, args.decile, args.cost_bps, exit_decile=args.exit_decile)
         report(res, args.decile, args.cost_bps, mode="single")
-        if args.cost_sweep:
+        if args.cost_sweep or args.borrow_sweep:
             sim = _simulate(panel[panel["date"] >= tm.split_date], tm.model, tm.z_cols, args.decile, args.exit_decile)
-            cost_sensitivity(sim["gross"], sim["turnover"])
+            if args.cost_sweep:
+                cost_sensitivity(sim["gross"], sim["turnover"])
+            if args.borrow_sweep:
+                borrow_sensitivity(sim["gross"], sim["turnover"], args.cost_bps)
 
 
 if __name__ == "__main__":
