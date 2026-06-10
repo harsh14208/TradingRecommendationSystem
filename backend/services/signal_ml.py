@@ -122,6 +122,10 @@ def _check_feature_drift(features: list[float], label: str = "live") -> None:
         meta = json.loads(_FEATURE_FILE.read_text())
         stats = meta.get("feature_stats", {})
         if not stats:
+            # Only log once per process so we don't spam on every prediction
+            if not getattr(_check_feature_drift, "_warned_missing_stats", False):
+                log.info("[signal_ml] feature_stats absent in model metadata — drift monitor inactive until next retrain")
+                _check_feature_drift._warned_missing_stats = True
             return
         for i, name in enumerate(_FEATURE_NAMES):
             s = stats.get(name)
@@ -605,8 +609,9 @@ def train_model() -> Optional[dict]:
                 f"[signal_ml] Champion re-scored on current test fold: "
                 f"AUC={_champion_auc_same_window:.4f} (stored={_champion_auc_stored})"
             )
-        except Exception as _ce:
-            log.debug(f"[signal_ml] Could not re-score champion on current fold: {_ce}")
+        except (xgb.core.XGBoostError, OSError, Exception) as _ce:
+            log.warning(f"[signal_ml] Could not re-score champion on current fold: {_ce}")
+            _champion_auc_same_window = None
 
     # Use the same-window AUC when available; fall back to stored AUC only
     # when the champion file is missing (first-run scenario).

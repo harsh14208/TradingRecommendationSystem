@@ -1,0 +1,187 @@
+{"experiment_type": "backtest_run", "hypothesis": "R1 Exit/MFE — NO-DEPLOY.", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "R2 Regime-conditional — structural NULL.", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "R3 Score→win-prob calibration — NULL.", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "R4 Stop-width — CONFIRMS current.", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "R5 Cross-sectional MR — NEGATIVE.", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "R6 Confluence — already enforced.", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "R7 Portfolio DD-scaled exposure — IS-positive but OOS-FAILED → NO-DEPLOY.", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-06-08T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "Residual stat-arb (QENG-5a) — NON-VIABLE + misspecified in prod.", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "TS-momentum (QENG-5b) — apparent Sharpe is basket beta, not alpha.", "number_of_trials": 8, "git_sha": null, "is_metrics": {}, "created_at": "2026-06-08T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "11. Pro-Forma Analysis — v5.12 Filters Retroactively Applied", "number_of_trials": 7, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "11a. Performance by Day of Week", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-19T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "11b. Performance by Ticker (Top / Bottom 5)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-19T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "11c. Performance by Days-to-Next-Earnings", "number_of_trials": 12, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-19T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "16. Tier-1 Technical Backtest — v6.9 (20-Year, 2026-05-27)", "number_of_trials": 8, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "17. Signal Alpha Decomposition — v8 (12-Family, 2026-05-20)", "number_of_trials": 15, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-20T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§10j — Earnings Proximity Gate Test (2026-05-20)", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-20T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "18. Signal Alpha Decomposition — v11c (11-Family, 2026-05-23)", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-23T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§10j — Earnings Proximity Gate Test (v11c, 2026-05-23)", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-23T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "19. Sharpe > 1.0 Research — §11 Parameter Sweep (2026-05-23)", "number_of_trials": 8, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-23T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§11a. Hold Period Sweep", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§11b. RSI Gate Depth Sweep", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§11c. Stop/Target Ratio Sweep", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§11d. Score Threshold Sweep — Strongest Lever", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§11e. Cross-Dimension Combinations", "number_of_trials": 7, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§11 — Why Per-Trade Sharpe > 1 Is Structurally Unreachable", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§11 — Paths to Annualized Portfolio Sharpe > 1", "number_of_trials": 7, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "20. Signal Alpha Decomposition — v12 (74-Ticker Universe, 2026-05-23)", "number_of_trials": 12, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-23T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "11. Parameter Sweep (74-Ticker)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§11a. Hold Period", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§11b. RSI Gate Depth — Zero Effect (Confirmed)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§11c. Stop/Target Ratio", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§11d. Score Threshold", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§11e. Cross-Dimension Combinations", "number_of_trials": 12, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-23T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "21. Advanced Gate Research — §12 (2026-05-24) — Annualized Sharpe ≥ 1.0 Achieved", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-24T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§12a. Score-Weighted Sharpe (Kelly-Style Sizing)", "number_of_trials": 2, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§12b. VIX Minimum Filter", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "§12c. MR Gate Multi-Condition Confluence", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§12d. Persistent Oversold (Consecutive Score)", "number_of_trials": 2, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§12e. ATR Percentile Rank Minimum — **Achieved Ann. Sharpe = 1.00**", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§12f. Best Gate Combination", "number_of_trials": 9, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§12 Key Findings", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-24T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "22. Master Research Summary — Full Backtest Research Progression (2026-05-24)", "number_of_trials": 10, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-24T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "23. ATR Regime + Beta-Hedge Research — §13 (2026-05-24)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-24T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§23a — Fine-Grained ATR Percentile Sweep", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "§23b — Per-Sector ATR Floor Analysis", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§23c — ATR≥20 + VIX Combination Stack", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "§23d — Beta-Hedge Simulation", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-24T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "24. Tech/FAANG Sector Optimization — §14 (2026-05-25)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "§14a — New 68-Ticker Baseline (Strong Universe)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§14b — Tech BUY_THRESH Sweep", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "25. Sector-Specific Filter Research — §15 (2026-05-25)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "§15a — Universe Pruning: Strong-Only vs Full 68", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§15b — Hold Period Sweep (Per Sector, Strong Universe)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§15c — VIX Floor Sweep (Per Sector, Strong Universe)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§15d — BUY_THRESH Sweep (Per Sector, Strong Universe)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§15e — Financials ATR≥30 Validation", "number_of_trials": 2, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§15f — Best Combined Per-Sector Configuration", "number_of_trials": 7, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "26. Full-Universe Sector Research — §16 (2026-05-25)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§16a — Sector Baselines (All Sectors, Default Config)", "number_of_trials": 11, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§16b — Optimal Hold Period (Per Sector)", "number_of_trials": 8, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§16c — VIX Floor Winners (Per Sector)", "number_of_trials": 8, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§16d — BUY_THRESH Winners (Per Sector)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§16e — ATR Floor Winners (Per Sector)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§16f — Best Combined Per-Sector Configuration", "number_of_trials": 9, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§16g — Sector Ranking (Optimal Config)", "number_of_trials": 11, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "27. Entry Quality Gate Research — §17 (2026-05-25)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§17 Baseline Reproduced", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§17a — ATR Ceiling Sweep", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§17b — Single-Day Return Jump Filter", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§17c — T+2 Entry Delay", "number_of_trials": 2, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§17d — Best Combined (ATR≤70 + Jump<-6%)", "number_of_trials": 2, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§17e — IBS Streak Confluence Gate", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§17f — Full Stack (§15f + ATR≤70 + Jump<-6% + IBS≥5d)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§17 Gates — Implementation Status", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "28. S&P 500 Universe Expansion Screening — §18 (2026-05-25)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "§18a — Screener Funnel", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§18b — PASS Candidates (ranked by Sharpe)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§18c — Notable FAIL Tickers (N ≥ 5, below quality bar)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§18d — Projection", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§18f — §15f + §17f Validation (2026-05-25)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§18e — Confirmed Bad (FAIL, do not add)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "29. OOS Walk-Forward Validation — §19 (2026-05-25)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§19a — Fixed Parameters Applied OOS", "number_of_trials": 7, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§19b — Per-Window Results — v1 (25-ticker, N-starvation era)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§19c — Per-Window Results — v2 (56-ticker, powered run)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§19d — Analysis of Failure Modes", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§19e — Verdict and Next Step", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "29b. OOS Walk-Forward — §20 Relaxed Global Params (2026-05-25)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§20a — Results", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§20b — §19 vs §20 Comparison (the critical finding)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§20c — Interpretation", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§20d — Recommended Next Steps", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "30. S&P 500 Expanded Screener — §18 Extended Run (2026-05-25)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§30a — Screener Funnel", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§30b — PASS Tickers by Sector", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§30c — Projection", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§30d — FAIL Tickers (do not add)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-25T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "31. Primary Backtest Validation — Adaptive Exit + ATR≥20 Default (2026-05-26)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§31a — Overall Performance (ATR≥20 default, adaptive exit enabled)", "number_of_trials": 8, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§31b — Adaptive Exit Validation", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§31c — Regime Breakdown", "number_of_trials": 8, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§31d — MR-Only vs Full-Signal Comparison", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "32. SELL Edge Validation — §32 (2026-05-26)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§32a — Results with SELL_THRESH = −45", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§32b — Portfolio Impact", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§32c — Verdict", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "33. Energy Sub-Sector Split · XLU Research · ATR Stop Sweep — §33 (2026-05-26)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§33a — Energy Sub-Sector Split", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§33b — XLU Utilities Research", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§33c — ATR Stop Sweep", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "34. Time-Loss Reduction Experiments — §34 (2026-05-26)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§34a — Time-Loss Diagnostic", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§34b — Fail-Fast (lower MAX_LOSS_DAYS)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§34c — No-Progress Exit (price < entry×1.003 AND RSI ≤ 50 by day N)", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§34d — Score-Segmented Hold ⭐ WINNER", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§34e — Combined (fail-fast + no-progress)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§34 — Final Verdict", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "35. Five Research Experiments — §35 (2026-05-26)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§35a — §21 VIX-Regime Switching OOS ✗ REJECTED", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§35b — Adaptive Exit RSI Threshold Sweep ⭐ WINNER", "number_of_trials": 7, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§35c — Score-Segmented Hold Full Universe ✗ REJECTED", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§35d — R:R Asymmetry (stop=2.0×, target sweep) ✗ REJECTED", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§35e — Universe Re-Screen", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§35 Final Verdict", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-26T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "36. Live Engine Revision — §36 (2026-05-27)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§36a — Near-Earnings Gate Loosened (8-14d hard block → tiered haircuts)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§36b — Sustained-Bear Macro Gate Added", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§36c — 9 Backtest-Negative Tickers Added to Defensive Block", "number_of_trials": 9, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "37. Quant Audit — §37 (2026-05-27)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§37a — CRITICAL: _DEFENSIVE_BUY_BLOCK Look-Ahead Bias ✓ FIXED", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§37b — CRITICAL: _SECTOR_MR_CONFIG Over-Optimization ✓ FIXED", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§37c — HIGH: Overnight Gap Slippage on Stop-Losses ✓ FIXED (v3 backtest audit)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§37d — MEDIUM: resample(\"W\").last() Incomplete-Week Look-Ahead ✓ FIXED", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§37e — MEDIUM: Adaptive Exit 100% WR Tautology ✓ FIXED", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§37f — HIGH: Survivorship Bias (partially addressed)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§37 Test Coverage", "number_of_trials": 26, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "38. §37 Backtest Results — 23-Year Run (2003-2026-05-27)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "§38a — Overall Impact", "number_of_trials": 8, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§38b — Regime Breakdown", "number_of_trials": 7, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§38c — Score-Band Distribution", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§38d — MR-Only vs Full-Signal Validation", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§38e — Honest Interpretation (Post-Audit)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "39. Infrastructure & Signal Quality Upgrades — §38 Audit (2026-05-27)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§39a — AR(1) + Fundamental Blend (`signal_engine.py`)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§39b — Options GEX + Call Sweep Combo Gate (`signal_engine.py`)", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§39c — Champion/Challenger ML Deployment Gate (`signal_ml.py`)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§39d — Polygon Extended-Hours Data (`polygon_client.py`)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§39e — Redis OHLCV Cache (`market_data.py`)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§39f — Latent Bug Fix (`signal_engine.py`)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§39g — Tests Added", "number_of_trials": 2, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "40. Data Validation — §39 Backtest Confirmation + First OOS Run (2026-05-27)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§40a — Main Universe Backtest (stable vs §38)", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§40b — First OOS Validation Run (HELD_OUT_TICKERS)", "number_of_trials": 10, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "41. Data Validation — §40 Promotions + v2 OOS + Sector-Filter (2026-05-27)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§41a — Main Universe After §40 Promotions", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "§41b — Sector-Filter (§10) Impact", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§41c — v2 OOS Validation (Same-Sector Held-Out Set)", "number_of_trials": 10, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§41d — Diagnosis: Intra-Sector Heterogeneity", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§41e — Actions / Next Steps", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "42. v7.1 Backtest — BUY_THRESH 40→50 + Tighter Stops (2026-05-27)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§42a — IS Results (BUY_THRESH=50)", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "§42b — OOS v3 (BUY_THRESH=50)", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§42c — v7.1 Regime Breakdown", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§42d — Key Findings", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-27T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§QuantEngine — Four Research-Engine Improvements (2026-05-31)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-31T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "A. Beta Hedge (−0.9× SPY per BUY entry, `--beta-hedge`)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "B. Portfolio Equity-Curve Simulation (5 concurrent slots, `--portfolio`)", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "C. Continuous Forecast Sizing — Carver FDM (`--forecast-sizing`)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "D. Walk-Forward with BUY_THRESH Optimisation (`--walk-forward`)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§QuantEngine Summary", "number_of_trials": 4, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-31T00:00:00"}
+{"experiment_type": "walk_forward", "hypothesis": "§PostFix — Honest Metrics After All Corrections (2026-05-31)", "number_of_trials": 7, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-31T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§InvestigationResults — Five Alpha Investigations (2026-05-31)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-31T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "Inv1 — MR Trigger Quality Split", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "Inv2 — VIX<20 Gate Ablation (2022–present)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "Inv3 — Live Per-Gate Contribution (546 resolved signals)", "number_of_trials": 9, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "Inv4 — Score Discrimination (546 live signals)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "gate_ablation", "hypothesis": "Inv5 — Joint Gate Ablation (100-ticker IS, 23yr)", "number_of_trials": 5, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§InvB — Quality Score Tier Analysis (IS, 173 trades)", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§Russell1000 — MR Screener Results (fast 2006–2016, 2026-05-31)", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-31T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§A8 — Babel → esbuild Migration (2026-05-31)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-05-31T00:00:00"}
+{"experiment_type": "parameter_sweep", "hypothesis": "§83 — Sharpe Improvement Sweep (2026-06-09)", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-06-09T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§83a. New CLI Flags Implemented", "number_of_trials": 12, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§83b. Results — Trade-Count-Maintaining Filters", "number_of_trials": 9, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§83c. Results — Trade-Count-Reducing Filters", "number_of_trials": 9, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§83d. Consec-Score Frontier", "number_of_trials": 6, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§83e. Live Engine Changes Deployed", "number_of_trials": 3, "git_sha": null, "is_metrics": {}, "created_at": "2026-01-01T00:00:00"}
+{"experiment_type": "backtest_run", "hypothesis": "§83f. Key Findings", "number_of_trials": 1, "git_sha": null, "is_metrics": {}, "created_at": "2026-06-09T00:00:00"}

@@ -1,111 +1,111 @@
 {
-  "trained_at": "2026-06-02T00:37:47.011778",
-  "n_train": 382,
-  "n_test": 164,
-  "n_total": 546,
-  "challenger_auc": 0.6896,
-  "baseline_auc": 0.7007,
-  "delta": -0.0111,
+  "trained_at": "2026-06-10T04:56:52.177803",
+  "n_train": 280,
+  "n_test": 120,
+  "n_total": 400,
+  "challenger_auc": 0.6,
+  "baseline_auc": null,
+  "delta": null,
   "deployed": false,
   "training_only": false,
   "raw_score_importance_rank": 24,
   "feature_importances": [
     {
-      "feature": "target_pct",
-      "importance": 0.10994
-    },
-    {
-      "feature": "is_buy",
-      "importance": 0.09186
+      "feature": "n_sources",
+      "importance": 0.1
     },
     {
       "feature": "n_rationale",
-      "importance": 0.09172
-    },
-    {
-      "feature": "stop_pct",
-      "importance": 0.08837
-    },
-    {
-      "feature": "n_neg_rationale",
-      "importance": 0.08365
+      "importance": 0.1
     },
     {
       "feature": "n_pos_rationale",
-      "importance": 0.07659
+      "importance": 0.1
     },
     {
-      "feature": "price_log",
-      "importance": 0.07467
-    },
-    {
-      "feature": "day_of_week",
-      "importance": 0.0744
-    },
-    {
-      "feature": "has_options_source",
-      "importance": 0.06477
-    },
-    {
-      "feature": "n_sources",
-      "importance": 0.06155
-    },
-    {
-      "feature": "month",
-      "importance": 0.06139
-    },
-    {
-      "feature": "change_pct",
-      "importance": 0.05738
-    },
-    {
-      "feature": "has_macro_source",
-      "importance": 0.04069
-    },
-    {
-      "feature": "has_fundamentals_source",
-      "importance": 0.02301
+      "feature": "n_neg_rationale",
+      "importance": 0.1
     },
     {
       "feature": "rr_numeric",
-      "importance": 0.0
+      "importance": 0.1
+    },
+    {
+      "feature": "is_buy",
+      "importance": 0.1
+    },
+    {
+      "feature": "has_options_source",
+      "importance": 0.1
     },
     {
       "feature": "has_dark_pool_source",
-      "importance": 0.0
+      "importance": 0.1
+    },
+    {
+      "feature": "has_fundamentals_source",
+      "importance": 0.1
     },
     {
       "feature": "has_institutional_source",
-      "importance": 0.0
+      "importance": 0.1
+    },
+    {
+      "feature": "has_macro_source",
+      "importance": 0.1
     },
     {
       "feature": "has_earnings_source",
-      "importance": 0.0
+      "importance": 0.1
     },
     {
       "feature": "is_pre_market",
-      "importance": 0.0
+      "importance": 0.1
     },
     {
       "feature": "is_position_style",
-      "importance": 0.0
+      "importance": 0.1
+    },
+    {
+      "feature": "stop_pct",
+      "importance": 0.1
+    },
+    {
+      "feature": "target_pct",
+      "importance": 0.1
+    },
+    {
+      "feature": "price_log",
+      "importance": 0.1
+    },
+    {
+      "feature": "change_pct",
+      "importance": 0.1
+    },
+    {
+      "feature": "day_of_week",
+      "importance": 0.1
+    },
+    {
+      "feature": "month",
+      "importance": 0.1
     },
     {
       "feature": "sector_ord",
-      "importance": 0.0
+      "importance": 0.1
     },
     {
       "feature": "dte_bucket",
-      "importance": 0.0
+      "importance": 0.1
     },
     {
       "feature": "rs_vs_sector",
-      "importance": 0.0
+      "importance": 0.1
     },
     {
       "feature": "raw_score",
-      "importance": 0.0
+      "importance": 0.1
     }
   ],
-  "interpretation": "raw_score adds only -0.0111 AUC (threshold: +0.005). The heuristic scoring layer appears redundant at this sample size \u2014 structural features already encode the same information."
+  "interpretation": "No baseline signal model to compare against \u2014 cannot evaluate."
 }

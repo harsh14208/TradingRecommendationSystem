@@ -653,6 +653,7 @@ async def _run_weekly_digest(force: bool = False):
         # cron). We persist a marker row on every successful send and skip if one
         # was written in the last 6 days. force=True (manual admin trigger) bypasses
         # the read check but still records the marker so it shifts the weekly window.
+        digest_week = now.strftime("%Y-%W")
         if not force:
             async with AsyncSessionLocal() as db_guard:
                 already = (
@@ -666,6 +667,26 @@ async def _run_weekly_digest(force: bool = False):
             if already:
                 log.info("[digest] already sent within the last 6 days — skipping (weekly idempotency guard)")
                 return
+
+        # Atomic marker insert: if another instance already inserted this week,
+        # the unique constraint on (job_name, digest_week) will raise IntegrityError
+        # and we skip sending. This closes the TOCTOU race when the distributed
+        # lock TTL is shorter than the sleep period.
+        try:
+            async with AsyncSessionLocal() as db_lock:
+                db_lock.add(
+                    BackgroundJobRun(
+                        job_name="weekly_digest_sent",
+                        start_time=now,
+                        end_time=datetime.utcnow(),
+                        status="completed",
+                        digest_week=digest_week,
+                    )
+                )
+                await db_lock.commit()
+        except Exception:
+            log.info("[digest] weekly marker already present for this week — skipping (atomic guard)")
+            return
 
         async with AsyncSessionLocal() as db:
             sent_this_week = (
@@ -830,24 +851,6 @@ async def _run_weekly_digest(force: bool = False):
                     log.warning(f"[digest] email to {email} failed: {e_mail}")
         except Exception as e_email:
             log.warning(f"[digest] email digest error: {e_email}")
-
-        # ── Record the weekly idempotency marker ─────────────────────────────────
-        # Written after the send attempt so the once-per-week guard above can skip
-        # any subsequent trigger this week. Non-critical: a failure here only risks
-        # an extra digest, never a missed one.
-        try:
-            async with AsyncSessionLocal() as db_marker:
-                db_marker.add(
-                    BackgroundJobRun(
-                        job_name="weekly_digest_sent",
-                        start_time=now,
-                        end_time=datetime.utcnow(),
-                        status="completed",
-                    )
-                )
-                await db_marker.commit()
-        except Exception as e_marker:
-            log.warning(f"[digest] failed to record weekly marker (non-critical): {e_marker}")
 
         # ── Auto performance snapshot (weekly baseline) ───────────────────────
         try:
@@ -1316,6 +1319,15 @@ def _supervise(name: str, coro_fn, restart: bool = True):
             "nightly_outcome_resolution",
         }
 
+        # Per-job lock TTLs: weekly_digest sleeps for days, so its lock must
+        # outlast the sleep or multiple instances will all fire on Sunday.
+        _lock_ttls = {
+            "weekly_digest": 691200,        # 8 days
+            "weekly_factor_mining": 14400,  # 4 hours
+            "weekly_ml_retrain": 14400,     # 4 hours
+            "nightly_outcome_resolution": 14400,  # 4 hours
+        }
+
         worker_id = f"{socket.gethostname()}:{os.getpid()}"
 
         while True:
@@ -1329,7 +1341,8 @@ def _supervise(name: str, coro_fn, restart: bool = True):
             lock_token = None
             if name in locked_jobs:
                 try:
-                    lock_token = await cache_acquire_lock(f"lock:job:{name}", ttl=7200)  # 2 hours TTL
+                    lock_ttl = _lock_ttls.get(name, 7200)
+                    lock_token = await cache_acquire_lock(f"lock:job:{name}", ttl=lock_ttl)
                     if not lock_token:
                         log.info(f"[bg:{name}] Lock lock:job:{name} already held. Skipping execution.")
                         _bg_tasks[name]["status"] = "skipped_lock"

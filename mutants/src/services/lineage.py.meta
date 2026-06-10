@@ -1,0 +1,21 @@
+{
+    "exit_code_by_key": {
+        "services.lineage.x_get_lineage_hash__mutmut_1": null,
+        "services.lineage.x_get_lineage_hash__mutmut_2": null,
+        "services.lineage.x_get_lineage_hash__mutmut_3": null,
+        "services.lineage.x_get_lineage_hash__mutmut_4": null,
+        "services.lineage.x_get_lineage_hash__mutmut_5": null,
+        "services.lineage.x_get_lineage_hash__mutmut_6": null,
+        "services.lineage.x_get_lineage_hash__mutmut_7": null,
+        "services.lineage.x_get_lineage_hash__mutmut_8": null,
+        "services.lineage.x_get_lineage_hash__mutmut_9": null,
+        "services.lineage.x_get_lineage_hash__mutmut_10": null,
+        "services.lineage.x_get_lineage_meta__mutmut_1": null,
+        "services.lineage.x_get_lineage_meta__mutmut_2": null,
+        "services.lineage.x_get_lineage_meta__mutmut_3": null,
+        "services.lineage.x_get_lineage_meta__mutmut_4": null
+    },
+    "type_check_error_by_key": {},
+    "durations_by_key": {},
+    "estimated_durations_by_key": {}
+}

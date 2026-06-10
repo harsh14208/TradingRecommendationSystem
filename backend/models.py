@@ -27,6 +27,7 @@ class Signal(Base):
     company = Column(String(100))
     action = Column(String(4), nullable=False)
     confidence = Column(Float, nullable=False)
+    raw_confidence = Column(Float, nullable=True)
     price = Column(Float, nullable=False)
     change = Column(Float, default=0)
     change_pct = Column(Float, default=0)
@@ -566,6 +567,9 @@ class BackgroundJobRun(Base):
     """Tracks background job execution history (TSYS-4a)."""
 
     __tablename__ = "background_job_runs"
+    __table_args__ = (
+        UniqueConstraint("job_name", "digest_week", name="uq_background_job_runs_weekly_digest_week"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     job_name = Column(String(100), nullable=False)
     cycle_id = Column(String(100), nullable=True, index=True)
@@ -575,6 +579,7 @@ class BackgroundJobRun(Base):
     duration_s = Column(Float, nullable=True)
     error = Column(Text, nullable=True)
     worker_id = Column(String(100), nullable=True)
+    digest_week = Column(String(10), nullable=True, index=True)
 
 
 class ProviderTelemetry(Base):

@@ -1,0 +1,12 @@
+# pyproject.toml — mutmut v3 configuration for mutation testing
+# Created 2026-06-09 for TEST-4 (delivery_gates.py mutation testing).
+# The `src/` symlink points to `backend/` so mutmut can resolve imports.
+# To run: `.venv/bin/python -m mutmut run` from project root.
+# To see surviving mutants: `.venv/bin/python -m mutmut results`
+
+[tool.mutmut]
+source_paths = ["src/services/delivery_gates.py"]
+pytest_add_cli_args_test_selection = ["src/tests/test_delivery_gates.py"]
+also_copy = ["src/tests/", "src/conftest.py", "src/config.py", "src/database.py", "src/models.py"]
+only_mutate = ["src/services/delivery_gates.py"]
+timeout_multiplier = 15.0
