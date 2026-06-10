@@ -4,6 +4,7 @@ No PII is exposed. All stats are aggregate and anonymised.
 """
 
 import math
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -16,6 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from routers.signals import _best_outcome
 
 router = APIRouter(prefix="/api/public", tags=["public"])
+
+# Public track-record stats are aggregate and change only as new outcomes resolve.
+# Cache for 60s to avoid re-scanning the entire signals table on every page view.
+_TRACK_RECORD_TTL_S = 60.0
+_track_record_cache: dict | None = None
+_track_record_cache_at = 0.0
 
 
 def _utcnow_naive() -> datetime:
@@ -54,6 +61,10 @@ async def version_info():
 
 @router.get("/track-record")
 async def public_track_record(db: AsyncSession = Depends(get_db)):
+    global _track_record_cache, _track_record_cache_at
+    now = time.monotonic()
+    if _track_record_cache is not None and (now - _track_record_cache_at) < _TRACK_RECORD_TTL_S:
+        return _track_record_cache
     """
     Aggregate win-rate stats with no PII — safe to expose without auth.
     Powers the public /track-record.html page.

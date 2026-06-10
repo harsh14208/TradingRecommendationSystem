@@ -240,8 +240,14 @@ async def get_polygon_quotes_batch(tickers: list[str]) -> list[dict]:
             continue
         try:
             last_trade = snap.get("lastTrade") or {}
+            day = snap.get("day") or {}
+            minute = snap.get("min") or {}
             prev_day = snap.get("prevDay") or {}
-            price = float(last_trade.get("p") or 0)
+            # Polygon snapshot structure varies by market state. Prefer lastTrade,
+            # then minute close, then day close (all can lag slightly after hours).
+            price = float(
+                last_trade.get("p") or minute.get("c") or day.get("c") or 0
+            )
             prev_close = float(prev_day.get("c") or 0)
             if price <= 0 or prev_close <= 0:
                 continue

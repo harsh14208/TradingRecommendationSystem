@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 
 from config import TIERS, get_settings
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -36,13 +37,25 @@ def _require_basic(user: User):
         )
 
 
+# In-memory ticker-tape cache: quote data is expensive to fetch (Polygon snapshot +
+# yfinance fallback), but stale within a few seconds is fine for the UI tape.
+_QUOTES_CACHE_TTL_S = 5.0
+_quotes_cache: list[dict] | None = None
+_quotes_cache_at = 0.0
+
 SECTOR_ETFS = ["XLK", "XLF", "XLY", "XLC", "XLV", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
 
 
 @router.get("/quotes")
 async def ticker_tape():
+    global _quotes_cache, _quotes_cache_at
+    now = time.monotonic()
+    if _quotes_cache is not None and (now - _quotes_cache_at) < _QUOTES_CACHE_TTL_S:
+        return _quotes_cache
     settings = get_settings()
-    return await get_quotes(settings.tickers)
+    _quotes_cache = await get_quotes(settings.tickers)
+    _quotes_cache_at = now
+    return _quotes_cache
 
 
 @router.get("/chart/{ticker}")
