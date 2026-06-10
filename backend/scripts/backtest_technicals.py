@@ -2237,6 +2237,7 @@ def simulate_ticker(
     ff_str: dict | None = None,
     si_rising_map: dict | None = None,
     calm_sleeve: bool = False,
+    ff_str_regime_map: dict | None = None,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -3003,6 +3004,11 @@ def simulate_ticker(
         # §88: calm-regime sleeve — 0.5× risk budget on relaxed low-VIX entries
         if calm_sleeve and is_buy_signal:
             _size_mult *= 0.5
+        # §89a: FF ST_Rev regime tilt — size down when reversal factor is negative
+        if ff_str_regime_map and is_buy_signal:
+            _ff_regime_mult = ff_str_regime_map.get(_date_key, 1.0)
+            if _ff_regime_mult is not None:
+                _size_mult *= float(_ff_regime_mult)
         _near_52wk_low_flag = (
             bool(row.get("near_52wk_low", False)) if pd.notna(row.get("near_52wk_low", float("nan"))) else False
         )
@@ -5138,6 +5144,30 @@ def main():
     except Exception as _ff_err:
         print(f"failed ({_ff_err})")
 
+    # §89a: FF ST_Rev regime tilt — rolling 63d Sharpe as sizing dial
+    _ff_str_regime_map: dict[pd.Timestamp, float] = {}
+    _ff_str_sizing_flag = "--ff-str-sizing" in sys.argv
+    if _ff_str_sizing_flag and _ff_str:
+        print("[meta] computing FF ST_Rev regime (63d Sharpe)…", end=" ", flush=True)
+        try:
+            _ff_series = pd.Series(_ff_str).sort_index()
+            # Rolling 63d mean / std → annualized Sharpe
+            _ff_roll_mean = _ff_series.rolling(63, min_periods=30).mean()
+            _ff_roll_std = _ff_series.rolling(63, min_periods=30).std()
+            _ff_sharpe = (_ff_roll_mean / _ff_roll_std.replace(0, np.nan)) * np.sqrt(252)
+            for _d, _s in _ff_sharpe.items():
+                if pd.isna(_s):
+                    continue
+                # Regime buckets: negative (<-0.5) → 0.5×, flat → 1.0×, positive (>0.5) → 1.0×
+                # We only size DOWN in negative regime; flat/positive = full size
+                if _s < -0.5:
+                    _ff_str_regime_map[_d] = 0.5
+                else:
+                    _ff_str_regime_map[_d] = 1.0
+            print(f"ok ({len(_ff_str_regime_map)} dates, negative regime = {sum(1 for v in _ff_str_regime_map.values() if v == 0.5)} days)")
+        except Exception as _ff_reg_err:
+            print(f"failed ({_ff_reg_err})")
+
     # §91: Short-interest rising flag (as-of join from bi-weekly FINRA data)
     _si_rising_map: dict[str, dict] = {}
     _si_rising_sizing_flag = "--si-rising-sizing" in sys.argv
@@ -5191,6 +5221,7 @@ def main():
             sector_momentum_map=_sector_momentum_map,
             ff_str=_ff_str,
             si_rising_map=_si_rising_map,
+            ff_str_regime_map=_ff_str_regime_map,
         )
         if t is not None and not t.empty:
             all_trades.append(t)
@@ -5214,6 +5245,7 @@ def main():
                 sector_momentum_map=_sector_momentum_map,
                 ff_str=_ff_str,
                 si_rising_map=_si_rising_map,
+                ff_str_regime_map=_ff_str_regime_map,
             )
             if _ct is not None and not _ct.empty:
                 _calm_list.append(_ct)
@@ -6734,6 +6766,7 @@ def main():
                     fred_panel=fred_panel_data,
                     ff_str=_ff_str,
                     si_rising_map=_si_rising_map,
+                    ff_str_regime_map=_ff_str_regime_map,
                 )
                 if not t_fp.empty:
                     fp_list.append(t_fp)
