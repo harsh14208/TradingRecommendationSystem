@@ -1,7 +1,7 @@
 # Signal.Trade — Live Engine Signal Validation Status
 
 > Tracks every signal and gate in the live engine (`signal_engine.py`) against its backtest evidence.
-> Last updated: 2026-06-03 — v10.5 IS baseline (N=230, WR=66.1%, Sharpe=0.20).
+> Last updated: 2026-06-10 — v10.8+ IS baseline (N=217, WR=69.1%, Sharpe=0.24) + §93d gap decomposition findings.
 >
 > **How to re-run backtest validation:**
 > ```bash
@@ -19,6 +19,7 @@
 | ⚠ Directional evidence only (live data, no backtest) | 5 | Partial — live WR observed (§50/§73 EDGAR: confirmed neutral) |
 | ❌ Not testable in backtest (look-ahead / paid data) | 17 | No — live-only |
 | 🔴 Removed / disabled (tested, found harmful or dead) | 8 | Yes — empirical (§76 Altman added 2026-06-03) |
+| ⏳ Monitoring (live tracking, insufficient N to validate) | 1 | No — §93d midday warning, need N≥20 in reliable cohort |
 | **Total live engine gates** | **41** | — |
 
 ---
@@ -28,7 +29,9 @@
 Gates where `--validate-live-gates` ablation has produced a measured ΔSharpe.
 **Interpretation:** ΔSharpe on REMOVE < −0.02 = gate earns its trade-count cost.
 
-Baseline (v10.3, 2026-06-02): **N=225, WR=66.7%, Sharpe=0.20**
+Baseline (v10.8, 2026-06-10): **N=217, WR=69.1%, Sharpe=0.24**
+
+> **§93d gap decomposition update:** Live WR 43.6% vs IS 69.1% = **25.5pp gap**. Primary driver: regime mismatch (live period = 2022+ rate-hike epoch with negative backtest Sharpe). Secondary: midday microstructure (hour 11–12 ET catastrophic, p=0.000). Scanner midday warning added (tracking only, no hard filter yet).
 
 | Gate | Mechanism | In Baseline? | ΔSharpe on Remove | N impact | Verdict |
 |---|---|---|---|---|---|
@@ -66,6 +69,7 @@ These gates exist in the live engine, produce signals with a rationale card, and
 | §63 Sector cointegration | Cointegration Z<−2.0→+4pts | **Now in backtest** — `coint_z` column computed for every IS ticker. Ablated in `--validate-live-gates`. ΔSharpe pending next run. | Medium→✅ | — |
 | §65 TRIN | TRIN>2→capitulation boost; currently metadata only in backtest | TRIN > 2.0 historically associates with MR setups; not yet validated as score gate | Low-Medium | Available as data, but no pre-specified threshold for gate |
 | §66 AD breadth | Zweig thrust interaction; currently metadata only | Breadth context available via ^NYAD; gate logic not yet specified for backtest | Low | Available as data, but gate condition not pre-specified |
+| §93d Midday warning | Log warning when signal created at 11–12 ET | Live: catastrophic WR 23.7% vs 47.8% baseline (p=0.000, N=97). But May+ reliable cohort shows reversal (N=4, WR=75%). Effect may be regime-specific. | Medium | Backtest uses daily bars; no intraday session modeling |
 
 ---
 

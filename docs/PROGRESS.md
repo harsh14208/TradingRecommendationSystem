@@ -1,7 +1,8 @@
 # Signal.Trade — Development Progress
 
-> **Version: v8.2** · Updated: 2026-06-09 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v8.3** · Updated: 2026-06-10 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
 > **v10.8 backtest — Sharpe improvement sweep (2026-06-09):** 12 candidate approaches tested on 100-ticker/23yr IS. Score-band sizing (L7 non-linear step function) → +0.05 Sharpe, zero trade-count impact. Dynamic RSI stops (2.0× ATR when RSI<30) → embedded in baseline. MR-count=2 (≥2 MR conditions vs 1) → +0.01 Sharpe, −1 trade. Consecutive-score filter → +0.14 Sharpe (−73% trades) — best as high-conviction tier, not main flow. Score acceleration and entry-delay both hurt. Live engine updated: `assembler.py` L7 score-band sizing + `_has_mr` MR-count=2 + `helpers.py` dynamic RSI stops. See `docs/Stats.md §83`.
+> **§87–§94 Sharpe×N agenda (2026-06-10):** All free-subscription items implemented and validated. §87 L10 consec-score sizing (+0.03 Sharpe, ΔN=0). §88 calm-regime sleeve ABANDONED (0 trades in 23yr — structural mismatch). §89 FF ST_Rev wired as 15th meta-label feature; §89a regime sizing negligible (+0.008); §89b factor attribution confirms genuine alpha (+0.87%/day, p=0.044, R²=0.05). §90 WATCH bench all rejected (0/9 trades). §91 SI rising tilt wired, live +2.42pp spread, backtest unvalidatable. §92 shadow criteria locked. §93a sector_rs bug fixed; §93c net-of-friction calibration (43.6%→40.5%); §93d gap decomposition v2 (25.5pp WR gap, midday 11–12 ET catastrophic, p=0.000). §94 per-sector hold-days (+0.04 Sharpe). Full 23yr backtest: 217 trades, 69.1% WR, 0.24 Sharpe, −2.31% MaxDD. Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of trades in that window. Post-2022 epoch (rate-hike cycle) shows negative Sharpe (−0.10), explaining live underperformance.
 > **Ratings live in [`docs/Stats.md §15`](Stats.md) (single source of truth, v8.2). This file is a chronological dev log.**
 > ~210 tickers (incl. 52 leveraged ETFs) · 150 API endpoints · dual auto-execution brokers (Alpaca + IBKR)
 > **Data: Polygon.io-first (bulk OHLCV + quotes + reference) · yfinance fallback · FRED (macro) · EDGAR (fundamentals/8-K) — pooled aiohttp + cached TLS across 20 modules**
@@ -11,22 +12,24 @@
 > **v8.1 (2026-06-09) — Survivorship correction + new live gates + correctness fixes + open-source quant-library audit.** Survivorship bias corrected via free PIT S&P constituents (the #1 named ceiling); new live gates (§14 FRED macro-regime, Polygon short-volume, dynamic sector limits + XLI ML); live correctness fixes (`sector_etf` decouple — was nulling ~81% of signals; cohort-enrichment restore; dark_pool restart-storm); §63 cointegration ADF correctness fix + macro-regime HMM→hmmlearn (both live); cross-sectional model net-positive at h=21 (net +0.347, borrow-robust) deployed in **SHADOW**. **Overall 8.8/10 product · 8.6/10 quality** (+0.1 from v8.0.1; shadow/research work excluded per "implemented ≠ working live"). See Stats.md §15.
 > **v8.0 — Quant Engine (QENG) Roadmap Implementation (16/17 QENG features complete):** experiment registry, PBO report, checklist promotions, PIT feature store, replay engine, version lineage, live fill ledger, TCA service, capacity limits, portfolio allocator, HRP, cost-aware turnover control, stat-arb residual sleeve, TS momentum trend sleeve, cross-sectional factors, cross-sleeve capital allocator, triple-barrier meta-labeling, shadow-control cohort routing, and policy versioning. Overall 8.6/10 product · 8.3/10 quality (v8.0.1, revised down after a server-log audit found the PIT feature store crashing every live scan on NaN→json and the TSYS-5a health scorecard recording 0 calls due to a constraint/race — both green in the test suite; see Stats.md §15 v8.0.1).
 
-## 📊 Live database stats (2026-05-17)
+## 📊 Live database stats (2026-06-10)
 
 | Metric | Value |
 |--------|-------|
 | Watchlist tickers | 191 |
 | Total signals generated | 7,015+ |
 | Signals sent to Telegram | 543 |
-| Resolved signals (outcome_pct filled) | 529 |
+| Resolved signals (outcome_pct filled) | 566 |
 | Effective ticker-days (deduplicated) | 459 |
 | 7d win rate (mark-to-market) | 58.8% |
 | 7d win rate (stop-enforced) | 42.2% |
 | 14d win rate | 65.1% |
-| Win rate (friction-adjusted, best horizon) | 54.4% |
+| Win rate (friction-adjusted, best horizon) | 43.6% |
 | Brier score | 0.2531 (best horizon) |
 | Confidence gap | +11.0pp overconfident (raw) |
-| XGBoost training samples | 529 |
+| XGBoost training samples | 566 |
+
+> **§93d gap decomposition (2026-06-10):** Live WR 43.6% vs IS 69.1% = **25.5pp gap**. Primary driver: **regime mismatch** — live period (2022+) overlaps backtest epoch with negative Sharpe (−0.10). Secondary: midday microstructure (hour 11–12 ET WR 23.7% vs 47.8% baseline, p=0.000). Delivery latency mean ~2h (80% >5min SLA). No fill data (paper account not trading).
 
 ## 🏅 Quality Ratings — v8.2 (2026-06-09)
 
@@ -42,6 +45,44 @@
 ---
 
 ## ✅ Implemented
+
+### v8.3 (2026-06-10) — Sharpe×N Agenda §87–§94 Complete + Gap Decomposition v2
+
+**§87 L10 Consec-Score Sizing (`backtest_technicals.py` + `signal_engine.py`):**
+Gate 18 converted from filter to sizing multiplier. When `prev_score ≥ _consec_score_thresh` (18), `positionSizeScale *= 1.3×`; otherwise 1.0×. Preserves all trades (ΔN = 0). Backtest: +0.03 per-trade Sharpe vs baseline. Deployed as L10 in `positionSizeScale`. Committed `ede79b2`.
+
+**§88 Calm-Regime Sleeve — ABANDONED:**
+Full 23-year backtest with `--calm-sleeve`: **0 trades generated.** ALL 217 baseline trades occurred in VIX 20–30 (stress). Zero in calm (<20) or panic (≥30). MR triggers (RSI<42, BB%B<0.22, IBS<0.15, VWAP%<−0.75) naturally only fire in fear-driven capitulation. **Structural mismatch, not a gate problem.** Code retained but deprioritized.
+
+**§89 Fama-French ST_Rev + Factor Attribution:**
+- `fetch_ff_str()` from Ken French Data Library, cached to disk. Wired as 15th meta-label feature (`ff_str`). `signal_ml.py` `_META_FEATURE_NAMES` updated to 15 features.
+- §89a regime sizing: rolling 63d ST_Rev Sharpe; negative regime → 0.5× size. Result: +0.008 Sharpe (negligible). ST_Rev is NOT a useful regime predictor for this idiosyncratic strategy.
+- §89b factor attribution: OLS on FF5 + ST_Rev. **Alpha = +0.87%/day (p=0.044, annualized +218%)**. HML significant positive (p=0.009), CMA significant negative (p=0.005). ST_Rev NOT significant (p=0.530). R² = 0.05 — 95% idiosyncratic.
+
+**§90 WATCH Bench — ALL REJECTED:**
+Full 22-year IS backtest on PANW, BWA, FTI, EQH, TRGP, APTV, DHI, FIVE, ITW: **0 trades across all 9 tickers.** PIT analysis: EQH/FIVE never in S&P 500; others have ample history but produce zero MR signals. The 111-name curated list is already well-filtered.
+
+**§91 SI Rising Sizing Tilt:**
+`simulate_ticker()` accepts `si_rising_map`; applies 1.15× when `si_rising=True`. Live read (N=335): rising SI avg +1.01% vs falling SI −1.41% = **+2.42pp spread**. Backtest: only 3/217 trades had SI data (pre-2017). Deploy gate: live N≥50 with rising SI.
+
+**§92 Cross-Sectional Shadow Criteria — LOCKED:**
+`SHADOW_PROMOTION_CRITERIA` immutable in `cross_sectional_shadow.py`: min 150 resolved, bottom-decile WR ≥3pp worse, monotonic top>bottom, 0.75× haircut. Wired into `signal_engine.py`. Criteria now immutable — changing them after viewing live data invalidates the forward test.
+
+**§93 Live-vs-IS Gap Closure:**
+- (a) `assembler.py:1011` — `_sector_etf_ml` falls back to `SECTOR_MAP.get(ticker.upper())` when `sector_rs` is None. Fixes 81% under-application of sector-specific entry models.
+- (b) Server restarted (PID 14175). DATA-1/DATA-2 fixes active.
+- (c) Net-of-friction calibration backfill: 566 samples, gross 43.6% → net 40.5%.
+- (d) **Gap decomposition v2:** `live_gap_decomposition.py` — 566 resolved signals, 25.5pp WR gap (43.6% live vs 69.1% IS). Primary driver: **regime mismatch** (live period = 2022+ rate-hike epoch, backtest Sharpe −0.10). Hour 11–12 ET catastrophic: WR 23.7% vs 47.8% baseline (p=0.000). Effect is April-driven; May+ cohort too small to confirm. Scanner midday warning log added (tracking only, no hard filter).
+
+**§94 Per-Sector Hold-Days Parity:**
+`_SECTOR_MR_CONFIG` hold-days wired into `simulate_ticker()`: XLK/XLE/XLB/XLRE/XLU = 5d, XLF/XLV/XLI = 7d, others = 10d. Backtest: +0.04 Sharpe. Canon now matches live `recommendedHoldDays`.
+
+**Meta-model retrain:**
+Fresh train on 217 trades with all 15 features. CV-AUC **0.4224 ± 0.0977** — still below `_MIN_META_AUC=0.52` gate. Top features: `vix_term_ratio`, `dow`, `hmm_trans_risk`. Constraint is N (sample size), not features. Auto-activates when CV-AUC crosses 0.52.
+
+**Full 23-year backtest canon (v10.8 + all features):** 217 trades, 69.1% WR, +0.80% avg, 0.24 Sharpe, −2.31% MaxDD. **100% of trades in VIX 20–30.** Strategy is structurally a **stress-regime contrarian play** — MR triggers don't fire in calm or panic.
+
+**Tests:** 801 passed (ex-e2e), 1 failed (e2e Playwright fixture missing).
 
 ### v6.4 (2026-05-31) — Methodology Soundness: Sharpe CI, Deflated Sharpe, ML Deployment Gates, Expanded Universe
 

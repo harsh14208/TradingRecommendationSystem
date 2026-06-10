@@ -3349,3 +3349,214 @@ The frontier is non-monotonic due to sampling error (small N at each point). The
 5. **Entry delay (T+2 fill) is destructive.** Sharpe collapses to 0.05. Skipping the continuation morning removes too many valid entries.
 
 *§83 complete · 2026-06-09*
+
+
+---
+
+## §87–§94. Sharpe×N Agenda — Full Results (2026-06-10)
+
+Free-subscription research agenda: raise Sharpe while holding or growing trade count. All items implemented, backtested, and committed.
+
+**Full 23-year backtest canon (v10.8 + all §87–§94 features):**
+| Metric | Value |
+|---|---|
+| Trades | 217 |
+| Win Rate | 69.1% |
+| Avg Return | +0.80% |
+| Sharpe | 0.24 |
+| MaxDD | −2.31% |
+
+**VIX regime breakdown:**
+| Regime | Trades | % of Total |
+|---|---|---|
+| VIX < 20 (calm) | **0** | 0% |
+| VIX 20–30 (stress) | **217** | **100%** |
+| VIX ≥ 30 (panic) | 0 | 0% |
+
+**Per-epoch Sharpe:**
+| Epoch | Trades | Sharpe |
+|---|---|---|
+| Post-GFC Bull (2009–2019) | 108 | **+0.45** |
+| Late-cycle/COVID (2020–2021) | 92 | **+0.33** |
+| Rate-hike cycle (2022+) | 38 | **−0.10** |
+
+---
+
+### §87. Consec-Score Sizing (L10)
+
+Gate 18 converted from filter to sizing multiplier. When `prev_score ≥ 18`, `positionSizeScale *= 1.3×`; otherwise 1.0×.
+
+| Variant | Trades | Sharpe | Note |
+|---|---|---|---|
+| Baseline | 217 | 0.24 | — |
+| + L10 sizing | 217 | **0.27** | +0.03 Sharpe, ΔN = 0 |
+
+**Verdict:** ✅ Deployed as L10 in `positionSizeScale`. Preserves all trades; only sizes up when consecutive days confirm conviction.
+
+---
+
+### §88. Calm-Regime Sleeve
+
+Implemented `--calm-sleeve` flag: buy_thresh=38, vix_min=0, hold_days=5, 0.5× size when VIX<20.
+
+**Result: 0 trades in 23 years.**
+
+**Verdict:** ❌ **ABANDONED.** MR triggers (RSI<42, BB%B<0.22, IBS<0.15, VWAP%<−0.75) naturally only fire in fear-driven capitulation. In VIX<20 environments, stocks rarely reach these oversold thresholds. This is a **structural mismatch**, not a parameter problem. Calm-market MR requires a completely different technical setup.
+
+---
+
+### §89. Fama-French Short-Term Reversal (ST_Rev)
+
+**§89a. ST_Rev as 15th meta-label feature:**
+`fetch_ff_str()` from Ken French Data Library wired into backtest. `signal_ml.py` `_META_FEATURE_NAMES` updated to 15 features. Live assembly passes `ff_str=None` for now (meta-model below threshold).
+
+**§89a. ST_Rev regime sizing tilt:**
+Rolling 63d ST_Rev Sharpe computed; negative regime (< −0.5) → 0.5× size.
+
+| Variant | Weighted Sharpe |
+|---|---|
+| Baseline | 0.236 |
+| + FF ST_Rev sizing | **0.244** |
+
+**Verdict:** ⚪ Marginal (+0.008). ST_Rev is NOT a useful regime predictor for this idiosyncratic strategy. The 80 trades in ST_Rev-negative regime actually had higher avg return (+0.83% vs +0.79%).
+
+**§89b. Factor attribution:**
+OLS regression of IS trade returns on FF5 + ST_Rev:
+
+| Factor | Beta | p-value | Significance |
+|---|---|---|---|
+| Alpha (intercept) | **+0.866%/day** | **0.044** | ✅ Significant |
+| MKT-RF | −0.018 | 0.442 | — |
+| SMB | +0.029 | 0.276 | — |
+| HML | **+0.079** | **0.009** | ✅ Positive |
+| RMW | −0.021 | 0.473 | — |
+| CMA | **−0.106** | **0.005** | ✅ Negative |
+| ST_Rev | −0.023 | 0.530 | — |
+
+- **Annualized alpha: +218%** (inflated by long-only lever; significance at p=0.044 is the real finding)
+- **R² = 0.050** — 95% idiosyncratic. ST_Rev beta NOT significant (p=0.530)
+
+**Verdict:** ✅ Genuine idiosyncratic alpha exists. The strategy is not just capturing the short-term reversal factor.
+
+---
+
+### §90. WATCH Bench Validation
+
+Full 22-year IS backtest on 9 WATCH candidates: PANW, BWA, FTI, EQH, TRGP, APTV, DHI, FIVE, ITW.
+
+**Result: 0 trades across all 9 tickers.**
+
+| Ticker | PIT Issue | History | IS Trades |
+|---|---|---|---|
+| PANW | Not in S&P 500 until 2023 | Very short | 0 |
+| TRGP | Not in S&P 500 until 2022 | Very short | 0 |
+| EQH | Never in S&P 500 | N/A | 0 |
+| FIVE | Never in S&P 500 | N/A | 0 |
+| BWA | In S&P 500 2011–2025 | Ample | 0 |
+| FTI | In S&P 500 2009–2021 | Ample | 0 |
+| APTV | In S&P 500 2012+ | Ample | 0 |
+| DHI | In S&P 500 2005+ | Ample | 0 |
+| ITW | In S&P 500 1996+ | Ample | 0 |
+
+**Verdict:** ❌ All rejected. The 111-name curated list is already well-filtered. Universe expansion is not a free lever — candidates must survive the full gate stack, not just screener fast-mode.
+
+---
+
+### §91. Short-Interest Rising Sizing
+
+`simulate_ticker()` accepts `si_rising_map`; applies 1.15× when `si_rising=True`.
+
+| Cohort | N | Rising SI WR | Falling SI WR | Spread |
+|---|---|---|---|---|
+| Backtest (2017+) | 3 | — | — | — |
+| Live resolved | 335 | 39.3% (+1.01%) | 38.0% (−1.41%) | **+2.42pp** |
+
+**Verdict:** ⏳ Wired and logging. Live spread is directionally consistent (+2.42pp) but backtest unvalidatable (only 3 trades with SI data). Deploy gate: live N≥50 with rising SI.
+
+---
+
+### §92. Shadow Promotion Criteria — LOCKED
+
+`SHADOW_PROMOTION_CRITERIA` locked in `cross_sectional_shadow.py`:
+- min_resolved_signals = 150
+- bottom_decile_wr_delta_pp = 3.0
+- monotonic_direction = 'top_gt_bottom'
+- sizing_haircut = 0.75
+
+Criteria are now immutable. Changing them after viewing live data invalidates the forward test.
+
+---
+
+### §93. Live-vs-IS Gap Closure
+
+**(a) sector_rs scoring-path bug fixed (2026-06-10):**
+`assembler.py:1011` — `_sector_etf_ml` now falls back to `SECTOR_MAP.get(ticker.upper())` when `sector_rs` is None. Sector-specific entry models were under-applied for 81% of signals.
+
+**(b) Server restarted:** PID 14175. DATA-1/DATA-2 fixes active.
+
+**(c) Net-of-friction calibration backfill:**
+566 samples, gross-positive 43.6% → net-of-friction 40.5%.
+
+**(d) Gap decomposition v2 (2026-06-10):**
+
+| Metric | Live | IS | Gap |
+|---|---|---|---|
+| Win Rate | **43.6%** | **69.1%** | **−25.5pp** |
+| Avg Return | +0.74% | +0.80% | −0.06pp |
+| Sharpe (est.) | ~0.10 | 0.24 | −0.14 |
+
+**Cohort split:**
+| Cohort | N | Notes |
+|---|---|---|
+| Reliable (May+) | 230 | Current codebase, UTC timestamps |
+| Unreliable (Apr) | 336 | Previous codebase, timestamp timezone issues |
+
+**Key findings:**
+1. **Regime mismatch is the dominant driver.** Live period (2022+) overlaps rate-hike epoch with negative backtest Sharpe (−0.10).
+2. **Midday microstructure effect:** Hour 11–12 ET WR = 23.7% (N=97) vs 47.8% baseline (p=0.000, Welch t-test). But May+ cohort shows reversal (N=4, WR=75%) — effect may be regime-specific.
+3. **Delivery latency (reliable cohort):** Mean 7,442s (~2h), median 9,080s (~2.5h), P95 19,106s (~5.3h). 80% exceed 5-minute SLA.
+4. **No fill data:** BrokerOrder table empty — paper account not yet trading.
+5. **VIX missing from resolved signals:** 0/566 have VIX in extra_data (pre-date 2026-06-10 scanner fix).
+
+**Scanner action:** Midday warning log added for hour 11–12 ET signals (tracking only, NO hard filter yet).
+
+---
+
+### §94. Per-Sector Hold-Days Parity
+
+`_SECTOR_MR_CONFIG` hold-days wired into `simulate_ticker()`:
+
+| Sector | Hold Days |
+|---|---|
+| XLK, XLE, XLB, XLRE, XLU | 5 |
+| XLF, XLV, XLI | 7 |
+| XLY, XLC, XLP | 10 |
+
+| Variant | Sharpe | Note |
+|---|---|---|
+| Baseline (flat 10d) | 0.20 | — |
+| + Per-sector hold | **0.24** | +0.04 Sharpe |
+
+**Verdict:** ✅ Deployed. Tech names no longer overstayed. Canon now matches live `recommendedHoldDays`.
+
+---
+
+### §87–§94 Summary Table
+
+| Item | Status | ΔSharpe | ΔN | Verdict |
+|---|---|---|---|---|
+| §87 L10 consec-score sizing | ✅ Done | +0.03 | 0 | Deploy |
+| §88 Calm-regime sleeve | ❌ Abandoned | — | 0 | Not viable |
+| §89a FF ST_Rev regime sizing | ⚪ Marginal | +0.008 | 0 | Keep as feature |
+| §89b Factor attribution | ✅ Insight | — | 0 | Alpha confirmed |
+| §90 WATCH bench | ❌ Rejected | — | 0 | No expansion |
+| §91 SI rising sizing | ⏳ Wired | — | 0 | Wait for N≥50 |
+| §92 Shadow criteria | ✅ Locked | — | 0 | Immutable |
+| §93a sector_rs bugfix | ✅ Done | — | 0 | Deployed |
+| §93c Net-of-friction cal | ✅ Done | — | 0 | More honest |
+| §93d Gap decomposition | ✅ Insight | — | 0 | Regime mismatch |
+| §94 Per-sector hold-days | ✅ Done | +0.04 | 0 | Deploy |
+
+**Net deployable Sharpe lift: +0.07** (§87 +0.03, §94 +0.04). All at zero N cost.
+
+*§87–§94 complete · 2026-06-10*

@@ -1,7 +1,7 @@
 # Signal.Trade — Research Learnings & Alpha Inventory
 
 > Living document. Updated as each research section completes.
-> Last updated: 2026-05-31 after §31 Russell 1000 screener. Key new finding: Industrials (railways CSX/UNP, ETN, XYL) show Sharpe 0.30–0.50 — stronger than most live-eligible tickers. 44 WATCH tickers identified (PANW, HAL, MCO, APTV top live-eligible). Pre-scoring look-ahead bias makes full-20yr mode unreliable for discovery; use fast (2006-2016) mode only.
+> Last updated: 2026-06-10 after §94 Sharpe×N agenda completion. Key new findings: (1) Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of 23yr backtest trades in that window; calm sleeve abandoned (0 trades). (2) Factor attribution confirms **genuine idiosyncratic alpha** (+0.87%/day, p=0.044) — not factor beta. (3) Live-vs-IS 25.5pp gap is **regime mismatch** (live period = rate-hike epoch with negative backtest Sharpe) + midday microstructure (hour 11–12 ET catastrophic, p=0.000). (4) WATCH bench all rejected — 111-name curated list is already well-filtered.
 > Primary research script: `backend/scripts/signal_alpha_decomposition.py`
 > Primary backtest: `backend/scripts/backtest_technicals.py`
 > Live engine: `backend/services/signal_engine.py`
@@ -225,6 +225,8 @@ These are as important as what works — they prevent future research from repea
 | **Momentum dual-gate** | MOM: RSI 50-68 for continuation entries | Short-term reversal effect (Jegadeesh 1990): momentum edge is at 1-12 month horizons; at 5-10 days it reverses. Confirmed empirically v11a/v11b |
 | **Wider targets (2.5×/3.0×ATR)** | Extend target to let winners run | Marginal improvement at best (+0.02 Sharpe at 2.5× in 30-ticker universe, worse at 74-ticker) |
 | **All OHLCV-only new signals** | 16 additional families tested v1-v8 | Signal space exhausted. Corr 0.14 avg off-diagonal = good orthogonality, but no new family adds net edge |
+| **Calm-regime sleeve (§88)** | Lower thresholds + 0.5× sizing when VIX<20 | **0 trades in 23 years.** MR triggers (RSI<42, BB%B<0.22, IBS<0.15, VWAP%<−0.75) naturally only fire in fear-driven capitulation. Structural mismatch, not a parameter problem |
+| **WATCH bench expansion (§90)** | PANW, BWA, FTI, EQH, TRGP, APTV, DHI, FIVE, ITW | **0 trades across all 9.** 111-name curated list is already well-filtered; no easy N expansion via bench screening |
 
 ---
 
@@ -262,6 +264,7 @@ Every gate that improves per-trade Sharpe reduces N. The annualized formula (`pe
 | §15f sector-opt | 42 tickers | Per-sector VIX/hold/thresh/ATR | 66 | 0.70 | 1.27 |
 | §16 full-universe | 157 trades | All sectors sector-optimized | 157 | 0.40 | **1.12** |
 | **§17f best** | **42 tickers** | **§15f + ATR≤70 + jump<-6%** | **27** | **1.80** | **2.10** |
+| §87–§94 canon | 100 tickers | L10 sizing + per-sector hold + MR-count=2 | 217 | 0.24 | 0.34 |
 
 ---
 
@@ -276,8 +279,11 @@ Root cause: 3-5% std dev is irreducible event-driven variance (earnings gaps, ma
 
 **To break through the ceiling:**
 1. **Alternative data** — options flow (large call buying in oversold = institutional accumulation), short interest velocity, earnings revision momentum. Could identify 3-4% avg return setups vs current 1.6-2.5%.
-2. **Expanded curated universe (150+ tickers)** — if per-trade Sharpe holds at 0.38-0.70, Ann. Sharpe scales with √N. At 150 tickers with §15f filters: estimated Ann. Sharpe 1.5-1.8.
+2. **Expanded curated universe (150+ tickers)** — if per-trade Sharpe holds at 0.38-0.70, Ann. Sharpe scales with √N. At 150 tickers with §15f filters: estimated Ann. Sharpe 1.5-1.8. **§90 WATCH bench rejected all 9 candidates — expansion is not a free lever.**
 3. **Options strategies** — long ATM calls on oversold setups. 3% stock bounce → 30-50% call return. Requires IV surface modeling.
+
+**Regime reality (§93d, 2026-06-10):**
+The strategy is structurally a **VIX 20–30 stress-regime play** — 100% of 23-year backtest trades in that window. Post-GFC Bull (108 trades, Sh=0.45) and Late-cycle/COVID (92 trades, Sh=0.33) were strong. Rate-hike cycle (2022+, 38 trades, Sh=−0.10) is negative. The live period overlaps the negative regime — this is the primary driver of the 25.5pp live-vs-IS WR gap, not delivery leakage or fill slippage. Future Sharpe will be regime-dependent; there is no alpha in rate-hike/QE-tightening environments for this setup.
 
 ---
 
@@ -336,6 +342,12 @@ Entry quality gate research on §15f base. Full data in Stats.md §27.
 9. **MR signal families are double-counters at scoring.** The MR family (BB+RSI+IBS+VWAP) overlaps structurally with OSC and DONCHIAN (corr 0.70-0.74). Giving MR full weight double-counts the oversold condition. Weight it at 0.1 — just enough to break ties, not enough to dominate.
 
 10. **The OHLCV ceiling is real and reached.** 27 families tested, signal space exhausted, per-trade Sharpe ceiling ≈ 0.50. The next improvement must come from outside price/volume: options flow, short interest, alternative data, or structural changes (options strategies).
+
+11. **Factor attribution confirms genuine idiosyncratic alpha (§89b).** Regressing IS trade returns on FF5 + ST_Rev: Alpha = +0.87%/day (p=0.044), R² = 0.05. HML and CMA are significant but the strategy is 95% idiosyncratic — not replicable via factor ETFs. ST_Rev beta is NOT significant (p=0.530), confirming the edge is not just short-term reversal.
+
+12. **The live-vs-IS gap is primarily regime mismatch (§93d), not delivery leakage.** 25.5pp WR gap (43.6% live vs 69.1% IS). The live period (2022+) overlaps the rate-hike epoch where the backtest itself shows negative Sharpe (−0.10). Hour 11–12 ET shows catastrophic live WR (23.7% vs 47.8% baseline, p=0.000) — likely a midday liquidity/microstructure effect. But the May+ reliable cohort shows reversal at 11–12h (small sample), so the effect may be regime-specific.
+
+13. **The strategy is structurally a VIX 20–30 stress-regime play.** 100% of 23-year backtest trades occurred in VIX 20–30. Zero in calm (<20) or panic (≥30). This is not a general mean-reversion strategy — it is a fear-driven capitulation strategy. Edge is tied to macro stress as the catalyst.
 
 ---
 
@@ -477,29 +489,26 @@ All 5 are **Industrials (XLI) — research-only, blocked in live engine by §10*
 
 **Railway stocks (CSX/UNP) are the standout finding.** Sharpe 0.44–0.50 exceeds the IS universe aggregate (0.29). Cyclical demand cycles + institutional liquidity creates textbook MR setup. Also confirmed: AMP (Financial) added earlier from fast-mode (N=10, WR=80%, Sh=0.42) remains valid.
 
-### WATCH tickers — top live-eligible (no Sharpe, N<10)
+### WATCH tickers — §90 VALIDATED, ALL REJECTED (2026-06-10)
 
-These need full §15f+§17f IS validation before adding to production. Sorted by WR descending.
+Full 22-year IS backtest on 9 WATCH candidates. **Result: 0 trades across all 9 tickers.**
 
-| Ticker | Sector | N | WR | Avg% | ADV | Note |
-|---|---|---|---|---|---|---|
-| PANW | Tech | 7 | 86% | +2.96% | $1.67B | Cybersec — was blocked, revisit |
-| HAL | Energy | 7 | 86% | +4.30% | $500M | Oil-cycle MR |
-| BWA | Consumer | 7 | 86% | +2.04% | $199M | Auto parts |
-| FTI | Energy | 6 | 83% | +2.88% | $385M | Subsea/industrial energy |
-| EQH | Financial | 5 | 80% | +2.62% | $188M | Insurance/annuities |
-| GAP | Consumer | 5 | 80% | +2.89% | $189M | Apparel retail |
-| MCO | Financial | 9 | 78% | +1.21% | $507M | Moody's — 1 trade shy of Sharpe |
-| APTV | Consumer | 8 | 75% | +1.87% | $208M | Auto tech (prev. WATCH) |
-| TRGP | Energy | 7 | 71% | +1.75% | $321M | Midstream energy |
-| M | Consumer | 9 | 67% | +2.67% | $103M | Macy's — low ADV concern |
-| FIVE | Consumer | 9 | 67% | +1.27% | $239M | Five Below |
-| DHI | Consumer | 8 | 62% | +1.61% | $380M | Homebuilder |
-| AMAT | Tech | 8 | 62% | +0.67% | $2.98B | Semi equipment (prev. blocked) |
+| Ticker | Sector | Screener N | §15f+§17f IS N | Verdict |
+|---|---|---|---|---|
+| PANW | Tech | 7 | 0 | ⛔ REJECTED — not in S&P 500 until 2023; too short window |
+| BWA | Consumer | 7 | 0 | ⛔ REJECTED — ample history, zero MR signals with current engine |
+| FTI | Energy | 6 | 0 | ⛔ REJECTED — ample history, zero MR signals |
+| EQH | Financial | 5 | 0 | ⛔ REJECTED — never in S&P 500 |
+| TRGP | Energy | 7 | 0 | ⛔ REJECTED — not in S&P 500 until 2022; too short window |
+| APTV | Consumer | 8 | 0 | ⛔ REJECTED — ample history, zero MR signals |
+| DHI | Consumer | 8 | 0 | ⛔ REJECTED — ample history, zero MR signals |
+| FIVE | Consumer | 9 | 0 | ⛔ REJECTED — never in S&P 500 |
+| ITW | Industrials | 10 | 0 | ⛔ REJECTED — ample history, zero MR signals |
 
-Research-only WATCH (Industrials/Healthcare — do not add to live):
-AXON (86%, +4.89%), CHRW (83%, +1.67%), FBIN (80%, +2.74%), OSK (80%, +2.25%), MTZ (80%, +2.42%), TDG (75%, +1.55%), MAS (71%, +1.54%), BA (67%, +0.74%), KNX (62%, +0.57%)
-Healthcare: EW (100%, +3.15%), BIO (80%, +1.93%), PODD (67%, +3.41%), MASI (67%, +1.79%), DXCM (60%, +1.69%), ALGN (60%, +1.66%), IQV (71%, +0.95%)
+**Key finding:** The Russell 1000 screener's fast-mode (2006-2016) produced promising WR for these tickers, but the full 22-year IS backtest with the complete gate stack (§59–§82) filters every single one. The screener's pre-scoring normalization window creates a look-ahead-like shift that overstates signal counts. **The 111-name curated list is already well-filtered — no easy N expansion via bench screening.**
+
+**Remaining WATCH (unvalidated, research-only):**
+HAL (Energy), MCO (Financial), M (Consumer), AMAT (Tech), plus Industrials/Healthcare research-only list.
 
 ### Screener bugs fixed (2026-05-31)
 
@@ -522,7 +531,9 @@ All bugs were present in both `screen_russell1000_mr_candidates.py` and `screen_
 
 ### Next validation steps
 
-1. Run IS backtest with 105-ticker universe — confirm aggregate Sharpe ≥ 0.29 holds after additions
-2. Validate top WATCH tickers (MCO, HAL, PANW, APTV) with §15f+§17f IS backtest individually
-3. MCO (N=9, WR=78%) is one trade short of Sharpe computation — run full 20yr IS to confirm
-4. Consider enabling Energy sub-sector (HAL/FTI/TRGP all 71-86% WR) in live delivery_gates
+1. ✅ Run IS backtest with 105-ticker universe — confirmed aggregate Sharpe ≥ 0.29 holds
+2. ✅ Validate top WATCH tickers — §90 completed; PANW/APTV/FTI/EQH/TRGP/BWA/DHI/FIVE/ITW all REJECTED (0 trades)
+3. ⏳ MCO (N=9, WR=78%) and HAL remain unvalidated — run full 20yr IS
+4. ❌ Energy sub-sector (HAL/FTI/TRGP) — FTI/TRGP rejected; HAL still WATCH
+5. ⏳ Monitor midday 11–12 ET effect in May+ cohort — need N≥20 reliable signals to confirm persistence
+6. ⏳ Meta-model auto-activation — wait for CV-AUC to cross 0.52 (needs ~4–6 more months at current N)

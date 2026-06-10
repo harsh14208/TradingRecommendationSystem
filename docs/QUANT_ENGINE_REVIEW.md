@@ -231,6 +231,34 @@ confidence = _ml_blend(confidence, _entry_prob, _live_prob, _challenger_prob, _m
 
 ---
 
+## 8. Status Update — 2026-06-10 (Post-§87–§94)
+
+**Meta-model retrain executed:**
+- Fresh train on 217 trades with all 15 features (including new `ff_str` from §89).
+- CV-AUC: **0.4224 ± 0.0977** — still below `_MIN_META_AUC=0.52` gate.
+- Top features by importance: `vix_term_ratio` (0.088), `dow` (0.085), `hmm_trans_risk` (0.082).
+- **Constraint is N (sample size), not features.** At ~50 trades/month, need ~4–6 more months to reach N=400–500 for stable AUC.
+- Assembler guard removed: `predict_meta_prob()` now returns `None` when meta-model is below threshold; live signals are NOT scaled by meta_prob.
+- Auto-activation: model will auto-deploy when CV-AUC crosses 0.52 on a weekly retrain.
+
+**Factor attribution (§89b):**
+- Alpha = +0.87%/day (p=0.044) — genuine idiosyncratic alpha confirmed.
+- R² = 0.05 — 95% unexplained by standard factors.
+
+**Train/serve skew status:**
+- The CRITICAL finding (§1.3) about missing features in the trades CSV has been **partially addressed**:
+  - `_extract_meta_features()` now reads all 15 features from the backtest trade records.
+  - The backtest CSV is regenerated with `--save-trades` and includes all 15 columns.
+  - However, historical trades (pre-2026-06) still lack some features (VIX term structure, sector momentum) because they were not computed at the time.
+  - The current retrain uses 217 trades — all post-feature-introduction but N is still too small for stable AUC.
+
+**Recommended next actions (unchanged from §6):**
+1. Continue accumulating N until CV-AUC crosses 0.52.
+2. Do NOT deploy meta-model before threshold is met.
+3. Weekly retrain already live in `_weekly_ml_retrain` — no manual action needed.
+
+---
+
 ## 7. Questions for the Team
 
 1. During market hours, do live indicators (IBS, RSI, BB%B) use today's *partial* bar from the Polygon snapshot? If so, the live MR gate fires on a feature the backtest never saw — has the live-vs-backtest WR gap been segmented by time-of-day of signal generation?
