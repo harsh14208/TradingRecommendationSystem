@@ -418,10 +418,10 @@ class TestMetaFeatureExtraction:
     """Tests for _extract_meta_features() vector shape and values."""
 
     def test_feature_vector_length(self):
-        """Meta-label feature vector must have exactly 14 elements."""
+        """Meta-label feature vector must have exactly 15 elements."""
         from services.signal_ml import _extract_meta_features, _META_FEATURE_NAMES
 
-        assert len(_META_FEATURE_NAMES) == 14
+        assert len(_META_FEATURE_NAMES) == 15
         feats = _extract_meta_features(
             tech=_make_tech(),
             entry_prob=0.65,
@@ -431,7 +431,7 @@ class TestMetaFeatureExtraction:
             dow=0,
             dte=70,
         )
-        assert len(feats) == 14
+        assert len(feats) == 15
 
     def test_entry_prob_is_first_feature(self):
         """entry_prob must be feature[0] — it is THE key meta-label predictor."""

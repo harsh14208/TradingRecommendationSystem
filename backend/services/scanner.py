@@ -420,6 +420,15 @@ async def _maybe_send(
         log.info(f" {sig_dict['ticker']} notification suppressed — outside clean market window")
         return
 
+    # §93d: midday microstructure warning — Hour 11–12 ET has shown catastrophic
+    # live WR (≈23% vs 44% baseline). Log for tracking; do NOT filter yet.
+    _et_h = datetime.now(_ET).hour
+    if _et_h in (11, 12):
+        log.warning(
+            f" [midday] {sig_dict['ticker']} {sig_dict['action']} @ hour {_et_h} ET — "
+            f"historical live WR ≈23% in this window (tracking only, not filtered)"
+        )
+
     # ── Cooldown: 24h normally, 30 min on direction-flip (force_resend) ────
     # ── Hard cap: max 1 send per ticker per trading day ─────────────────────
     # Multiple same-ticker sends within one session count as one market view but
