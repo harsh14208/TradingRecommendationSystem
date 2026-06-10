@@ -2994,6 +2994,7 @@ def simulate_ticker(
         if _consec_score_sizing and is_buy_signal:
             # §87: multiply base size by consec-score conviction tier
             _size_mult *= _consec_size_mult
+        _date_key = pd.Timestamp(str(date)[:10])
         # §91: rising short-interest sizing tilt (squeeze-fuel thesis)
         if si_rising_map and is_buy_signal:
             _si_flag = si_rising_map.get(ticker, {}).get(_date_key)
@@ -3002,8 +3003,6 @@ def simulate_ticker(
         # §88: calm-regime sleeve — 0.5× risk budget on relaxed low-VIX entries
         if calm_sleeve and is_buy_signal:
             _size_mult *= 0.5
-
-        _date_key = pd.Timestamp(str(date)[:10])
         _near_52wk_low_flag = (
             bool(row.get("near_52wk_low", False)) if pd.notna(row.get("near_52wk_low", float("nan"))) else False
         )
