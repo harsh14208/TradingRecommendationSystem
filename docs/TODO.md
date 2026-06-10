@@ -36,13 +36,15 @@ Goal: raise Sharpe while holding or growing trade count. Ordering reflects expec
   - [x] **(a) sector_rs scoring-path bug fixed.** `assembler.py:1011` — `_sector_etf_ml` now falls back to `SECTOR_MAP.get(ticker.upper())` when `sector_rs` is None.
   - [x] **(b) launchd server restarted** — DATA-1/DATA-2 fixes now active.
   - [x] **(c) net-of-friction calibration backfill run.** 566 samples, gross 43.6% → net 40.5%.
-  - [x] **(d) ACT-4 part b gap decomposition.** `live_gap_decomposition.py` created and run. **Key findings:**
+  - [x] **(d) ACT-4 part b gap decomposition v2.** `live_gap_decomposition.py` updated and run. **Key findings:**
     - 566 resolved live signals: WR=43.6%, Avg=+0.74% (vs IS 69.1% / +0.80%)
-    - **No VIX persisted in Signal.extra_data** — scanner investigation needed
-    - Session timing: 9am best (75% WR, N=4), 12pm worst (16.7% WR, N=24)
-    - Per-sector live: XLK 54.4% best, XLU 0% worst, XLF 34.4% / XLP 30.0%
-    - Delivery latency: negative values suggest timestamp column mislabeling
-    - No fill data in BrokerOrder (paper account not yet trading?)
+    - **Cohort split:** 230 reliable (May+, current codebase) / 336 unreliable (Apr, previous codebase)
+    - **VIX:** 0/566 resolved signals have VIX — all pre-date the 2026-06-10 extra_data fix. New signals WILL have VIX.
+    - **Session timing (ET hours):** Catastrophic hours **11–12 ET**: WR=23.7% (N=97) vs all other hours 47.8% (N=469). Welch t-test: **t=-6.06, p=0.000** ✅ highly significant.
+    - **Cohort breakdown for catastrophic hours:** Effect is **April-driven** (Apr: N=93, WR=21.5% vs May+: N=4, WR=75.0%). May+ sample too small to confirm persistence.
+    - **Per-sector live:** XLK 54.4% best, XLU 0% worst, XLF 34.4% / XLP 30.0%
+    - **Latency (reliable cohort):** Mean 7442s (~2h), median 9079s (~2.5h), P95 19106s (~5.3h). 80% > 5 min SLA.
+    - **Scanner:** Added midday warning log for hour 11–12 ET signals (tracking only, NO hard filter yet).
 - [x] **§94. Per-sector hold-days parity in the backtest canon (2026-06-10).** `_SECTOR_MR_CONFIG` hold-days mapping wired into `simulate_ticker()` via `sector_etf` lookup: XLK/XLE/XLB/XLRE/XLU = 5d, XLF/XLV/XLI = 7d, others = 10d. Backtest result: +0.04 Sharpe (Tech names no longer overstayed), canon now matches live `recommendedHoldDays`. Committed `6295eb2`.
 
 - [~] **§86. Market-Neutral Cross-Sectional Ranking Architecture** — Move from time-series prediction to cross-sectional ranking. **v1 built 2026-06-09** in `backend/scripts/cross_sectional_alpha_model.py`. RESULT: OOS 2019→2026 **net Sharpe ≈ 0.44–0.50** (gross 0.73–0.78), mean IC +0.018, quintiles NOT monotonic. Beta-neutrality lowers vol but adds no alpha — "1.0+ mathematically" is a fallacy (Sharpe = IC × √breadth × √turnover-eff; generic price-factor IC ≈0.018 caps it). Honest verdict: competitive with the ~0.28 IS / ~0.14 fwd single-name engine, NOT a ceiling break. Data caveats: `cache_earnings` is dates-only (proximity feature, no surprise); short interest is Postgres bi-weekly 2017-12+ (`--short-interest` opt-in). **STATUS 2026-06-09 (Step 10):** the original 0.44–0.50 leaned on pre-survivorship-correction breadth; honest survivorship-corrected canon is net **−0.058 at the old 5d rebalance → +0.347 at 21d** (cost + stock-borrow robust). DEFAULT HORIZON raised 5→21; model deployed LIVE in SHADOW mode (observe-only). Net-positive but thin (CI grazes 0); see Step 10.
