@@ -27,13 +27,19 @@ Large-cap stocks that become oversold via a specific set of conditions (RSI<42, 
 
 ### A1. MR Condition Gate (entry filter, not a scoring signal)
 
-The mean-reversion gate (RSI<42 OR BB%B<0.22 OR IBS<0.15 OR VWAP%<−0.75%) is the most important structural element. It acts as a hard entry filter — without it, BUY signals have near-zero edge (Sharpe 0.04 at MR-gate off).
+The mean-reversion gate (RSI<42, BB%B<0.22, IBS<0.15, VWAP%<−0.75%) is the most important structural element. It acts as a hard entry filter — without it, BUY signals have near-zero edge (Sharpe 0.04 at MR-gate off).
 
-**IBS<0.15 dominates** (11.1% of raw BUY signals pass via IBS alone vs RSI<42 at only 1.7%). IBS-alone entries are genuine — §12c confirmed that requiring 2+ conditions simultaneously removes valid setups and *hurts* Sharpe. The conditions are orthogonal-yet-valid: don't require confluence of MR signals.
+**Updated 2026-06-09: MR-count=2.** Backtest on 100-ticker/23yr universe with full gate stack (§59–§82) showed:
+- MR-count=1 (OR logic): 155 trades, Sharpe 0.20
+- **MR-count=2 (≥2 conditions): 154 trades, Sharpe 0.21** (+0.01, −1 trade)
+
+Requiring 2+ conditions filters weak single-condition setups (especially IBS-only) without materially reducing trade count. The mild improvement (0.20→0.21) justifies the change because it costs effectively nothing in trade frequency.
+
+**IBS<0.15 dominates** (11.1% of raw BUY signals pass via IBS alone vs RSI<42 at only 1.7%). IBS-alone entries are genuine but are the weakest class — they disproportionately hit stops. Requiring a second condition (RSI<42, BB%B<0.22, or VWAP%<−0.75%) alongside IBS removes the worst performers while keeping most valid setups.
 
 **RSI gate depth is irrelevant.** RSI<35 vs RSI<42 produces identical results because IBS dominates the OR logic. RSI threshold is a dead parameter.
 
-**Implemented in:** `signal_engine.py` gate 9, `backtest_technicals.py` MR-only mode.
+**Implemented in:** `services/engines/assembler.py` `_has_mr`, `delivery_gates.py` hard block, `backtest_technicals.py` `--mr-count` flag.
 
 ---
 

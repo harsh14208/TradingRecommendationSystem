@@ -371,11 +371,19 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 ---
 
-## 15. Project Ratings — v8.1 (2026-06-09)
+## 15. Project Ratings — v8.3 (2026-06-09)
 
 > **Single source of truth** for all project quality ratings. Referenced by `docs/TODO.md` and `docs/PROGRESS.md`.
-> v8.1 (2026-06-09): **17 commits since v8.0** (074dc33) — survivorship correction, new live gates, live correctness fixes, portfolio/risk work, and an open-source quant-library audit. Reviewed in full before re-rating.
-> **Survivorship-bias correction (a5b96e4 → v10.6/v10.7):** free point-in-time S&P constituents (fja05680/sp500) now drive the IS universe — addresses the long-standing **#1 named ceiling**. New IS canon **v10.7: N=205, WR=67.8%, Sh=0.23** (survivorship-corrected + §63 ADF gate; ungated v10.6 was N=189/0.27). Residual caveat: free-yfinance prices for delisted tickers are corrupt → §84 still needs a paid security master.
+> v8.3 (2026-06-09): **External-lens quant engine review — honesty down-revision** (full report: `docs/QUANT_ENGINE_REVIEW.md`). Same lesson as v8.0.1, now on the quant side: "implemented + green tests" ≠ "statistically sound." Findings that move scores:
+> **(1) CRITICAL — meta-label model train/serve skew:** `train_metalabel_model.py` trains from `data/backtest_trades_is.csv`, which carries **none** of `entry_prob`/`ou_halflife`/`hurst`/`rvol`/`vix` (CSV column is `vix_entry`)/`vix_term_ratio`/`sector_momentum`/`vix_9d_ratio`/HMM columns → 11 of 14 features are NaN or constants (0.5/0.1) at training time but real values at serve time, yet `predict_meta_prob` scales **live delivered confidence ×0.60–1.40** in `assembler.py`. The live meta-scaling is untrained noise.
+> **(2) HIGH — PIT placebo fallback:** `is_index_constituent()` silently regenerates the constituents JSON with full 2003–2026 membership for every curated ticker when the file is missing — the survivorship correction can become a no-op while printing success output. Delisted names with real price history remain absent regardless (§84).
+> **(3) HIGH — Deflated Sharpe uses `n_trials=50`** while the research log documents ≳300 effective trials (§1–§86 + sweeps + ablations). At N=205, E[max SR by chance] ≈ 0.24 (300 trials) – 0.25 (500) — **above the IS 0.23**; the printed DSR ✅ is an artifact of the hardcoded trial count.
+> **(4) MEDIUM-HIGH — FRED weekly series look-ahead:** STLFSI4/NFCI keyed to *observation* date, but FRED publishes ~5–7 days later — Gate 2 sees crisis-week stress readings before the market did, exactly when MR entries cluster.
+> **(5) MEDIUM — headline `max_dd` computed on a non-date-sorted equity curve** (per-ticker concat order; only `run_portfolio_simulation` DD is valid); **OOS-CLEAN conditions on outcome-selected blocked tickers** (STT/MTB blocked citing OOS v5 itself; APH on N=4) — OOS-ALL (Sh 0.04) is the honest generalization number; **calibration trained on final confidence but applied mid-pipeline** (pre-ML-blend, pre-peer-haircut) with an isotonic-on-isotonic refit loop; **champion/challenger AUCs compared across different test windows** (noise ≈ 8× the 0.005 promotion delta); earnings blackout uses 10-Q/K *filing* dates, not announcement dates.
+> Clean bill of health where it matters most: indicator pipeline fully point-in-time (no `.shift(-1)` anywhere), fill-at-next-open + stop-before-target discipline, pre-specified OOS tickers, shadow-only §86 deployment, and the tautology-aware live-model feature exclusion are all confirmed correct.
+> v8.2 (2026-06-09): **v10.8 Sharpe improvement sweep** — 12 candidate approaches backtested on 100-ticker/23yr IS. Score-band sizing (+0.05 Sharpe, zero trade impact), MR-count=2 (+0.01 Sharpe, −1 trade), and dynamic RSI stops all validated and shipped live. IS Sharpe 0.23→0.25. See `docs/Stats.md §83` for full sweep results.
+> v8.1 (2026-06-09): **17 commits since v8.0** (074dc33) — survivorship correction, new live gates, live correctness fixes, portfolio/risk work, and an open-source quant-library audit.
+> **Survivorship-bias correction (a5b96e4 → v10.6/v10.7):** free point-in-time S&P constituents (fja05680/sp500) now drive the IS universe — addresses the long-standing **#1 named ceiling**. IS canon **v10.7: N=205, WR=67.8%, Sh=0.23** (survivorship-corrected + §63 ADF gate). **v10.8: N=155, WR=67.1%, Sh=0.25** (+L7 score-band sizing + MR-count=2). Residual caveat: free-yfinance prices for delisted tickers are corrupt → §84 still needs a paid security master.
 > **New live gates:** §14 FRED macro-regime panel + credit-spread scaling fix (56976d7); Polygon short-volume gate (6a35a00); dynamic sector limits + XLI sector ML model + dynamic sector-gate unblocking (2f0cdcd).
 > **Live correctness fixes:** `sector_etf` decoupled from the RS fetch (b3dbe29) — the RS failure had been nulling `sector_etf` on ~81% of signals, silently bypassing sector gates/models; cohort enrichment restored (scanner now passes `dte` to `predict_meta_prob`, 8da9ae2); dark_pool stall heartbeat + give-up backoff ended a 15s restart storm (3ceaeb2).
 > **Portfolio & risk:** portfolio allocation + cross-sleeve sizing + cohort analytics + meta-label features (49712cd); drawdown throttle + L7 sizing + vol scaling + Hurst/cointegration optimizations (a5b96e4); unvalidated alpha sleeves disabled (3e4e102, honesty).
@@ -406,7 +414,9 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 > v7.3 (2026-05-31): adversarial quant review, 10 methodology fixes, OOS v6 CLEAN (N=51, Sh=0.16), block bootstrap, phantom win correction.
 > Two lenses: **Quant** = statistical rigour | **Product** = user-facing completeness × soundness.
 
-**Overall: 8.8/10 product audit · 8.6/10 B+ quality grade** (v8.1, 2026-06-09 — +0.1 from v8.0.1, driven by what is *live and proven*: the survivorship-bias correction — the long-standing #1 ceiling — plus the `sector_etf`-decouple correctness fix and four new live gates. The cross-sectional deployment is SHADOW-only and the §63/HMM library swaps are correctness/robustness not new alpha, so they do NOT move the headline — per the v8.0.1 "implemented ≠ working live" discipline. Aspect bumps: IS Backtest 7.9→8.2, Gate Stack 8.8→9.0, Live Alpha 7.0→7.3, Backtest Infra 7.8→8.1, ML 8.9→9.0, Risk 8.9→9.0, Sector 7.6→7.8, Data 8.3→8.4.)
+**Overall: 8.9/10 product audit · 7.9/10 B quality grade** (v8.3, 2026-06-09 — quality grade revised DOWN from 8.7 after the external-lens quant review (`docs/QUANT_ENGINE_REVIEW.md`). Product audit unchanged — the findings are statistical/methodological, not user-facing. Aspect revisions: ML Methodology 9.0→7.2 (live meta-model train/serve skew + cross-window champion/challenger), IS Backtest 8.3→7.4 (FRED publication-lag look-ahead in Gate 2, DSR fails under honest trial count, PIT placebo fallback, filing-date earnings proxy), Calibration 7.6→6.8 (stage mismatch + refit feedback loop + frictionless mixed-horizon labels), Live Alpha 7.5→6.8 (delivered confidence currently scaled by the skewed meta-model), OOS 6.5→6.0 (CLEAN-set selection on outcomes), Backtest Infra 8.2→7.8 (max_dd ordering bug, `_fill_bar` time-exit off-by-one), Gate Stack 9.1→8.8 (per-ticker blocks/floors acting on N=4), Execution 8.0→7.8 (gap-through stop slippage thin; no signal-vs-fill telemetry), Test Coverage 8.0→7.7 (schema validation checks vector length only — no NaN-rate or feature-drift monitor caught the meta-model skew), Risk 9.1→9.0. The v8.2 numbers below each table row are retained with ↓ markers where revised.)
+
+> **Prior headline (v8.2):** 8.9/10 product · 8.7/10 B+ quality — +0.1 from v8.1, driven by v10.8 Sharpe improvement sweep: score-band sizing +0.05 Sharpe, MR-count=2 +0.01 Sharpe, and dynamic RSI stops all shipped live. IS Backtest Sharpe 0.23→0.25. Per v8.0.1 discipline, only live-and-proven changes move the headline; shadow/research work does not.
 > Δ since v7.8: Complete Quant Engine (QENG) roadmap implementation. Added point-in-time database snapshots and replay engine, portfolio allocation with HRP and turnover control, TCA slippage/friction engine, residual stat-arb/trend/factor alpha sleeves, triple-barrier meta-labeling model, and shadow-control randomized cohort routing.
 > **v8.0.1 correction (2026-06-08, server-log audit):** the initial v8.0 self-rating (9.0/9.2) was revised down after a production-log review exposed a **gap between "implemented + unit-tested" and "working in production"** in two flagship features from the last two version bumps — both were green in the test suite yet broken live:
 > **(1) QENG-2a PIT feature store** crashed *every* live scan — a non-finite float (`NaN`) flowed into the Postgres `json` column, which rejects the bare `NaN` token, aborting `save_feature_snapshot()` → `_persist_scan_signals()` → the whole `run_scan()` task as an unretrieved exception. Fixed: `_json_safe()` sanitizer in `feature_store.py` recursively nulls NaN/Inf before hashing/storage.
@@ -417,19 +427,19 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **IS Backtest Accuracy** | 8.2/10 | A− | ↑ from 7.9 | **IS v10.7: N=205, WR=67.8%, Sh=0.23** (survivorship-corrected PIT S&P universe + §63 Engle-Granger ADF gate). **Survivorship bias — the long-standing #1 ceiling — now corrected** via free point-in-time constituents (a5b96e4). BT-2 sweep, BT-4 bootstrap CI, BH-FDR, --pbo CSCV. Residual ceiling: free-data prices for delisted names corrupt → §84 still needs a paid security master. |
-| **OOS / Forward Validation** | 6.5/10 | B | ↑ from 6.3 | OOS v6 CLEAN: N=51, Sh=0.16. OOS v9 locked. Added checklist-based promotion verification via promote_model.py. SR=0 still inside CI at N=51; need N≥387 to clear. |
-| **Live Alpha Quality** | 7.3/10 | B | ↑ from 7.0 | Shadow-control cohort routing; EOD-batch silent-block fix; §76 Altman removed. **v8.1 live correctness fixes:** `sector_etf` decoupled from RS fetch (b3dbe29) — RS failures had nulled `sector_etf` on ~81% of signals, silently bypassing sector gates/models; cohort enrichment restored (8da9ae2). Ceiling: §85-1 audit still pending ≥200 resolved signals. |
-| **Gate Stack (§47–§83)** | 9.0/10 | A | ↑ from 8.8 | 29 of 31 strategies live; residual stat-arb / trend / factor sleeves. **v8.1 new live gates:** §14 FRED macro-regime panel + credit-spread fix (56976d7), Polygon short-volume gate (6a35a00), dynamic sector limits + XLI sector ML model + dynamic sector-gate unblocking (2f0cdcd). **§63 correctness fix:** now gated on the Engle-Granger step-2 ADF stationarity test (statsmodels) — no longer fires on spurious-regression pairs. Remaining: §62 VRP + options-flow/GEX (paid data). |
-| **Backtest Infrastructure** | 8.1/10 | A− | ↑ from 7.8 | Replay engine (QENG-2b) + version lineage (QENG-2c). **v8.1:** survivorship-free PIT universe wired into the backtest; new cross-sectional L/S harness (`cross_sectional_alpha_model.py`) with purged expanding-window WF CV, block-bootstrap Sharpe CI, and cost + stock-borrow sensitivity sweeps. PIT feature store now past the v8.0.1 NaN→json crash; still wants burn-in. |
-| **Confidence Calibration** | 7.6/10 | B+ | ↑ from 7.5 | Cal v4: Brier 0.2641. Added ModelRegistry and CalibrationHistory rollback capability. Sector-cal and reliability curves live. |
+| **IS Backtest Accuracy** | 7.4/10 | B | ↓ from 8.3 (v8.3 review) | **IS v10.8: N=155, WR=67.1%, Sh=0.25** still stands as computed, but the v8.3 review found the *inputs* compromised: Gate 2 STLFSI4/NFCI keyed to observation date (~5–7d publication look-ahead, concentrated in crisis weeks); earnings blackout uses 10-Q/K filing dates, not announcements; DSR clears only at the hardcoded `n_trials=50` — at the documented ≳300 trials, E[max SR]≈0.24 > IS 0.23; PIT constituents file silently regenerates as full-history membership if missing. Re-run canon after lag fixes before citing Sh=0.25. Residual ceiling unchanged: §84 paid security master. |
+| **OOS / Forward Validation** | 6.0/10 | B− | ↓ from 6.5 (v8.3 review) | OOS v6 CLEAN: N=51, Sh=0.16 — but CLEAN excludes tickers blocked *because they lost* (STT/MTB blocked citing OOS v5 results themselves; APH on N=4 live trades) = selection on outcomes. **OOS-ALL (Sh 0.04–0.05) is the honest generalization number.** Pre-specified v7/v8/v9 ticker locking remains genuinely good practice. SR=0 still inside CI at N=51; need N≥387 to clear. |
+| **Live Alpha Quality** | 6.8/10 | B | ↓ from 7.5 (v8.3 review) | **Delivered confidence is currently scaled ×0.60–1.40 by a meta-model trained on NaN/constant features** (train/serve skew, CRITICAL — disable `meta_prob` until retrained on a feature-complete trades CSV). v8.2 wins still real: score-band sizing, dynamic RSI stops, MR-count=2 shipped via backtest validation; `sector_etf` decoupling (b3dbe29). Ceiling: §85-1 audit still pending ≥200 resolved signals. |
+| **Gate Stack (§47–§83)** | 8.8/10 | A− | ↓ from 9.1 (v8.3 review: per-ticker blocks/adaptive conf floors act on N=4 live outcomes — online noise-fitting; require N≥30) | 29 of 31 strategies live; residual stat-arb / trend / factor sleeves. **v8.2:** MR-count=2 refinement (≥2 MR conditions vs 1) validated via 12-approach backtest sweep (+0.01 Sharpe, −1 trade) and shipped live. **v8.1 new live gates:** §14 FRED macro-regime panel + credit-spread fix (56976d7), Polygon short-volume gate (6a35a00), dynamic sector limits + XLI sector ML model + dynamic sector-gate unblocking (2f0cdcd). **§63 correctness fix:** now gated on the Engle-Granger step-2 ADF stationarity test (statsmodels) — no longer fires on spurious-regression pairs. Remaining: §62 VRP + options-flow/GEX (paid data). |
+| **Backtest Infrastructure** | 7.8/10 | B+ | ↓ from 8.2 (v8.3 review) | **v8.3 bugs found:** headline `max_dd` in `stats()` computed over per-ticker-concatenated (non-chronological) trade order — only `run_portfolio_simulation` DD is valid; no-exit time fallback hardcodes `i+1` instead of `_fill_bar` (wrong under `entry_delay_override`); no experiment registry → DSR trial count unfalsifiable. Replay engine (QENG-2b) + version lineage (QENG-2c). **v8.2:** 12 new research CLI flags in `backtest_technicals.py` enabling rapid Sharpe-improvement sweep (score-band sizing, dynamic stops, MR-count override, consecutive score, score acceleration, entry delay, DOW filter, buy-thresh override, etc.). **v8.1:** survivorship-free PIT universe wired into the backtest; new cross-sectional L/S harness (`cross_sectional_alpha_model.py`) with purged expanding-window WF CV, block-bootstrap Sharpe CI, and cost + stock-borrow sensitivity sweeps. PIT feature store now past the v8.0.1 NaN→json crash; still wants burn-in. |
+| **Confidence Calibration** | 6.8/10 | B | ↓ from 7.6 (v8.3 review) | Walk-forward fit protocol is correct in time, but: calibration is trained on *final stored* confidence yet applied mid-pipeline (before ML blend + peer haircut) — stage mismatch; weekly refits ingest already-calibrated outputs (isotonic-on-isotonic feedback loop); win label is frictionless `pct>0` mixing 14d and ~7d outcomes against a 10d hold. Fix: persist `raw_confidence`, calibrate raw→outcome, apply as the last confidence-mutating step. Cal v4 Brier 0.2641; ModelRegistry + rollback remain ✅. |
 
 ### Risk & Execution
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **Risk Management** | 9.0/10 | A | ↑ from 8.9 | RISK-1/2/4 stop/circuit-breaker/kill-switch; broker recon; per-ticker ADV/vol/spread capacity. **v8.1:** portfolio allocator drawdown throttle + L7 sizing + vol scaling (a5b96e4), dynamic sector limits (2f0cdcd), cross-sleeve capital sizing (49712cd), unvalidated sleeves disabled (3e4e102). |
-| **Execution & Friction** | 8.0/10 | B+ | ↑ from 7.2 | Added live fill ledger (QENG-3a) and TCA service (QENG-3b) for realized slippage, spread capture, shortfall, and fee analysis. Dual-broker execution. Flat 0.50% friction. |
+| **Risk Management** | 9.0/10 | A | ↓ from 9.1 (v8.3: backtest DD reporting unreliable — trade-close granularity only, no MAE/CVaR/worst-5; live risk machinery itself unaffected) | RISK-1/2/4 stop/circuit-breaker/kill-switch; broker recon; per-ticker ADV/vol/spread capacity. **v8.2:** dynamic RSI stops (widen to 2.0× ATR when RSI<30, 1.75× when RSI<35) improve stop placement on deepest oversold entries; L7 score-band sizing (non-linear step function 0.50×–1.55×) replaces linear Kelly for better risk-adjusted capital allocation. **v8.1:** portfolio allocator drawdown throttle + L7 sizing + vol scaling (a5b96e4), dynamic sector limits (2f0cdcd), cross-sleeve capital sizing (49712cd), unvalidated sleeves disabled (3e4e102). |
+| **Execution & Friction** | 7.8/10 | B+ | ↓ from 8.0 (v8.3 review) | Live fill ledger (QENG-3a) + TCA service (QENG-3b); dual-broker execution; flat 0.50% friction defensible at ≥$50M-ADV. **v8.3 gaps:** backtest gap-through stop slippage (0.15%) thin for earnings gaps (compounded by filing-date blackout proxy); no per-trade signal-price-vs-broker-fill distribution telemetry; dollar-volume gate uses adjusted prices (understates historical liquidity). |
 | **Sector Concentration** | 7.8/10 | B+ | ↑ from 7.6 | HARD_LIMIT 30%, SOFT_LIMIT 20%. §83 correlation penalty. XLI blocked. **v8.1:** dynamic per-sector limits + data-driven sector-gate unblocking + XLI sector ML model (2f0cdcd). |
 
 ### Product & Deployment
@@ -445,36 +455,40 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **ML Methodology** | 9.0/10 | A− | ↑ from 8.9 | Triple-barrier meta-labeling (QENG-6a), ModelRegistry, feature-schema validation, calibration rollback, Entry OOS AUC=0.6399. **v8.1:** hand-rolled HMM → `hmmlearn`; XLI sector ML model trained (2f0cdcd); alphalens-validated WQ-101 IC + orthogonality harness (`scripts/research/`); cross-sectional model net-positive at h=21 (cost+borrow-robust) deployed live in SHADOW. Ceiling: live shadow unproven; cross-sectional IC still ~0.002 (data-bound). |
+| **ML Methodology** | 7.2/10 | B | ↓ from 9.0 (v8.3 review) | **CRITICAL: triple-barrier meta-labeling (QENG-6a) labels are sound but its feature matrix is broken** — trained from a trades CSV missing 11 of 14 features (NaN/constants at train, real values at serve) while live confidence is scaled by its output. Champion/challenger compares AUCs from *different* test windows (cross-window noise ≈ 8× the 0.005 promotion delta); `purged_expanding_cv` embargo is 20 *rows*, not days; `validate_feature_schema` checks vector length only — no PSI/feature-drift monitor (the one that would have caught the skew). Still genuinely good: tautology-aware feature exclusion (`confidence`/`raw_score` excluded), purged CV for the entry model, self-gating retrain (rejected Δ−0.0011 correctly), HMM trailing-window fit leak-free live, §86 shadow-only discipline. Entry OOS AUC=0.6399. |
 | **Signal Engine / Gate Stack** | 8.5/10 | B+ | — | Decomposition to services/engines/, parity tests, machine-readable gate trace, gate registry, signal-policy versioning. **v8.1:** `sector_etf` decoupled from RS fetch + policy_version stamping (b3dbe29); cross-sectional alpha model wired into `scan_all` in SHADOW mode (`crossSectionalShadowPct` per signal; no action impact). Remaining: ~5.2k-line generate_signal() scorer. |
 | **Backend Architecture** | 9.0/10 | A− | ↑ from 8.5 | Strong decomposition + integrated portfolio allocator, HRP baseline, turnover control, residual stat-arb sleeve, TS-momentum, cross-sectional factors, cross-sleeve allocator, cohort routing. **R10-16 done:** aux-data persistence now runs in a SAVEPOINT (one bad ticker can't abort the cycle) + a global `asyncio` exception handler logs unretrieved task failures instead of swallowing them. |
 | **Data Pipeline** | 8.4/10 | B+ | ↑ from 8.3 | Excellent source breadth (Polygon + yfinance + FRED + EDGAR + options + execution). **v8.1:** §14 FRED macro-regime panel + credit-spread scaling fix (56976d7), Polygon short-volume gate (6a35a00), point-in-time S&P constituents; quant libs `statsmodels`/`hmmlearn`/`arch` added (numpy-1.26 safe). Reliability ceiling persists from v8.0.1 (prod-break history); breadth real, live reliability still re-proving. |
-| **Test Coverage** | 8.0/10 | B+ | ↑ from 7.5 | **R10-18 partial:** `test_r10_hardening.py` adds regression guards for both audit bugs — NaN/Inf fuzzing on the json writer, the real `save_feature_snapshot` sanitization path, the `uq_provider_endpoint` constraint, and duplicate-row resilience (both fail against the old code). Still open: a true end-to-end "scan persists against real Postgres" test, TEST-4 mutation testing (>70%), and §69–§74 gate unit tests. |
+| **Test Coverage** | 7.7/10 | B+ | ↓ from 8.0 (v8.3: no test asserts ML training-feature NaN rates or train/serve distribution parity — the meta-model skew shipped green; add NaN-rate assertions + PSI checks to both trainers) | **R10-18 partial:** `test_r10_hardening.py` adds regression guards for both audit bugs — NaN/Inf fuzzing on the json writer, the real `save_feature_snapshot` sanitization path, the `uq_provider_endpoint` constraint, and duplicate-row resilience (both fail against the old code). Still open: a true end-to-end "scan persists against real Postgres" test, TEST-4 mutation testing (>70%), and §69–§74 gate unit tests. |
 
-### Adversarial Assessment — v7.2 → v7.3 → v7.4 → v7.5 → v7.6 → v7.8
+### Adversarial Assessment — v7.2 → v7.3 → v7.4 → v7.5 → v7.6 → v7.8 → v8.2 → v8.3
 
 > v8.0 (Quant Engine implementation) upgrades alpha/backtesting, risk, execution friction tracking, and ML modeling capabilities substantially, checking off almost the entire QENG roadmap.
 > **v8.0.1 caveat (2026-06-08):** a hostile reviewer reading the server logs (not just the test report) would dock Test Coverage hard — two of the marquee features (QENG-2a feature store, TSYS-5a scorecard) were crashing/non-functional in production while the suite stayed green. The lesson is the gap between green-on-mocks and works-under-load, not the feature count.
 
 > Scores a hostile quant engineer would assign at each snapshot. Trajectory shows real improvement, not feature-count inflation.
 
-| Category | v7.2 | v7.3 | v7.4 | v7.5 | v7.6 | v7.8 | **v8.1 (2026-06-09)** | Hard Ceiling | Root Cause of Ceiling |
-|---|---|---|---|---|---|---|---|---|---|
-| Backtest Methodology | 3/10 | 7/10 | 7/10 | 7.5/10 | 7.5/10 | 7.5/10 | **8.2/10** | 8.5/10 → ceiling raised | Survivorship bias CORRECTED (free PIT constituents); residual = paid security master for clean delisted prices (§84) |
-| OOS Validation | 2/10 | 5.5/10 | 6.1/10 | 6.3/10 | 6.3/10 | 6.3/10 | **6.5/10** | 7/10 | SR=0 inside CI at N=51; need N≥387 |
-| Signal Generation | 6.5/10 | 6.5/10 | 6.5/10 | 6.5/10 | 6.8/10 | 6.8/10 | **7.3/10** | 8/10 | sector_etf-decouple fix landed; §85-1 still pending ≥200 resolved |
-| Risk Management | 6.5/10 | 7.5/10 | 8.5/10 | 8.5/10 | 8.5/10 | 8.6/10 | **9.0/10** | 9/10 | Drawdown throttle + vol scaling + dynamic sector limits added; Kelly still global WR |
-| ML Methodology | 3.5/10 | 7.5/10 | 8.2/10 | 8.4/10 | 8.4/10 | 8.5/10 | **9.0/10** | 8.5/10 → ceiling raised | v8.1: hmmlearn HMM + WQ-101/alphalens harness + cross-sectional model (h=21 net +0.347) live in SHADOW. Triple-barrier meta-labeling + model registry; live models experimental until forward-validated |
-| Friction & Execution | 4/10 | 7/10 | 7.2/10 | 7.2/10 | 7.2/10 | 7.2/10 | **8.0/10** | 8/10 | Fill ledger + TCA service added; variable spread by ticker not modeled |
-| Product & Security | 5/10 | 6.5/10 | 8.5/10 | 8.9/10 | 9.0/10 | 9.2/10 | **9.3/10** | 9/10 → ceiling raised | Audit trail + key rotation + risk-ack + deletion verification; owner password/HTTPS/VAPID still needed |
-| Test Coverage | 7/10 | 8.5/10 | 9.3/10 | 9.5/10 | 9.6/10 | 9.7/10 | **8.0/10** | 9/10 | R10-18 added regression guards for both audit bugs; still unit/mock-heavy with no real-Postgres integration test; §69–§74 gates + mutation testing pending |
+| Category | v7.2 | v7.3 | v7.4 | v7.5 | v7.6 | v7.8 | v8.1 | v8.2 | **v8.3 (2026-06-09)** | Hard Ceiling | Root Cause of Ceiling |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Backtest Methodology | 3/10 | 7/10 | 7/10 | 7.5/10 | 7.5/10 | 7.5/10 | 8.2/10 | 8.3/10 | **7.4/10** | 8.5/10 | v8.3 review: FRED publication-lag look-ahead (Gate 2), filing-date earnings proxy, DSR fails at honest trial count (≳300 vs hardcoded 50), PIT placebo fallback. Residual: paid security master (§84) |
+| OOS Validation | 2/10 | 5.5/10 | 6.1/10 | 6.3/10 | 6.3/10 | 6.3/10 | 6.5/10 | 6.5/10 | **6.0/10** | 7/10 | v8.3: OOS-CLEAN conditions on outcome-selected blocks — OOS-ALL (Sh 0.04) is the honest number. SR=0 inside CI at N=51; need N≥387 |
+| Signal Generation | 6.5/10 | 6.5/10 | 6.5/10 | 6.5/10 | 6.8/10 | 6.8/10 | 7.3/10 | 7.5/10 | **7.0/10** | 8/10 | v8.3: live confidence scaled ×0.60–1.40 by the skewed meta-model; calibration stage mismatch. v8.2 sizing/stop wins remain real |
+| Risk Management | 6.5/10 | 7.5/10 | 8.5/10 | 8.5/10 | 8.5/10 | 8.6/10 | 9.0/10 | 9.1/10 | **9.0/10** | 9.5/10 | v8.3: backtest DD trade-close-only + non-chronological headline max_dd; no MAE/CVaR. Live machinery sound. Kelly still global WR |
+| ML Methodology | 3.5/10 | 7.5/10 | 8.2/10 | 8.4/10 | 8.4/10 | 8.5/10 | 9.0/10 | 9.0/10 | **7.2/10** | 8.5/10 | v8.3: meta-model train/serve skew (CRITICAL, live); champion/challenger cross-window AUC comparison; embargo in rows not days; no feature-drift monitor. The 9.0 rated features existing, not being correct — v8.0.1 lesson, quant edition |
+| Friction & Execution | 4/10 | 7/10 | 7.2/10 | 7.2/10 | 7.2/10 | 7.2/10 | 8.0/10 | 8.0/10 | **7.8/10** | 8/10 | v8.3: gap-through stop slip thin; no signal-vs-fill telemetry; adjusted-price liquidity gate. Fill ledger + TCA remain |
+| Product & Security | 5/10 | 6.5/10 | 8.5/10 | 8.9/10 | 9.0/10 | 9.2/10 | 9.3/10 | 9.3/10 | **9.3/10** | 9/10 → ceiling raised | Unchanged — v8.3 findings are methodological, not product. Owner password/HTTPS/VAPID still needed |
+| Test Coverage | 7/10 | 8.5/10 | 9.3/10 | 9.5/10 | 9.6/10 | 9.7/10 | 8.0/10 | 8.0/10 | **7.7/10** | 9/10 | v8.3: meta-model skew shipped green — no NaN-rate/train-serve-parity assertions in ML trainers; still no real-Postgres integration test; §69–§74 gates + mutation testing pending |
 
 ### Next Highest-Leverage Improvements
 
 | Priority | Item | Effort | Expected Δ |
 |---|---|---|---|
+| 🔴 0a | **Disable `meta_prob` in `blend_confidence`** until meta-model retrained on a feature-complete trades CSV (v8.3 CRITICAL) | One-line | Stops untrained ×0.60–1.40 live confidence scaling |
+| 🔴 0b | **Regenerate `backtest_trades_is.csv` with all 14 meta features + retrain meta-model** (rename `vix_entry`, add entry_prob/ou_halflife/hurst/rvol/sector_etf/term ratios; NaN-rate assertion) | Medium | Meta-label model becomes real |
+| 🔴 0c | **Publication-lag STLFSI4/NFCI (~5–7d) + PIT file load-or-fail; re-run canon** | Low-medium | Honest IS baseline (likely −Δ Sharpe) |
 | 🔴 1 | **Unusual Whales options flow** (~$50/mo) | Paid + impl | +0.15–0.25 Sharpe |
 | 🔴 2 | **Deploy to HTTPS + Stripe webhook** | Config | Unblocks paid users |
+| 🟠 2b | **Experiment registry → honest DSR `n_trials`; shared frozen champion/challenger window; date-sort before `stats()`** (v8.3) | Low-medium | Trustworthy significance + DD claims |
 | 🟠 3 | **§85-1 fundamental audit** (≥200 resolved signals) | Wait + script | Remove dead modifiers |
 | 🟠 4 | **OOS v7 validation** (≥30 live trades in pre-specified tickers) | Wait | Confirms edge in new names |
 | 🟠 5 | **Survivorship bias correction** (Norgate/EODHD, ~$20/mo) | Paid + impl | Honest IS −2–4pp WR |
@@ -3242,4 +3256,96 @@ Babel CDN removed from all production paths. Three esbuild bundles built:
 
 `load-app.js` hardened: Babel fallback localhost-only, error shown in production if bundle missing. `sw.js` cache version bumped to v4. React dev builds → production builds. CSP `unsafe-eval` was already removed in §43; production path now truly eval-free.
 
-*§InvestigationResults + §Russell1000 + §A8 complete · 2026-05-31*
+---
+
+## §83 — Sharpe Improvement Sweep (2026-06-09)
+
+Systematic backtest of 12 candidate improvements on 100-ticker/23yr IS universe with full gate stack (§59–§82). Goal: improve Sharpe while maintaining or improving trade count. All runs include score-band-sizing + dynamic-stop-RSI + no-family-discount as baseline.
+
+### §83a. New CLI Flags Implemented
+
+| Flag | Parameter | Description |
+|:---|:---|:---|
+| `--score-band-sizing` | — | Non-linear position sizing by Sharpe band (L7 step function) |
+| `--dynamic-stop-rsi` | — | Widen stops to 2.0× ATR when entry RSI<30, 1.75× when RSI<35 |
+| `--no-family-discount` | — | Remove 0.90× trend and 0.85× volume family multipliers |
+| `--entry-delay` | — | T+2 fill (skip continuation morning) |
+| `--consec-score` | — | Require score ≥ threshold on 2 consecutive days |
+| `--consec-score-grad N` | float | Graduated threshold for prev-day score (e.g. 45) |
+| `--target-mult X` | float | Override profit target multiplier |
+| `--max-loss-days N` | int | Override max loss days |
+| `--dow-filter DOW` | str | Block entries on specified days (MON/TUE/WED/THU/FRI) |
+| `--mr-count N` | int | Require N simultaneous MR conditions |
+| `--buy-thresh N` | int | Override BUY threshold |
+| `--score-accel` | — | Require today's score > yesterday's score |
+
+### §83b. Results — Trade-Count-Maintaining Filters
+
+| Approach | Trades | WR | Avg Ret | Sharpe | Max DD | Verdict |
+|:---|---:|---:|---:|---:|---:|:---|
+| Baseline (3 flags) | 155 | 67.1% | +0.72% | **0.20** | -0.78% | Reference |
+| `--mr-count 2` | 154 | 67.5% | +0.74% | **0.21** | -0.78% | ✅ +0.01 Sharpe, −1 trade |
+| `--mr-count 2 --rsi-ceil 45` | 154 | 67.5% | +0.74% | **0.21** | -0.78% | ⚪ Same as MR-count-2 alone |
+| `--rsi-ceil 38` | 155 | 67.1% | +0.72% | **0.20** | -0.78% | ⚪ No effect |
+| `--rsi-ceil 45 --ibs-ceil 0.10` | 154 | 67.5% | +0.74% | **0.21** | -0.78% | ⚪ Same as MR-count-2 |
+| `--dow-filter FRI` | 151 | 66.9% | +0.71% | **0.20** | -0.78% | ⚪ Neutral |
+| `--target-mult 2.5` | 155 | 66.5% | +0.74% | **0.20** | -0.77% | ⚪ Neutral |
+| `--target-mult 1.5` | 155 | 68.4% | +0.57% | **0.17** | -0.82% | ❌ Worse |
+| `--max-loss-days 3` | 155 | 65.8% | +0.66% | **0.18** | -0.80% | ❌ Worse |
+
+**Score-band sizing A/B (within baseline run):**
+
+| | Flat Sizing | Score-Band Sizing | Δ |
+|:---|---:|---:|---:|
+| Win Rate | 67.1% | 68.8% | +1.7pp |
+| Weighted Avg | +0.72% | +0.89% | +0.17pp |
+| Sharpe | 0.20 | **0.25** | **+0.05** |
+
+### §83c. Results — Trade-Count-Reducing Filters
+
+| Approach | Trades | WR | Avg Ret | Sharpe | Max DD | Verdict |
+|:---|---:|---:|---:|---:|---:|:---|
+| `--consec-score` | 42 | 69.0% | +1.16% | **0.34** | -0.62% | ✅ +0.14 Sharpe, −73% trades |
+| `--consec-score --grad 45` | 53 | 69.8% | +1.18% | **0.34** | -0.50% | ✅ +0.14 Sharpe, −66% trades |
+| `--consec-score --grad 44` | 66 | 65.2% | +0.79% | **0.23** | -0.63% | ⚪ +0.03 Sharpe, −57% trades |
+| `--consec-score --grad 43` | 70 | 64.3% | +0.70% | **0.20** | -0.63% | ⚪ 0.00 Sharpe, −55% trades |
+| `--consec-score --grad 42` | 73 | 65.8% | +0.83% | **0.24** | -0.59% | ⚪ +0.04 Sharpe, −53% trades |
+| `--consec-score --grad 40` | 71 | 69.0% | +1.00% | **0.28** | -0.41% | ✅ +0.08 Sharpe, −54% trades |
+| `--consec-score --buy-thresh 48` | 62 | 66.1% | +0.97% | **0.26** | -0.71% | ✅ +0.06 Sharpe, −60% trades |
+| `--score-accel` | 150 | 64.0% | +0.52% | **0.15** | -1.15% | ❌ Worse |
+| `--entry-delay` | 155 | 61.3% | +0.18% | **0.05** | -1.99% | ❌ Much worse |
+
+### §83d. Consec-Score Frontier
+
+| Prev-Day Threshold | Trades | Sharpe | Avg Ret | WR |
+|:---|---:|---:|---:|---:|
+| ≥ 50 (pure) | 42 | **0.34** | +1.16% | 69.0% |
+| ≥ 45 | 53 | **0.34** | +1.18% | 69.8% |
+| ≥ 44 | 66 | **0.23** | +0.79% | 65.2% |
+| ≥ 43 | 70 | **0.20** | +0.70% | 64.3% |
+| ≥ 42 | 73 | **0.24** | +0.83% | 65.8% |
+| ≥ 40 | 71 | **0.28** | +1.00% | 69.0% |
+
+The frontier is non-monotonic due to sampling error (small N at each point). The safest conclusion: **any consecutive-score filter between 40–50 improves Sharpe to ~0.25–0.34 at the cost of 50–70% of trades.**
+
+### §83e. Live Engine Changes Deployed
+
+| Change | File | Backtest Result |
+|:---|:---|:---|
+| **Score-band sizing (L7)** | `assembler.py` | +0.05 Sharpe, same trades |
+| **Dynamic RSI stops** | `helpers.py` `_levels()` | Embedded in baseline |
+| **MR-count=2** | `assembler.py` `_has_mr` | +0.01 Sharpe, −1 trade |
+
+### §83f. Key Findings
+
+1. **Score-band sizing is the clearest winner.** Non-linear step-function sizing (0.50× at <50, 1.55× at ≥75) improves Sharpe +0.05 with zero trade-count impact. Already wired into live `positionSizeScale` L7.
+
+2. **MR-count=2 is the only filter that improves Sharpe while keeping trades flat.** +0.01 Sharpe, −1 trade. Justified because it costs nothing and filters the weakest single-condition setups (IBS-only entries that disproportionately hit stops).
+
+3. **Consecutive score is the biggest Sharpe booster but kills trade count.** +0.14 Sharpe (+70%) at the cost of −73% trades. Best used as a "Tier-1" high-conviction signal tier, not applied to the main flow.
+
+4. **Score acceleration is a failure.** Requiring `score_today > score_yesterday` drops Sharpe to 0.15. Filters out flat-score high-conviction setups where the bounce is already primed.
+
+5. **Entry delay (T+2 fill) is destructive.** Sharpe collapses to 0.05. Skipping the continuation morning removes too many valid entries.
+
+*§83 complete · 2026-06-09*

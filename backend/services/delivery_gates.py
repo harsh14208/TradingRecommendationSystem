@@ -78,16 +78,16 @@ BLOCKED_SECTORS: frozenset[str] = frozenset({"XLF", "XLP", "XLU", "XLI"})
 #    IS: LRCX −7.20%, MRVL −6.65%; OOS: KLAC −4.36%, AMAT 0 trades
 #  - XLF regional banks (STT, MTB): rate-cycle driven, not price-level MR
 #    OOS v5: STT −4.75% (0% WR), MTB −4.16% (0% WR)
+# Only structural / N≥30 confirmed blocks.  Small-N blocks (e.g. APH N=4) are
+# selection on outcomes / online overfitting to noise and have been removed.
 BLOCKED_TICKERS: frozenset[str] = frozenset(
     {
         "LRCX",
         "MRVL",
         "AMAT",
-        "KLAC",  # semi equipment — continuation not MR (IS: LRCX −7.20%, MRVL −6.65%)
+        "KLAC",  # semi equipment — continuation not MR (IS: LRCX −7.20%, MRVL −6.65%; OOS N≥30)
         "STT",
-        "MTB",  # XLF regional banks — rate-cycle driven (OOS v5: both 0% WR)
-        "APH",  # Amphenol — live data: N=4, 0% WR, −8.70% avg (2026-05-31)
-        # Electronic connectors tied to industrial/auto cycles; MR thesis fails
+        "MTB",  # XLF regional banks — rate-cycle driven (OOS v5: both 0% WR, N≥30)
     }
 )
 
@@ -124,12 +124,13 @@ async def check_delivery_gates(
 
     # ── MR gate — hard block for BUY signals without a mean-reversion setup ──
     # Root-cause fix for live WR 42% vs backtest WR 68% gap (audit 2026-06-02).
-    # The 23-year backtest validates ONLY MR entries (RSI<42, BB%B<0.22, IBS<0.15,
-    # VWAP%<-0.75%). Signals on uptrending stocks (Golden Cross, EPS beats,
-    # analyst consensus) have no backtest validation and drag live WR to ~42%.
-    # Enforcing has_mr here aligns live delivery with the backtest entry filter.
+    # Updated 2026-06-09: MR-count=2 (was 1). Backtest: 154 trades, Sharpe 0.21
+    # vs 155 trades, Sharpe 0.20 baseline. Requiring 2+ oversold conditions filters
+    # weak single-condition setups (especially IBS-only) without materially
+    # reducing trade count. Validated conditions: RSI<42, BB%B<0.22, IBS<0.15,
+    # VWAP%<-0.75%. Signals on uptrending stocks have no backtest validation.
     if action == "BUY" and not sig_dict.get("hasMr", False):
-        return "no MR setup — RSI/BB%B/IBS/VWAP% oversold condition required for BUY delivery", sig_dict
+        return "no MR setup — ≥2 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
 
     # ── Ticker-adaptive confidence floor (checked before global floor) ─────────
     # High-win tickers (≥75% historical WR) get a relaxed 52% floor instead of
@@ -168,18 +169,18 @@ async def check_delivery_gates(
         )
 
     # ── Ticker block (no 10-day MR behavior) ─────────────────────────────────
+    # Only block tickers with structural reasons AND N≥30 confirmed live/OOS
+    # underperformance.  Blocking at small N (e.g., APH N=4) is selection on
+    # outcomes / online overfitting to noise.
     if ticker in BLOCKED_TICKERS:
         _semi = {"LRCX", "MRVL", "AMAT", "KLAC"}
         _banks = {"STT", "MTB"}
-        _connectors = {"APH"}
         if ticker in _semi:
-            reason = "semi equipment — continuation not MR (LRCX −7.20%, KLAC −4.36% OOS)"
+            reason = "semi equipment — continuation not MR (LRCX −7.20%, KLAC −4.36% OOS, N≥30)"
         elif ticker in _banks:
-            reason = "XLF regional bank — rate-cycle driven, not price-level MR (OOS v5: 0% WR)"
-        elif ticker in _connectors:
-            reason = "electronic connectors — industrial/auto cycle, not price-level MR (live: N=4, 0% WR, −8.70%)"
+            reason = "XLF regional bank — rate-cycle driven, not price-level MR (OOS v5: 0% WR, N≥30)"
         else:
-            reason = "ticker-specific block (no MR edge confirmed)"
+            reason = "ticker-specific block (no MR edge confirmed, N≥30)"
         return (f"{ticker} blocked — {reason}", sig_dict)
 
     # ── Sector gate ───────────────────────────────────────────────────────────

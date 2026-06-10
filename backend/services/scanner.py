@@ -718,7 +718,9 @@ async def _compute_adaptive_weights() -> dict:
         _HALFLIFE_DAYS = 60.0  # outcomes from 60 days ago count at half weight
 
         for ticker, entries in ticker_outcomes.items():
-            if len(entries) < 3:
+            # Require N≥30 before any per-ticker adaptive action to avoid online
+            # overfitting to noise (e.g., APH at N=4, 0% WR).
+            if len(entries) < 30:
                 continue
 
             # Recency-weighted win rate

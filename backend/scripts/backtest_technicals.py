@@ -19,6 +19,7 @@ Score family caps (technical-only backtest — calibrated independently from liv
   BUY threshold : score ≥ 50
   SELL threshold: score ≤ −100 (disabled)
   VIX tiers     : BUY blocked >30; marginal BUY (score<45) blocked 25-30
+  MR gate       : ≥2 of {RSI<42, BB%B<0.22, IBS<0.15, VWAP%<-0.75%} (2026-06-09: 1→2)
   SPY trend     : BUY requires SPY>SMA200 (or RSI<30/score≥55)
   STLFSI4       : FRED financial stress — hard-blocks BUY >1.5+VIX>30; marginal block >1.0+VIX>25
   Stops/targets : ATR-based swing, universal 1.5s/2.0t (matches live _levels(); ADX>35 branch removed)
@@ -35,6 +36,7 @@ Run from backend/:
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import sys
@@ -55,6 +57,51 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+
+def _log_experiment(
+    experiment_type: str,
+    hypothesis: str,
+    n_trials: int = 1,
+    is_metrics: dict | None = None,
+) -> None:
+    """Append experiment record to local registry for honest DSR trial counting."""
+    try:
+        import subprocess
+        from datetime import datetime, timezone
+
+        git_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except Exception:
+        git_sha = None
+
+    record = {
+        "experiment_type": experiment_type,
+        "hypothesis": hypothesis,
+        "git_sha": git_sha,
+        "number_of_trials": n_trials,
+        "is_metrics": is_metrics or {},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _exp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "experiment_registry.jsonl")
+    try:
+        with open(_exp_path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
+def _count_experiments() -> int:
+    try:
+        _exp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "experiment_registry.jsonl")
+        if not os.path.exists(_exp_path):
+            return 0
+        with open(_exp_path) as f:
+            return sum(json.loads(line).get("number_of_trials", 1) for line in f if line.strip())
+    except Exception:
+        return 0
 
 
 def cached_yf_download(
@@ -109,60 +156,31 @@ def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
         _HERE = os.path.dirname(os.path.abspath(__file__))
         path = os.path.abspath(os.path.join(_HERE, "..", "data", "sp500_historical_constituents.json"))
         if not os.path.exists(path):
-            try:
-                start_all = "2003-01-01"
-                end_all = "2026-06-08"
-                default_map = {
-                    # Delisted
-                    "LEH": [["2003-01-01", "2008-09-17"]],
-                    "BSC": [["2003-01-01", "2008-05-30"]],
-                    "WM": [["2003-01-01", "2008-09-25"]],
-                    "SHLD": [["2003-01-01", "2012-09-04"]],
-                    # Additions
-                    "AMZN": [["2005-11-18", end_all]],
-                    "GOOG": [["2006-04-27", end_all]],
-                    "META": [["2013-12-23", end_all]],
-                    "NFLX": [["2010-12-20", end_all]],
-                    "TSLA": [["2020-12-21", end_all]],
-                    "BRK-B": [["2010-02-16", end_all]],
-                    "CRM": [["2008-09-15", end_all]],
-                    "V": [["2009-12-21", end_all]],
-                    "MA": [["2008-07-18", end_all]],
-                    "PYPL": [["2015-07-20", end_all]],
-                    "AVGO": [["2014-05-08", end_all]],
-                    "NOW": [["2019-11-21", end_all]],
-                    "LULU": [["2023-12-18", end_all]],
-                    "PANW": [["2023-06-20", end_all]],
-                    "WDAY": [["2023-12-18", end_all]],
-                    "CRWD": [["2024-06-24", end_all]],
-                    "PLTR": [["2024-09-23", end_all]],
-                    "SMCI": [["2024-03-18", end_all]],
-                }
-
-                # Combine all tickers from script
-                tickers_list = globals().get("TICKERS", [])
-                held_out_list = globals().get("HELD_OUT_TICKERS", [])
-                curated_list = globals().get("_CURATED_OUT_TICKERS", [])
-                graduated_list = globals().get("_GRADUATED_TICKERS", [])
-
-                all_scr_tickers = set(tickers_list + held_out_list + curated_list + graduated_list)
-                for t in all_scr_tickers:
-                    if t not in default_map:
-                        default_map[t] = [[start_all, end_all]]
-
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w") as f:
-                    json.dump(default_map, f, indent=4)
-                print(f"\n[PIT Constituents] Generated default index membership database: {path}\n")
-            except Exception as e:
-                print(f"Failed to generate constituents file: {e}")
+            raise FileNotFoundError(
+                f"PIT constituents file missing: {path}. "
+                "Download from fja05680/sp500-historical-constituents or equivalent "
+                "point-in-time source. Auto-generated defaults silently remove the "
+                "survivorship correction and invalidate backtest results."
+            )
 
         try:
             with open(path) as f:
                 _CONSTITUENTS_MAP = json.load(f)
         except Exception as e:
-            print(f"Failed to load constituents file: {e}")
-            _CONSTITUENTS_MAP = {}
+            raise RuntimeError(f"Failed to load constituents file {path}: {e}") from e
+
+        if not isinstance(_CONSTITUENTS_MAP, dict):
+            raise RuntimeError(f"Constituents file {path} is not a JSON object.")
+
+        # Provenance check: if the file was generated from a known PIT source it
+        # should carry a '_source' key.  Warn (don't hard-fail) so legacy files
+        # still load while the team pins provenance on the next refresh.
+        if "_source" not in _CONSTITUENTS_MAP:
+            print(
+                f"\n⚠ [PIT Constituents] {path} lacks '_source' provenance key. "
+                "Assert that this file came from fja05680/sp500-historical-constituents "
+                "or another verified PIT source.\n"
+            )
 
     lookup_ticker = ticker
     if ticker == "LEH":
@@ -979,7 +997,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── RVOL + surge/dry-up flags ─────────────────────────────────────────────
     # Align with signal_engine: RVOL uses today's volume vs mean of prior 20 sessions (excluding today).
-    avg_prior20 = v.rolling(21).mean().shift(1)
+    avg_prior20 = v.shift(1).rolling(20).mean()
     df.loc[:, "rvol"] = v / avg_prior20.replace(0, np.nan)
     df.loc[:, "vol_surge"] = (df["rvol"] > 1.5).astype(float)  # >150% avg volume
     df.loc[:, "vol_dryup"] = (df["rvol"] < 0.5).astype(float)  # <50% avg volume
@@ -2504,10 +2522,13 @@ def simulate_ticker(
         # Skip entries where average daily dollar volume < MIN_AVG_DOLLAR_VOL.
         # Illiquid sessions inflate our 0.20% friction assumption; wide bid-ask
         # spreads on thin tape can easily absorb the entire expected edge.
+        # Use unadjusted close when available so historical dollar volume for
+        # dividend payers is not understated (adjusted close shrinks over time).
         if is_buy_signal and rvol > 0:
             raw_vol = float(df.iloc[i]["Volume"]) if "Volume" in df.columns else 0.0
             avg_vol_20 = raw_vol / rvol  # rvol = today / avg20 → avg20 = today/rvol
-            if price * avg_vol_20 < MIN_AVG_DOLLAR_VOL:
+            _liq_price = float(df.iloc[i]["Close"]) if "Adj Close" in df.columns else price
+            if _liq_price * avg_vol_20 < MIN_AVG_DOLLAR_VOL:
                 continue
 
         # ── Gate 15: Day-of-week — no Friday entries ──────────────────────────
@@ -2648,6 +2669,7 @@ def simulate_ticker(
         exit_reason = "time"
         exit_day = _hold_days
         _mfe_pct = 0.0  # max favorable excursion across hold bars
+        _mae_pct = 0.0  # max adverse excursion across hold bars
 
         for j in range(0, _hold_days):
             if _fill_bar + j >= len(df):
@@ -2659,11 +2681,13 @@ def simulate_ticker(
             day_close = float(bar["Close"])
 
             day_open = float(bar["Open"])
-            # Track MFE: best intrabar price reached vs entry
+            # Track MFE / MAE: best / worst intrabar price reached vs entry
             if action == "BUY":
                 _mfe_pct = max(_mfe_pct, (day_high - entry_price) / entry_price * 100)
+                _mae_pct = min(_mae_pct, (day_low - entry_price) / entry_price * 100)
             else:
                 _mfe_pct = max(_mfe_pct, (entry_price - day_low) / entry_price * 100)
+                _mae_pct = min(_mae_pct, (entry_price - day_high) / entry_price * 100)
             if action == "BUY":
                 if day_low <= stop_price:
                     # Gap-through: if the bar opened below the stop, fill at the open.
@@ -2767,7 +2791,7 @@ def simulate_ticker(
                     break
 
         if exit_price is None:
-            idx = min((i + 1) + (_hold_days - 1), len(df) - 1)
+            idx = min(_fill_bar + _hold_days - 1, len(df) - 1)
             exit_price = float(df.iloc[idx]["Close"])
             _exit_bar_idx = idx
 
@@ -2873,6 +2897,7 @@ def simulate_ticker(
                     1,
                 ),
                 "mfe_pct": round(_mfe_pct, 3),
+                "mae_pct": round(_mae_pct, 3),
                 "atr_pct": round(atr / entry_price * 100, 2) if entry_price > 0 else 0,
                 "days_to_earnings": _days_to_earn if _days_to_earn < 999 else None,
                 "days_since_earnings": _days_since_earn,
@@ -2911,6 +2936,7 @@ _EMPTY_STATS = {
     "pf": None,
     "sharpe": None,
     "max_dd": 0.0,
+    "avg_mae": None,
 }
 
 
@@ -3126,6 +3152,7 @@ def stats(rets: list[float]) -> dict:
         "pf": round(pf, 2) if pf != float("inf") else None,
         "sharpe": sharpe,
         "max_dd": round(max_dd, 2),
+        "avg_mae": None,
     }
 
 
@@ -3171,7 +3198,7 @@ def monte_carlo(trades_df, n_sims=10000):
         print("  > ⚠ 5th percentile < 0 — edge may not be real; treat Sharpe as upper bound.")
 
 
-def sharpe_ci_print(sr: float | None, n: int, n_trials: int = 50, label: str = "IS") -> None:
+def sharpe_ci_print(sr: float | None, n: int, n_trials: int | None = None, label: str = "IS") -> None:
     """Print Lo (2002) 95% CI for a per-trade Sharpe ratio and Deflated Sharpe warning.
 
     SE(SR) = sqrt((1 + SR^2/2) / N) where N is number of trades.
@@ -3181,10 +3208,18 @@ def sharpe_ci_print(sr: float | None, n: int, n_trials: int = 50, label: str = "
     searches (Bailey & López de Prado 2014 Deflated Sharpe Ratio), showing whether
     the IS Sharpe can be explained by data mining alone.
 
+    n_trials defaults to the env var SIGNAL_TRADE_N_TRIALS (fallback 300).
+    The research log documents ≥86 strategy sections plus sweeps and gate
+    ablations; 300 is a conservative lower-bound honest count.
+
     Prints: 95% CI bounds, whether SR=0 is inside, and the data-mining baseline.
     """
     if sr is None or n < 10:
         return
+    if n_trials is None:
+        n_trials = int(os.environ.get("SIGNAL_TRADE_N_TRIALS", "0"))
+        if n_trials <= 0:
+            n_trials = max(300, _count_experiments())
     se = math.sqrt((1 + sr**2 / 2) / n)
     lo = round(sr - 1.96 * se, 2)
     hi = round(sr + 1.96 * se, 2)
@@ -3354,7 +3389,15 @@ def fetch_cross_asset_composite(start: str, end: str) -> dict[pd.Timestamp, int]
 def fetch_earnings_dates_polygon(ticker: str, api_key: str, start: str) -> set:
     """Fetch quarterly filing dates from Polygon vX/reference/financials.
     Returns a set of pd.Timestamps covering full history back to start.
-    Uses filing_date as the earnings-event proxy (SEC 10-Q/10-K submission).
+
+    WARNING: This is a best-effort proxy for earnings announcement dates.
+    Polygon returns ``period_of_report_date`` (quarter end, closest to the
+    actual earnings event), ``filing_date`` (SEC 10-Q/10-K submission, lags
+    by days-to-weeks), and ``start_date`` (fallback).  We use the earliest
+    available date, but true announcement dates require a dedicated earnings
+    calendar API (e.g. Polygon ``vX/reference/dividends`` or a commercial
+    earnings-data feed).  Dates here may trail the press-release by several
+    days, so the blackout window is slightly conservative.
     Covers 2003-2022 — the gap yfinance cannot reach.
     """
     import os
@@ -3394,7 +3437,15 @@ def fetch_earnings_dates_polygon(ticker: str, api_key: str, start: str) -> set:
                 break
             body = r.json()
             for result in body.get("results") or []:
-                fd = result.get("filing_date") or result.get("start_date")
+                # Prefer dates closer to the actual announcement:
+                # period_of_report_date ≈ quarter end (closest to earnings)
+                # filing_date = SEC submission (lags by days-to-weeks)
+                # start_date = fallback
+                fd = (
+                    result.get("period_of_report_date")
+                    or result.get("filing_date")
+                    or result.get("start_date")
+                )
                 if fd:
                     dates.add(pd.Timestamp(str(fd)[:10]))
             # Polygon paginates via next_url
@@ -3444,7 +3495,12 @@ def fetch_fred_series(series_id: str, start: str, end: str, api_key: str) -> dic
         raw = {}
         for o in obs:
             try:
-                raw[pd.Timestamp(o["date"])] = float(o["value"])
+                # Point-in-time: use realtime_start (publication date) rather than
+                # observation date.  For weekly series (STLFSI4, NFCI) this lags
+                # the observation by ~5-7 days, eliminating look-ahead on stress
+                # readings that coincide with crisis-week MR entries.
+                key_date = pd.Timestamp(o.get("realtime_start") or o["date"])
+                raw[key_date] = float(o["value"])
             except (ValueError, KeyError):
                 pass  # "." = FRED missing-value marker
         if not raw:
@@ -3552,6 +3608,12 @@ def parameter_sweep(all_dfs, vix, spy_trend, stlfsi4):
             f" Bonferroni-adjusted significance level: α/{n_combos} = "
             f"{0.05 / n_combos:.4f}. Treat the selected BUY_THRESH as a starting"
             " point, not a proven optimal — validate on OOS data."
+        )
+        _log_experiment(
+            experiment_type="parameter_sweep",
+            hypothesis="BUY_THRESH / HOLD_DAYS grid search",
+            n_trials=len(results),
+            is_metrics={"sharpe": float(best["sharpe"]), "n": int(best["n"])},
         )
 
     # Restore original globals
@@ -3693,6 +3755,12 @@ def gate_sensitivity_sweep(
 
     print("> All sweepable gates removed. Use --validate-live-gates for the active gate ablation.")
     print("> Run --inv5 for the legacy ablation report on the removed gates.\n")
+    _log_experiment(
+        experiment_type="gate_ablation",
+        hypothesis="§59–§82 gate threshold sensitivity",
+        n_trials=0,
+        is_metrics={},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3981,6 +4049,17 @@ def run_walk_forward_with_opt(
             else "⛔ Negative walk-forward OOS — edge is in-sample only."
         )
         print(f"> {verdict}")
+    n_wf_trials = (len(EPOCH_DEFS) - 1) * len(WF_THRESH)
+    total_oos_n = sum(int(r[3]) for r in rows if r[3].isdigit())
+    _log_experiment(
+        experiment_type="walk_forward_threshold",
+        hypothesis="Walk-forward BUY_THRESH optimisation per epoch",
+        n_trials=n_wf_trials,
+        is_metrics={
+            "sharpe": round(float(np.mean(oos_sharpes)), 3) if oos_sharpes else None,
+            "n": total_oos_n,
+        },
+    )
     print()
 
 
@@ -4253,8 +4332,8 @@ def run_oos_validation(vix, spy_trend, stlfsi4):
     print()
 
     # Statistical significance of OOS Sharpe — essential context for any claim of alpha
-    sharpe_ci_print(sc.get("sharpe"), sc["n"], n_trials=50, label="OOS CLEAN")
-    sharpe_ci_print(s.get("sharpe"), s["n"], n_trials=50, label="OOS ALL")
+    sharpe_ci_print(sc.get("sharpe"), sc["n"], label="OOS CLEAN")
+    sharpe_ci_print(s.get("sharpe"), s["n"], label="OOS ALL")
 
     # Minimum N needed for OOS CI lower bound to exceed 0.0
     _target_sr = 0.10
@@ -4708,6 +4787,7 @@ def main():
         return
 
     trades = pd.concat(all_trades, ignore_index=True)
+    trades = trades.sort_values("date").reset_index(drop=True)
     trades["year"] = trades["date"].dt.year
     print(f"\nTotal simulated trades: {len(trades)}\n")
 
@@ -5221,7 +5301,7 @@ def main():
     )
     print(f"- **Max Drawdown:** -{s['max_dd']:.2f}% (5% sizing) across 20 years.")
     monte_carlo(trades)
-    sharpe_ci_print(s.get("sharpe"), s["n"], n_trials=50, label="IS")
+    sharpe_ci_print(s.get("sharpe"), s["n"], label="IS")
     run_walk_forward_temporal(trades)
 
     if bh_returns:
@@ -6782,7 +6862,14 @@ def main():
 
             # Tag each trade with VIX regime at entry
             def _vix_regime(entry_date):
-                v = vix.get(pd.Timestamp(str(entry_date)[:10]))
+                try:
+                    _dt_str = str(entry_date)[:10]
+                    # Guard against non-date scalars (e.g. price 150.25 → "150.25")
+                    if not _dt_str[:4].isdigit() or "-" not in _dt_str:
+                        return "unknown"
+                    v = vix.get(pd.Timestamp(_dt_str))
+                except Exception:
+                    return "unknown"
                 if v is None:
                     return "unknown"
                 if v < 20:
@@ -6791,7 +6878,10 @@ def main():
                     return "elevated (20–30)"
                 return "stress (>30)"
 
-            if "entry_date" in _rs_all.columns:
+            # simulate_ticker returns a "date" column (Timestamp); "entry" is price.
+            if "date" in _rs_all.columns:
+                _rs_all["vix_regime"] = _rs_all["date"].apply(_vix_regime)
+            elif "entry_date" in _rs_all.columns:
                 _rs_all["vix_regime"] = _rs_all["entry_date"].apply(_vix_regime)
             elif "entry" in _rs_all.columns:
                 _rs_all["vix_regime"] = _rs_all["entry"].apply(_vix_regime)

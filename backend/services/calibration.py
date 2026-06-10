@@ -165,6 +165,12 @@ def _build_spy_regime_cache(start: str, end: str) -> dict:
 async def run_calibration() -> dict:
     """
     Build a regime-aware, recency-weighted calibration map from resolved signals.
+
+    Win labels are net-of-friction (deducting a 0.50% round-trip cost) so that
+    calibrated probabilities answer "P(profitable trade)" rather than
+    "P(gross-positive at an inconsistent horizon)". The canonical hold horizon
+    is ~10 days; we evaluate profitability after friction.
+
     Writes calibration.json and returns the map.
     """
     try:
@@ -211,7 +217,11 @@ async def run_calibration() -> dict:
             pct = pct_14d if pct_14d is not None else pct_7d
             if pct is None:
                 continue
-            win = 1 if (pct > 0 if action == "BUY" else pct < 0) else 0
+            # Net-of-friction win label: must clear 0.50% round-trip cost.
+            # The strategy's canonical hold is 10 days; we evaluate profitability
+            # after friction, not gross positivity.
+            net_pct = pct - 0.50
+            win = 1 if (net_pct > 0 if action == "BUY" else net_pct < 0) else 0
             weight = _recency_weight(created_at, ref_dt)
             regime = _spy_regime_at(created_at, spy_cache) if created_at else "neutral"
             samples.append(

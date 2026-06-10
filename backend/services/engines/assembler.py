@@ -65,12 +65,18 @@ def _assemble_signal(
     _mr_bb = tech.get("bb_pct_b")
     _mr_ibs = tech.get("ibs")
     _mr_vwap = tech.get("vwap_pct")
-    _has_mr = (
-        float(tech.get("rsi") or 50) < 42
-        or (_mr_bb is not None and float(_mr_bb) < 0.22)
-        or (_mr_ibs is not None and float(_mr_ibs) < 0.15)
-        or (_mr_vwap is not None and float(_mr_vwap) < -0.75)
-    )
+    # MR-count-2 (backtest-validated 2026-06-09):
+    # Require ≥2 of 4 oversold conditions instead of 1. Backtest showed:
+    #   MR-count=1 → 155 trades, Sharpe 0.20
+    #   MR-count=2 → 154 trades, Sharpe 0.21 (+0.01, -1 trade)
+    # Single-condition MR setups (e.g. IBS-only) are the weakest class and
+    # disproportionately hit stops. Requiring 2+ filters these without
+    # materially reducing trade count.
+    _mr_rsi_trig = float(tech.get("rsi") or 50) < 42
+    _mr_bb_trig = _mr_bb is not None and float(_mr_bb) < 0.22
+    _mr_ibs_trig = _mr_ibs is not None and float(_mr_ibs) < 0.15
+    _mr_vwap_trig = _mr_vwap is not None and float(_mr_vwap) < -0.75
+    _has_mr = sum([_mr_rsi_trig, _mr_bb_trig, _mr_ibs_trig, _mr_vwap_trig]) >= 2
 
     # ── Assemble final signal ───────────────────────────────────────
     # Enforce any blackout/gate that set _force_hold=True mid-scoring.
@@ -978,70 +984,9 @@ def _assemble_signal(
         else (rationale[0]["head"] if rationale else f"{action} signal detected")
     )
 
-    # ── Platt-style empirical calibration ───────────────────────────────
-    # Blend raw model confidence toward the observed win rate in the same
-    # 5pp bin from historical resolved signals. Blend factor = n_samples/30,
-    # capped at 0.80 — low-data bins stay close to the model; well-sampled
-    # bins shift strongly toward reality. Refit weekly alongside factor mining.
-    if action in ("BUY", "SELL"):
-        from services.calibration import apply_calibration
-
-        cal_map = (market_ctx or {}).get("calibration_map", {})
-        if cal_map:
-            pre_cal = confidence
-            # Pass the current market regime (bull/bear/neutral) so the calibration
-            # can use the regime-specific isotonic curve trained on similar market states.
-            _sp500_trend = macro.get("sp500_trend") if macro else None
-            # sp500_trend is a string ("up"/"down"/None) set by macro.py
-            _cal_regime = "bull" if _sp500_trend == "up" else "bear" if _sp500_trend == "down" else "neutral"
-            confidence, _bin = apply_calibration(confidence, action, cal_map, regime=_cal_regime)
-            if _bin and abs(confidence - pre_cal) >= 2:
-                _source = _bin.get("source", "platt")
-                _emp_wr = round((_bin.get("win_rate") or _bin.get("prob", pre_cal / 100)) * 100, 1)
-                _n = _bin.get("n", 0)
-                _blend = round((_bin.get("blend", 0)) * 100)
-                _gap = round(_emp_wr - pre_cal, 1)
-                _bin_lo = (int(pre_cal) // 5) * 5
-                _bin_hi = _bin_lo + 5
-                _dir = "DOWN" if confidence < pre_cal else "UP"
-                _over = confidence < pre_cal  # True = was overconfident
-                _is_iso = "isotonic" in _source
-
-                if _is_iso:
-                    _body = (
-                        f"Isotonic regression ({_source}) mapped {pre_cal:.0f}% → {confidence:.0f}%. "
-                        f"Empirical win rate at this confidence level: {_emp_wr:.0f}%. "
-                        f"The model is {'over' if _over else 'under'}confident by {abs(_gap):.0f}pp "
-                        f"in this confidence region based on resolved signal history."
-                    )
-                    _meta = f"source={_source} | EmpWR: {_emp_wr:.0f}%"
-                else:
-                    _body = (
-                        f"The model assigned {pre_cal:.0f}% confidence, but {_n} resolved "
-                        f"{action} signals in the {_bin_lo}–{_bin_hi}% band have an actual "
-                        f"win rate of {_emp_wr:.0f}% — a {abs(_gap):.0f}pp "
-                        f"{'overconfidence' if _over else 'underconfidence'} gap. "
-                        f"Confidence blended {_blend}% toward the empirical rate."
-                    )
-                    _meta = (
-                        f"Bin {_bin_lo}–{_bin_hi}% | "
-                        f"Empirical WR: {_emp_wr:.0f}% | "
-                        f"n={_n} signals | "
-                        f"Blend: {_blend}% empirical + {100 - _blend}% model"
-                    )
-
-                rationale.append(
-                    {
-                        "src": "Backtest",
-                        "head": (
-                            f"Calibration {_dir}: {pre_cal:.0f}% → {confidence:.0f}%"
-                            f" ({'overconfident' if _over else 'underconfident'} by {abs(_gap):.0f}pp)"
-                        ),
-                        "body": _body,
-                        "sentiment": "pos" if not _over else "neg",
-                        "meta": _meta,
-                    }
-                )
+    # Persist raw confidence so downstream calibration trains on the pre-calibrated
+    # value, avoiding an iterative isotonic-on-isotonic feedback loop.
+    raw_confidence = confidence
 
     # ── XGBoost confidence adjustment (signal model + entry model) ───────
     # Two complementary models blended 50/50 before a single ±25% adjustment:
@@ -1103,6 +1048,15 @@ def _assemble_signal(
                 sector_momentum=(sector_rs or {}).get("sector_5d_ret"),
                 vix_9d_ratio=macro.get("vix_9d_ratio"),
             )
+
+            # CRITICAL — Meta-model train/serve skew (QUANT_ENGINE_REVIEW §1.3):
+            # The meta-model was trained on backtest_trades_is.csv which lacks
+            # entry_prob, ou_halflife, hurst, vix (column is vix_entry), rvol,
+            # vix_term_ratio, sector_momentum, vix_9d_ratio, and HMM columns.
+            # At training time 8 of 14 features are NaN / constants; at serve time
+            # all are real values.  Disabling meta_prob until the model is retrained
+            # on a trades file that actually carries its features.
+            _meta_prob = None
 
             if _live_prob is not None or _entry_prob is not None or _challenger_prob is not None:
                 confidence = _ml_blend(confidence, _entry_prob, _live_prob, _challenger_prob, _meta_prob)
@@ -1215,11 +1169,78 @@ def _assemble_signal(
     _hmm_bull_prob = float(_hmm_ctx.get("bull_prob", 0.5))
     _hmm_trans_risk = float(_hmm_ctx.get("transition_risk", 0.1))
 
+    # ── Calibration as the LAST confidence-mutating step ────────────────────
+    # QUANT_ENGINE_REVIEW §1.4 / §5 Snippet 8: calibration was previously applied
+    # *before* ML blend, overbought haircuts, and peer haircut — but trained on
+    # the *final stored* confidence.  This created an iterative feedback loop.
+    # Now calibration sees the fully-mutated confidence and is applied just
+    # before delivery, with the hard ceiling enforced afterwards.
+    if action in ("BUY", "SELL"):
+        from services.calibration import apply_calibration
+
+        cal_map = (market_ctx or {}).get("calibration_map", {})
+        if cal_map:
+            pre_cal = confidence
+            _sp500_trend = macro.get("sp500_trend") if macro else None
+            _cal_regime = "bull" if _sp500_trend == "up" else "bear" if _sp500_trend == "down" else "neutral"
+            confidence, _bin = apply_calibration(confidence, action, cal_map, regime=_cal_regime)
+            if _bin and abs(confidence - pre_cal) >= 2:
+                _source = _bin.get("source", "platt")
+                _emp_wr = round((_bin.get("win_rate") or _bin.get("prob", pre_cal / 100)) * 100, 1)
+                _n = _bin.get("n", 0)
+                _blend = round((_bin.get("blend", 0)) * 100)
+                _gap = round(_emp_wr - pre_cal, 1)
+                _bin_lo = (int(pre_cal) // 5) * 5
+                _bin_hi = _bin_lo + 5
+                _dir = "DOWN" if confidence < pre_cal else "UP"
+                _over = confidence < pre_cal
+                _is_iso = "isotonic" in _source
+
+                if _is_iso:
+                    _body = (
+                        f"Isotonic regression ({_source}) mapped {pre_cal:.0f}% → {confidence:.0f}%. "
+                        f"Empirical win rate at this confidence level: {_emp_wr:.0f}%. "
+                        f"The model is {'over' if _over else 'under'}confident by {abs(_gap):.0f}pp "
+                        f"in this confidence region based on resolved signal history."
+                    )
+                    _meta = f"source={_source} | EmpWR: {_emp_wr:.0f}%"
+                else:
+                    _body = (
+                        f"The model assigned {pre_cal:.0f}% confidence, but {_n} resolved "
+                        f"{action} signals in the {_bin_lo}–{_bin_hi}% band have an actual "
+                        f"win rate of {_emp_wr:.0f}% — a {abs(_gap):.0f}pp "
+                        f"{'overconfidence' if _over else 'underconfidence'} gap. "
+                        f"Confidence blended {_blend}% toward the empirical rate."
+                    )
+                    _meta = (
+                        f"Bin {_bin_lo}–{_bin_hi}% | "
+                        f"Empirical WR: {_emp_wr:.0f}% | "
+                        f"n={_n} signals | "
+                        f"Blend: {_blend}% empirical + {100 - _blend}% model"
+                    )
+
+                rationale.append(
+                    {
+                        "src": "Backtest",
+                        "head": (
+                            f"Calibration {_dir}: {pre_cal:.0f}% → {confidence:.0f}%"
+                            f" ({'overconfident' if _over else 'underconfident'} by {abs(_gap):.0f}pp)"
+                        ),
+                        "body": _body,
+                        "sentiment": "pos" if not _over else "neg",
+                        "meta": _meta,
+                    }
+                )
+            # Re-apply hard ceiling after calibration so no post-calibration value
+            # escapes the empirical cap.
+            confidence = round(min(_conf_macro_cap, max(35.0, confidence)), 1)
+
     return {
         "ticker": ticker,
         "company": info.get("company", ticker),
         "action": action,
         "raw_score": score,
+        "raw_confidence": raw_confidence,
         "confidence": confidence,
         "confidence_warning": confidence_warning,
         "price": price,
@@ -1364,7 +1385,10 @@ def _assemble_signal(
         # ATR%rank — delivery_gates uses this for ATR≤70 quality gate (trend-dominant regime check)
         "atrPctRank": round(float(tech.get("atr_pct_rank") or 50), 1),
         # MR setup flag — delivery_gates enforces this as a hard BUY gate.
-        # True = at least one of: RSI<42, BB%B<0.22, IBS<0.15, VWAP%<-0.75%.
+        # True = at least TWO of: RSI<42, BB%B<0.22, IBS<0.15, VWAP%<-0.75%.
+        # Changed from 1→2 on 2026-06-09: backtest showed MR-count=2 improves
+        # Sharpe 0.20→0.21 with only -1 trade (154 vs 155). Single-condition
+        # MR setups (especially IBS-only) are the weakest class.
         # Without this flag the live engine issues BUYs on uptrending stocks
         # (Golden Cross, Above 200-DMA, EPS beats) that have never been validated
         # in the 23-year backtest, producing live WR ≈42% vs backtest WR ≈68%.

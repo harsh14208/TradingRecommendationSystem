@@ -59,7 +59,15 @@ def _make_daily_df(n=300, start="2022-01-01", seed=42):
 @pytest.fixture(autouse=True)
 def _disable_earnings_cache():
     """Prevent local cache files from shadowing mocked Polygon responses."""
-    with patch("os.path.exists", return_value=False):
+    _real_exists = os.path.exists
+
+    def _fake_exists(path):
+        # Only lie about earnings-cache files; let PIT constituents etc. through.
+        if isinstance(path, str) and "earnings" in path.lower():
+            return False
+        return _real_exists(path)
+
+    with patch("os.path.exists", side_effect=_fake_exists):
         yield
 
 

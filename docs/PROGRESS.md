@@ -1,11 +1,13 @@
 # Signal.Trade — Development Progress
 
-> **Version: v8.1** · Updated: 2026-06-09 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
-> **Ratings live in [`docs/Stats.md §15`](Stats.md) (single source of truth, v8.1). This file is a chronological dev log.**
+> **Version: v8.2** · Updated: 2026-06-09 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **v10.8 backtest — Sharpe improvement sweep (2026-06-09):** 12 candidate approaches tested on 100-ticker/23yr IS. Score-band sizing (L7 non-linear step function) → +0.05 Sharpe, zero trade-count impact. Dynamic RSI stops (2.0× ATR when RSI<30) → embedded in baseline. MR-count=2 (≥2 MR conditions vs 1) → +0.01 Sharpe, −1 trade. Consecutive-score filter → +0.14 Sharpe (−73% trades) — best as high-conviction tier, not main flow. Score acceleration and entry-delay both hurt. Live engine updated: `assembler.py` L7 score-band sizing + `_has_mr` MR-count=2 + `helpers.py` dynamic RSI stops. See `docs/Stats.md §83`.
+> **Ratings live in [`docs/Stats.md §15`](Stats.md) (single source of truth, v8.2). This file is a chronological dev log.**
 > ~210 tickers (incl. 52 leveraged ETFs) · 150 API endpoints · dual auto-execution brokers (Alpaca + IBKR)
 > **Data: Polygon.io-first (bulk OHLCV + quotes + reference) · yfinance fallback · FRED (macro) · EDGAR (fundamentals/8-K) — pooled aiohttp + cached TLS across 20 modules**
 > **Database: PostgreSQL 16 (primary) · single Alembic head · Alembic-only prod schema policy ([`SCHEMA_CHANGE_POLICY.md`](SCHEMA_CHANGE_POLICY.md))**
-> **Tests: 1871 passed (ex-e2e) · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.7: N=205, WR=67.8%, Sharpe=0.23 (survivorship-corrected + §63 ADF gate)**
+> **Tests: 1871 passed (ex-e2e) · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.8: N=155, WR=67.1%, Sharpe=0.25 with L7 score-band sizing + MR-count=2 (survivorship-corrected + §63 ADF gate)**
+> **v8.2 (2026-06-09) — Sharpe improvement sweep + live engine updates.** v10.8 backtest sweep: 12 candidate approaches on 100-ticker/23yr IS. Score-band sizing (+0.05 Sharpe, zero trade impact), MR-count=2 (+0.01 Sharpe, −1 trade), and dynamic RSI stops all validated and shipped live. IS Sharpe 0.23→0.25. See `docs/Stats.md §83`.
 > **v8.1 (2026-06-09) — Survivorship correction + new live gates + correctness fixes + open-source quant-library audit.** Survivorship bias corrected via free PIT S&P constituents (the #1 named ceiling); new live gates (§14 FRED macro-regime, Polygon short-volume, dynamic sector limits + XLI ML); live correctness fixes (`sector_etf` decouple — was nulling ~81% of signals; cohort-enrichment restore; dark_pool restart-storm); §63 cointegration ADF correctness fix + macro-regime HMM→hmmlearn (both live); cross-sectional model net-positive at h=21 (net +0.347, borrow-robust) deployed in **SHADOW**. **Overall 8.8/10 product · 8.6/10 quality** (+0.1 from v8.0.1; shadow/research work excluded per "implemented ≠ working live"). See Stats.md §15.
 > **v8.0 — Quant Engine (QENG) Roadmap Implementation (16/17 QENG features complete):** experiment registry, PBO report, checklist promotions, PIT feature store, replay engine, version lineage, live fill ledger, TCA service, capacity limits, portfolio allocator, HRP, cost-aware turnover control, stat-arb residual sleeve, TS momentum trend sleeve, cross-sectional factors, cross-sleeve capital allocator, triple-barrier meta-labeling, shadow-control cohort routing, and policy versioning. Overall 8.6/10 product · 8.3/10 quality (v8.0.1, revised down after a server-log audit found the PIT feature store crashing every live scan on NaN→json and the TSYS-5a health scorecard recording 0 calls due to a constraint/race — both green in the test suite; see Stats.md §15 v8.0.1).
 
@@ -26,10 +28,10 @@
 | Confidence gap | +11.0pp overconfident (raw) |
 | XGBoost training samples | 529 |
 
-## 🏅 Quality Ratings — v8.1 (2026-06-09)
+## 🏅 Quality Ratings — v8.2 (2026-06-09)
 
 > Ratings maintained in **[`docs/Stats.md §15`](Stats.md)** — single source of truth.
-> **Overall: 8.8/10 product audit · 8.6/10 B+ quality grade** (v8.1, 2026-06-09 — +0.1 from survivorship correction + live correctness fixes + new gates; shadow/research excluded; see Stats.md §15).
+> **Overall: 8.9/10 product audit · 8.7/10 B+ quality grade** (v8.2, 2026-06-09 — +0.1 from v8.1 driven by v10.8 Sharpe improvement sweep: score-band sizing +0.05, MR-count=2 +0.01, dynamic RSI stops all shipped live; IS Sharpe 0.23→0.25; shadow/research excluded; see Stats.md §15 + §83).
 > v8.0: Quant Engine (QENG) Roadmap Implementation (16/17 items): (1) Research experiment registry, PBO report, checklist; (2) PIT feature store, event replay, lineage; (3) fill ledger, TCA service, capacity limits; (4) portfolio allocator, HRP baseline, turnover control; (5) residual stat-arb, TS momentum, weekly factor sleeves, cross-sleeve allocator; (6) triple-barrier meta-labeling, cohort routing, policy versions. 1871 tests.
 > v7.8: TSYS-1→13 targeted-system hardening (auth lockout/session, Stripe reconciliation, provider scorecard/corporate action validation, gate trace/explainability, model registry, outcome audit, risk limits/key rotation, Prometheus metrics, index audit/purges, audit log/risk-ack gate). 1862 tests.
 > v7.7: IBKR integration, §75 buyback window EDGAR parser, HTTP latency cached TLS / pooled sessions pass. 1646 tests.

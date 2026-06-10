@@ -26,6 +26,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 log = logging.getLogger("signal.ml")
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
@@ -110,6 +112,35 @@ def _dte_bucket(dte: int | None) -> float:
     if dte <= 65:
         return 2.0
     return 3.0
+
+
+def _check_feature_drift(features: list[float], label: str = "live") -> None:
+    """Log warning if any feature drifts outside training P1/P99 bounds."""
+    try:
+        if not _FEATURE_FILE.exists():
+            return
+        meta = json.loads(_FEATURE_FILE.read_text())
+        stats = meta.get("feature_stats", {})
+        if not stats:
+            return
+        for i, name in enumerate(_FEATURE_NAMES):
+            s = stats.get(name)
+            if s is None:
+                continue
+            v = features[i]
+            if math.isnan(v):
+                continue
+            lo, hi = s.get("p01"), s.get("p99")
+            if lo is not None and v < lo:
+                log.warning(
+                    f"[signal_ml] {label} feature '{name}' = {v:.4f} below training P1 ({lo:.4f}) — distribution drift"
+                )
+            elif hi is not None and v > hi:
+                log.warning(
+                    f"[signal_ml] {label} feature '{name}' = {v:.4f} above training P99 ({hi:.4f}) — distribution drift"
+                )
+    except Exception:
+        pass
 
 
 # ── Feature extraction ─────────────────────────────────────────────────────────
@@ -449,6 +480,17 @@ def train_model() -> Optional[dict]:
         log.info(f"[signal_ml] After filtering, only {len(X)} usable rows — skipping.")
         return None
 
+    # NaN-rate guard: if any feature is >20% missing, the model is training on
+    # a degraded distribution.  Log loudly so telemetry catches it.
+    _X_arr = np.array(X, dtype=float)
+    _nan_rate = np.isnan(_X_arr).mean(axis=0)
+    for _i, _rate in enumerate(_nan_rate):
+        if _rate > 0.20:
+            log.critical(
+                f"[signal_ml] Feature '{_FEATURE_NAMES[_i]}' is {_rate:.1%} NaN — "
+                "model training on degraded distribution. Check data pipeline."
+            )
+
     # ── Temporal train/test split ──────────────────────────────────────────────
     split = max(int(len(X) * _TRAIN_SPLIT), _MIN_SAMPLES)
     X_train, X_test = X[:split], X[split:]
@@ -533,16 +575,42 @@ def train_model() -> Optional[dict]:
     top_features = [f["feature"] for f in fi[:5]]
 
     # ── Champion / Challenger gate ────────────────────────────────────────────
-    # Only deploy the new model if it beats the current champion's OOS AUC.
-    # Guards against retraining on a bad sample window replacing a good model.
+    # Only deploy the new model if it beats the current champion on the SAME
+    # test set.  Previously the comparison was across different windows
+    # (challenger's newest 30% vs champion's older stored window), which at
+    # N_test≈170 has SE≈0.04 — 8× the 0.005 threshold.  Now both models are
+    # scored on the identical held-out fold.
     _deployed = False
-    _champion_auc: Optional[float] = None
+    _champion_auc_stored: Optional[float] = None
+    _champion_auc_same_window: Optional[float] = None
     try:
         if _FEATURE_FILE.exists():
             _champ_meta = json.loads(_FEATURE_FILE.read_text())
-            _champion_auc = _champ_meta.get("oos_auc")
+            _champion_auc_stored = _champ_meta.get("oos_auc")
     except Exception:
         pass
+
+    # Score champion on the SAME test fold so the comparison is fair.
+    if _MODEL_FILE.exists() and len(set(y_test)) > 1:
+        try:
+            _champ_booster = xgb.Booster()
+            _champ_booster.load_model(str(_MODEL_FILE))
+            _champ_dm = xgb.DMatrix(
+                np.array(X_test, dtype=float),
+                feature_names=_FEATURE_NAMES,
+            )
+            _champ_prob = _champ_booster.predict(_champ_dm)
+            _champion_auc_same_window = round(float(roc_auc_score(y_test, _champ_prob)), 4)
+            log.info(
+                f"[signal_ml] Champion re-scored on current test fold: "
+                f"AUC={_champion_auc_same_window:.4f} (stored={_champion_auc_stored})"
+            )
+        except Exception as _ce:
+            log.debug(f"[signal_ml] Could not re-score champion on current fold: {_ce}")
+
+    # Use the same-window AUC when available; fall back to stored AUC only
+    # when the champion file is missing (first-run scenario).
+    _champion_auc = _champion_auc_same_window if _champion_auc_same_window is not None else _champion_auc_stored
 
     # Deploy only when the OOS AUC is computable, beats the champion by at least
     # _MIN_AUC_DELTA_TO_DEPLOY, and N_live >= _MIN_LIVE_N_FOR_DEPLOYMENT.
@@ -552,7 +620,7 @@ def train_model() -> Optional[dict]:
     #   2. oos_auc is None — single-class test set: do NOT deploy (degenerate sample).
     #   3. _champion_auc is None — no existing champion: deploy on first run only.
     #   4. oos_auc > _champion_auc + _MIN_AUC_DELTA — challenger must exceed champion
-    #      by the minimum meaningful delta, not just by noise.
+    #      by the minimum meaningful delta on the SAME test window.
     _should_deploy = (
         not _training_only  # N gate: enough live data for reliable AUC estimate
         and (
@@ -573,9 +641,10 @@ def train_model() -> Optional[dict]:
                 log.info(f"[signal_ml] First model deployed — OOS AUC={oos_auc}")
             else:
                 _delta = oos_auc - _champion_auc
+                _window_note = "same-window" if _champion_auc_same_window is not None else "stored-window"
                 log.info(
                     f"[signal_ml] Challenger deployed — OOS AUC {oos_auc:.4f} > "
-                    f"champion {_champion_auc:.4f} (Δ+{_delta:.4f} > min {_MIN_AUC_DELTA_TO_DEPLOY})"
+                    f"champion {_champion_auc:.4f} ({_window_note}) (Δ+{_delta:.4f} > min {_MIN_AUC_DELTA_TO_DEPLOY})"
                 )
         except Exception as e:
             log.error(f"[signal_ml] WRITE FAILED — {_MODEL_FILE}: {e}")
@@ -586,15 +655,31 @@ def train_model() -> Optional[dict]:
         )
     elif oos_auc is not None and _champion_auc is not None:
         _delta = oos_auc - _champion_auc
+        _window_note = "same-window" if _champion_auc_same_window is not None else "stored-window"
         log.warning(
             f"[signal_ml] Challenger rejected — OOS AUC {oos_auc:.4f} vs champion "
-            f"{_champion_auc:.4f} (Δ{_delta:+.4f}, min required +{_MIN_AUC_DELTA_TO_DEPLOY}). "
+            f"{_champion_auc:.4f} ({_window_note}) (Δ{_delta:+.4f}, min required +{_MIN_AUC_DELTA_TO_DEPLOY}). "
             "Keeping existing model."
         )
     else:
         log.warning(
             f"[signal_ml] Challenger rejected — oos_auc={oos_auc} (single-class or None). Keeping existing model."
         )
+
+    # Store per-feature training bounds for drift monitoring
+    _X_arr = np.array(X, dtype=float)
+    feature_stats = {}
+    for i, name in enumerate(_FEATURE_NAMES):
+        col = _X_arr[:, i]
+        col_valid = col[~np.isnan(col)]
+        if len(col_valid) > 0:
+            feature_stats[name] = {
+                "p01": round(float(np.percentile(col_valid, 1)), 6),
+                "p99": round(float(np.percentile(col_valid, 99)), 6),
+                "median": round(float(np.median(col_valid)), 6),
+                "mean": round(float(np.mean(col_valid)), 6),
+                "std": round(float(np.std(col_valid)), 6),
+            }
 
     # ── Persist feature importances + metadata ─────────────────────────────────
     from datetime import datetime as _dt
@@ -606,6 +691,7 @@ def train_model() -> Optional[dict]:
         "n_train": n_train,
         "n_test": n_test,
         "n_total": len(rows),
+        "feature_stats": feature_stats,
         "oos_accuracy": oos_acc,
         "oos_auc": oos_auc,
         "oos_auc_ci_95": [_auc_lo_out, _auc_hi_out],
@@ -1171,6 +1257,7 @@ def predict_live_prob(sig_dict: dict, model) -> float | None:
         import xgboost as xgb
 
         features = _extract_features(sig_dict)
+        _check_feature_drift(features, label="live")
         if not validate_feature_schema(features, _FEATURE_NAMES):
             log.error("[signal_ml] Schema validation failed for predict_live_prob")
             return None
@@ -1197,6 +1284,7 @@ def predict_entry_prob(
 
         now = datetime.now()
         features = _extract_entry_features(tech, vix, sector_etf, now.weekday(), now.month)
+        _check_feature_drift(features, label="entry")
         if not validate_feature_schema(features, _ENTRY_FEATURE_NAMES):
             log.error("[signal_ml] Schema validation failed for predict_entry_prob")
             return None
@@ -1353,6 +1441,7 @@ def predict_meta_prob(
             sector_momentum=sector_momentum,
             vix_9d_ratio=vix_9d_ratio,
         )
+        _check_feature_drift(feats, label="meta")
         dm = xgb.DMatrix(np.array([feats], dtype=float), feature_names=_META_FEATURE_NAMES)
         return float(model.predict(dm)[0])
     except Exception as e:

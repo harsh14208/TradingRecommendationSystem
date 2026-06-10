@@ -242,6 +242,17 @@ def _dte_bucket(dte) -> float:
     return 3.0
 
 
+def _to_float(v, default: float = float("nan")) -> float:
+    """Safely coerce to float, preserving NaN for missing/None but keeping 0.0."""
+    if v is None:
+        return default
+    try:
+        f = float(v)
+        return default if math.isnan(f) else f
+    except (TypeError, ValueError):
+        return default
+
+
 def extract_meta_features(trades: pd.DataFrame) -> np.ndarray:
     """
     Build the 14-feature meta-label matrix from backtest trade columns.
@@ -249,8 +260,8 @@ def extract_meta_features(trades: pd.DataFrame) -> np.ndarray:
     """
     rows = []
     for _, r in trades.iterrows():
-        price = float(r.get("entry_price") or 0)
-        atr = float(r.get("atr") or 0)
+        price = _to_float(r.get("entry_price"), 0.0)
+        atr = _to_float(r.get("atr"), 0.0)
         atr_pct = (atr / price * 100.0) if price > 0 else float("nan")
 
         try:
@@ -260,20 +271,20 @@ def extract_meta_features(trades: pd.DataFrame) -> np.ndarray:
             dow = float("nan")
 
         row = [
-            float(r.get("entry_prob") or float("nan")),
-            float(r.get("ou_halflife") or float("nan")),
-            float(r.get("hurst") or float("nan")),
-            float(r.get("vix") or float("nan")),
+            _to_float(r.get("entry_prob")),
+            _to_float(r.get("ou_halflife")),
+            _to_float(r.get("hurst")),
+            _to_float(r.get("vix")),
             atr_pct,
-            float(r.get("rvol") or float("nan")),
-            float(r.get("hmm_bull_prob") or 0.5),
-            float(r.get("hmm_trans_risk") or 0.1),
+            _to_float(r.get("rvol")),
+            _to_float(r.get("hmm_bull_prob"), 0.5),
+            _to_float(r.get("hmm_trans_risk"), 0.1),
             _dte_bucket(r.get("days_to_earnings")),
             float(_SECTOR_ORD.get(str(r.get("sector_etf") or ""), -1)),
             dow,
-            float(r.get("vix_term_ratio") or float("nan")),
-            float(r.get("sector_momentum") or r.get("sector_momentum_5d") or float("nan")),
-            float(r.get("vix_9d_ratio") or float("nan")),
+            _to_float(r.get("vix_term_ratio")),
+            _to_float(r.get("sector_momentum") or r.get("sector_momentum_5d")),
+            _to_float(r.get("vix_9d_ratio")),
         ]
         rows.append(row)
 
@@ -292,7 +303,7 @@ def purged_expanding_cv(
 ):
     """
     Expanding-window purged cross-validation (López de Prado, Ch. 7).
-    Train on first k/n history; test on next split; embargo gap between them.
+    Train on first k/n history; test on next split; embargo gap in CALENDAR DAYS.
     Returns list of (train_idx, test_idx) tuples.
     """
     n = len(X)
@@ -300,8 +311,13 @@ def purged_expanding_cv(
     splits = []
     for k in range(1, n_splits + 1):
         train_end = k * fold_size
-        embargo_end = train_end + embargo_days
-        test_start = min(embargo_end, n - 1)
+        # Embargo in calendar days, not row indices
+        train_cutoff = dates[train_end - 1] if train_end > 0 else dates[0]
+        embargo_cutoff = train_cutoff + pd.Timedelta(days=embargo_days)
+        test_mask = dates > embargo_cutoff
+        test_idx = np.where(test_mask)[0]
+        # Only use test points within the next fold-sized chunk
+        test_start = test_idx[0] if len(test_idx) else n
         test_end = min(test_start + fold_size, n)
         if test_start >= n or test_end <= test_start:
             break
@@ -470,6 +486,20 @@ def main():
         y = (trades.loc[valid, "net_pct"] > 0).astype(int).values
         X_all = extract_meta_features(trades[valid])
         dates_all = pd.DatetimeIndex(trades.loc[valid, "entry_date"])
+
+    # Hard guard: abort if >20% of any feature column is NaN.  This catches the
+    # train/serve skew where backtest_trades_is.csv lacks columns the live engine
+    # expects (ou_halflife, hurst, vix, rvol, etc.).
+    _nan_rate = np.isnan(X_all).mean(axis=0)
+    if np.any(_nan_rate > 0.20):
+        bad = [
+            f"{_META_FEATURE_NAMES[i]}:{_nan_rate[i]:.1%}"
+            for i in np.where(_nan_rate > 0.20)[0]
+        ]
+        raise ValueError(
+            f"Meta-feature NaN rate >20% — train/serve skew likely. "
+            f"Re-run backtest with --save-trades including all meta features. Bad: {', '.join(bad)}"
+        )
 
     if len(y) < 200:
         log.warning("Only %d training samples — meta-label model may be unreliable (min 200 recommended)", len(y))

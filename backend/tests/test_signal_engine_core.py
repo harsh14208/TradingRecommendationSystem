@@ -187,7 +187,7 @@ def test_assemble_signal_risk_free_rate_dampener():
         res = _assemble_signal(
             ticker="AAPL",
             info={"company": "Apple"},
-            tech={"price": 100.0, "atr": 1.0, "rsi": 38.0},  # rsi<42 satisfies MR gate; target 100+3*1=103
+            tech={"price": 100.0, "atr": 1.0, "rsi": 38.0, "bb_pct_b": 0.20, "ibs": 0.14},  # 2 MR conditions for count≥2
             score=50.0,  # BUY
             rationale=[],
             sources=set(),
@@ -485,11 +485,11 @@ def test_iv_rank_flag_post_earnings_context():
 
 
 def _mr_buy_kwargs(**overrides):
-    """Base kwargs for an MR BUY signal: RSI<42 satisfies _has_mr."""
+    """Base kwargs for an MR BUY signal: RSI<42 + BB%B<0.22 satisfies _has_mr (count≥2)."""
     defaults = dict(
         ticker="NVDA",
         info={"company": "NVIDIA"},
-        tech={"price": 100.0, "atr": 2.0, "rsi": 38.0, "volume": 5_000_000, "avg_volume": 4_000_000},
+        tech={"price": 100.0, "atr": 2.0, "rsi": 38.0, "bb_pct_b": 0.20, "ibs": 0.14, "volume": 5_000_000, "avg_volume": 4_000_000},
         score=45.0,
         rationale=[],
         sources=set(),
