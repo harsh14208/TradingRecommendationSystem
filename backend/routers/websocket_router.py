@@ -1,9 +1,12 @@
 import json
 import math
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.security import HTTPBearer
+from services.auth_svc import decode_access_token
 
 router = APIRouter()
+_bearer = HTTPBearer(auto_error=False)
 
 
 def _json_default(obj):
@@ -54,6 +57,11 @@ manager = ConnectionManager()
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    token = websocket.query_params.get("token")
+    payload = decode_access_token(token) if token else None
+    if not payload:
+        await websocket.close(code=1008, reason="Invalid or missing token")
+        return
     await manager.connect(websocket)
     try:
         while True:

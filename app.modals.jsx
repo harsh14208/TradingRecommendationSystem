@@ -55,18 +55,21 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
       setBrokerKey("");
       setBrokerSecret("");
       setBrokerConnMsg("");
+      const ctrl = new AbortController();
+      const signal = ctrl.signal;
       if (user.is_owner || (user.subscription_tier === "pro" && user.subscription_status === "active")) {
         setBrokerLoading(true);
-        authFetch("/api/me/broker/status").then(r => r.json()).then(d => { setBrokerStatus(d); }).catch(() => {}).finally(() => setBrokerLoading(false));
+        authFetch("/api/me/broker/status", { signal }).then(r => r.json()).then(d => { setBrokerStatus(d); }).catch(() => {}).finally(() => setBrokerLoading(false));
       }
       if (user.is_owner) {
-        authFetch("/api/admin/setup-status").then(r => r.json()).then(setSetupStatus).catch(() => {});
-        apiFetch("/api/admin/stats").then(d => { if (d) setAdminStats(d); }).catch(() => {});
-        apiFetch("/api/admin/weekly-digest/status").then(d => { if (d) setDigestStatus(d); }).catch(() => {});
-        apiFetch("/api/admin/execution-kill-switch").then(d => { if (d) setKillSwitch(d.execution_paused); }).catch(() => {});
+        authFetch("/api/admin/setup-status", { signal }).then(r => r.json()).then(setSetupStatus).catch(() => {});
+        apiFetch("/api/admin/stats", { signal }).then(d => { if (d) setAdminStats(d); }).catch(() => {});
+        apiFetch("/api/admin/weekly-digest/status", { signal }).then(d => { if (d) setDigestStatus(d); }).catch(() => {});
+        apiFetch("/api/admin/execution-kill-switch", { signal }).then(d => { if (d) setKillSwitch(d.execution_paused); }).catch(() => {});
       }
-      apiFetch("/api/auth/referral").then(d => { if (d) setReferral(d); }).catch(() => {});
-      apiFetch("/api/billing/status").then(d => { if (d) setBillingStatus(d); }).catch(() => {});
+      apiFetch("/api/auth/referral", { signal }).then(d => { if (d) setReferral(d); }).catch(() => {});
+      apiFetch("/api/billing/status", { signal }).then(d => { if (d) setBillingStatus(d); }).catch(() => {});
+      return () => ctrl.abort();
     }
   }, [open, user]);
 

@@ -459,11 +459,13 @@ function PaperView({ open, onClose, online }) {
     if (!online) { setErr("offline"); return; }
     setErr(null);
     setLoading(true);
+    const ctrl = new AbortController();
+    const signal = ctrl.signal;
     Promise.all([
-      authFetch("/api/paper/account"),
-      authFetch("/api/paper/positions"),
-      authFetch("/api/paper/orders"),
-      authFetch("/api/paper/risk"),
+      authFetch("/api/paper/account", { signal }),
+      authFetch("/api/paper/positions", { signal }),
+      authFetch("/api/paper/orders", { signal }),
+      authFetch("/api/paper/risk", { signal }),
     ]).then(async ([accR, posR, ordR, rskR]) => {
       if (accR.status === 402) { setErr("upgrade"); return; }
       const [acc, pos, ord, rsk] = await Promise.all([accR.json(), posR.json(), ordR.json(), rskR.json()]);
@@ -473,6 +475,7 @@ function PaperView({ open, onClose, online }) {
       if (rsk) setRisk(rsk);
     }).catch(() => setErr("offline"))
       .finally(() => setLoading(false));
+    return () => ctrl.abort();
   }, [open, online]);
 
   const loadVolTarget = (tickers = "") => {
@@ -689,10 +692,12 @@ function MarketOverviewView({ open, onClose, online }) {
   useEffect(() => {
     if (!open) return;
     setLoading(true);
-    authFetch("/api/market/context")
+    const ctrl = new AbortController();
+    authFetch("/api/market/context", { signal: ctrl.signal })
       .then(async r => { const d = await r.json(); if (d) setCtx(d); })
       .catch(() => {})
       .finally(() => setLoading(false));
+    return () => ctrl.abort();
   }, [open]);
 
   const fg     = ctx?.fear_greed  || {};

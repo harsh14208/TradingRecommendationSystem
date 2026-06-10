@@ -1,7 +1,9 @@
 from config import get_settings
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from models import User
 from pydantic import BaseModel
 from services import alpaca_rest
+from services.auth_svc import get_current_user
 
 router = APIRouter(prefix="/api/paper", tags=["paper"])
 
@@ -10,7 +12,12 @@ def _require_keys():
     s = get_settings()
     if not s.alpaca_api_key or not s.alpaca_api_secret:
         raise HTTPException(403, "Alpaca API keys not configured — set ALPACA_API_KEY and ALPACA_API_SECRET in .env")
-    return s.alpaca_api_key, s.alpaca_api_secret
+    return s.alpaca_api_key, s.alpaca_api_secret.get_secret_value()
+
+
+def _require_paper_user(user: User):
+    if not (user.is_owner or user.subscription_tier == "pro"):
+        raise HTTPException(403, "Paper trading requires Pro tier.")
 
 
 class OrderRequest(BaseModel):
@@ -22,38 +29,39 @@ class OrderRequest(BaseModel):
 
 
 @router.get("/account")
-async def account():
+async def account(user: User = Depends(get_current_user)):
     key, secret = _require_keys()
     try:
         return await alpaca_rest.get_account(key, secret)
     except Exception as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, "Broker request failed")
 
 
 @router.get("/positions")
-async def positions():
+async def positions(user: User = Depends(get_current_user)):
     s = get_settings()
     if not s.alpaca_api_key:
         return []
     try:
-        return await alpaca_rest.get_positions(s.alpaca_api_key, s.alpaca_api_secret)
+        return await alpaca_rest.get_positions(s.alpaca_api_key, s.alpaca_api_secret.get_secret_value())
     except Exception as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, "Broker request failed")
 
 
 @router.get("/orders")
-async def orders(status: str = "all"):
+async def orders(status: str = "all", user: User = Depends(get_current_user)):
     s = get_settings()
     if not s.alpaca_api_key:
         return []
     try:
-        return await alpaca_rest.get_orders(s.alpaca_api_key, s.alpaca_api_secret, status)
+        return await alpaca_rest.get_orders(s.alpaca_api_key, s.alpaca_api_secret.get_secret_value(), status)
     except Exception as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, "Broker request failed")
 
 
 @router.post("/orders")
-async def place_order(req: OrderRequest):
+async def place_order(req: OrderRequest, user: User = Depends(get_current_user)):
+    _require_paper_user(user)
     key, secret = _require_keys()
     if req.side not in ("buy", "sell"):
         raise HTTPException(400, "side must be 'buy' or 'sell'")
@@ -70,29 +78,29 @@ async def place_order(req: OrderRequest):
             req.limit_price,
         )
     except Exception as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, "Broker request failed")
 
 
 @router.delete("/positions/{symbol}")
-async def close_position(symbol: str):
+async def close_position(symbol: str, user: User = Depends(get_current_user)):
     key, secret = _require_keys()
     try:
         return await alpaca_rest.close_position(key, secret, symbol)
     except Exception as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, "Broker request failed")
 
 
 @router.delete("/orders/{order_id}")
-async def cancel_order(order_id: str):
+async def cancel_order(order_id: str, user: User = Depends(get_current_user)):
     key, secret = _require_keys()
     try:
         return await alpaca_rest.cancel_order(key, secret, order_id)
     except Exception as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, "Broker request failed")
 
 
 @router.get("/risk")
-async def portfolio_risk():
+async def portfolio_risk(user: User = Depends(get_current_user)):
     """
     Aggregate risk metrics across all open paper positions:
     Sharpe ratio, max drawdown, beta vs SPY, total exposure.
@@ -107,7 +115,7 @@ async def portfolio_risk():
         positions = await get_positions(key, secret)
         account = await get_account(key, secret)
     except Exception as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, "Broker request failed")
 
     if not positions:
         return {
@@ -198,7 +206,7 @@ async def portfolio_risk():
 
 
 @router.get("/volatility-target")
-async def volatility_target(tickers: str = ""):
+async def volatility_target(tickers: str = "", user: User = Depends(get_current_user)):
     """
     Compute correlation-based inverse-vol weights scaled to a 15% annualised
     portfolio volatility target. Pass comma-separated tickers or leave empty

@@ -149,18 +149,26 @@ async def backfill(apply: bool = False, min_delta: float = 0.5, force: bool = Fa
             return
         print(f"  Loaded saved cal_map ({len(cal_map)} keys)\n")
 
-    # ── Step 2: read all signals (only columns needed — avoids raw_score migration gap) ──
-    print("Step 2/3 — Reading all signals from DB…")
+    # ── Step 2: read only signals that have not been calibrated yet ────────────
+    print("Step 2/3 — Reading uncalibrated signals from DB…")
     db_gen = get_db()
     db = await anext(db_gen)
     try:
         rows = (
-            await db.execute(select(Signal.id, Signal.action, Signal.confidence).order_by(Signal.created_at.asc()))
+            await db.execute(
+                select(Signal.id, Signal.action, Signal.confidence, Signal.raw_score)
+                .where(Signal.raw_score.isnot(None))
+                .order_by(Signal.created_at.asc())
+            )
         ).all()
+        total_signals = (
+            await db.execute(select(func.count()).select_from(Signal))
+        ).scalar_one()
     finally:
         await db.close()
 
-    print(f"  {len(rows):,} signals total\n")
+    skipped_already_calibrated = total_signals - len(rows)
+    print(f"  {len(rows):,} uncalibrated signals (skipped {skipped_already_calibrated:,} with no raw_score)\n")
 
     # ── Step 3: compute new confidence for each signal ─────────────────────────
     print("Step 3/3 — Computing new confidence values…")
@@ -203,6 +211,7 @@ async def backfill(apply: bool = False, min_delta: float = 0.5, force: bool = Fa
     print(f"  Max increase:       {max(deltas):+.2f}pp")
     print(f"  Skipped (HOLD):     {skipped_hold:,}")
     print(f"  Skipped (< {min_delta}pp):  {skipped_below_delta:,}")
+    print(f"  Skipped (already calibrated / no raw_score): {skipped_already_calibrated:,}")
 
     # Band shift preview
     old_bands = _band_dist([u["old"] for u in updates])

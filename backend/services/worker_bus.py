@@ -145,7 +145,7 @@ class WorkerTask:
 
             task._errors += 1
             task._cb.record_failure()
-            log.info("[worker] %s: FAILED (%s)", task.name, last_exc)
+            log.warning("[worker] %s: FAILED (%s)", task.name, last_exc, exc_info=last_exc)
             return ScoringResult(ok=False)
 
         wrapper.__name__ = fn.__name__

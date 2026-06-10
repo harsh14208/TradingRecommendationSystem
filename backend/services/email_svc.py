@@ -36,7 +36,7 @@ async def _send(to: str, subject: str, html: str, plain: str):
             hostname=s.smtp_host,
             port=s.smtp_port,
             username=s.smtp_user,
-            password=s.smtp_password,
+            password=s.smtp_password.get_secret_value(),
             start_tls=True,
         )
         log.info(f"[email] sent TO={to} SUBJECT={subject}")

@@ -28,7 +28,7 @@ async def _reply(chat_id: str, text: str):
     s = get_settings()
     if not s.telegram_bot_token:
         return
-    url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
+    url = f"https://api.telegram.org/bot{s.telegram_bot_token.get_secret_value()}/sendMessage"
     try:
         async with aiohttp.ClientSession() as session:
             await session.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"})
@@ -128,7 +128,7 @@ async def set_webhook(owner: User = Depends(get_current_user)):
     webhook_url = f"{s.app_url}/api/telegram/webhook"
     async with aiohttp.ClientSession() as session:
         resp = await session.post(
-            f"https://api.telegram.org/bot{s.telegram_bot_token}/setWebhook",
+            f"https://api.telegram.org/bot{s.telegram_bot_token.get_secret_value()}/setWebhook",
             json={"url": webhook_url, "allowed_updates": ["message"]},
         )
         data = await resp.json()

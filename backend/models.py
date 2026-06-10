@@ -2,6 +2,7 @@ from database import Base
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -18,6 +19,9 @@ from sqlalchemy.sql import func
 
 class Signal(Base):
     __tablename__ = "signals"
+    __table_args__ = (
+        CheckConstraint("action IN ('BUY', 'SELL')", name="ck_signal_action"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     ticker = Column(String(10), index=True, nullable=False)
     company = Column(String(100))
@@ -39,9 +43,9 @@ class Signal(Base):
     # eod_batch_send() so the EOD delivery path evaluates the same BUY gates as
     # the real-time path (ACT-4c: hasMr/vix/crossAssetHeadwinds/daysToExDiv).
     extra_data = Column(JSON, nullable=True)
-    is_active = Column(Boolean, default=True)
-    is_sent = Column(Boolean, default=False, index=True)  # TSYS-12c: hot filter
-    is_skipped = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True, nullable=False, server_default="1")
+    is_sent = Column(Boolean, default=False, index=True, nullable=False, server_default="0")  # TSYS-12c: hot filter
+    is_skipped = Column(Boolean, default=False, nullable=False, server_default="0")
     created_at = Column(DateTime, server_default=func.now(), index=True)
     sent_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)  # user journal notes
@@ -89,7 +93,7 @@ class SendLog(Base):
 
 class AppSettings(Base):
     __tablename__ = "app_settings"
-    id = Column(Integer, primary_key=True, default=1)
+    id = Column(Integer, primary_key=True, autoincrement=True, default=1)
     data = Column(JSON)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -120,6 +124,9 @@ class Source(Base):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("subscription_tier IN ('free', 'basic', 'pro')", name="ck_user_subscription_tier"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
@@ -132,8 +139,8 @@ class User(Base):
     # Stripe
     stripe_customer_id = Column(String(50), nullable=True)
     stripe_subscription_id = Column(String(50), nullable=True)
-    subscription_tier = Column(String(20), default="free")  # free | basic | pro
-    subscription_status = Column(String(20), default="inactive")  # active | inactive | past_due | canceled
+    subscription_tier = Column(String(20), default="free", nullable=False, server_default="free")  # free | basic | pro
+    subscription_status = Column(String(20), default="inactive", nullable=False, server_default="inactive")  # active | inactive | past_due | canceled
     subscription_period_end = Column(DateTime, nullable=True)
     # Per-user signal preferences
     min_confidence_override = Column(Float, nullable=True)  # None = use global setting
@@ -162,6 +169,8 @@ class User(Base):
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())
     last_seen_at = Column(DateTime, nullable=True)
+    # Billing — trial abuse gating
+    trial_consumed_at = Column(DateTime, nullable=True)
     # Lockout & Security
     failed_login_attempts = Column(Integer, default=0, nullable=False, server_default="0")
     lockout_until = Column(DateTime, nullable=True)
@@ -281,9 +290,16 @@ class BrokerOrder(Base):
     """Auto-executed order placed on behalf of a user via their connected broker."""
 
     __tablename__ = "broker_orders"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('submitted','filled','rejected','error','orphan','canceled')",
+            name="ck_broker_order_status",
+        ),
+        UniqueConstraint("alpaca_order_id", name="uq_broker_orders_alpaca_order_id"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     signal_id = Column(Integer, ForeignKey("signals.id", ondelete="SET NULL"), nullable=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     broker = Column(String(20), nullable=False)  # "alpaca"
     account_type = Column(String(10), nullable=False)  # "paper" | "live"
     alpaca_order_id = Column(String(50), nullable=True)
@@ -291,8 +307,8 @@ class BrokerOrder(Base):
     notional = Column(Float, nullable=False)  # dollar amount ordered
     side = Column(String(10), nullable=False)  # "buy" | "sell"
     status = Column(
-        String(20), nullable=False, default="submitted", index=True
-    )  # TSYS-12c: submitted | filled | rejected | error | orphan
+        String(20), nullable=False, default="submitted", server_default="submitted", index=True
+    )  # TSYS-12c: submitted | filled | rejected | error | orphan | canceled
     error_msg = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), index=True)
     cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
@@ -425,9 +441,12 @@ class Fill(Base):
     """Individual execution against a broker order (an order may fill in parts)."""
 
     __tablename__ = "fills"
+    __table_args__ = (
+        UniqueConstraint("broker_fill_id", name="uq_fills_broker_fill_id"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     broker_order_id = Column(Integer, ForeignKey("broker_orders.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     instrument_id = Column(Integer, ForeignKey("instruments.id", ondelete="SET NULL"), nullable=True, index=True)
     side = Column(String(4), nullable=False)  # buy | sell
     qty = Column(Float, nullable=False)  # shares filled
@@ -443,7 +462,7 @@ class Position(Base):
 
     __tablename__ = "positions"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     instrument_id = Column(Integer, ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False, index=True)
     signal_id = Column(Integer, ForeignKey("signals.id", ondelete="SET NULL"), nullable=True, index=True)
     status = Column(String(8), nullable=False, default="open", server_default="open")  # open | closed
@@ -469,7 +488,7 @@ class PnlDaily(Base):
 
     __tablename__ = "pnl_daily"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     date = Column(Date, nullable=False)
     equity = Column(Float, nullable=False, default=0, server_default="0")  # total account equity
     cash = Column(Float, nullable=True)
@@ -488,7 +507,7 @@ class RiskMetric(Base):
 
     __tablename__ = "risk_metrics"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     date = Column(Date, nullable=False)
     portfolio_beta = Column(Float, nullable=True)  # vs SPY
     portfolio_vol = Column(Float, nullable=True)  # annualized
@@ -505,7 +524,9 @@ class RiskMetric(Base):
 class OAuthState(Base):
     __tablename__ = "oauth_states"
     state = Column(String(64), primary_key=True, index=True)
-    referred_by = Column(Integer, nullable=True)
+    referred_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    code_challenge = Column(String(255), nullable=True)
+    code_verifier = Column(String(255), nullable=True)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 

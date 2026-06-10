@@ -19,7 +19,7 @@ async def reconcile_stripe_subscriptions(db):
         log.warning("[reconcile] Stripe is not configured (missing STRIPE_SECRET_KEY)")
         return
 
-    stripe.api_key = s.stripe_secret_key
+    stripe.api_key = s.stripe_secret_key.get_secret_value()
 
     # Query all users connected to Stripe
     stmt = select(User).where((User.stripe_customer_id.isnot(None)) | (User.stripe_subscription_id.isnot(None)))

@@ -48,12 +48,28 @@ function App() {
     try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("st_tweaks") || "{}") }; }
     catch { return DEFAULTS; }
   });
+  // Guard rapid setTweak calls so overlapping PUTs don't race
+  const tweakSaving = useRef(false);
+  const pendingTweak = useRef(null);
   const setTweak = patch => {
     const next = { ...tweakState, ...patch };
     setTweakState(next);
     try { localStorage.setItem("st_tweaks", JSON.stringify(next)); } catch {}
-    // Persist to DB (fire-and-forget)
-    apiFetch("/api/settings", { method:"PUT", body: JSON.stringify(next) }).catch(() => {});
+    // Persist to DB with simple in-flight guard
+    pendingTweak.current = next;
+    if (tweakSaving.current) return;
+    const run = async () => {
+      tweakSaving.current = true;
+      while (pendingTweak.current) {
+        const payload = pendingTweak.current;
+        pendingTweak.current = null;
+        try {
+          await apiFetch("/api/settings", { method:"PUT", body: JSON.stringify(payload) });
+        } catch {}
+      }
+      tweakSaving.current = false;
+    };
+    run();
   };
 
   // Hydrate tweaks from DB on first authenticated load (DB wins over localStorage)
@@ -78,12 +94,14 @@ function App() {
   const [now,            setNow]            = useState(() => new Date());
   const [predictive,     setPredictive]     = useState(null);
   const [predLoading,    setPredLoading]    = useState(false);
+  const [paperTradeFlash,setPaperTradeFlash]= useState(false);
   const [searchQuery,    setSearchQuery]    = useState("");
   const [fullDetailOpen, setFullDetailOpen] = useState(false);  // kept for keyboard compat
   const [detailTab,      setDetailTab]      = useState("why"); // why | position | simulate | similar
   const [chartPeriod,    setChartPeriod]    = useState("3M");
   const [compareVs,      setCompareVs]      = useState(null);
   const btCacheRef = useRef(null);  // BacktestView 10-min result cache
+  const onBtCache = useCallback(d => { btCacheRef.current = d; }, []);
   const [feedFilter,     setFeedFilter]     = useState("all");
   const [hkOpen,         setHkOpen]         = useState(false);
   const [tourOpen,       setTourOpen]       = useState(false);
@@ -93,13 +111,14 @@ function App() {
 
   /* Auth bootstrap — also handles ?oauth_code= redirect from Google OAuth */
   useEffect(() => {
+    const ctrl = new AbortController();
     const params = new URLSearchParams(window.location.search);
     const oauthCode = params.get("oauth_code");
 
     if (oauthCode) {
       // Remove the code from the URL immediately (don't expose it in history)
       window.history.replaceState({}, "", window.location.pathname);
-      fetch(`/api/auth/oauth-exchange?code=${oauthCode}`)
+      fetch(`/api/auth/oauth-exchange?code=${oauthCode}`, { signal: ctrl.signal })
         .then(r => r.ok ? r.json() : null)
         .then(d => {
           if (d?.access_token) {
@@ -109,12 +128,12 @@ function App() {
         })
         .catch(() => {})
         .finally(() => setAuthReady(true));
-      return;
+      return () => ctrl.abort();
     }
 
     const token = getToken();
     const fetchMe = () =>
-      authFetch("/api/auth/me")
+      authFetch("/api/auth/me", { signal: ctrl.signal })
         .then(r => r.ok ? r.json() : null)
         .then(u => { if (u) setCurrentUser(u); else clearToken(); })
         .catch(() => {})
@@ -124,16 +143,18 @@ function App() {
       // No in-memory token after page reload — try to restore session from the
       // HTTP-only refresh cookie before giving up and sending to login.
       _tryRefresh().then(ok => { if (ok) fetchMe(); else setAuthReady(true); });
-      return;
+      return () => ctrl.abort();
     }
     fetchMe();
+    return () => ctrl.abort();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── WebSocket Connection ── */
   useEffect(() => {
     if (!authReady || !currentUser) return;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const token = getToken();
+    const wsUrl = `${protocol}//${window.location.host}/ws?token=${token || ""}`;
     let ws = new WebSocket(wsUrl);
     ws.onmessage = (e) => {
       try {
@@ -155,7 +176,12 @@ function App() {
         }
       } catch (err) {}
     };
-    return () => { ws.close(); };
+    return () => {
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.close();
+    };
   }, [authReady, currentUser]);
 
   /* Theme */
@@ -363,16 +389,9 @@ function App() {
           }),
         }).then(res => {
           if (res && res.ok) {
-            // Show success feedback
-            const btn = document.querySelector(`[data-paper-trade-btn]`);
-            if (btn) {
-              btn.style.background = "var(--up)";
-              btn.textContent = " ✓ Placed";
-              setTimeout(() => {
-                btn.style.background = "";
-                btn.textContent = "Paper Trade";
-              }, 1500);
-            }
+            // Show success feedback via React state (no DOM mutation)
+            setPaperTradeFlash(true);
+            setTimeout(() => setPaperTradeFlash(false), 1500);
           }
         });
         return;
@@ -427,14 +446,15 @@ function App() {
   const [refreshing,   setRefreshing]   = useState(false);
   const [countdown,    setCountdown]    = useState(30);
 
-  const loadData = useCallback(async (showSpinner = false) => {
+  const loadData = useCallback(async (showSpinner = false, opts = {}) => {
     if (showSpinner) setRefreshing(true);
+    const signal = opts.signal;
 
     // ── Tier 1: fast DB-only reads — clears loading immediately ──────────────
     try {
       const [sigs, srcs] = await Promise.all([
-        apiFetch("/api/signals"),
-        apiFetch("/api/sources"),
+        apiFetch("/api/signals", { signal }),
+        apiFetch("/api/sources", { signal }),
       ]);
       if (Array.isArray(sigs)) {
         setSignals(sigs);
@@ -452,10 +472,10 @@ function App() {
 
     // ── Tier 2: enrichment — loads in background after feed is shown ─────────
     Promise.all([
-      apiFetch("/api/delivery/log"),
-      apiFetch("/api/quotes"),
-      apiFetch("/api/market/context"),
-      apiFetch("/api/signals/history"),
+      apiFetch("/api/delivery/log", { signal }),
+      apiFetch("/api/quotes", { signal }),
+      apiFetch("/api/market/context", { signal }),
+      apiFetch("/api/signals/history", { signal }),
     ]).then(([lg, quotes, mktCtx, hist]) => {
       if (Array.isArray(lg))     setLog(lg);
       if (Array.isArray(quotes)) setTickerTape(quotes);
@@ -468,7 +488,9 @@ function App() {
      trigger loadData (i.e. no token was present on mount).                */
   useEffect(() => {
     if (!authReady || !currentUser) return;
-    loadData();
+    const ctrl = new AbortController();
+    loadData(false, { signal: ctrl.signal });
+    return () => ctrl.abort();
   }, [authReady, currentUser, loadData]);
 
   /* Auto-refresh every 30 seconds + countdown ticker */
@@ -490,15 +512,17 @@ function App() {
     if (!active) { setPredictive(null); return; }
     setPredLoading(true);
     setPredictive(null);
+    const ctrl = new AbortController();
     const params = new URLSearchParams({
       action:     active.action,
       confidence: active.confidence || 65,
       sources:    (active.sources || []).join(","),
       style:      active.style || "swing",
     });
-    apiFetch(`/api/signals/predictive?${params}`)
+    apiFetch(`/api/signals/predictive?${params}`, { signal: ctrl.signal })
       .then(d => { if (d) setPredictive(d); })
       .finally(() => setPredLoading(false));
+    return () => ctrl.abort();
   }, [activeId]);
 
   useEffect(() => {
@@ -509,7 +533,7 @@ function App() {
       setActiveId(filteredSignals[0].id);
       setExpandedId(null);
     }
-  }, [filteredSignals]);
+  }, [activeId, filteredSignals]);
 
   const up = active ? (active.change || 0) >= 0 : true;
 
@@ -576,14 +600,17 @@ function App() {
     });
   };
 
-  /* Auth gate */
+  /* Auth gate — redirect side-effect must live in useEffect, not render */
+  useEffect(() => {
+    if (authReady && !currentUser) {
+      window.location.replace("/login?next=/app");
+    }
+  }, [authReady, currentUser]);
+
   if (!authReady) return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", background:"var(--bg-0)", color:"var(--text-faint)", fontFamily:"var(--font-mono)", fontSize:13 }}>Loading…</div>
   );
-  if (!currentUser) {
-    window.location.replace("/login?next=/app");
-    return null;
-  }
+  if (!currentUser) return null;
 
   /* Disclaimer */
   if (!disclaimerAck) return (
@@ -1472,6 +1499,27 @@ function App() {
                 <button className="btn" onClick={() => setAlertOpen(true)}>
                   <Icon name="bell" size={14}/> Alert
                 </button>
+                {hasTierAccess(currentUser.subscription_tier, "pro", currentUser.is_owner) && active.action !== "HOLD" && (
+                  <button
+                    className="btn"
+                    style={{ background: paperTradeFlash ? "var(--up)" : undefined, color: paperTradeFlash ? "#fff" : undefined, transition:"all 0.2s" }}
+                    onClick={() => {
+                      const side = active.action === "BUY" ? "buy" : "sell";
+                      authFetch("/api/paper/orders", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ symbol: active.ticker, qty: 1, side, type: "market", time_in_force: "day" }),
+                      }).then(res => {
+                        if (res && res.ok) {
+                          setPaperTradeFlash(true);
+                          setTimeout(() => setPaperTradeFlash(false), 1500);
+                        }
+                      });
+                    }}
+                    title="Paper Trade (P)">
+                    {paperTradeFlash ? "✓ Placed" : "Paper Trade"}
+                  </button>
+                )}
                 <button
                   className="btn ghost"
                   style={{ marginLeft:"auto", color: active.reviewed ? "var(--up)" : undefined }}
@@ -1503,7 +1551,7 @@ function App() {
         <ScreenerView open={nav==="screener"} onClose={() => setNav("feed")}/>
         <BacktestView open={nav==="backtest"} onClose={() => setNav("feed")} online={online}
           btCache={btCacheRef.current}
-          onBtCache={d => { btCacheRef.current = d; }}/>
+          onBtCache={onBtCache}/>
         <PricingView open={pricingOpen} onClose={() => setPricingOpen(false)} user={currentUser}/>
         <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} user={currentUser} setUser={setCurrentUser} onUpgrade={() => { setAccountOpen(false); setPricingOpen(true); }}/>
         <PriceAlertModal open={alertOpen} onClose={() => setAlertOpen(false)} ticker={active?.ticker} currentPrice={active?.price}/>

@@ -10,6 +10,7 @@ if the JWT secret rotates, users will need to re-enter credentials.
 import base64
 import hashlib
 import logging
+import os
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
@@ -21,7 +22,7 @@ log = logging.getLogger("broker_svc")
 # used for new encryptions; all versions down to v1 remain valid for decryption,
 # so a rotation re-encrypts ciphertexts under the new primary without forcing
 # users to re-enter credentials. Bump this to rotate.
-_BROKER_KEY_VERSION = 1
+_BROKER_KEY_VERSION = 2
 _FERNET_CACHE: Optional[MultiFernet] = None
 
 # Portfolio drawdown circuit-breaker: if unrealised P&L drops below this
@@ -29,24 +30,36 @@ _FERNET_CACHE: Optional[MultiFernet] = None
 _DD_BLOCK_THRESHOLD = -0.05  # −5%
 
 
-def _derive_key(jwt_secret: str, version: int) -> bytes:
-    """Derive a Fernet key for a given version. v1 keeps the original
-    ":broker-v1" domain separator so pre-versioning ciphertexts still decrypt."""
-    raw = hashlib.sha256(f"{jwt_secret}:broker-v{version}".encode()).digest()
+def _derive_key_v1(jwt_secret: str) -> bytes:
+    """Legacy v1 KDF (SHA-256) kept for decrypting existing credentials."""
+    raw = hashlib.sha256(f"{jwt_secret}:broker-v1".encode()).digest()
+    return base64.urlsafe_b64encode(raw)
+
+
+def _derive_key_v2(jwt_secret: str, salt: bytes) -> bytes:
+    """v2 KDF using scrypt with a random per-credential salt."""
+    raw = hashlib.scrypt(
+        jwt_secret.encode(),
+        salt=salt,
+        n=2**14,
+        r=8,
+        p=1,
+        maxmem=64 * 1024 * 1024,
+        dklen=32,
+    )
     return base64.urlsafe_b64encode(raw)
 
 
 def _get_fernet() -> MultiFernet:
-    """MultiFernet whose first key is the current version (used for encryption)
-    and whose remaining keys (older versions) remain valid for decryption."""
+    """MultiFernet holding only fixed-key legacy versions (v1) for decryption.
+    New encryptions use v2 with a per-credential salt stored alongside the
+    ciphertext, so they are not handled through this cache."""
     global _FERNET_CACHE
     if _FERNET_CACHE is None:
         from config import get_settings
 
         jwt_secret = get_settings().jwt_secret_key
-        # Newest version first → MultiFernet encrypts with it; older versions
-        # follow so existing ciphertexts keep decrypting after a rotation.
-        keys = [Fernet(_derive_key(jwt_secret, v)) for v in range(_BROKER_KEY_VERSION, 0, -1)]
+        keys = [Fernet(_derive_key_v1(jwt_secret))]
         _FERNET_CACHE = MultiFernet(keys)
     return _FERNET_CACHE
 
@@ -57,25 +70,46 @@ def current_key_version() -> int:
 
 
 def encrypt_credential(plaintext: str) -> str:
-    """Encrypt a broker API key/secret for storage in the DB."""
-    return _get_fernet().encrypt(plaintext.encode()).decode()
+    """Encrypt a broker API key/secret for storage in the DB using v2 scrypt KDF."""
+    from config import get_settings
+
+    jwt_secret = get_settings().jwt_secret_key
+    salt = os.urandom(16)
+    key = _derive_key_v2(jwt_secret, salt)
+    ct = Fernet(key).encrypt(plaintext.encode())
+    salt_b64 = base64.urlsafe_b64encode(salt).decode()
+    return f"v2:{salt_b64}:{ct.decode()}"
 
 
 def decrypt_credential(ciphertext: str) -> Optional[str]:
-    """Decrypt a broker credential. Returns None if the token is invalid."""
+    """Decrypt a broker credential. Supports v2 (salt-prefixed) and v1 legacy
+    tokens. Returns None if the token is invalid."""
+    if not ciphertext:
+        return None
     try:
+        if ciphertext.startswith("v2:"):
+            from config import get_settings
+
+            jwt_secret = get_settings().jwt_secret_key
+            _, salt_b64, ct = ciphertext.split(":", 2)
+            salt = base64.urlsafe_b64decode(salt_b64.encode())
+            key = _derive_key_v2(jwt_secret, salt)
+            return Fernet(key).decrypt(ct.encode()).decode()
         return _get_fernet().decrypt(ciphertext.encode()).decode()
-    except (InvalidToken, Exception):
+    except Exception:
         return None
 
 
 def rotate_credential(ciphertext: str) -> Optional[str]:
-    """TSYS-9d: re-encrypt a ciphertext under the current primary key without
-    decrypting to plaintext in the caller. Returns None if the token is invalid."""
-    try:
-        return _get_fernet().rotate(ciphertext.encode()).decode()
-    except (InvalidToken, Exception):
+    """TSYS-9d: re-encrypt a ciphertext under the current primary key.
+    Returns the original ciphertext if it is already current; returns None if
+    the token is invalid."""
+    if ciphertext.startswith(f"v{current_key_version()}:"):
+        return ciphertext
+    plaintext = decrypt_credential(ciphertext)
+    if plaintext is None:
         return None
+    return encrypt_credential(plaintext)
 
 
 async def verify_alpaca_connection(key: str, secret: str, live: bool) -> dict:
@@ -118,7 +152,9 @@ async def check_portfolio_drawdown(user, key: str, secret: str, live: bool, brok
 
     Returns True (block execution) if unrealised P&L / equity < −5%.
     Logs a WARNING and fires a Telegram admin alert on first breach.
-    Returns False (allow execution) if below threshold or on any error.
+    Returns True (fail closed) if equity cannot be fetched or is missing.
+    Returns False (allow execution) only when equity is available and drawdown
+    is below the threshold.
     """
     if broker == "ibkr":
         from services import ibkr_rest as broker_rest
@@ -127,32 +163,38 @@ async def check_portfolio_drawdown(user, key: str, secret: str, live: bool, brok
 
     try:
         account = await broker_rest.get_account(key, secret, live=live)
-        equity = float(account.get("equity") or 1.0)
-        unreal_pl = float(account.get("unrealized_pl") or 0.0)
-        if equity <= 0:
-            return False
-        dd_frac = unreal_pl / equity
-        if dd_frac < _DD_BLOCK_THRESHOLD:
-            log.warning(
-                "broker_svc: RISK-2 portfolio DD %.1f%% < %.0f%% threshold — blocking user=%d auto-execute",
-                dd_frac * 100,
-                _DD_BLOCK_THRESHOLD * 100,
-                user.id,
-            )
-            # Best-effort Telegram admin alert (non-blocking)
-            try:
-                from services.telegram_svc import send_admin_alert
-
-                await send_admin_alert(
-                    f"⚠️ Portfolio DD {dd_frac * 100:.1f}% for user {user.id} "
-                    f"(equity ${equity:,.0f}, unreal PL ${unreal_pl:,.0f}) — "
-                    "auto-execution paused until DD recovers."
-                )
-            except Exception:
-                pass
-            return True
     except Exception as e:
         log.debug("broker_svc: DD check failed for user=%d: %s", user.id, e)
+        return True
+
+    equity = account.get("equity")
+    if equity is None:
+        return True
+    equity = float(equity)
+    if equity <= 0:
+        return True
+
+    unreal_pl = float(account.get("unrealized_pl") or 0.0)
+    dd_frac = unreal_pl / equity
+    if dd_frac < _DD_BLOCK_THRESHOLD:
+        log.warning(
+            "broker_svc: RISK-2 portfolio DD %.1f%% < %.0f%% threshold — blocking user=%d auto-execute",
+            dd_frac * 100,
+            _DD_BLOCK_THRESHOLD * 100,
+            user.id,
+        )
+        # Best-effort Telegram admin alert (non-blocking)
+        try:
+            from services.telegram_svc import send_admin_alert
+
+            await send_admin_alert(
+                f"⚠️ Portfolio DD {dd_frac * 100:.1f}% for user {user.id} "
+                f"(equity ${equity:,.0f}, unreal PL ${unreal_pl:,.0f}) — "
+                "auto-execution paused until DD recovers."
+            )
+        except Exception:
+            pass
+        return True
     return False
 
 
@@ -333,7 +375,8 @@ async def execute_signal_for_user(
         return
 
     base_notional = user.auto_execute_qty_dollars or 100.0
-    scale = float(sig.get("positionSizeScale") or 1.0)
+    scale_raw = sig.get("positionSizeScale")
+    scale = float(scale_raw) if scale_raw is not None else 1.0
     notional = round(base_notional * scale, 2)
     notional = max(notional, 1.0)  # minimum
 
@@ -481,52 +524,67 @@ async def execute_portfolio_for_user(
         return
 
     # Fetch total equity from broker to use as capital base
-    total_cash = user.auto_execute_qty_dollars or 100.0
     try:
         if broker_type == "ibkr":
             from services import ibkr_rest as broker_rest
         else:
             from services import alpaca_rest as broker_rest
         account = await broker_rest.get_account(key, secret, live=live)
-        equity = float(account.get("equity") or 0.0)
-        if equity > 0:
-            total_cash = equity
-            # Persist daily equity/PL mark (TSYS-8a / RISK-2 / Drawdown Throttle)
-            try:
-                from models import PnlDaily
-                from sqlalchemy import select
-                import datetime
-                
-                today = datetime.date.today()
-                stmt = select(PnlDaily).where(PnlDaily.user_id == user.id, PnlDaily.date == today)
-                res = await db.execute(stmt)
-                pnl_row = res.scalar_one_or_none()
-                
-                unrealized_pl = float(account.get("unrealized_pl") or 0.0)
-                cash = float(account.get("cash") or 0.0)
-                
-                if pnl_row:
-                    pnl_row.equity = equity
-                    pnl_row.cash = cash
-                    pnl_row.unrealized_pnl = unrealized_pl
-                else:
-                    pnl_row = PnlDaily(
-                        user_id=user.id,
-                        date=today,
-                        equity=equity,
-                        cash=cash,
-                        unrealized_pnl=unrealized_pl,
-                        realized_pnl=0.0,
-                        n_positions=len(active_signals)
-                    )
-                    db.add(pnl_row)
-                await db.flush()
-                log.info("broker_svc: user=%d — recorded daily PnL mark: equity=$%.2f", user.id, equity)
-            except Exception as mark_err:
-                log.warning("broker_svc: user=%d — failed to record daily PnL mark: %s", user.id, mark_err)
     except Exception as e:
-        log.warning("broker_svc: user=%d — could not fetch account equity, using fallback: %s", user.id, e)
-        total_cash = (user.auto_execute_qty_dollars or 100.0) * 10.0
+        log.warning(
+            "broker_svc: user=%d — could not fetch account equity, aborting portfolio execution: %s",
+            user.id,
+            e,
+        )
+        return
+
+    equity_raw = account.get("equity")
+    if equity_raw is None:
+        log.warning("broker_svc: user=%d — account equity missing, aborting portfolio execution", user.id)
+        return
+    equity = float(equity_raw)
+    if equity <= 0:
+        log.warning(
+            "broker_svc: user=%d — account equity non-positive (%.2f), aborting portfolio execution",
+            user.id,
+            equity,
+        )
+        return
+    total_cash = equity
+
+    # Persist daily equity/PL mark (TSYS-8a / RISK-2 / Drawdown Throttle)
+    try:
+        from models import PnlDaily
+        from sqlalchemy import select
+        import datetime
+
+        today = datetime.date.today()
+        stmt = select(PnlDaily).where(PnlDaily.user_id == user.id, PnlDaily.date == today)
+        res = await db.execute(stmt)
+        pnl_row = res.scalar_one_or_none()
+
+        unrealized_pl = float(account.get("unrealized_pl") or 0.0)
+        cash = float(account.get("cash") or 0.0)
+
+        if pnl_row:
+            pnl_row.equity = equity
+            pnl_row.cash = cash
+            pnl_row.unrealized_pnl = unrealized_pl
+        else:
+            pnl_row = PnlDaily(
+                user_id=user.id,
+                date=today,
+                equity=equity,
+                cash=cash,
+                unrealized_pnl=unrealized_pl,
+                realized_pnl=0.0,
+                n_positions=len(active_signals),
+            )
+            db.add(pnl_row)
+        await db.flush()
+        log.info("broker_svc: user=%d — recorded daily PnL mark: equity=$%.2f", user.id, equity)
+    except Exception as mark_err:
+        log.warning("broker_svc: user=%d — failed to record daily PnL mark: %s", user.id, mark_err)
 
     # Call portfolio allocator to get sized orders
     try:

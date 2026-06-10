@@ -54,17 +54,24 @@ cd backend && python app.py
 Quickest path: Use stripe listen from the CLI — it gives you the secret immediately without needing ngrok or a public URL.
 """
 import os, sys
+import subprocess
+import tempfile
 
 # Load .env
 env_path = os.path.join(os.path.dirname(__file__), "backend", ".env")
-env_vars = {}
+env_vars: dict[str, str] = {}
 if os.path.exists(env_path):
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _, v = line.partition("=")
-                env_vars[k.strip()] = v.strip()
+    try:
+        from dotenv import dotenv_values
+
+        env_vars = dict(dotenv_values(env_path))
+    except Exception:
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    env_vars[k.strip()] = v.strip()
 
 secret_key = env_vars.get("STRIPE_SECRET_KEY", "").strip()
 if not secret_key or secret_key.startswith("sk_test_...") or not secret_key.startswith("sk_"):
@@ -79,12 +86,12 @@ try:
     import stripe
 except ImportError:
     print("Installing stripe…")
-    os.system(f"{sys.executable} -m pip install stripe -q")
+    subprocess.run([sys.executable, "-m", "pip", "install", "stripe", "-q"], check=False)
     import stripe
 
 stripe.api_key = secret_key
 mode = "TEST" if "test" in secret_key else "LIVE"
-print(f"\n🔑  Using Stripe {mode} mode key: {secret_key[:12]}…\n")
+print(f"\n🔑  Using Stripe {mode} mode key: {secret_key[:4]}…{'*' * 12}\n")
 
 PLANS = [
     {
@@ -118,7 +125,8 @@ results = {}
 for plan in PLANS:
     print(f"Creating product: {plan['name']} …")
     # Check if product already exists
-    existing = stripe.Product.search(query=f"name:'{plan['name']}'", limit=1)
+    safe_name = plan["name"].replace("'", "").strip()
+    existing = stripe.Product.search(query=f"name:'{safe_name}'", limit=1)
     if existing.data:
         product = existing.data[0]
         print(f"  ✓ Product already exists: {product.id}")
@@ -167,11 +175,19 @@ print("\nDone! Restart the server after updating .env.\n")
 
 # Optionally patch .env automatically
 if results:
+    import re
+
     with open(env_path) as f:
         content = f.read()
     for k, v in results.items():
-        import re
         content = re.sub(rf"^{k}=.*$", f"{k}={v}", content, flags=re.MULTILINE)
-    with open(env_path, "w") as f:
-        f.write(content)
+    dir_name = os.path.dirname(env_path)
+    fd, tmp_path = tempfile.mkstemp(prefix=".env.tmp.", dir=dir_name)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp_path, env_path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
     print(f"✓  Also patched {env_path} automatically.")

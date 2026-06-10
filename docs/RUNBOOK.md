@@ -259,6 +259,53 @@ python scripts/backfill_confidence.py --force --apply   # recalibrate
 
 ---
 
+## 8. Security Incident Response
+
+### 8.1 JWT_SECRET leaked or suspected compromised
+
+1. **Rotate immediately** — generate a new secret:
+   ```bash
+   python3 -c "import secrets; print(secrets.token_hex(32))"
+   ```
+2. Update `JWT_SECRET` in the production environment (Railway / Fly.io) and
+   redeploy.
+3. **Invalidate sessions** — because the secret signs access tokens, all
+   existing JWTs become invalid on rotation. Users will be forced to
+   re-authenticate via their refresh cookie; revoke all stored
+   `RefreshToken` rows if you need a hard logout:
+   ```bash
+   psql $DATABASE_URL -c "DELETE FROM refresh_tokens;"
+   ```
+4. Audit `auth_audit_log` for unexpected IPs or user agents.
+5. If the leak also exposed broker credentials (encrypted with a key derived
+   from `JWT_SECRET`), notify affected users to re-enter broker API keys.
+
+### 8.2 Stripe webhook secret suspected compromised
+
+1. **Disable webhook processing** temporarily by unsetting
+   `STRIPE_WEBHOOK_SECRET` (the endpoint returns `503` and Stripe retries).
+2. In the Stripe Dashboard, delete the old webhook endpoint and create a new
+   one.
+3. Copy the new `whsec_...` signing secret into `STRIPE_WEBHOOK_SECRET`.
+4. Redeploy and verify events resume successfully via the Stripe Dashboard.
+5. Review `stripe_events` for any anomalous transitions or replayed events
+   during the exposure window.
+
+### 8.3 OAuth credentials leaked (Google or Discord)
+
+1. Rotate the compromised client secret in the provider console:
+   - Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client
+   - Discord Developer Portal → OAuth2 → Client Secret → Regenerate
+2. Update `GOOGLE_CLIENT_SECRET` and/or `DISCORD_CLIENT_SECRET` in production
+   `.env`.
+3. Verify that `OAuthState` rows do not contain plaintext long-lived secrets
+   (PKCE verifiers are stored but are short-lived).
+4. Redeploy and run a test login flow end-to-end.
+5. Audit `auth_audit_log` for logins from unexpected OAuth providers or
+   accounts.
+
+---
+
 ## 7. Contacts and Resources
 
 | Resource | URL |

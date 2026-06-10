@@ -22,13 +22,30 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_index(op.f("ix_signals_is_sent"), "signals", ["is_sent"], unique=False)
-    op.create_index(op.f("ix_broker_orders_status"), "broker_orders", ["status"], unique=False)
+    bind = op.get_bind()
+    dialect = bind.dialect.name
+    pg_kwargs = {"postgresql_concurrently": True} if dialect == "postgresql" else {}
+
+    op.create_index(
+        op.f("ix_signals_is_sent"),
+        "signals",
+        ["is_sent"],
+        unique=False,
+        **pg_kwargs,
+    )
+    op.create_index(
+        op.f("ix_broker_orders_status"),
+        "broker_orders",
+        ["status"],
+        unique=False,
+        **pg_kwargs,
+    )
     op.create_index(
         op.f("ix_provider_response_samples_created_at"),
         "provider_response_samples",
         ["created_at"],
         unique=False,
+        **pg_kwargs,
     )
 
 

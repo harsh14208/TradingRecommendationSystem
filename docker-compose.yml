@@ -6,7 +6,8 @@ services:
     environment:
       POSTGRES_DB: signal_trade
       POSTGRES_USER: signal
-      POSTGRES_PASSWORD: signal_dev_pw
+      # ⚠️  Never use the default in production. Set POSTGRES_PASSWORD in your shell/env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-signal_dev_pw}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -29,8 +30,9 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      # Override .env so the container uses the compose network hostname
-      - DATABASE_URL=postgresql://signal:signal_dev_pw@postgres:5432/signal_trade
+      # Override .env so the container uses the compose network hostname.
+      # Keep the password in sync with POSTGRES_PASSWORD above.
+      - DATABASE_URL=postgresql://signal:${POSTGRES_PASSWORD:-signal_dev_pw}@postgres:5432/signal_trade
     depends_on:
       postgres:
         condition: service_healthy

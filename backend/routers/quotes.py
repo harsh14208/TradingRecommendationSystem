@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 from config import TIERS, get_settings
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -265,12 +266,35 @@ async def massive_endpoints():
     return categories
 
 
+_MASSIVE_SAFE_ENDPOINTS = {
+    re.compile(r"^v\d+/reference/tickers/[A-Z0-9]+$"),
+    re.compile(r"^v\d+/reference/dividends/[A-Z0-9]+$"),
+    re.compile(r"^v\d+/reference/splits/[A-Z0-9]+$"),
+    re.compile(r"^v\d+/reference/news$"),
+    re.compile(r"^v\d+/aggs/ticker/[A-Z0-9:.]+/range/\d+/\w+/\d{4}-\d{2}-\d{2}/\d{4}-\d{2}-\d{2}$"),
+    re.compile(r"^v\d+/snapshot/locale/us/markets/stocks/tickers$"),
+    re.compile(r"^v\d+/snapshot/locale/us/markets/stocks/tickers/[A-Z0-9:.]+$"),
+    re.compile(r"^v\d+/indicators/[a-z]+$"),
+}
+
+
+def _is_safe_endpoint(endpoint: str) -> bool:
+    normalized = endpoint.lstrip("/")
+    return any(pattern.match(normalized) for pattern in _MASSIVE_SAFE_ENDPOINTS)
+
+
 @router.post("/massive/proxy")
-async def massive_proxy(payload: dict):
-    """Generic proxy to call any Massive REST API endpoint."""
+async def massive_proxy(
+    payload: dict,
+    user: User = Depends(get_current_user),
+):
+    """Generic proxy to call specific allowed Massive/Polygon REST API endpoints."""
     import os
 
     import aiohttp
+
+    if not user.is_owner:
+        raise HTTPException(403, detail="Owner access required")
 
     api_key = os.getenv("MASSIVE_API_KEY")
     if not api_key:
@@ -279,6 +303,9 @@ async def massive_proxy(payload: dict):
     endpoint = payload.get("endpoint", "").lstrip("/")
     method = payload.get("method", "GET")
     params = payload.get("params", {})
+
+    if not _is_safe_endpoint(endpoint):
+        raise HTTPException(400, detail="Endpoint not in allowlist")
 
     import ssl
 

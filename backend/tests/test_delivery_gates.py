@@ -37,6 +37,7 @@ async def _db_no_sector_count():
     db = AsyncMock()
     result = AsyncMock()
     result.scalar_one = MagicMock(return_value=0)
+    result.scalar_one_or_none = MagicMock(return_value=None)
     db.execute = AsyncMock(return_value=result)
     return db
 
@@ -330,9 +331,16 @@ async def test_gate_allows_swing_with_two_non_ta():
 
 
 def _db_with_counts(*counts):
-    """DB mock that returns sequential scalar values across multiple execute() calls."""
+    """DB mock that returns sequential scalar values across multiple execute() calls.
+
+    The first result is for the AppSettings adaptive-weights lookup; subsequent
+    results are for sector/alias concentration counts."""
     db = AsyncMock()
     results = []
+    # AppSettings.scalar_one_or_none() → None
+    app_r = AsyncMock()
+    app_r.scalar_one_or_none = MagicMock(return_value=None)
+    results.append(app_r)
     for count in counts:
         r = AsyncMock()
         r.scalar_one = MagicMock(return_value=count)
@@ -499,19 +507,18 @@ async def test_ticker_adaptive_low_wr_raises_floor():
     app_settings_row = MagicMock()
     app_settings_row.data = {"adaptive_weights": {"ticker_win_rates": {"AAPL": 0.40}}}
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    scalar_result = AsyncMock()
-    scalar_result.scalar_one_or_none = MagicMock(return_value=app_settings_row)
-    mock_session.execute = AsyncMock(return_value=scalar_result)
+    app_result = AsyncMock()
+    app_result.scalar_one_or_none = MagicMock(return_value=app_settings_row)
+    sector_result = AsyncMock()
+    sector_result.scalar_one = MagicMock(return_value=0)
+    sector_result.scalar_one_or_none = MagicMock(return_value=None)
+    db.execute = AsyncMock(side_effect=[app_result, sector_result, sector_result, sector_result])
 
-    with patch("database.AsyncSessionLocal", return_value=mock_session):
-        reason, _ = await check_delivery_gates(
-            _sig(ticker="AAPL", confidence=65.0),  # below raised 68 floor
-            db,
-            _Settings(),
-        )
+    reason, _ = await check_delivery_gates(
+        _sig(ticker="AAPL", confidence=65.0),  # below raised 68 floor
+        db,
+        _Settings(),
+    )
     assert reason is not None
     assert "68" in reason
 
@@ -526,20 +533,19 @@ async def test_ticker_adaptive_high_wr_lowers_floor():
     app_settings_row = MagicMock()
     app_settings_row.data = {"adaptive_weights": {"ticker_win_rates": {"AAPL": 0.80}}}
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    scalar_result = AsyncMock()
-    scalar_result.scalar_one_or_none = MagicMock(return_value=app_settings_row)
-    mock_session.execute = AsyncMock(return_value=scalar_result)
+    app_result = AsyncMock()
+    app_result.scalar_one_or_none = MagicMock(return_value=app_settings_row)
+    sector_result = AsyncMock()
+    sector_result.scalar_one = MagicMock(return_value=0)
+    sector_result.scalar_one_or_none = MagicMock(return_value=None)
+    db.execute = AsyncMock(side_effect=[app_result, sector_result, sector_result, sector_result])
 
     # With floor lowered to 52, a conf=53 signal should pass global floor
-    with patch("database.AsyncSessionLocal", return_value=mock_session):
-        reason, _ = await check_delivery_gates(
-            _sig(ticker="AAPL", confidence=53.0),
-            db,
-            _Settings(),
-        )
+    reason, _ = await check_delivery_gates(
+        _sig(ticker="AAPL", confidence=53.0),
+        db,
+        _Settings(),
+    )
     # May pass or fail other gates but NOT the global conf floor
     if reason:
         assert "52" not in reason and "global floor" not in reason

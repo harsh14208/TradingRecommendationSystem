@@ -814,6 +814,40 @@ REGIMES = [
     ("Current (2025+)", "2025-01-01", END),
 ]
 
+# ── Backtest research flags (Sharpe-improvement experiments) ──────────────────
+# These are toggled via CLI flags; they do NOT affect the live engine.
+_SCORE_BAND_SIZING = False
+_DYNAMIC_STOP_RSI = False
+_NO_FAMILY_DISCOUNT = False
+
+
+def score_band_size_mult(score: float) -> float:
+    """Non-linear position sizing by backtest-validated Sharpe band.
+
+    Band data (v7.1, 2026-05-28):
+      <50  → Sharpe ~0.07, WR 56%  → reduce size
+      50-55 → Sharpe ~0.15         → modest reduction
+      55-60 → Sharpe ~0.21, WR 65% → baseline
+      60-65 → Sharpe ~0.25+        → modest boost
+      65-70 → higher conviction    → stronger boost
+      70-75 → strong edge          → near-max
+      ≥75   → extreme edge         → max
+    """
+    if score >= 75:
+        return 1.55
+    elif score >= 70:
+        return 1.45
+    elif score >= 65:
+        return 1.30
+    elif score >= 60:
+        return 1.15
+    elif score >= 55:
+        return 1.00
+    elif score >= 50:
+        return 0.75
+    else:
+        return 0.50
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Indicator computation (pure pandas / numpy — no external TA library)
@@ -1112,7 +1146,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def score_row(r: pd.Series) -> float:
+def score_row(r: pd.Series, no_family_discount: bool = False) -> float:
     """
     Compute the technical score using the optimised research weight structure.
     All 5 families + 4 regime layers. Technical-only (no news/options/fundamentals).
@@ -1522,8 +1556,8 @@ def score_row(r: pd.Series) -> float:
     # signal families (options, fundamentals, alt-data, macro) that increase scores;
     # compressing these caps to match live-engine values would collapse trade count.
     osc_f = max(-25, min(25, osc)) * 1.00
-    trend_f = max(-28, min(28, trend_score)) * 0.90
-    volume_f = max(-20, min(20, volume_score)) * 0.85
+    trend_f = max(-28, min(28, trend_score)) * (1.00 if no_family_discount else 0.90)
+    volume_f = max(-20, min(20, volume_score)) * (1.00 if no_family_discount else 0.85)
     ma_f = max(-28, min(28, ma_score)) * 1.00
     mr_f = max(-18, min(18, mean_rev_score)) * 1.00
 
@@ -1559,7 +1593,7 @@ def score_row(r: pd.Series) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def compute_scores(df: pd.DataFrame) -> pd.Series:
+def compute_scores(df: pd.DataFrame, no_family_discount: bool = False) -> pd.Series:
     """
     Fully vectorised replacement for df.apply(score_row, axis=1).
     Operates on the entire DataFrame in one numpy pass (~20-50x faster).
@@ -1892,9 +1926,11 @@ def compute_scores(df: pd.DataFrame) -> pd.Series:
     # has 50+ additional signal families so its score ceiling is ~4× higher;
     # these caps must NOT be changed to match the live engine's ±22/±30 values
     # because that collapses the trade count from ~188 to ~15.
+    _trend_mult = 1.00 if no_family_discount else 0.90
+    _vol_mult = 1.00 if no_family_discount else 0.85
     osc_f = np.clip(osc, -25, 25) * 1.00
-    trend_f = np.clip(trend, -28, 28) * 0.90
-    vol_f = np.clip(vol, -20, 20) * 0.85
+    trend_f = np.clip(trend, -28, 28) * _trend_mult
+    vol_f = np.clip(vol, -20, 20) * _vol_mult
     ma_f = np.clip(ma, -28, 28) * 1.00
     mr_f = np.clip(mr, -18, 18) * 1.00
     score = osc_f + trend_f + vol_f + ma_f + mr_f
@@ -2036,6 +2072,7 @@ def simulate_ticker(
     vix_min_override: float | None = None,
     require_mr_count_override: int | None = None,
     require_consec_score_override: bool | None = None,
+    consec_score_thresh_override: float | None = None,
     atr_pct_rank_min_override: float | None = None,
     atr_pct_rank_max_override: float | None = None,
     ret_jump_filter_override: float | None = None,
@@ -2052,6 +2089,13 @@ def simulate_ticker(
     spy_prices: dict | None = None,
     forecast_sizing: bool = False,
     fred_panel: dict | None = None,
+    score_band_sizing: bool = False,
+    dynamic_stop_rsi: bool = False,
+    no_family_discount: bool = False,
+    dow_filter: set[int] | None = None,
+    mr_bb_ceil_override: float | None = None,
+    mr_ibs_ceil_override: float | None = None,
+    score_accel: bool = False,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -2101,6 +2145,9 @@ def simulate_ticker(
     _vix_min = vix_min_override
     _require_mr_count = require_mr_count_override if require_mr_count_override is not None else 1
     _require_consec = require_consec_score_override if require_consec_score_override is not None else False
+    _consec_score_thresh = consec_score_thresh_override if consec_score_thresh_override is not None else _buy_thresh
+    _mr_bb_ceil = mr_bb_ceil_override if mr_bb_ceil_override is not None else MR_BB_CEIL
+    _mr_ibs_ceil = mr_ibs_ceil_override if mr_ibs_ceil_override is not None else MR_IBS_CEIL
     # Default to 20 in MR-only mode — matches live engine gate (§12e validated:
     # Ann. Sharpe 0.92 → 1.00, removes only 17% of trades, WR +3.4pp).
     _atr_rank_min = atr_pct_rank_min_override if atr_pct_rank_min_override is not None else (20.0 if mr_only else None)
@@ -2124,6 +2171,10 @@ def simulate_ticker(
             continue
 
         if date <= in_trade_until:
+            continue
+
+        # Day-of-week filter — block entries on specified days (0=Mon, 4=Fri)
+        if dow_filter is not None and date.dayofweek in dow_filter:
             continue
 
         # Check point-in-time constituent membership (Survivorship bias correction §84)
@@ -2305,8 +2356,8 @@ def simulate_ticker(
             # signal engine's _has_mr (RSI/BB/IBS/VWAP only). They still
             # contribute to the signal score via compute_scores().
             _trig_rsi = rsi_e < _mr_rsi_ceil
-            _trig_bb = bb_e < MR_BB_CEIL
-            _trig_ibs = ibs_e < MR_IBS_CEIL
+            _trig_bb = bb_e < _mr_bb_ceil
+            _trig_ibs = ibs_e < _mr_ibs_ceil
             _trig_vwap = vwap_e < MR_VWAP_FLOOR
             _is_mr_setup = _trig_rsi or _trig_bb or _trig_ibs or _trig_vwap
             # Build trigger label for analysis (Inv 1)
@@ -2348,8 +2399,8 @@ def simulate_ticker(
                 _mr_count = sum(
                     [
                         rsi_e < _mr_rsi_ceil,
-                        bb_e < MR_BB_CEIL,
-                        ibs_e < MR_IBS_CEIL,
+                        bb_e < _mr_bb_ceil,
+                        ibs_e < _mr_ibs_ceil,
                         vwap_e < MR_VWAP_FLOOR,
                     ]
                 )
@@ -2411,12 +2462,23 @@ def simulate_ticker(
                 continue
 
         # ── Gate 18: Persistent oversold — consecutive score requirement ───────
-        # Require the previous bar also had score >= BUY_THRESH. One-day panic
+        # Require the previous bar also had score >= threshold. One-day panic
         # signals frequently whipsaw; persistent oversold (2+ days above threshold)
         # indicates sustained selling pressure nearing exhaustion — higher conviction.
+        # _consec_score_thresh defaults to _buy_thresh but can be graduated lower
+        # (e.g. 45) to keep more trades while still filtering single-day spikes.
         if is_buy_signal and _require_consec and i > 0:
             prev_score = float(df.iloc[i - 1]["score"]) if "score" in df.columns else 0.0
-            if prev_score < _buy_thresh:
+            if prev_score < _consec_score_thresh:
+                continue
+
+        # ── Gate 18b: Score acceleration — require rising conviction ────────────
+        # Filters signals where score is already peaking and starting to decline.
+        # A rising score indicates building selling pressure / increasing signal
+        # strength — entry is earlier in the move, before the bounce begins.
+        if is_buy_signal and score_accel and i > 0:
+            prev_score = float(df.iloc[i - 1]["score"]) if "score" in df.columns else 0.0
+            if score <= prev_score:
                 continue
 
         # ── Gate 12: Deep-bear stricter RSI ───────────────────────────────────
@@ -2530,9 +2592,9 @@ def simulate_ticker(
             _vwap_ev = float(row.get("vwap_pct", 0)) if pd.notna(row.get("vwap_pct")) else 0.0
             _gap_ev = float(row.get("gap_pct", 0)) if pd.notna(row.get("gap_pct")) else 0.0
             _ibs_is_sole = (
-                _ibs_ev < MR_IBS_CEIL
+                _ibs_ev < _mr_ibs_ceil
                 and _rsi_ev >= _mr_rsi_ceil
-                and _bb_ev >= MR_BB_CEIL
+                and _bb_ev >= _mr_bb_ceil
                 and _vwap_ev >= MR_VWAP_FLOOR
                 and _gap_ev >= MR_GAP_FLOOR
             )
@@ -2559,9 +2621,27 @@ def simulate_ticker(
             _spy_entry_price = spy_prices.get(_fill_date_key)
         _exit_bar_idx: int = _fill_bar  # updated in each exit branch; default = fill bar
 
+        # ── Dynamic stop widening based on entry RSI ──────────────────────────
+        # Oversold entries (RSI<30) often see an initial dip before reversal.
+        # Widening the stop prevents premature stop-outs on these bounces.
+        _dyn_stop_mult = None
+        if dynamic_stop_rsi and is_buy_signal:
+            _rsi_entry = float(row.get("rsi", 50)) if pd.notna(row.get("rsi")) else 50.0
+            if _rsi_entry < 30:
+                _dyn_stop_mult = 2.0
+            elif _rsi_entry < 35:
+                _dyn_stop_mult = 1.75
+            else:
+                _dyn_stop_mult = 1.5
+            # Override only when dynamic is wider than any existing override
+            if stop_mult_override is not None and _dyn_stop_mult <= stop_mult_override:
+                _dyn_stop_mult = stop_mult_override
+
+        _effective_stop_mult = _dyn_stop_mult if _dyn_stop_mult is not None else stop_mult_override
+
         # Anchor stop/target to actual fill price, not signal-bar close.
         # Using signal close misplaces stops by the overnight gap distance.
-        stop_price, target_price = atr_levels(entry_price, atr, action, adx_v, stop_mult_override, target_mult_override)
+        stop_price, target_price = atr_levels(entry_price, atr, action, adx_v, _effective_stop_mult, target_mult_override)
 
         # ── Scan next HOLD_DAYS bars for stop/target/time-loss exit ──────────
         exit_price = None
@@ -2736,6 +2816,8 @@ def simulate_ticker(
         if forecast_sizing and is_buy_signal:
             _forecast_val = (score - _buy_thresh) / FORECAST_THRESH_DIV
             _size_mult = max(FORECAST_FLOOR, min(FORECAST_CAP, _forecast_val))
+        if score_band_sizing and is_buy_signal:
+            _size_mult = score_band_size_mult(score)
 
         _date_key = pd.Timestamp(str(date)[:10])
         _near_52wk_low_flag = (
@@ -2761,7 +2843,7 @@ def simulate_ticker(
                 "net_pct_stop25": _net_stop25,  # R4: mechanical 2.5-ATR stop
                 "net_pct_nostop": _net_nostop,  # R4: no hard stop (target/time only)
                 "spy_leg_pct": round(_spy_leg_pct, 3) if beta_hedge else None,
-                "size_mult": round(_size_mult, 3) if forecast_sizing else None,
+                "size_mult": round(_size_mult, 3),
                 "mr_trigger": _mr_trigger_label,
                 # ── Quality score (Option B — continuous trade ranking) ──────────
                 # Composite 0-100: rewards high signal score, fast OU mean-reversion,
@@ -3504,7 +3586,7 @@ def run_full_universe_curation_bias(vix, spy_trend, stlfsi4):
     print("> Runs the same IS strategy on _CURATED_OUT_TICKERS (removed underperformers)")
     print("> to show what portion of IS Sharpe is curation bias vs genuine alpha.\n")
 
-    args_list = [(t, vix, spy_trend, stlfsi4, True, False, {}, False) for t in _CURATED_OUT_TICKERS]
+    args_list = [(t, vix, spy_trend, stlfsi4, True, False, {}, False, False) for t in _CURATED_OUT_TICKERS]
     with Pool(min(8, len(_CURATED_OUT_TICKERS))) as p:
         results = p.map(process_ticker, args_list)
 
@@ -3702,7 +3784,9 @@ def run_portfolio_simulation(
         if len(open_slots) < max_concurrent:
             # R7: graduated de-risk — size down a new slot opened during a drawdown.
             _dd_now = (peak - capital) / peak * 100 if peak > 0 else 0.0
-            _mult = throttle_mult if (dd_throttle and _dd_now > dd_trig) else 1.0
+            _throttle = throttle_mult if (dd_throttle and _dd_now > dd_trig) else 1.0
+            _trade_size = float(row.get("size_mult", 1.0)) if pd.notna(row.get("size_mult")) else 1.0
+            _mult = _throttle * _trade_size
             open_slots.append((exit_dt, net_pct, _mult))
         else:
             skipped += 1
@@ -4001,7 +4085,7 @@ def run_oos_validation(vix, spy_trend, stlfsi4):
     print(f"> {blocked_note}")
     print("> Same MR-Only strategy, same gates, same period — zero data-mining benefit.\n")
 
-    args_list = [(t, vix, spy_trend, stlfsi4, True, False, {}, False) for t in HELD_OUT_TICKERS]
+    args_list = [(t, vix, spy_trend, stlfsi4, True, False, {}, False, False) for t in HELD_OUT_TICKERS]
     with Pool(min(8, len(HELD_OUT_TICKERS))) as p:
         results = p.map(process_ticker, args_list)
 
@@ -4200,6 +4284,7 @@ def process_ticker(args):
         beta_hedge,
         spy_prices,
         forecast_sizing,
+        no_family_discount,
     ) = args
     print(f"Processing {ticker}…", flush=True)
     try:
@@ -4208,7 +4293,8 @@ def process_ticker(args):
         cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_indicators"))
         os.makedirs(cache_dir, exist_ok=True)
         ticker_clean = ticker.replace("^", "_").replace("-", "_").replace(" ", "_")
-        indicator_cache_path = os.path.join(cache_dir, f"{ticker_clean}_{START}_{END}.csv")
+        _cache_suffix = "_nodisc" if no_family_discount else ""
+        indicator_cache_path = os.path.join(cache_dir, f"{ticker_clean}_{START}_{END}{_cache_suffix}.csv")
 
         loaded_from_cache = False
         if os.path.exists(indicator_cache_path):
@@ -4250,7 +4336,7 @@ def process_ticker(args):
         if "vwap_slope_pos" not in df.columns:
             df["vwap_slope_pos"] = False
 
-        df["score"] = compute_scores(df)
+        df["score"] = compute_scores(df, no_family_discount=no_family_discount)
 
         # ── Fetch earnings dates: Polygon only (full point-in-time history) ────
         _poly_key = os.getenv("MASSIVE_API_KEY", "")
@@ -4353,6 +4439,93 @@ def main():
 
     _beta_hedge_flag = "--beta-hedge" in sys.argv
     _forecast_sizing_flag = "--forecast-sizing" in sys.argv
+    _score_band_sizing_flag = "--score-band-sizing" in sys.argv
+    _dynamic_stop_rsi_flag = "--dynamic-stop-rsi" in sys.argv
+    _no_family_discount_flag = "--no-family-discount" in sys.argv
+    _entry_delay_flag = "--entry-delay" in sys.argv
+    _consec_score_flag = "--consec-score" in sys.argv
+
+    # Parse --target-mult X.Y
+    _target_mult_override = None
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--target-mult" and _i + 1 < len(sys.argv):
+            try:
+                _target_mult_override = float(sys.argv[_i + 1])
+            except ValueError:
+                pass
+
+    # Parse --max-loss-days N
+    _max_loss_days_override = None
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--max-loss-days" and _i + 1 < len(sys.argv):
+            try:
+                _max_loss_days_override = int(sys.argv[_i + 1])
+            except ValueError:
+                pass
+
+    # Parse --dow-filter MON,TUE,WED,THU,FRI
+    _dow_filter = None
+    _dow_map = {"MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4}
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--dow-filter" and _i + 1 < len(sys.argv):
+            _dow_parts = sys.argv[_i + 1].upper().split(",")
+            _dow_filter = {_dow_map[p.strip()] for p in _dow_parts if p.strip() in _dow_map}
+
+    # Parse --consec-score-grad N (graduated consecutive score threshold, e.g. 45)
+    _consec_score_thresh_override = None
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--consec-score-grad" and _i + 1 < len(sys.argv):
+            try:
+                _consec_score_thresh_override = float(sys.argv[_i + 1])
+            except ValueError:
+                pass
+
+    # Parse --mr-count N (require N MR conditions simultaneously)
+    _mr_count_override = None
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--mr-count" and _i + 1 < len(sys.argv):
+            try:
+                _mr_count_override = int(sys.argv[_i + 1])
+            except ValueError:
+                pass
+
+    # Parse --rsi-ceil N
+    _rsi_ceil_override = None
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--rsi-ceil" and _i + 1 < len(sys.argv):
+            try:
+                _rsi_ceil_override = float(sys.argv[_i + 1])
+            except ValueError:
+                pass
+
+    # Parse --bb-ceil N
+    _bb_ceil_override = None
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--bb-ceil" and _i + 1 < len(sys.argv):
+            try:
+                _bb_ceil_override = float(sys.argv[_i + 1])
+            except ValueError:
+                pass
+
+    # Parse --ibs-ceil N
+    _ibs_ceil_override = None
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--ibs-ceil" and _i + 1 < len(sys.argv):
+            try:
+                _ibs_ceil_override = float(sys.argv[_i + 1])
+            except ValueError:
+                pass
+
+    # Parse --buy-thresh N
+    _buy_thresh_override = None
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--buy-thresh" and _i + 1 < len(sys.argv):
+            try:
+                _buy_thresh_override = int(sys.argv[_i + 1])
+            except ValueError:
+                pass
+
+    _score_accel_flag = "--score-accel" in sys.argv
 
     # SPY prices are needed for the beta-hedge leg return computation
     spy_prices: dict = {}
@@ -4371,6 +4544,7 @@ def main():
             _beta_hedge_flag,
             spy_prices,
             _forecast_sizing_flag,
+            _no_family_discount_flag,
         )
         for t in TICKERS
     ]
@@ -4490,7 +4664,7 @@ def main():
             cz = _coint_z_series(df["Close"], etf_p)
             df["coint_z"] = cz.reindex(df.index)
             # Recompute scores so they include cointegration adjustments!
-            df["score"] = compute_scores(df)
+            df["score"] = compute_scores(df, no_family_discount=_no_family_discount_flag)
             _coint_added += 1
         print(f"ok ({_coint_added}/{len(all_dfs)} tickers)")
     except Exception as _coint_err:
@@ -4510,6 +4684,21 @@ def main():
             beta_hedge=_beta_hedge_flag,
             spy_prices=spy_prices,
             forecast_sizing=_forecast_sizing_flag,
+            score_band_sizing=_score_band_sizing_flag,
+            dynamic_stop_rsi=_dynamic_stop_rsi_flag,
+            no_family_discount=_no_family_discount_flag,
+            entry_delay_override=_entry_delay_flag,
+            require_consec_score_override=_consec_score_flag,
+            consec_score_thresh_override=_consec_score_thresh_override,
+            target_mult_override=_target_mult_override,
+            max_loss_days_override=_max_loss_days_override,
+            dow_filter=_dow_filter,
+            require_mr_count_override=_mr_count_override,
+            mr_rsi_ceil_override=_rsi_ceil_override,
+            mr_bb_ceil_override=_bb_ceil_override,
+            mr_ibs_ceil_override=_ibs_ceil_override,
+            buy_thresh_override=_buy_thresh_override,
+            score_accel=_score_accel_flag,
         )
         if t is not None and not t.empty:
             all_trades.append(t)
@@ -6253,6 +6442,51 @@ def main():
                 avg_mult = sub["size_mult"].mean()
                 sb_rows.append([str(band), f"{avg_mult:.2f}×", str(len(sub))])
             print_table(["Score Band", "Avg Size Mult", "N"], sb_rows)
+
+    # ── §QuantEngine: non-linear score-band sizing report ────────────────────
+    if _score_band_sizing_flag and "size_mult" in trades.columns:
+        print("\n## §QuantEngine: Non-linear Score-Band Sizing\n")
+        print("> Position size steps by backtest-validated Sharpe band.\n"
+              ">  <50→0.5×  50-55→0.75×  55-60→1.0×  60-65→1.15×  65-70→1.3×  70-75→1.45×  ≥75→1.55×\n")
+        _sm = trades["size_mult"].fillna(1.0).tolist()
+        _rets = trades["net_pct"].tolist()
+        sw = stats_weighted(_rets, _sm)
+        sf = stats(_rets)
+        print_table(
+            ["Metric", "Flat Sizing", "Score-Band Sizing", "Δ"],
+            [
+                ["Win Rate", f"{sf['wr']:.1f}%", f"{sw['wr']:.1f}%", f"{sw['wr'] - sf['wr']:+.1f}pp"],
+                ["Weighted Avg", f"{sf['avg']:+.2f}%", f"{sw['avg']:+.2f}%", f"{sw['avg'] - sf['avg']:+.2f}pp"],
+                [
+                    "Sharpe",
+                    fmt_sharpe(sf["sharpe"]),
+                    fmt_sharpe(sw["sharpe"]),
+                    f"{(sw.get('sharpe') or 0) - (sf.get('sharpe') or 0):+.2f}",
+                ],
+            ],
+        )
+        print("\n### Avg size multiplier by score band\n")
+        sb_rows = []
+        for band in ["<50", "50-55", "55-60", "60-65", "65-70", "70-75", "75+"]:
+            if band == "<50":
+                sub = trades[trades["score"] < 50]
+            elif band == "50-55":
+                sub = trades[(trades["score"] >= 50) & (trades["score"] < 55)]
+            elif band == "55-60":
+                sub = trades[(trades["score"] >= 55) & (trades["score"] < 60)]
+            elif band == "60-65":
+                sub = trades[(trades["score"] >= 60) & (trades["score"] < 65)]
+            elif band == "65-70":
+                sub = trades[(trades["score"] >= 65) & (trades["score"] < 70)]
+            elif band == "70-75":
+                sub = trades[(trades["score"] >= 70) & (trades["score"] < 75)]
+            else:
+                sub = trades[trades["score"] >= 75]
+            if sub.empty:
+                continue
+            avg_mult = sub["size_mult"].mean()
+            sb_rows.append([str(band), f"{avg_mult:.2f}×", str(len(sub))])
+        print_table(["Score Band", "Avg Size Mult", "N"], sb_rows)
 
     # ── §Inv2. VIX<20 gate ablation on 2022-present epoch ────────────────────
     if "--inv2" in sys.argv and all_dfs:

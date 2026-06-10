@@ -14,6 +14,7 @@ Create Date: 2026-06-08 08:00:00.000000
 
 """
 
+import sqlalchemy as sa
 from alembic import op
 
 
@@ -26,16 +27,37 @@ depends_on = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    bind = op.get_bind()
+    dialect = bind.dialect.name
+
     # Drop duplicate rows, keeping the lowest id per (provider, endpoint).
-    op.execute(
-        """
-        DELETE FROM provider_health_scorecards a
-        USING provider_health_scorecards b
-        WHERE a.provider = b.provider
-          AND a.endpoint = b.endpoint
-          AND a.id > b.id
-        """
-    )
+    # Use dialect-specific syntax to support both PostgreSQL and SQLite.
+    if dialect == "postgresql":
+        op.execute(
+            """
+            DELETE FROM provider_health_scorecards a
+            USING provider_health_scorecards b
+            WHERE a.provider = b.provider
+              AND a.endpoint = b.endpoint
+              AND a.id > b.id
+            """
+        )
+    else:
+        # SQLite / other: use a correlated subquery
+        op.execute(
+            sa.text(
+                """
+                DELETE FROM provider_health_scorecards
+                WHERE id > (
+                    SELECT MIN(b.id)
+                    FROM provider_health_scorecards b
+                    WHERE b.provider = provider_health_scorecards.provider
+                      AND b.endpoint = provider_health_scorecards.endpoint
+                )
+                """
+            )
+        )
+
     op.create_unique_constraint(
         "uq_provider_endpoint",
         "provider_health_scorecards",

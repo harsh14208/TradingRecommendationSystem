@@ -195,23 +195,27 @@ TradingRecommendationSystem/
 │   │                              nightly signal cleanup)
 │   ├── models.py                 SQLAlchemy models (Signal, User, RefreshToken,
 │   │                             SignalDelivery, WatchlistItem, AppSettings…)
-│   ├── config.py                 Settings, tier definitions, feature gates
+│   ├── config.py                 Settings, tier definitions, feature gates.
+│   │                             All secrets use pydantic.SecretStr; no hardcoded
+│   │                             JWT fallback. JWT_SECRET is required in production.
 │   ├── database.py               PostgreSQL (asyncpg, pool_size=10) or SQLite WAL fallback;
-│   │                             loads .env at import time so DATABASE_URL is always available
+│   │                             loads .env at import time so DATABASE_URL is always available.
+│   │                             Does NOT auto-commit; callers own transaction boundaries.
 │   ├── data/
 │   │   └── factor_weights.json   Weekly-mined OOS-Sharpe source rankings
 │   ├── routers/
-│   │   ├── auth.py               JWT, OAuth, GDPR deletion, refresh tokens
+│   │   ├── auth.py               JWT, refresh cookies, GDPR deletion
 │   │   ├── billing.py            Stripe checkout, webhook, portal, live status
 │   │   ├── signals.py            Signal CRUD, backtest, calibration, factor-mining
 │   │   ├── accuracy.py           Win rate per source / per ticker
 │   │   ├── market.py             F&G, macro, calendar
 │   │   ├── quotes.py             OHLCV, sector heatmap, sector detail
-│   │   ├── paper_router.py       Alpaca paper trading (positions, orders, risk)
+│   │   ├── paper_router.py       Alpaca paper trading. All endpoints require auth;
+│   │                             POST /orders requires Pro tier (or owner).
 │   │   ├── watchlist_router.py   Watchlist CRUD
 │   │   ├── admin.py              Owner-only: users, MRR, setup status
-│   │   ├── oauth.py              Google + Discord OAuth2
-│   │   └── websocket_router.py   Real-time /ws push
+│   │   ├── oauth.py              Google + Discord OAuth2 with PKCE
+│   │   └── websocket_router.py   Real-time /ws push; requires valid access token
 │   └── services/
 │       ├── signal_engine.py      50+ block scoring engine; style from rationale;
 │       │                         structural invariants; sector peer confirmation
@@ -226,6 +230,10 @@ TradingRecommendationSystem/
 │       ├── market_data.py        yfinance batch fetch + caching
 │       ├── sector.py             Sector ETF relative strength (154-ticker map)
 │       ├── auth_svc.py           JWT, bcrypt, tier gating
+│       ├── broker_svc.py         Credential encryption (scrypt KDF v2 + per-credential salt),
+│       │                         drawdown circuit breaker, auto-execution
+│       ├── redis_cache.py        Redis with in-memory fallback; asyncio.Lock for
+│       │                         in-memory lock fallback (TSYS-13c)
 │       ├── email_svc.py          Transactional SMTP
 │       └── …
 ├── app.jsx                       Dashboard React SPA (~4000 lines)
@@ -243,6 +251,10 @@ TradingRecommendationSystem/
 ├── stripe_setup.py               One-time Stripe product creation
 └── PROGRESS.md                   Full feature log + remaining TODOs
 ```
+
+> **New in this refactor:** all API success responses are moving to a unified
+> envelope helper, `ApiResponse[T]`, so clients can rely on a consistent
+> `{success, data, error, meta}` shape. See `backend/routers/` usage for examples.
 
 ---
 

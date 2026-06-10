@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -26,11 +27,12 @@ log = logging.getLogger("signal.trade.cache")
 # ── In-memory fallback (always active; used when Redis is unavailable) ─────────
 _mem: dict[str, tuple[Any, float]] = {}  # key → (value, expires_at)
 _mem_locks: dict[str, tuple[str, float]] = {}  # key → (token, expires_at)
-
+_mem_lock_mutex = asyncio.Lock()  # TSYS-13c: protects the in-memory lock dict
 
 # ── Redis client (lazily initialised) ─────────────────────────────────────────
 _redis_client: Optional[Any] = None
 _redis_init_tried: bool = False
+_redis_init_lock = asyncio.Lock()
 
 
 def _get_redis_url() -> str:
@@ -46,20 +48,23 @@ async def _get_redis() -> Optional[Any]:
     global _redis_client, _redis_init_tried
     if _redis_init_tried:
         return _redis_client
-    _redis_init_tried = True
-    url = _get_redis_url()
-    if not url:
-        return None
-    try:
-        import redis.asyncio as aioredis
+    async with _redis_init_lock:
+        if _redis_init_tried:
+            return _redis_client
+        _redis_init_tried = True
+        url = _get_redis_url()
+        if not url:
+            return None
+        try:
+            import redis.asyncio as aioredis
 
-        client = aioredis.from_url(url, decode_responses=True, socket_connect_timeout=2)
-        await client.ping()
-        _redis_client = client
-        log.info(f"[cache] Redis connected: {url[:30]}…")
-    except Exception as e:
-        log.warning(f"[cache] Redis unavailable ({e}); using in-memory fallback")
-        _redis_client = None
+            client = aioredis.from_url(url, decode_responses=True, socket_connect_timeout=2)
+            await client.ping()
+            _redis_client = client
+            log.info(f"[cache] Redis connected: {url[:30]}…")
+        except Exception as e:
+            log.warning(f"[cache] Redis unavailable ({e}); using in-memory fallback")
+            _redis_client = None
     return _redis_client
 
 
@@ -136,12 +141,14 @@ async def cache_acquire_lock(key: str, ttl: int = 300) -> Optional[str]:
     except Exception as e:
         log.debug(f"[cache] Redis lock acquire error ({key}): {e}")
 
-    now = time.monotonic()
-    existing = _mem_locks.get(key)
-    if existing and existing[1] > now:
-        return None
-    _mem_locks[key] = (token, now + ttl)
-    return token
+    # In-memory fallback — protect with asyncio.Lock to avoid TOCTOU races.
+    async with _mem_lock_mutex:
+        now = time.monotonic()
+        existing = _mem_locks.get(key)
+        if existing and existing[1] > now:
+            return None
+        _mem_locks[key] = (token, now + ttl)
+        return token
 
 
 async def cache_release_lock(key: str, token: str) -> None:
@@ -160,9 +167,10 @@ async def cache_release_lock(key: str, token: str) -> None:
     except Exception as e:
         log.debug(f"[cache] Redis lock release error ({key}): {e}")
 
-    existing = _mem_locks.get(key)
-    if existing and existing[0] == token:
-        _mem_locks.pop(key, None)
+    async with _mem_lock_mutex:
+        existing = _mem_locks.get(key)
+        if existing and existing[0] == token:
+            _mem_locks.pop(key, None)
 
 
 def cache_stats() -> dict:

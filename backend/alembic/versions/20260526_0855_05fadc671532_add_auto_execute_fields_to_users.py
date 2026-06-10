@@ -23,10 +23,26 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _add_column_if_missing(table: str, col: sa.Column) -> None:
-    """Add column only if it doesn't already exist (SQLite has no IF NOT EXISTS)."""
+    """Add column only if it doesn't already exist in a dialect-safe way."""
     bind = op.get_bind()
-    cols = {r[1] for r in bind.execute(sa.text(f"PRAGMA table_info({table})"))}
-    if col.name not in cols:
+    dialect = bind.dialect.name
+    if dialect == "sqlite":
+        cols = {r[1] for r in bind.execute(sa.text(f"PRAGMA table_info({table})"))}
+        if col.name not in cols:
+            op.add_column(table, col)
+    elif dialect == "postgresql":
+        # PostgreSQL: query information_schema
+        result = bind.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = :table AND column_name = :col"
+            ),
+            {"table": table, "col": col.name},
+        )
+        if result.scalar() is None:
+            op.add_column(table, col)
+    else:
+        # Best-effort: add and let the DB raise if it already exists
         op.add_column(table, col)
 
 

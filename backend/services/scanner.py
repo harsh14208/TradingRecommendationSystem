@@ -40,7 +40,17 @@ def _check_data_quality(histories: dict, settings) -> list[str]:
     """
     degraded = []
     for ticker, df in histories.items():
-        if df is None or len(df) < 5 or float(df["Close"].squeeze().iloc[-1]) == 0:
+        if df is None or len(df) < 5:
+            _data_quality[ticker] = _data_quality.get(ticker, 0) + 1
+            if _data_quality[ticker] == 5:  # only alert on the transition to 5
+                degraded.append(ticker)
+            continue
+        close_series = df["Close"].squeeze()
+        if not hasattr(close_series, "iloc"):
+            last_close = float(close_series)
+        else:
+            last_close = float(close_series.iloc[-1])
+        if last_close == 0:
             _data_quality[ticker] = _data_quality.get(ticker, 0) + 1
             if _data_quality[ticker] == 5:  # only alert on the transition to 5
                 degraded.append(ticker)
@@ -55,7 +65,7 @@ async def _alert_sla_breach(ticker: str, action: str, latency_s: float, settings
         f"⚠️ SLA breach: {action} {ticker} took {latency_s / 60:.1f}min to deliver (target ≤5min). Check scanner health."
     )
     try:
-        url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+        url = f"https://api.telegram.org/bot{settings.telegram_bot_token.get_secret_value()}/sendMessage"
         async with aiohttp.ClientSession() as sess:
             await sess.post(
                 url,
@@ -64,7 +74,7 @@ async def _alert_sla_breach(ticker: str, action: str, latency_s: float, settings
                 timeout=aiohttp.ClientTimeout(total=5),
             )
     except Exception:
-        pass
+        log.warning("_alert_sla_breach failed", exc_info=True)
 
 
 async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
@@ -102,11 +112,21 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
     if not eligible:
         return False
 
-    # Check for already-delivered (dedup)
+    # Check for already-delivered (dedup) — limit to recent receipts to avoid
+    # unbounded growth on high-volume tickers.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    receipt_cutoff = now - timedelta(days=7)
+    alert_cutoff = now - timedelta(days=30)
     delivered_user_ids = set()
     if db_row.id:
         rows = (
-            (await db.execute(select(SignalDelivery.user_id).where(SignalDelivery.signal_id == db_row.id)))
+            (
+                await db.execute(
+                    select(SignalDelivery.user_id)
+                    .where(SignalDelivery.signal_id == db_row.id)
+                    .where(SignalDelivery.sent_at >= receipt_cutoff)
+                )
+            )
             .scalars()
             .all()
         )
@@ -120,6 +140,7 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
                 select(SignalAlert).where(
                     SignalAlert.ticker == ticker,
                     SignalAlert.is_active == True,
+                    SignalAlert.created_at >= alert_cutoff,
                 )
             )
         )
@@ -141,7 +162,7 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> bool:
         return _p if isinstance(_p, dict) else None
 
     message_text = format_signal(sig_dict)
-    url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
+    url = f"https://api.telegram.org/bot{s.telegram_bot_token.get_secret_value()}/sendMessage"
     any_success = False
 
     global_min_conf = get_settings().min_confidence
@@ -317,7 +338,7 @@ async def _get_scan_tickers(settings) -> list[str]:
             if rows:
                 return [r.ticker for r in rows]
     except Exception:
-        pass
+        log.warning("_get_scan_tickers failed", exc_info=True)
     return settings.tickers
 
 
@@ -332,8 +353,13 @@ async def _update_outcomes(quotes: list[dict]):
     """Record % return at 1d, 3d, 7d, and 14d horizons for sent signals."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     price_map = {q["t"]: q["p"] for q in quotes}
+    cutoff = now - timedelta(days=45)
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(select(Signal).where(Signal.is_sent == True))).scalars().all()
+        rows = (
+            await db.execute(
+                select(Signal).where(Signal.is_sent == True, Signal.created_at >= cutoff)
+            )
+        ).scalars().all()
         for sig in rows:
             current = price_map.get(sig.ticker)
             if not current or not sig.entry or sig.entry <= 0:
@@ -459,7 +485,7 @@ async def _maybe_send(
                 elif losses >= 1:
                     base_hours = 48
         except Exception:
-            pass
+            log.warning("recent resolved outcome lookup failed", exc_info=True)
 
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=base_hours)
         result = await db.execute(
@@ -485,7 +511,7 @@ async def _maybe_send(
     _broadcast_id = settings.telegram_broadcast_channel_id
     if _broadcast_id:
         try:
-            _url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+            _url = f"https://api.telegram.org/bot{settings.telegram_bot_token.get_secret_value()}/sendMessage"
             _msg = format_signal(sig_dict)
             async with aiohttp.ClientSession() as _sess:
                 _r = await _sess.post(
@@ -538,7 +564,7 @@ async def _maybe_send(
                         _alert_sla_breach(sig_dict["ticker"], sig_dict["action"], latency_s, settings)
                     )
                 except Exception:
-                    pass
+                    log.warning("_alert_sla_breach scheduling failed", exc_info=True)
         log.info(
             f" ✓ Telegram sent ({label}) — "
             f"{sig_dict['action']} {sig_dict['ticker']} @ {sig_dict['price']:.2f} "
@@ -726,6 +752,7 @@ async def _compute_adaptive_weights() -> dict:
 
         return weights
     except Exception:
+        log.warning("_compute_adaptive_weights failed", exc_info=True)
         return {}
 
 
@@ -737,7 +764,7 @@ async def _load_db_settings() -> dict:
             if row and row.data:
                 return row.data
     except Exception:
-        pass
+        log.warning("_load_db_settings failed", exc_info=True)
     return {}
 
 
@@ -785,7 +812,7 @@ async def _maybe_paper_trade(
     # Guard: check buying power before placing BUY orders
     try:
         if action == "BUY":
-            acct = await alpaca_rest.get_account(settings.alpaca_api_key, settings.alpaca_api_secret)
+            acct = await alpaca_rest.get_account(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value())
             buying_power = float(acct.get("buying_power") or 0)
             if buying_power < notional * 0.5:
                 log.info(
@@ -805,7 +832,7 @@ async def _maybe_paper_trade(
                 return
             order = await alpaca_rest.place_order(
                 settings.alpaca_api_key,
-                settings.alpaca_api_secret,
+                settings.alpaca_api_secret.get_secret_value(),
                 ticker,
                 qty,
                 "buy",
@@ -817,7 +844,7 @@ async def _maybe_paper_trade(
 
         else:  # SELL
             if pos and pos.get("side") == "long":
-                order = await alpaca_rest.close_position(settings.alpaca_api_key, settings.alpaca_api_secret, ticker)
+                order = await alpaca_rest.close_position(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), ticker)
                 log.info(f" ✓ AUTO CLOSE long {ticker} — SELL signal received")
             else:
                 if pos and pos.get("side") == "short":
@@ -825,7 +852,7 @@ async def _maybe_paper_trade(
                     return
                 order = await alpaca_rest.place_order(
                     settings.alpaca_api_key,
-                    settings.alpaca_api_secret,
+                    settings.alpaca_api_secret.get_secret_value(),
                     ticker,
                     qty,
                     "sell",
@@ -969,7 +996,7 @@ async def _alert_telegram(text: str):
         s = get_settings()
         if not s.telegram_bot_token or not s.telegram_chat_id:
             return
-        url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
+        url = f"https://api.telegram.org/bot{s.telegram_bot_token.get_secret_value()}/sendMessage"
         async with aiohttp.ClientSession() as sess:
             await sess.post(
                 url,
@@ -978,7 +1005,7 @@ async def _alert_telegram(text: str):
                 timeout=aiohttp.ClientTimeout(total=6),
             )
     except Exception:
-        pass
+        log.warning("_alert_telegram failed", exc_info=True)
 
 
 _last_analytics_compute: float = 0.0
@@ -1060,14 +1087,14 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     try:
         market_ctx["adaptive_weights"] = await _compute_adaptive_weights()
     except Exception:
-        pass
+        log.warning("adaptive_weights fetch failed", exc_info=True)
 
     try:
         from services.calibration import load_calibration
 
         market_ctx["calibration_map"] = load_calibration()
     except Exception:
-        pass
+        log.warning("calibration_map load failed", exc_info=True)
 
     # ── HMM Macro Regime (cached 1h) ─────────────────────────────────────────
     try:
@@ -1081,7 +1108,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
             f"trans_risk={regime_data.get('transition_risk', 0):.0%}"
         )
     except Exception as e:
-        log.debug(f" HMM regime failed (non-critical): {e}")
+        log.warning("HMM regime failed: %s", e, exc_info=True)
 
     # ── Supply Chain signals (cached 4h) ─────────────────────────────────────
     try:
@@ -1089,7 +1116,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
 
         market_ctx["supply_chain"] = await get_supply_chain_signals()
     except Exception as e:
-        log.debug(f" Supply chain data failed (non-critical): {e}")
+        log.warning("Supply chain data failed: %s", e, exc_info=True)
 
     # ── 13F institutional flow (quarterly, cached 6h) ────────────────────────
     try:
@@ -1100,7 +1127,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
         if inst_list:
             log.info(f" 13F: {len(inst_list)} watchlist tickers with institutional activity")
     except Exception as e:
-        log.debug(f" 13F fetch failed (non-critical): {e}")
+        log.warning("13F fetch failed: %s", e, exc_info=True)
 
     # ── Dark Pool Block Prints (cached 1h) ───────────────────────────────────
     try:
@@ -1108,7 +1135,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
 
         market_ctx["dark_pool"] = await get_dark_pool_flow(settings.tickers)
     except Exception as e:
-        log.debug(f" Dark pool fetch failed (non-critical): {e}")
+        log.warning("Dark pool fetch failed: %s", e, exc_info=True)
 
     # ── Corporate Events (cached 4h) ─────────────────────────────────────────
     try:
@@ -1120,7 +1147,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
         if n_ev:
             log.info(f" Corporate events: {n_ev} upcoming across {len(corp_events.get('by_ticker', {}))} tickers")
     except Exception as e:
-        log.debug(f" Corporate events fetch failed (non-critical): {e}")
+        log.warning("Corporate events fetch failed: %s", e, exc_info=True)
 
     # ── ETF Fund Flows (cached 4h) ───────────────────────────────────────────
     try:
@@ -1128,7 +1155,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
 
         market_ctx["etf_flows"] = await get_etf_flows()
     except Exception as e:
-        log.debug(f" ETF flows fetch failed (non-critical): {e}")
+        log.warning("ETF flows fetch failed: %s", e, exc_info=True)
 
     # ── Economy data from Massive (cached 1h) ────────────────────────────────
     try:
@@ -1138,7 +1165,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
         if eco:
             market_ctx["massive_economy"] = eco
     except Exception as e:
-        log.debug(f" Massive economy fetch failed (non-critical): {e}")
+        log.warning("Massive economy fetch failed: %s", e, exc_info=True)
 
     # ── ETF Constituents preload (cached 24h) ────────────────────────────────
     try:
@@ -1146,7 +1173,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
 
         await preload_all()
     except Exception as e:
-        log.debug(f" ETF constituents preload failed (non-critical): {e}")
+        log.warning("ETF constituents preload failed: %s", e, exc_info=True)
 
     # ── Paper portfolio sector exposure + PCA risk ───────────────────────────
     if settings.alpaca_api_key and settings.alpaca_api_secret:
@@ -1154,7 +1181,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
             from services import alpaca_rest
             from services.sector import SECTOR_MAP as SECTOR_ETF_MAP
 
-            positions_list = await alpaca_rest.get_positions(settings.alpaca_api_key, settings.alpaca_api_secret)
+            positions_list = await alpaca_rest.get_positions(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value())
             if positions_list:
                 total_mv = sum(abs(float(p.get("market_value") or 0)) for p in positions_list)
                 sector_exposure: dict[str, float] = {}
@@ -1191,9 +1218,9 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
                                     f"haircut={pca_result['haircut_pct']:.0f}%"
                                 )
                     except Exception as pca_e:
-                        log.debug(f" PCA risk model failed (non-critical): {pca_e}")
+                        log.warning("PCA risk model failed: %s", pca_e, exc_info=True)
         except Exception as e:
-            log.debug(f" Portfolio context failed (non-critical): {e}")
+            log.warning("Portfolio context failed: %s", e, exc_info=True)
 
     # ── MST dynamic pairs refresh (Sunday only, uses prefetched histories) ─────
     # compute_mst_pairs is CPU-bound (~2s for 154 tickers); run in thread pool.
@@ -1208,7 +1235,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
             _n_mst = await _refresh_mst(_mst_hists)
             log.info(f" MST pairs refresh: {_n_mst} dynamic pairs computed")
     except Exception as e:
-        log.debug(f" MST pairs refresh failed (non-critical): {e}")
+        log.warning("MST pairs refresh failed: %s", e, exc_info=True)
 
     # ── Cointegration / pairs trading signals (cached 2h) ────────────────────
     try:
@@ -1219,7 +1246,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
         if pairs_signals:
             log.info(f" Pairs: {len(pairs_signals)} divergence signals detected")
     except Exception as e:
-        log.debug(f" Pairs signal fetch failed (non-critical): {e}")
+        log.warning("Pairs signal fetch failed: %s", e, exc_info=True)
 
     # ── Weight overrides + factor mining weights ──────────────────────────────
     try:
@@ -1229,7 +1256,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
         if wo:
             log.debug(f" Weight overrides active: {wo}")
     except Exception as e:
-        log.debug(f" Weight overrides load failed: {e}")
+        log.warning("Weight overrides load failed: %s", e, exc_info=True)
 
     try:
         from services.factor_miner import load_factor_weights
@@ -1239,7 +1266,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
             market_ctx["factor_weights"] = fw
             log.debug(f" Factor weights loaded: {fw.get('combinations_tested', '?')} combos")
     except Exception as e:
-        log.debug(f" Factor weights load failed: {e}")
+        log.warning("Factor weights load failed: %s", e, exc_info=True)
 
     # ── BUY:SELL saturation circuit breaker (7-day ratio) ────────────────────
     try:
@@ -1270,7 +1297,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
         else:
             log.info(f" BUY:SELL ratio (7d): {_buy_sell_ratio:.1f}:1 — within normal range.")
     except Exception as e:
-        log.debug(f" BUY:SELL ratio check failed (non-critical): {e}")
+        log.warning("BUY:SELL ratio check failed: %s", e, exc_info=True)
         market_ctx["buy_saturated"] = False
 
     # ── News batch prefetch ───────────────────────────────────────────────────
@@ -1279,7 +1306,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
 
         await prefetch_news_batch(tickers)
     except Exception as e:
-        log.debug(f" news batch prefetch failed (non-critical): {e}")
+        log.warning("news batch prefetch failed: %s", e, exc_info=True)
 
     return market_ctx
 
@@ -1408,7 +1435,7 @@ async def run_scan(broadcast_fn=None):
 
                     await cache_release_lock("lock:scanner:run", lock_token)
                 except Exception:
-                    pass
+                    log.warning("cache_release_lock failed", exc_info=True)
 
 
 async def _precompute_analytics() -> None:
@@ -1473,7 +1500,7 @@ async def _precompute_analytics() -> None:
         await cache_set("analytics:backtest_summary", summary, ttl=_ANALYTICS_COMPUTE_INTERVAL)
         log.debug(f"[analytics] backtest summary cached (n={total_n})")
     except Exception as e:
-        log.debug(f"[analytics] pre-compute failed (non-critical): {e}")
+        log.warning("[analytics] pre-compute failed: %s", e, exc_info=True)
 
 
 async def _persist_scan_signals(
@@ -1895,7 +1922,7 @@ async def _run_scan_impl(broadcast_fn=None):
                 }
             )
         except Exception:
-            pass
+            log.warning("data quality telegram alert failed", exc_info=True)
 
     # ── Step 3: quotes batch for pre-filtering + outcome tracking ────────
     _mark_scan_stage("quotes_batch")
@@ -1963,6 +1990,7 @@ async def _run_scan_impl(broadcast_fn=None):
                 .all()
             )
     except Exception:
+        log.warning("recent signal ticker lookup failed", exc_info=True)
         _recent_sig_tickers = set()
 
     stable_tickers: set[str] = set()
@@ -1986,7 +2014,7 @@ async def _run_scan_impl(broadcast_fn=None):
                 if avg_vol > 0:
                     vol_ratio = today_vol / avg_vol
             except Exception:
-                pass
+                log.warning("volume ratio calculation failed", exc_info=True)
         if price_chg < _DIFF_PRICE_THRESHOLD and vol_ratio < _DIFF_VOL_THRESHOLD:
             stable_tickers.add(t)
 
@@ -2011,7 +2039,7 @@ async def _run_scan_impl(broadcast_fn=None):
                         )
                 await _su_db.commit()
         except Exception as e:
-            log.debug(f" differential price update failed: {e}")
+            log.warning("differential price update failed: %s", e, exc_info=True)
 
     # Update diff state for all tickers that have a current quote
     for t in tickers:
@@ -2081,7 +2109,7 @@ async def _run_scan_impl(broadcast_fn=None):
         try:
             from services import alpaca_rest
 
-            positions_list = await alpaca_rest.get_positions(settings.alpaca_api_key, settings.alpaca_api_secret)
+            positions_list = await alpaca_rest.get_positions(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value())
             positions_map = {p["symbol"].upper(): p for p in positions_list}
         except Exception as e:
             log.info(f" positions fetch failed: {e}")
@@ -2106,7 +2134,7 @@ async def _run_scan_impl(broadcast_fn=None):
         async with AsyncSessionLocal() as db:
             await evaluate_price_alerts(db)
     except Exception as e:
-        log.debug(f" price alert eval failed (non-critical): {e}")
+        log.warning("price alert eval failed: %s", e, exc_info=True)
 
     # ── Step 10: broadcast ───────────────────────────────────────────────
     _mark_scan_stage("broadcast")

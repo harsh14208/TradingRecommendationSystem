@@ -462,7 +462,7 @@ async def generate_signal(
                         days_to_exdiv = (_date.fromisoformat(_ex) - datetime.now(timezone.utc).date()).days
                         break
             except Exception:
-                pass
+                log.warning("ex-dividend lookup failed for %s", ticker, exc_info=True)
 
         tech = calculate_indicators(df)
         if not tech or tech.get("price") is None:
@@ -532,7 +532,7 @@ async def generate_signal(
                 elif w_price < w_sma20 * 0.98:
                     weekly_trend = -1
         except Exception:
-            pass
+            log.warning("weekly trend calculation failed for %s", ticker, exc_info=True)
 
         # ── Weekly OHLCV Trend Strength from Polygon ─────────────────────────
         # 26 weekly bars → close vs weekly SMA(13).
@@ -554,7 +554,7 @@ async def generate_signal(
                 elif _weeks_below >= 8:
                     _weekly_ohlcv_score = -4
         except Exception:
-            pass
+            log.warning("weekly OHLCV fetch failed for %s", ticker, exc_info=True)
 
         price = tech["price"]
         atr = tech.get("atr") or price * 0.02
@@ -587,7 +587,7 @@ async def generate_signal(
                 if hist != 0 and poly_hist != 0 and (hist > 0) == (poly_hist > 0):
                     hist = hist * 1.1
         except Exception:
-            pass
+            log.warning("polygon indicator blend failed for %s", ticker, exc_info=True)
         bb_upper = tech.get("bb_upper")
         bb_lower = tech.get("bb_lower")
         _bb_pct_b = tech.get("bb_pct_b")  # 0=lower band, 1=upper band; used for tiered MR scoring
@@ -906,7 +906,7 @@ async def generate_signal(
                         f"{_float_shares:,} → short_float={short_float:.1f}%"
                     )
             except Exception:
-                pass
+                log.warning("short float lookup failed for %s", ticker, exc_info=True)
         if short_float is not None:
             dtc_ok = short_ratio is not None and short_ratio > 5
             if short_float > 20 and dtc_ok and score > 5:
@@ -1186,7 +1186,7 @@ async def generate_signal(
             if _bzg_articles:
                 sources.add("Benzinga")
         except Exception:
-            pass
+            log.warning("Benzinga news fetch failed for %s", ticker, exc_info=True)
 
         def _nws(s: str) -> frozenset:
             import re as _re
@@ -1216,31 +1216,35 @@ async def generate_signal(
                 if _sl in _src_labels:
                     sources.add(_sl)
 
-            # Cap news contribution at ±15 — sentiment alone is noisy
-            _top = sorted(_all_news, key=lambda x: x.get("hours_ago", 9999))[0]
-            _src_lbl = _top.get("source", "News")
-            if avg_sent > 0.25:
-                score += min(15, round(avg_sent * 22))
-                rationale.append(
-                    {
-                        "src": _src_lbl,
-                        "head": _top["headline"][:90],
-                        "body": _top.get("summary", _top["headline"])[:250],
-                        "sentiment": "pos",
-                        "meta": f"{_src_lbl} · {_top.get('hours_ago', '?')}h ago | {len(_all_news)} articles",
-                    }
-                )
-            elif avg_sent < -0.25:
-                score += max(-15, round(avg_sent * 22))
-                rationale.append(
-                    {
-                        "src": _src_lbl,
-                        "head": _top["headline"][:90],
-                        "body": _top.get("summary", _top["headline"])[:250],
-                        "sentiment": "neg",
-                        "meta": f"{_src_lbl} · {_top.get('hours_ago', '?')}h ago | {len(_all_news)} articles",
-                    }
-                )
+            # When the async news_worker is running, skip inline score/rationale
+            # additions — the worker's ScoringResult is merged later. Applying
+            # both inline and worker news sentiment would double-count headlines.
+            if _worker_task is None:
+                # Cap news contribution at ±15 — sentiment alone is noisy
+                _top = sorted(_all_news, key=lambda x: x.get("hours_ago", 9999))[0]
+                _src_lbl = _top.get("source", "News")
+                if avg_sent > 0.25:
+                    score += min(15, round(avg_sent * 22))
+                    rationale.append(
+                        {
+                            "src": _src_lbl,
+                            "head": _top["headline"][:90],
+                            "body": _top.get("summary", _top["headline"])[:250],
+                            "sentiment": "pos",
+                            "meta": f"{_src_lbl} · {_top.get('hours_ago', '?')}h ago | {len(_all_news)} articles",
+                        }
+                    )
+                elif avg_sent < -0.25:
+                    score += max(-15, round(avg_sent * 22))
+                    rationale.append(
+                        {
+                            "src": _src_lbl,
+                            "head": _top["headline"][:90],
+                            "body": _top.get("summary", _top["headline"])[:250],
+                            "sentiment": "neg",
+                            "meta": f"{_src_lbl} · {_top.get('hours_ago', '?')}h ago | {len(_all_news)} articles",
+                        }
+                    )
 
         # ── SEC EDGAR — insider trades (Form 4) ─────────────────────────
         # Score contribution lives in institutional_worker (signal_workers.py).
@@ -2144,7 +2148,7 @@ async def generate_signal(
                                 }
                             )
             except Exception:
-                pass
+                log.warning("earnings tone LLM analysis failed for %s", ticker, exc_info=True)
 
         # ── Sector Relative Strength ──────────────────────────────────────
         if sector_rs:
@@ -2479,7 +2483,7 @@ async def generate_signal(
                         }
                     )
         except Exception:
-            pass
+            log.warning("corporate events scoring failed for %s", ticker, exc_info=True)
 
         # Apply analyst consensus bucket cap: price target + rec consensus + Finnhub
         # recs all read "what sell-side thinks" — cap so the bucket contributes once.
@@ -4080,7 +4084,7 @@ async def generate_signal(
                     }
                 )
         except Exception:
-            pass
+            log.warning("annual revenue acceleration fetch failed for %s", ticker, exc_info=True)
 
         # ── ROE Trend ────────────────────────────────────────────────────────
         roe_improving = fundamentals.get("roe_improving")
@@ -4293,7 +4297,7 @@ async def generate_signal(
                     }
                 )
         except Exception:
-            pass
+            log.warning("polygon dividend data fetch failed for %s", ticker, exc_info=True)
         if div_yield and div_yield > 0 and t10y_rate:
             sources.add("Fundamentals")
             yield_gap = div_yield - t10y_rate
@@ -4419,7 +4423,7 @@ async def generate_signal(
                     }
                 )
         except Exception:
-            pass
+            log.warning("MDA delta fetch failed for %s", ticker, exc_info=True)
 
         # ── Supply Chain Alternative Data ────────────────────────────────────
         try:
@@ -4451,7 +4455,7 @@ async def generate_signal(
                     }
                 )
         except Exception:
-            pass
+            log.warning("supply chain score lookup failed for %s", ticker, exc_info=True)
 
         # ── Corporate Events (Wall Street Horizon) ───────────────────────────
         try:
@@ -4522,7 +4526,7 @@ async def generate_signal(
                         }
                     )
         except Exception:
-            pass
+            log.warning("block print detection failed for %s", ticker, exc_info=True)
 
         # ── ETF Fund Flows ────────────────────────────────────────────────────
         try:
@@ -4546,7 +4550,7 @@ async def generate_signal(
                     }
                 )
         except Exception:
-            pass
+            log.warning("ETF flow scoring failed for %s", ticker, exc_info=True)
 
         # ── Social Sentiment (StockTwits + Reddit WSB) ───────────────────────
         st_bull_pct = social.get("st_bull_pct")
@@ -5113,7 +5117,7 @@ async def generate_signal(
                         }
                     )
         except Exception:
-            pass  # 1H data unavailable or insufficient — degrade gracefully
+            log.warning("1H technicals fetch failed for %s", ticker, exc_info=True)
 
         # ── Trend alignment gate (daily 200-DMA) ─────────────────────────────
         # Any BUY signal below the 200-DMA is a counter-trend trade — apply
@@ -5480,7 +5484,7 @@ async def generate_signal(
                             }
                         )
         except Exception:
-            pass
+            log.warning("massive analyst intelligence failed for %s", ticker, exc_info=True)
 
         # ── §80 NBBO Spread Quality Gate ─────────────────────────────────────
         # Amihud & Mendelson (1986): wide bid-ask spreads impose a transaction cost
@@ -5551,7 +5555,7 @@ async def generate_signal(
                             }
                         )
         except Exception:
-            pass
+            log.warning("OFI signal fetch failed for %s", ticker, exc_info=True)
 
         # RD-3 / §79: Q1 seasonal rebalancing bonus (Jan–Mar, sector laggards)
         _sector_etf_for_q1 = (sector_rs or {}).get("sector_etf") if "sector_rs" in dir() else None
@@ -5699,7 +5703,7 @@ async def scan_all(
                 ]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Sector"})
     except Exception:
-        pass
+        log.warning("polygon related companies peer check failed", exc_info=True)
 
     # ── Supply Chain Graph Propagation ──────────────────────────────────────────
     # Second pass: check if a key supplier of each ticker has a strong signal.
@@ -5730,7 +5734,7 @@ async def scan_all(
                 ]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Fundamentals"})
     except Exception:
-        pass
+        log.warning("supply chain propagation scoring failed", exc_info=True)
 
     # ── Cross-sectional universe ranking ──────────────────────────────────────
     # Rank every directional signal by confidence within this scan cycle.
@@ -5774,7 +5778,7 @@ async def scan_all(
                 ]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Cross-Sectional"})
     except Exception:
-        pass
+        log.warning("cross-sectional universe ranking failed", exc_info=True)
 
     # ── Cross-sectional alpha model (SHADOW — observability only) ─────────────
     # Attach the persisted h=21 cross-sectional model's batch percentile to each
@@ -5869,7 +5873,7 @@ async def scan_all(
                         if not _np83.isnan(_c):
                             _corrs.append(_c)
                     except Exception:
-                        pass
+                        log.warning("correlation calculation failed", exc_info=True)
 
                 if not _corrs:
                     continue
@@ -5897,6 +5901,6 @@ async def scan_all(
                     ]
                     _sig["sources"] = sorted(set(_sig.get("sources", [])) | {"Risk Gate"})
     except Exception:
-        pass
+        log.warning("cross-signal correlation penalty failed", exc_info=True)
 
     return signals

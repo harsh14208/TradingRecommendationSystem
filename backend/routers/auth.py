@@ -19,7 +19,17 @@ _limiter = Limiter(key_func=get_remote_address)
 
 from config import get_settings
 from database import get_db
-from models import PasswordResetToken, RefreshToken, User, AuthAuditLog, EmailChangeRequest
+from models import (
+    PasswordResetToken,
+    RefreshToken,
+    User,
+    AuthAuditLog,
+    EmailChangeRequest,
+    SignalDelivery,
+    PushSubscription,
+    PriceAlert,
+    SignalAlert,
+)
 from services.auth_svc import (
     create_access_token,
     generate_link_code,
@@ -33,6 +43,9 @@ from services.email_svc import send_verification_email, send_welcome
 
 log = logging.getLogger("signal.trade.auth")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+
 
 REFRESH_COOKIE = "st_refresh"
 
@@ -366,7 +379,7 @@ async def delete_account(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """GDPR Article 17 — right to erasure. Anonymises PII, cancels Stripe, revokes tokens."""
+    """GDPR Article 17 — right to erasure. Anonymises PII, cancels Stripe, revokes tokens, and cleans up user data."""
     import hashlib as _hl
 
     from sqlalchemy import update as _upd
@@ -382,20 +395,42 @@ async def delete_account(
     user.oauth_provider = None
     user.email_verify_token = None
     user.is_active = False
+    # Clear outbound integrations and broker credentials
+    user.webhook_url = None
+    user.discord_webhook_url = None
+    user.webhook_secret = None
+    user.alpaca_key_enc = None
+    user.alpaca_secret_enc = None
+    user.alpaca_account_type = None
+    user.alpaca_key_version = 1
+    user.auto_execute = False
+    user.auto_execute_broker = None
+    user.auto_execute_min_conf = None
+    user.auto_execute_qty_dollars = None
 
-    # Cancel active Stripe subscription
+    # Cancel active Stripe subscription at period end to preserve paid time
     if user.stripe_subscription_id:
         try:
             import stripe as _stripe
 
             s = get_settings()
-            _stripe.api_key = s.stripe_secret_key
-            _stripe.Subscription.delete(user.stripe_subscription_id)
-        except Exception:
-            pass  # best-effort; subscription will lapse naturally
+            _stripe.api_key = s.stripe_secret_key.get_secret_value()
+            _stripe.Subscription.modify(user.stripe_subscription_id, cancel_at_period_end=True)
+            log.info(f"[auth] marked Stripe subscription {user.stripe_subscription_id} cancel_at_period_end for user id={user.id}")
+        except Exception as e:
+            log.warning(f"[auth] Stripe cancellation failed for user id={user.id}: {e}")
 
     # Revoke all refresh tokens
     await db.execute(_upd(RefreshToken).where(RefreshToken.user_id == user.id).values(revoked=True))
+
+    # Delete associated user data covered by GDPR
+    await db.execute(delete(SignalDelivery).where(SignalDelivery.user_id == user.id))
+    await db.execute(delete(PushSubscription).where(PushSubscription.user_id == user.id))
+    await db.execute(delete(PriceAlert).where(PriceAlert.user_id == user.id))
+    await db.execute(delete(SignalAlert).where(SignalAlert.user_id == user.id))
+    await db.execute(delete(AuthAuditLog).where(AuthAuditLog.user_id == user.id))
+    await db.execute(delete(EmailChangeRequest).where(EmailChangeRequest.user_id == user.id))
+
     await db.commit()
     _clear_refresh_cookie(response)
     log.info(f"[auth] account deletion completed for user id={user.id}")
@@ -578,6 +613,7 @@ async def reset_password(request: Request, body: ResetPasswordIn, db: AsyncSessi
     user = (await db.execute(select(User).where(User.email == row.email))).scalar_one_or_none()
     if not user:
         raise HTTPException(400, "User not found.")
+    # Validation is handled by ResetPasswordIn validator; keep a defensive fallback.
     if len(body.new_password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters.")
     user.password_hash = hash_password(body.new_password)
@@ -659,7 +695,8 @@ async def update_signal_prefs(
 
 
 @router.get("/verify-email")
-async def verify_email(response: Response, token: str = Query(...), db: AsyncSession = Depends(get_db)):
+@_limiter.limit("10/minute")
+async def verify_email(request: Request, response: Response, token: str = Query(...), db: AsyncSession = Depends(get_db)):
     """Verify email address using the token from the verification email."""
     user = (await db.execute(select(User).where(User.email_verify_token == token))).scalar_one_or_none()
     if not user:
@@ -850,7 +887,9 @@ async def revoke_other_sessions(
 
 
 @router.post("/change-email")
+@_limiter.limit("3/minute")
 async def request_change_email(
+    request: Request,
     body: ChangeEmailIn,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -900,6 +939,8 @@ async def confirm_email_change(
     db: AsyncSession = Depends(get_db),
 ):
     """Confirm the email change using the token sent to the new email address."""
+    from fastapi.responses import RedirectResponse
+
     now = _utcnow_naive()
     row = (
         await db.execute(
@@ -910,16 +951,16 @@ async def confirm_email_change(
     ).scalar_one_or_none()
 
     if not row:
-        raise HTTPException(400, "Invalid or expired email change token.")
+        return RedirectResponse(f"{get_settings().app_url}/login?error=invalid_email_change_token")
 
     user = await db.get(User, row.user_id)
     if not user:
-        raise HTTPException(404, "User not found.")
+        return RedirectResponse(f"{get_settings().app_url}/login?error=user_not_found")
 
     # Double check new email is not occupied
     existing = (await db.execute(select(User).where(User.email == row.new_email))).scalar_one_or_none()
     if existing:
-        raise HTTPException(400, "Email address already registered.")
+        return RedirectResponse(f"{get_settings().app_url}/login?error=email_already_registered")
 
     old_email = user.email
     user.email = row.new_email
@@ -936,13 +977,14 @@ async def confirm_email_change(
     )
 
     await db.delete(row)
+
+    # Invalidate all sessions — require re-login after email change
+    await db.execute(update(RefreshToken).where(RefreshToken.user_id == user.id).values(revoked=True))
     await db.commit()
 
     log.info(f"[auth] email changed successfully for user {user.id} from {old_email} to {row.new_email}")
 
-    from fastapi.responses import RedirectResponse
-
-    return RedirectResponse(f"{get_settings().app_url}/app?email_changed=success")
+    return RedirectResponse(f"{get_settings().app_url}/login?email_changed=success")
 
 
 # ── Admin Account Unlock ──────────────────────────────────────────────────────

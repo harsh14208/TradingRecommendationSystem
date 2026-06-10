@@ -8,6 +8,7 @@ import uuid
 import logging
 import aiohttp
 import certifi
+from services.http_client import shared_session
 
 log = logging.getLogger("ibkr_rest")
 
@@ -36,7 +37,7 @@ def _ssl_ctx() -> ssl.SSLContext | bool:
 
 async def get_account(api_key: str, api_secret: str = "", live: bool = False) -> dict:
     base_url = _base()
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         # Get list of accounts
         async with s.get(
             f"{base_url}/portfolio/accounts",
@@ -79,7 +80,7 @@ async def get_account(api_key: str, api_secret: str = "", live: bool = False) ->
 
 async def search_conid(symbol: str, api_key: str) -> int:
     base_url = _base()
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.post(
             f"{base_url}/iserver/secdef/search",
             headers=_headers(api_key),
@@ -97,7 +98,7 @@ async def get_positions(api_key: str, api_secret: str = "", live: bool = False) 
     base_url = _base()
     acct = await get_account(api_key, api_secret, live)
     acct_id = acct["id"]
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.get(
             f"{base_url}/portfolio/{acct_id}/positions",
             headers=_headers(api_key),
@@ -111,7 +112,7 @@ async def get_orders(
     api_key: str, api_secret: str = "", status: str = "all", limit: int = 50, live: bool = False
 ) -> list:
     base_url = _base()
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.get(
             f"{base_url}/iserver/account/orders",
             headers=_headers(api_key),
@@ -155,7 +156,7 @@ async def place_order(
     if ib_order_type == "LMT" and limit_price is not None:
         order_payload["price"] = float(limit_price)
 
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.post(
             f"{base_url}/iserver/account/{acct_id}/orders",
             headers=_headers(api_key),
@@ -194,7 +195,7 @@ async def place_notional_order(
     if price is None or price <= 0:
         conid = await search_conid(symbol, api_key)
         base_url = _base()
-        async with aiohttp.ClientSession() as s:
+        async with shared_session() as s:
             async with s.get(
                 f"{base_url}/iserver/marketdata/snapshot",
                 headers=_headers(api_key),
@@ -244,7 +245,7 @@ async def submit_bracket_stop_order(
 
     price = entry_price
     if price is None or price <= 0:
-        async with aiohttp.ClientSession() as s:
+        async with shared_session() as s:
             async with s.get(
                 f"{base_url}/iserver/marketdata/snapshot",
                 headers=_headers(api_key),
@@ -314,7 +315,7 @@ async def submit_bracket_stop_order(
         }
         orders.append(tp_order)
 
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.post(
             f"{base_url}/iserver/account/{acct_id}/orders",
             headers=_headers(api_key),
@@ -369,7 +370,7 @@ async def cancel_order(api_key: str, api_secret: str, order_id: str, live: bool 
     acct = await get_account(api_key, api_secret, live)
     acct_id = acct["id"]
     base_url = _base()
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.delete(
             f"{base_url}/iserver/account/{acct_id}/order/{order_id}",
             headers=_headers(api_key),

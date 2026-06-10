@@ -11,6 +11,7 @@ import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -142,7 +143,7 @@ class TestSendTelegram:
         from services.telegram_svc import send_telegram
 
         fake_settings = types.SimpleNamespace(
-            telegram_bot_token="",
+            telegram_bot_token=SecretStr(""),
             telegram_chat_id="123456",
         )
         with patch("services.telegram_svc.aiohttp"):
@@ -157,7 +158,7 @@ class TestSendTelegram:
         from services.telegram_svc import send_telegram
 
         fake_settings = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             telegram_chat_id="",
         )
         with patch("config.get_settings", return_value=fake_settings):
@@ -171,7 +172,7 @@ class TestSendTelegram:
         from services.telegram_svc import send_telegram
 
         fake_settings = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             telegram_chat_id="-1001234567890",
         )
 
@@ -191,7 +192,7 @@ class TestSendTelegram:
         mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with patch("config.get_settings", return_value=fake_settings):
-            with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+            with patch("services.telegram_svc.shared_session", return_value=mock_session_ctx):
                 ok, detail = await send_telegram(_base_signal())
 
         assert ok is True
@@ -202,7 +203,7 @@ class TestSendTelegram:
         from services.telegram_svc import send_telegram
 
         fake_settings = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             telegram_chat_id="-1001234567890",
         )
 
@@ -222,7 +223,7 @@ class TestSendTelegram:
         mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with patch("config.get_settings", return_value=fake_settings):
-            with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+            with patch("services.telegram_svc.shared_session", return_value=mock_session_ctx):
                 ok, detail = await send_telegram(_base_signal())
 
         assert ok is False
@@ -233,7 +234,7 @@ class TestSendTelegram:
         from services.telegram_svc import send_telegram
 
         fake_settings = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             telegram_chat_id="-1001234567890",
         )
 
@@ -248,7 +249,7 @@ class TestSendTelegram:
         mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with patch("config.get_settings", return_value=fake_settings):
-            with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+            with patch("services.telegram_svc.shared_session", return_value=mock_session_ctx):
                 ok, detail = await send_telegram(_base_signal())
 
         assert ok is False
@@ -259,7 +260,7 @@ class TestSendTelegram:
         from services.telegram_svc import send_telegram
 
         fake_settings = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             telegram_chat_id="-1001234567890",
         )
 
@@ -268,7 +269,7 @@ class TestSendTelegram:
         mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with patch("config.get_settings", return_value=fake_settings):
-            with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+            with patch("services.telegram_svc.shared_session", return_value=mock_session_ctx):
                 ok, detail = await send_telegram(_base_signal())
 
         assert ok is False
@@ -280,7 +281,7 @@ class TestSendTelegram:
         from services.telegram_svc import send_telegram
 
         fake_settings = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             telegram_chat_id="-1001234567890",
         )
         sig = _base_signal(entry=148.00, stop=144.00, target=158.00)
@@ -301,7 +302,7 @@ class TestSendTelegram:
         mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with patch("config.get_settings", return_value=fake_settings):
-            with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+            with patch("services.telegram_svc.shared_session", return_value=mock_session_ctx):
                 ok, _ = await send_telegram(sig)
 
         assert ok is True
@@ -324,7 +325,7 @@ async def test_send_telegram_message_not_configured_no_token():
 
     import types
 
-    fake_settings = types.SimpleNamespace(telegram_bot_token="", telegram_chat_id="123")
+    fake_settings = types.SimpleNamespace(telegram_bot_token=SecretStr(""), telegram_chat_id="123")
 
     with patch("config.get_settings", return_value=fake_settings):
         ok, msg = await send_telegram_message("123", "hello")
@@ -339,7 +340,7 @@ async def test_send_telegram_message_not_configured_no_chat_id():
 
     import types
 
-    fake_settings = types.SimpleNamespace(telegram_bot_token="bot:XYZ", telegram_chat_id="")
+    fake_settings = types.SimpleNamespace(telegram_bot_token=SecretStr("bot:XYZ"), telegram_chat_id="")
 
     with patch("config.get_settings", return_value=fake_settings):
         ok, msg = await send_telegram_message("", "hello")

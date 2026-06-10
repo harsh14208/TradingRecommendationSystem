@@ -887,7 +887,7 @@ def _assemble_signal(
     if _is_lev_etf and style == "position":
         style = "swing"
 
-    entry, stop, target, rr = _levels(price, atr, action, style)
+    entry, stop, target, rr = _levels(price, atr, action, style, rsi=_rsi_gate)
 
     # ── Risk-Free Rate Yield Dampener ────────────────────────────────────
     # Every equity trade competes against the risk-free rate. If the signal's
@@ -1259,8 +1259,8 @@ def _assemble_signal(
             #    fires only for BUY; caps at 1.5× total; rewards best-predictor gates
             # L6 regime dampener      — calm bull (VIX<18 + bull trend) reduces MR sizing 0.8×
             #    AI-momentum regimes produce shallow bounces; Inv2+temporal: current regime weak
-            # L7 raw-score Kelly      — §18/§12a: score-proportional sizing (±15%).
-            #    score=50→0.85×  score=65→1.0×  score=80→1.15×
+            # L7 raw-score Kelly      — §18/§12a: non-linear score-band sizing (backtest-validated).
+            #    <50→0.50×  50-55→0.75×  55-60→1.00×  60-65→1.15×  65-70→1.30×  70-75→1.45×  ≥75→1.55×
             # L8 quality_score tier   — IS Sh spread High(≥43) 0.51 vs Low(<35) 0.17, v10.1 2026-06-01
             #    high(≥43)→1.30× mid(35–43)→1.0× low(<35)→0.75×; zero N impact (all trades pass)
             # L9 HMM regime sizing    — macro_regime.py 2-state Baum-Welch leads VIX by 1-3d
@@ -1314,7 +1314,21 @@ def _assemble_signal(
                     )
                     else 1.0
                 )
-                * max(0.85, min(1.15, 0.85 + (score - 50.0) / 100.0))  # L7 raw-score Kelly
+                * (  # L7 raw-score Kelly — §18/§12a: non-linear score-band sizing (backtest-validated)
+                    1.55
+                    if score >= 75
+                    else 1.45
+                    if score >= 70
+                    else 1.30
+                    if score >= 65
+                    else 1.15
+                    if score >= 60
+                    else 1.00
+                    if score >= 55
+                    else 0.75
+                    if score >= 50
+                    else 0.50
+                )
                 # L8: quality_score tier — thresholds recalibrated 2026-06-01 to IS p67/p33.
                 # IS distribution: High(≥43) N=63 Sh=0.51 | Mid(35–43) N=63 Sh=0.31 | Low(<35) N=62 Sh=0.17
                 # Old thresholds (60/30) put 80% in Mid (neutral) → no lift. Corrected to (43/35).

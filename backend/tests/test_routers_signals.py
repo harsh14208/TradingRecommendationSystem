@@ -3,6 +3,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 from database import get_db
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -233,7 +234,7 @@ def test_signals_send_success_sets_sent_and_commits():
         patch("routers.signals.get_settings") as m_settings,
         patch("services.telegram_svc.aiohttp.ClientSession") as m_session,
     ):
-        m_settings.return_value = MagicMock(telegram_bot_token="BOT", telegram_chat_id="OWNER_CHAT")
+        m_settings.return_value = MagicMock(telegram_bot_token=SecretStr("BOT"), telegram_chat_id="OWNER_CHAT")
 
         # Telegram response ok
         m_resp = MagicMock()

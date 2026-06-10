@@ -120,19 +120,14 @@ else:
     log.info("[db] PostgreSQL — production-ready concurrency.")
 
 # ── Security startup checks ────────────────────────────────────────────────────
-import hashlib as _hashlib
-
-_DEV_JWT = _hashlib.sha256(b"signal-trade-dev-secret-v1").hexdigest()
 _is_prod = settings.app_url.startswith("https")
 
 if _is_prod and not settings.jwt_secret:
-    log.critical(
-        "🔴 CRITICAL: JWT_SECRET not set — using deterministic dev secret in production. "
+    raise RuntimeError(
+        "FATAL: JWT_SECRET not set — using deterministic dev secret in production. "
         "Any attacker who reads the source can forge valid JWTs for any user. "
         "Set JWT_SECRET=<64+ random chars> in .env immediately."
     )
-elif settings.jwt_secret == _DEV_JWT:
-    log.warning("[auth] JWT_SECRET matches the hardcoded dev fallback — set a unique value in .env.")
 
 if _is_prod and not settings.stripe_webhook_secret:
     log.critical(
@@ -773,7 +768,7 @@ async def _run_weekly_digest(force: bool = False):
 
             # Send to Telegram subscribers
             if s.telegram_bot_token:
-                url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
+                url = f"https://api.telegram.org/bot{s.telegram_bot_token.get_secret_value()}/sendMessage"
                 message_text = "\n".join(lines)
                 async with aiohttp.ClientSession() as session:
                     # Fallback to owner's .env chat_id if no subscribers have linked Telegram
@@ -1165,7 +1160,7 @@ async def _ensure_owner_account():
             return
         owner = User(
             email=s.owner_email.lower(),
-            password_hash=hash_password(s.owner_password),
+            password_hash=hash_password(s.owner_password.get_secret_value()),
             full_name="Owner",
             is_owner=True,
             is_active=True,
@@ -1453,28 +1448,16 @@ async def lifespan(app: FastAPI):
     _s = get_settings()
     _is_local = _s.app_url.startswith("http://localhost") or _s.app_url.startswith("http://127.")
     if not _s.jwt_secret and not _is_local:
-        log.critical(
+        raise RuntimeError(
             "[startup] SECURITY: JWT_SECRET is not set. Tokens are signed with a static "
             "dev key — all users share the same signing secret. Set JWT_SECRET in .env "
             'to a 64-char random string (python -c "import secrets; print(secrets.token_hex(32))"). '
             "Every container restart with an empty JWT_SECRET is a production security incident."
         )
-    _DEFAULT_PW = "ChangeMe123!"
-    if _s.owner_password == _DEFAULT_PW:
-        if _is_local:
-            log.warning(
-                "[startup] SECURITY: OWNER_PASSWORD is the committed default 'ChangeMe123!'. "
-                "Change it in backend/.env before deploying. Set a 16+ char password."
-            )
-        else:
-            raise RuntimeError(
-                "FATAL: OWNER_PASSWORD is the committed default 'ChangeMe123!'. "
-                "Set OWNER_PASSWORD=<strong password> in your production environment and restart. "
-                "Refusing to start — the default password is public knowledge."
-            )
-    elif _s.owner_password and len(_s.owner_password) < 16 and not _is_local:
-        log.critical(
-            f"[startup] SECURITY: OWNER_PASSWORD is short ({len(_s.owner_password)} chars) — "
+    _owner_pwd = _s.owner_password.get_secret_value() if _s.owner_password else ""
+    if _owner_pwd and len(_owner_pwd) < 16 and not _is_local:
+        raise RuntimeError(
+            f"[startup] SECURITY: OWNER_PASSWORD is short ({len(_owner_pwd)} chars) — "
             "change it to a strong password before exposing /api/admin/ endpoints. "
             "An unauthorized login grants access to all user emails and Stripe IDs."
         )
@@ -1522,7 +1505,7 @@ async def lifespan(app: FastAPI):
 
     _supervise("prewarm_sectors", _prewarm_sectors, restart=False)
     if settings.alpaca_api_key and settings.alpaca_api_secret:
-        alpaca_ws.start(settings.alpaca_api_key, settings.alpaca_api_secret, settings.tickers, manager.broadcast)
+        alpaca_ws.start(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), settings.tickers, manager.broadcast)
     from services.dark_pool import start_dark_pool_stream
 
     _supervise("dark_pool_stream", start_dark_pool_stream, restart=True)

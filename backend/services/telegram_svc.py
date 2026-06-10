@@ -1,5 +1,5 @@
 import aiohttp
-from services.http_client import get_ssl_context
+from services.http_client import get_ssl_context, shared_session
 
 
 def format_signal(signal: dict) -> str:
@@ -31,10 +31,10 @@ async def send_telegram_message(
     s = get_settings()
     if not s.telegram_bot_token or not chat_id:
         return False, "Not configured"
-    url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
+    url = f"https://api.telegram.org/bot{s.telegram_bot_token.get_secret_value()}/sendMessage"
     ctx = get_ssl_context()
     try:
-        async with aiohttp.ClientSession() as session:
+        async with shared_session() as session:
             resp = await session.post(
                 url,
                 json={"chat_id": chat_id, "text": text, "parse_mode": parse_mode},

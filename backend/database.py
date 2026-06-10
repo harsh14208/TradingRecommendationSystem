@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from sqlalchemy import event, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -83,10 +84,17 @@ async def get_db():
     async with AsyncSessionLocal() as session:
         try:
             yield session
-            await session.commit()
         except Exception:
             await session.rollback()
             raise
+
+
+def _dt_type() -> str:
+    return "TIMESTAMP" if _IS_POSTGRES else "DATETIME"
+
+
+def _bool_default(false_value: str = "FALSE") -> str:
+    return f"BOOLEAN DEFAULT {false_value.upper()}" if _IS_POSTGRES else f"INTEGER DEFAULT 0"
 
 
 async def init_db():
@@ -109,17 +117,19 @@ async def init_db():
         #
         # WARNING: never remove columns via this init_db block — that requires a
         # proper Alembic migration with a downgrade() to be safely reversible.
+        dt = _dt_type()
+        bd = _bool_default
         _migrations: list[tuple[str, str]] = [
             # users table
             ("users", "ALTER TABLE users ADD COLUMN min_confidence_override REAL"),
-            ("users", "ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL"),
-            ("users", "ALTER TABLE users ADD COLUMN referral_rewarded INTEGER DEFAULT 0"),
+            ("users", f"ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+            ("users", f"ALTER TABLE users ADD COLUMN referral_rewarded {bd('FALSE')}"),
             ("users", "ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20)"),
             ("users", "ALTER TABLE users ADD COLUMN oauth_sub VARCHAR(255)"),
             ("users", "ALTER TABLE users ADD COLUMN discord_webhook_url VARCHAR(500)"),
             ("users", "ALTER TABLE users ADD COLUMN webhook_url VARCHAR(500)"),
             # signals table
-            ("signals", "ALTER TABLE signals ADD COLUMN expires_at DATETIME"),
+            ("signals", f"ALTER TABLE signals ADD COLUMN expires_at {dt}"),
             # performance_snapshots table
             ("performance_snapshots", "ALTER TABLE performance_snapshots ADD COLUMN alpha REAL"),
             # indexes for created_at
@@ -130,5 +140,10 @@ async def init_db():
         for _tbl, sql in _migrations:
             try:
                 await conn.execute(text(sql))
-            except Exception:
-                pass  # column already exists — safe to ignore
+            except OperationalError as exc:
+                err = str(exc).lower()
+                if any(k in err for k in ("duplicate column", "already exists")):
+                    continue
+                logger.warning(f"Migration operational error ({sql}): {exc}")
+            except Exception as exc:
+                logger.warning(f"Migration unexpected error ({sql}): {exc}")

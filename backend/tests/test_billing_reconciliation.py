@@ -1,3 +1,4 @@
+from pydantic import SecretStr
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import stripe
@@ -9,7 +10,7 @@ from models import User
 async def test_reconcile_no_stripe_key():
     mock_db = MagicMock()
     settings = MagicMock()
-    settings.stripe_secret_key = ""
+    settings.stripe_secret_key = SecretStr("")
 
     with patch("services.billing_reconciliation.get_settings", return_value=settings):
         await reconcile_stripe_subscriptions(mock_db)
@@ -38,7 +39,7 @@ async def test_reconcile_subscription_active_match():
     mock_db.commit = AsyncMock()
 
     settings = MagicMock()
-    settings.stripe_secret_key = "sk_test_key"
+    settings.stripe_secret_key = SecretStr("sk_test_key")
     settings.stripe_price_pro = "price_pro_id"
 
     # Mock stripe subscription retrieve
@@ -81,7 +82,7 @@ async def test_reconcile_subscription_mismatch_correction():
     mock_db.commit = AsyncMock()
 
     settings = MagicMock()
-    settings.stripe_secret_key = "sk_test_key"
+    settings.stripe_secret_key = SecretStr("sk_test_key")
     settings.stripe_price_pro = "price_pro_id"
 
     # Stripe says past_due Basic
@@ -124,7 +125,7 @@ async def test_reconcile_subscription_not_found():
     mock_db.commit = AsyncMock()
 
     settings = MagicMock()
-    settings.stripe_secret_key = "sk_test_key"
+    settings.stripe_secret_key = SecretStr("sk_test_key")
 
     err = stripe.error.InvalidRequestError("No such subscription: sub_deleted", "param")
 
@@ -160,7 +161,7 @@ async def test_reconcile_customer_missing_subscription_id():
     mock_db.commit = AsyncMock()
 
     settings = MagicMock()
-    settings.stripe_secret_key = "sk_test_key"
+    settings.stripe_secret_key = SecretStr("sk_test_key")
     settings.stripe_price_pro = "price_pro_id"
 
     mock_subs = {
@@ -207,7 +208,7 @@ async def test_reconcile_customer_inactive_no_active_subs():
     mock_db.commit = AsyncMock()
 
     settings = MagicMock()
-    settings.stripe_secret_key = "sk_test_key"
+    settings.stripe_secret_key = SecretStr("sk_test_key")
 
     # Stripe says empty subscriptions
     mock_subs = {"data": []}

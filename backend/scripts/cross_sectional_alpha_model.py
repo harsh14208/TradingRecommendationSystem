@@ -458,6 +458,72 @@ def _wq_alpha_panel(tickers: list[str]) -> pd.DataFrame:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Orthogonal FUNDAMENTAL factors (EDGAR, research EXP6/EXP7, 2026-06-09)
+# ---------------------------------------------------------------------------
+# Four non-price factors that screened with usable IC at the 21-63d horizon AND
+# full orthogonality (max|corr| ≤0.14 vs the 8 price RAW_FEATURE_COLS) — the only
+# axis left after price IC was exhausted. Signs oriented so higher = better:
+#   fz_piotroski_chg — ΔF-score ~1y (quality momentum; IC +0.018@63d, t=7.3)
+#   fz_gross_prof    — gross profit / assets (Novy-Marx; IC +0.015@42d, t=5.5)
+#   fz_asset_growth  — ΔAssets YoY (LARGE-CAP growth premium — high=good, the
+#                      OPPOSITE of the small-cap investment factor; |t|=5.6)
+#   fz_buyback       — −Δshares YoY (net buyback; IC +0.009@42d, t=4.3)
+# Built from data/fundamental_factors.pkl (scripts/build_fundamental_factors.py).
+# Coverage is the ~106 EDGAR-extracted names → use `--universe curated` for the
+# honest test (full universe leaves ~87% NaN→neutralized). Enabled by --fundamentals.
+FUND_FACTOR_COLS = ["fz_piotroski_chg", "fz_gross_prof", "fz_asset_growth", "fz_buyback"]
+
+
+def _fundamental_factor_panel(tickers: list[str]) -> pd.DataFrame:
+    """Long [date, ticker, fz_*] panel of the orthogonal EDGAR fundamental factors.
+
+    All series are PIT (SEC filing-date) ffilled to daily — no lookahead. Flow
+    items use a trailing-4-filing sum (≈TTM) to smooth 10-Q/10-K scale mixing.
+    """
+    import pickle
+
+    path = os.path.join(_DATA, "fundamental_factors.pkl")
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=["date", "ticker", *FUND_FACTOR_COLS])
+    fund = pickle.load(open(path, "rb"))
+    tickers = [t for t in tickers if t in fund]
+    if not tickers:
+        return pd.DataFrame(columns=["date", "ticker", *FUND_FACTOR_COLS])
+
+    idx = pd.bdate_range("2009-01-01", pd.Timestamp.today())
+
+    def _ttm(s):
+        return s.rolling(4, min_periods=2).sum() if s is not None and len(s) else s
+
+    def _daily(series_by_t):
+        cols = {}
+        for t, s in series_by_t.items():
+            if s is None or not len(s):
+                continue
+            s = s[~s.index.duplicated(keep="last")].sort_index()
+            cols[t] = s.reindex(idx.union(s.index)).ffill().reindex(idx)
+        return pd.DataFrame(cols)
+
+    assets = _daily({t: fund[t].get("assets") for t in tickers})
+    shares = _daily({t: fund[t].get("shares_out") for t in tickers})
+    rev = _daily({t: _ttm(fund[t].get("revenue")) for t in tickers})
+    gp = _daily({t: _ttm(fund[t].get("gross_profit")) for t in tickers})
+    cor = _daily({t: _ttm(fund[t].get("cost_of_revenue")) for t in tickers})
+    pio = _daily({t: fund[t].get("piotroski") for t in tickers})
+    gp = gp.where(gp.notna(), rev - cor)  # derive gross profit where not reported
+
+    fcols = {
+        "fz_piotroski_chg": pio - pio.shift(63),
+        "fz_gross_prof": gp / assets,
+        "fz_asset_growth": assets / assets.shift(252) - 1.0,
+        "fz_buyback": -(shares / shares.shift(252) - 1.0),
+    }
+    long = pd.concat({k: v.stack() for k, v in fcols.items()}, axis=1).reset_index()
+    long.columns = ["date", "ticker", *FUND_FACTOR_COLS]
+    return long.replace([np.inf, -np.inf], np.nan)
+
+
 def build_panel(
     use_short_interest: bool = False,
     min_price: float = 5.0,
@@ -1025,6 +1091,12 @@ def main() -> None:
         help="add the orthogonal WorldQuant-101 alphas (wq002, wq026) as extra features",
     )
     ap.add_argument(
+        "--fundamentals",
+        action="store_true",
+        help="add the orthogonal EDGAR fundamental factors (piotroski_chg, gross_prof, asset_growth, "
+        "buyback). Best with --universe curated (EDGAR coverage ~106 names).",
+    )
+    ap.add_argument(
         "--save-model",
         action="store_true",
         help="train on ALL data and persist the model + feature list to data/ "
@@ -1060,6 +1132,13 @@ def main() -> None:
         panel = panel.merge(wq, on=["date", "ticker"], how="left")
         feature_cols += [c for c in WQ_ALPHA_COLS if c in panel.columns]
         print(f"  feature set now {len(feature_cols)}: {feature_cols}")
+    if args.fundamentals:
+        print("Adding orthogonal EDGAR fundamental factors (piotroski_chg, gross_prof, asset_growth, buyback)…")
+        fz = _fundamental_factor_panel(sorted(panel["ticker"].unique()))
+        panel = panel.merge(fz, on=["date", "ticker"], how="left")
+        feature_cols += [c for c in FUND_FACTOR_COLS if c in panel.columns]
+        _cov = panel[FUND_FACTOR_COLS[0]].notna().mean() if FUND_FACTOR_COLS[0] in panel.columns else 0.0
+        print(f"  feature set now {len(feature_cols)}: {feature_cols} | fundamental coverage {_cov:.0%} of rows")
     panel = cross_sectional_zscore(panel, feature_cols)
 
     if args.save_model:

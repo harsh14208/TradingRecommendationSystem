@@ -228,8 +228,9 @@ function Chart({ signal, style, period = "3M" }) {
   useEffect(() => {
     if (!signal?.ticker) return;
     setLoading(true); setError(false); setNeedsUpgrade(false);
+    const ctrl = new AbortController();
     const apiPeriod = PERIOD_API[period] || "3mo";
-    authFetch(`/api/chart/${encodeURIComponent(signal.ticker)}?period=${apiPeriod}`)
+    authFetch(`/api/chart/${encodeURIComponent(signal.ticker)}?period=${apiPeriod}`, { signal: ctrl.signal })
       .then(async res => {
         if (res.status === 402) { setNeedsUpgrade(true); return; }
         if (!res.ok) { setError(true); return; }
@@ -238,6 +239,7 @@ function Chart({ signal, style, period = "3M" }) {
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
+    return () => ctrl.abort();
   }, [signal?.ticker, period]);
 
   useEffect(() => {
@@ -519,13 +521,15 @@ function CompareChart({ ticker, versus, period = "3M" }) {
   useEffect(() => {
     if (!ticker || !versus) return;
     setLoading(true); setError(false); setData(null);
-    apiFetch(`/api/chart/${encodeURIComponent(ticker)}/relative?versus=${encodeURIComponent(versus)}&period=${apiPeriod}`)
+    const ctrl = new AbortController();
+    apiFetch(`/api/chart/${encodeURIComponent(ticker)}/relative?versus=${encodeURIComponent(versus)}&period=${apiPeriod}`, { signal: ctrl.signal })
       .then(d => {
         if (d?.ticker?.length > 1 && d?.bench?.length > 1) setData(d);
         else setError(true);
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
+    return () => ctrl.abort();
   }, [ticker, versus, apiPeriod]);
 
   useEffect(() => {
@@ -662,9 +666,11 @@ function Sparkline({ ticker, up }) {
 
   useEffect(() => {
     if (!ticker) return;
-    apiFetch(`/api/signals/${ticker}/spark`).then(d => {
+    const ctrl = new AbortController();
+    apiFetch(`/api/signals/${ticker}/spark`, { signal: ctrl.signal }).then(d => {
       if (d?.prices?.length > 1) setRealPts(d.prices);
     }).catch(() => {});
+    return () => ctrl.abort();
   }, [ticker]);
 
   const pts = useMemo(() => {

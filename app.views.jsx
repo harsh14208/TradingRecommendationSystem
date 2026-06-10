@@ -233,7 +233,7 @@ function HistoryView({ open, onClose, online }) {
   const [actionQ,   setActionQ]   = useState("");
   const [outcomeQ,  setOutcomeQ]  = useState("");
 
-  const loadHistory = (sd, ed, tk, ac, oc) => {
+  const loadHistory = (sd, ed, tk, ac, oc, signal) => {
     if (!online) return;
     setLoading(true);
     const params = new URLSearchParams();
@@ -243,7 +243,7 @@ function HistoryView({ open, onClose, online }) {
     if (ac) params.set("action",     ac);
     if (oc) params.set("outcome",    oc);
     const qs = params.toString() ? `?${params}` : "";
-    apiFetch(`/api/signals/history${qs}`).then(d => {
+    apiFetch(`/api/signals/history${qs}`, { signal }).then(d => {
       setRows(Array.isArray(d) ? d : []);
       setLoading(false);
     }).catch(() => setLoading(false));
@@ -257,8 +257,10 @@ function HistoryView({ open, onClose, online }) {
 
   useEffect(() => {
     if (!open) return;
-    loadHistory(startDate, endDate, tickerQ, actionQ, outcomeQ);
-  }, [open, online]); // eslint-disable-line
+    const ctrl = new AbortController();
+    loadHistory(startDate, endDate, tickerQ, actionQ, outcomeQ, ctrl.signal);
+    return () => ctrl.abort();
+  }, [open, online, startDate, endDate, tickerQ, actionQ, outcomeQ]);
 
   const fmtRet = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
   const retColor = v => v == null ? "var(--text-faint)" : v >= 0 ? "var(--up)" : "var(--down)";
@@ -528,7 +530,7 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
   const [startDate, setStartDate] = useState("");
   const [endDate,   setEndDate]   = useState("");
 
-  const load = (sd, ed, force = false) => {
+  const load = (sd, ed, force = false, signal) => {
     if (!online) return;
     // Use parent cache if fresh and no date filters are active
     if (!force && !sd && !ed && btCache && (Date.now() - btCache.ts) < BT_CACHE_TTL_MS) {
@@ -543,14 +545,14 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
     if (ed) params.set("end_date",   ed);
     const qs = params.toString() ? `?${params}` : "";
     Promise.all([
-      apiFetch(`/api/signals/backtest${qs}`),
-      apiFetch(`/api/signals/backtest/horizons${qs}`),
-      apiFetch("/api/accuracy/sources"),
-      apiFetch("/api/accuracy/tickers"),
-      apiFetch("/api/signals/track-record"),
-      apiFetch("/api/signals/correlation"),
-      apiFetch(`/api/signals/backtest/calibration${qs}`),
-      apiFetch("/api/signals/alpha-decay"),
+      apiFetch(`/api/signals/backtest${qs}`, { signal }),
+      apiFetch(`/api/signals/backtest/horizons${qs}`, { signal }),
+      apiFetch("/api/accuracy/sources", { signal }),
+      apiFetch("/api/accuracy/tickers", { signal }),
+      apiFetch("/api/signals/track-record", { signal }),
+      apiFetch("/api/signals/correlation", { signal }),
+      apiFetch(`/api/signals/backtest/calibration${qs}`, { signal }),
+      apiFetch("/api/signals/alpha-decay", { signal }),
     ]).then(([d, h, src, tkr, tr, cr, cal, dc]) => {
       const next = {
         ts: Date.now(), data: d, horizons: (h||[]).filter(h => h.n > 0),
@@ -564,7 +566,12 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
     }).catch(() => setLoading(false));
   };
 
-  useEffect(() => { if (open) load(startDate, endDate); }, [open, online]); // eslint-disable-line
+  useEffect(() => {
+    if (!open) return;
+    const ctrl = new AbortController();
+    load(startDate, endDate, false, ctrl.signal);
+    return () => ctrl.abort();
+  }, [open, online, startDate, endDate, btCache, onBtCache]);
 
   const runBackfill = () => {
     setBackfilling(true);
@@ -804,9 +811,11 @@ function MLModelTab({ online }) {
   useEffect(() => {
     if (!online) return;
     setMlLoad(true);
-    apiFetch("/api/ml/status")
+    const ctrl = new AbortController();
+    apiFetch("/api/ml/status", { signal: ctrl.signal })
       .then(d => { setMlData(d); setMlLoad(false); })
       .catch(() => { setMlErr("Could not load ML model status."); setMlLoad(false); });
+    return () => ctrl.abort();
   }, [online]);
 
   const triggerTrain = async () => {

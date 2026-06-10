@@ -86,7 +86,29 @@ async def promote_model(args):
         # Perform the promotion
         model.approval_decision = "approved"
         model.is_active = True
-        
+
+        # Idempotency: avoid duplicate ResearchExperiment rows for identical promotion params
+        existing_exp = await db.execute(
+            select(ResearchExperiment).where(
+                ResearchExperiment.decision == "promoted",
+                ResearchExperiment.promotion_status == "live",
+                ResearchExperiment.hypothesis == f"Promotion of model {args.model_id} with verified checklist",
+                ResearchExperiment.universe == {"oos_universe": args.oos_universe},
+                ResearchExperiment.is_metrics == {"replay_sharpe": args.replay_sharpe},
+                ResearchExperiment.oos_metrics == {
+                    "shadow_sharpe": args.shadow_sharpe,
+                    "cost_adjusted_sharpe": args.cost_adjusted_sharpe,
+                },
+            )
+        )
+        existing_exp = existing_exp.scalar_one_or_none()
+        if existing_exp:
+            print(f"\nNote: A live promotion experiment already exists (ID {existing_exp.id}).")
+            print("Skipping duplicate ResearchExperiment creation.")
+            await db.commit()
+            print(f"Model '{args.model_id}' is active.")
+            return
+
         # Log promotion in ResearchExperiment
         exp = ResearchExperiment(
             experiment_type="ml_training",

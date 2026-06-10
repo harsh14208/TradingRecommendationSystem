@@ -137,11 +137,9 @@ async def check_delivery_gates(
     # setting. Low-win tickers (<45% WR) must clear a stricter 68% bar.
     _effective_conf_floor = settings.min_confidence
     try:
-        from database import AsyncSessionLocal
         from models import AppSettings
 
-        async with AsyncSessionLocal() as _adb:
-            _srow = (await _adb.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+        _srow = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
         app_data = (_srow.data or {}) if _srow else {}
         ticker_wrs = app_data.get("adaptive_weights", {}).get("ticker_win_rates", {})
         twr = ticker_wrs.get(ticker)
@@ -151,7 +149,7 @@ async def check_delivery_gates(
             elif twr >= 0.75:
                 _effective_conf_floor = min(_effective_conf_floor, 52.0)
     except Exception:
-        pass
+        log.warning("Failed to load adaptive weights in delivery gates", exc_info=True)
 
     # ── Global confidence floor (with ticker-adaptive override) ──────────────
     if conf < _effective_conf_floor:

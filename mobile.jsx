@@ -17,21 +17,66 @@ const POSITIONS_MOCK = [
   { tk:"TSLA", shares:-10, avg:172,   last:164.80,  pnl:72.00,  pct:4.19,  spark:[50,48,45,47,43,40,38,36] },
 ];
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-const AUTH_KEY = "st_auth_token";
-const getToken = () => localStorage.getItem(AUTH_KEY);
+// ── Auth helpers (same pattern as app.auth.jsx) ─────────────────────────────
+let _accessToken = null;
+const getToken   = () => _accessToken;
+const saveToken  = t  => { _accessToken = t; };
+const clearToken = () => { _accessToken = null; };
 
-async function mFetch(path) {
+let _refreshPromise = null;
+async function _tryRefresh() {
+  if (_refreshPromise) return _refreshPromise;
+  _refreshPromise = fetch("/api/auth/refresh-cookie", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  })
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (d?.access_token) { saveToken(d.access_token); return true; }
+      return false;
+    })
+    .catch(() => false)
+    .finally(() => { _refreshPromise = null; });
+  return _refreshPromise;
+}
+
+async function authFetch(path, opts = {}) {
   const token = getToken();
-  const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(path, { ...opts, headers, credentials: "include" });
+  if (res.status === 401) {
+    const refreshed = await _tryRefresh();
+    if (refreshed) {
+      const newToken = getToken();
+      const retryHeaders = { ...headers, "Authorization": `Bearer ${newToken}` };
+      return fetch(path, { ...opts, headers: retryHeaders, credentials: "include" });
+    }
+    clearToken();
+    window.location.replace("/login?next=/mobile");
+  }
+  return res;
+}
+
+async function apiFetch(path, opts = {}) {
   try {
-    const res = await fetch(path, { headers });
+    const res = await authFetch(path, opts);
+    if (!res.ok) throw new Error(res.status);
+    return res.json();
+  } catch { return null; }
+}
+
+async function mFetch(path, opts = {}) {
+  try {
+    const res = await authFetch(path, opts);
     if (!res.ok) return null;
     return res.json();
   } catch { return null; }
 }
 
 function Sparkline({ data, color }) {
+  if (!data || !data.length) return null;
   const max = Math.max(...data), min = Math.min(...data);
   const range = max - min || 1;
   const w = 60, h = 24;
@@ -419,7 +464,7 @@ function AccountScreen({ user }) {
         </div>
         <div style={{ padding:"20px 16px 30px", textAlign:"center" }}>
           <button className="m-btn" style={{ width:"100%", color:"var(--down)", borderColor:"rgba(239,68,68,0.3)" }}
-            onClick={() => { localStorage.removeItem("st_auth_token"); window.location.href = "/login"; }}>
+            onClick={() => { clearToken(); window.location.href = "/login"; }}>
             Sign out
           </button>
           <div style={{ marginTop:14, fontSize:10, color:"var(--text-faint)", lineHeight:1.5 }}>
@@ -475,16 +520,38 @@ function MobileApp() {
   // Auth
   useEffect(() => {
     const token = getToken();
-    if (!token) { setAuthReady(true); return; }
-    mFetch("/api/auth/me").then(u => { if (u) setUser(u); else localStorage.removeItem(AUTH_KEY); }).finally(() => setAuthReady(true));
+    if (!token) {
+      _tryRefresh().then(ok => {
+        if (ok) {
+          authFetch("/api/auth/me")
+            .then(r => r.ok ? r.json() : null)
+            .then(u => { if (u) setUser(u); else clearToken(); })
+            .catch(() => {})
+            .finally(() => setAuthReady(true));
+        } else {
+          setAuthReady(true);
+        }
+      });
+      return;
+    }
+    const ctrl = new AbortController();
+    authFetch("/api/auth/me", { signal: ctrl.signal })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => { if (u) setUser(u); else clearToken(); })
+      .catch(() => {})
+      .finally(() => setAuthReady(true));
+    return () => ctrl.abort();
   }, []);
 
   // Data
   useEffect(() => {
     if (!user) return;
-    mFetch("/api/signals").then(d => { if (d && d.length > 0) setSignals(d); });
-    mFetch("/api/paper/positions").then(d => { if (d && d.length > 0) setPositions(d); });
-    mFetch("/api/public/track-record").then(d => { if (d && !d.no_data) setStats(d); });
+    const ctrl = new AbortController();
+    const opts = { signal: ctrl.signal };
+    apiFetch("/api/signals", opts).then(d => { if (d && Array.isArray(d) && d.length > 0) setSignals(d); });
+    apiFetch("/api/paper/positions", opts).then(d => { if (d && Array.isArray(d) && d.length > 0) setPositions(d); });
+    apiFetch("/api/public/track-record", opts).then(d => { if (d && !d.no_data) setStats(d); });
+    return () => ctrl.abort();
   }, [user]);
 
   // Clock

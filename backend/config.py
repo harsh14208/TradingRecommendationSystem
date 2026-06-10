@@ -1,13 +1,11 @@
 import hashlib
 import time as _time
 
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
-# Stable dev-only fallback — derived from a fixed seed so it survives uvicorn
-# --reload (module is re-imported on each reload, but the seed stays constant).
-# Tokens issued before a reload remain valid in dev.  Override with JWT_SECRET
-# in .env for production (and for true token isolation between environments).
-_DEV_JWT_SECRET: str = hashlib.sha256(b"signal-trade-dev-secret-v1").hexdigest()
+# Production security: no hardcoded fallback. JWT_SECRET must be set explicitly.
+# Use: python -c "import secrets; print(secrets.token_hex(32))" to generate one.
 
 
 class Settings(BaseSettings):
@@ -21,13 +19,10 @@ class Settings(BaseSettings):
     scan_interval_min: int = 15
     fred_api_key: str = ""
     alpaca_api_key: str = ""
-    alpaca_api_secret: str = ""
+    alpaca_api_secret: SecretStr = Field(default=SecretStr(""))
     auto_send_notifications: bool = True
     min_confidence: float = 40.0  # recalibrated 57→40 post phantom-win correction (2026-05-31).
-    # Old 57% = phantom-win scale where "57%" → real WR ~42%. After correction all signals
-    # cluster at ~42% honest confidence. 40% floor preserves positive-EV filter:
-    # 42.5% WR × 1.63× payoff = +EV. Swing floor (70%) and position floor (0%) unchanged.
-    telegram_bot_token: str = ""
+    telegram_bot_token: SecretStr = Field(default=SecretStr(""))
     telegram_chat_id: str = ""
     # Scale prep: when set, signals are posted to ONE broadcast channel instead of
     # looping per-user DMs. Telegram limits bots to 30 msgs/sec; at 100+ subscribers
@@ -35,35 +30,51 @@ class Settings(BaseSettings):
     telegram_broadcast_channel_id: str = ""
 
     # ── Auth ──────────────────────────────────────────────────────────────────
-    jwt_secret: str = ""  # set in .env — MUST be a long random string
+    jwt_secret: SecretStr = Field(default=SecretStr(""))
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60  # 60 minutes; refresh tokens (30d) handle session persistence
     refresh_token_expire_days: int = 30
 
     # Owner account — auto-created on first startup if set
     owner_email: str = ""
-    owner_password: str = ""
+    owner_password: SecretStr = Field(default=SecretStr(""))
 
-    # ── Stripe ────────────────────────────────────────────────────────────────
-    stripe_secret_key: str = ""  # sk_live_... or sk_test_...
-    stripe_webhook_secret: str = ""  # whsec_...
+    @field_validator("owner_password", mode="after")
+    @classmethod
+    def _require_owner_password(cls, v: SecretStr) -> SecretStr:
+        raw = v.get_secret_value() if hasattr(v, "get_secret_value") else str(v)
+        if raw and len(raw) < 16:
+            raise ValueError("OWNER_PASSWORD must be at least 16 characters when set")
+        return v
+
+    @field_validator("jwt_secret", mode="after")
+    @classmethod
+    def _require_jwt_secret(cls, v: SecretStr) -> SecretStr:
+        raw = v.get_secret_value() if hasattr(v, "get_secret_value") else str(v)
+        if raw and len(raw) < 32:
+            raise ValueError("JWT_SECRET must be at least 32 characters when set")
+        return v
+
+    # ── Stripe ────────────────────────────────────────────────────────────────────
+    stripe_secret_key: SecretStr = Field(default=SecretStr(""))  # sk_live_... or sk_test_...
+    stripe_webhook_secret: SecretStr = Field(default=SecretStr(""))  # whsec_...
     stripe_price_basic: str = ""  # Stripe Price ID for Basic plan
     stripe_price_pro: str = ""  # Stripe Price ID for Pro plan
     app_url: str = "http://localhost:8000"  # Public URL for Stripe redirect
 
     # ── Google OAuth ──────────────────────────────────────────────────────────
     google_client_id: str = ""  # from Google Cloud Console → Credentials
-    google_client_secret: str = ""  # from Google Cloud Console → Credentials
+    google_client_secret: SecretStr = Field(default=SecretStr(""))
 
     # ── Discord OAuth ─────────────────────────────────────────────────────────
     discord_client_id: str = ""  # from discord.com/developers/applications → OAuth2
-    discord_client_secret: str = ""  # from discord.com/developers/applications → OAuth2
+    discord_client_secret: SecretStr = Field(default=SecretStr(""))
 
     # ── Email (SMTP) ──────────────────────────────────────────────────────────
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
-    smtp_password: str = ""
+    smtp_password: SecretStr = Field(default=SecretStr(""))
     smtp_from: str = "noreply@signal.trade"
     smtp_from_name: str = "Signal.Trade"
 
@@ -86,7 +97,7 @@ class Settings(BaseSettings):
 
     # ── Web Push (VAPID) ──────────────────────────────────────────────────────
     # Generate: `python -c "from py_vapid import Vapid; v=Vapid(); v.generate_keys(); print(v.private_pem().decode())"`
-    vapid_private_key: str = ""
+    vapid_private_key: SecretStr = Field(default=SecretStr(""))
     vapid_subject: str = "mailto:admin@signal.trade"
 
     @property
@@ -95,8 +106,20 @@ class Settings(BaseSettings):
 
     @property
     def jwt_secret_key(self) -> str:
-        """Return JWT secret; use a stable random one in dev if not set in .env."""
-        return self.jwt_secret or _DEV_JWT_SECRET
+        """Return JWT secret. Raises in production if unset; allows dev fallback only on localhost."""
+        raw = self.jwt_secret.get_secret_value() if hasattr(self.jwt_secret, "get_secret_value") else str(self.jwt_secret)
+        if raw:
+            return raw
+        is_local = self.app_url.startswith("http://localhost") or self.app_url.startswith("http://127.")
+        if not is_local:
+            raise RuntimeError(
+                "FATAL: JWT_SECRET is not set. Tokens cannot be signed securely. "
+                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+            )
+        # Dev-only: generate an ephemeral secret so uvicorn --reload works without .env setup.
+        # This secret is random per process start, so reload invalidates old tokens — acceptable for dev.
+        import secrets as _secrets
+        return hashlib.sha256(_secrets.token_hex(32).encode()).hexdigest()
 
     model_config = {"env_file": ".env", "case_sensitive": False, "extra": "ignore"}
 

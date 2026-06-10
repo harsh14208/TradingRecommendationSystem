@@ -53,8 +53,8 @@ class TestSettingsTickers:
 
 class TestJwtSecretKey:
     def test_returns_set_secret(self):
-        s = Settings(jwt_secret="MY_VERY_SECRET_KEY")
-        assert s.jwt_secret_key == "MY_VERY_SECRET_KEY"
+        s = Settings(jwt_secret="MY_VERY_SECRET_KEY_THAT_IS_LONG_ENOUGH_32")
+        assert s.jwt_secret_key == "MY_VERY_SECRET_KEY_THAT_IS_LONG_ENOUGH_32"
 
     def test_falls_back_to_dev_secret_when_empty(self):
         s = Settings(jwt_secret="")

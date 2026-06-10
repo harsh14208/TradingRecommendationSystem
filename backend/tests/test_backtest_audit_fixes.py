@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -53,6 +54,13 @@ def _make_daily_df(n=300, start="2022-01-01", seed=42):
 # ─────────────────────────────────────────────────────────────────────────────
 # fetch_earnings_dates_polygon
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _disable_earnings_cache():
+    """Prevent local cache files from shadowing mocked Polygon responses."""
+    with patch("os.path.exists", return_value=False):
+        yield
 
 
 def test_polygon_earnings_returns_set_on_success():

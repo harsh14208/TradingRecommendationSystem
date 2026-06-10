@@ -23,6 +23,7 @@ import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 from services import scanner
 
 # ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ from services import scanner
 
 def _settings(**kwargs):
     defaults = dict(
-        telegram_bot_token="bot:TOKEN",
+        telegram_bot_token=SecretStr("bot:TOKEN"),
         telegram_chat_id="-100123",
         min_confidence=55.0,
         telegram_broadcast_channel_id="",
@@ -298,7 +299,7 @@ class TestMaybeSend:
 class TestFanoutToSubscribers:
     @pytest.mark.asyncio
     async def test_no_token_returns_false_immediately(self):
-        settings_no_token = types.SimpleNamespace(telegram_bot_token="")
+        settings_no_token = types.SimpleNamespace(telegram_bot_token=SecretStr(""))
 
         db = AsyncMock()
         row = _db_row()
@@ -312,7 +313,7 @@ class TestFanoutToSubscribers:
     @pytest.mark.asyncio
     async def test_no_eligible_users_returns_false(self):
         settings_ok = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             min_confidence=55.0,
         )
 
@@ -335,7 +336,7 @@ class TestFanoutToSubscribers:
     @pytest.mark.asyncio
     async def test_owner_bypasses_subscription_tier_check(self):
         settings_ok = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             min_confidence=55.0,
         )
 
@@ -391,7 +392,7 @@ class TestFanoutToSubscribers:
     @pytest.mark.asyncio
     async def test_dedup_skips_already_delivered_user(self):
         settings_ok = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             min_confidence=55.0,
         )
 
@@ -445,7 +446,7 @@ class TestFanoutToSubscribers:
     @pytest.mark.asyncio
     async def test_per_user_confidence_threshold_blocks_low_conf_signal(self):
         settings_ok = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             min_confidence=55.0,
         )
 
@@ -499,7 +500,7 @@ class TestFanoutToSubscribers:
     async def test_duplicate_chat_id_sent_only_once(self):
         """Two users sharing the same telegram_chat_id: only the first gets a message."""
         settings_ok = types.SimpleNamespace(
-            telegram_bot_token="bot:TOKEN",
+            telegram_bot_token=SecretStr("bot:TOKEN"),
             min_confidence=55.0,
         )
 
@@ -561,7 +562,7 @@ class TestFanoutToSubscribers:
     @pytest.mark.asyncio
     async def test_notification_prefs_enforced(self):
         """PROD-3: a user who saved telegram=False receives no fanout delivery."""
-        settings_ok = types.SimpleNamespace(telegram_bot_token="bot:TOKEN", min_confidence=55.0)
+        settings_ok = types.SimpleNamespace(telegram_bot_token=SecretStr("bot:TOKEN"), min_confidence=55.0)
 
         user = MagicMock()
         user.id = 1

@@ -14,6 +14,12 @@ async function apiPost(path, body, token) {
   return { ok: res.ok, data };
 }
 
+/* ── Redirect wrapper — keeps navigation side-effect out of render ─────────── */
+function RedirectTo({ href }) {
+  useEffect(() => { window.location.replace(href); }, [href]);
+  return null;
+}
+
 /* ── Signal cards for hero phone mockup ──────────────────────────────────── */
 const W_SIGNALS = [
   { tk: "NVDA", action: "BUY",  style: "POSITION", conf: 82, head: "Double-confirmed: above EMA200 + weekly SMA13 uptrend ×8/10", entry: 1245, stop: 1188, target: 1385 },
@@ -765,10 +771,12 @@ function Site() {
 
   // Load public track record stats once
   useEffect(() => {
-    fetch("/api/public/track-record")
+    const ctrl = new AbortController();
+    fetch("/api/public/track-record", { signal: ctrl.signal })
       .then(r => r.json())
       .then(d => { if (!d.no_data) setStats(d); })
       .catch(() => {});
+    return () => ctrl.abort();
   }, []);
 
   // Handle hash changes (back button)
@@ -785,8 +793,8 @@ function Site() {
       {page === "track"     && <TrackPage stats={stats}/>}
       {page === "docs"      && <DocsPage/>}
       {page === "telegram"  && <TelegramPage/>}
-      {page === "login"     && (window.location.replace("/login"),  null)}
-      {page === "signup"    && (window.location.replace("/signup"), null)}
+      {page === "login"     && <RedirectTo href="/login"/>}
+      {page === "signup"    && <RedirectTo href="/signup"/>}
       {page === "terms"     && <LegalPage kind="terms"   go={go}/>}
       {page === "privacy"   && <LegalPage kind="privacy" go={go}/>}
       {page === "risk"      && <LegalPage kind="risk"    go={go}/>}

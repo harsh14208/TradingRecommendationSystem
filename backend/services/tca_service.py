@@ -105,7 +105,7 @@ async def record_fill_tca(
                 db.add(new_fill)
                 
     except Exception as e:
-        log.error(f"Error recording TCA for order {order.id}: {e}", exc_info=True)
+        log.warning("Error recording TCA for order %s: %s", order.id, e, exc_info=True)
         
     return order
 

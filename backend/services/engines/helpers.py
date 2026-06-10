@@ -124,7 +124,7 @@ def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
     return "HOLD", max(38.0, min(52.0, confidence))
 
 
-def _levels(price: float, atr: float, action: str, style: str = "swing"):
+def _levels(price: float, atr: float, action: str, style: str = "swing", rsi: float | None = None):
     if action == "HOLD" or atr == 0:
         return None, None, None, "—"
     entry = price
@@ -149,6 +149,14 @@ def _levels(price: float, atr: float, action: str, style: str = "swing"):
         # Universal 1.5s/2.0t wins — consistent with §31 live finding (44.9% stop-hit at 1.5×,
         # indicating intraday wicks clip 1.0× stops before direction change materialises).
         stop_mult, tgt_mult = 1.5, 2.0  # universal 1.5s/2.0t — R:R 1.33
+        # Dynamic stop widening for oversold entries (backtest-validated 2026-06-09).
+        # RSI<30 → 2.0× ATR (wider stop before reversal bounce).
+        # RSI<35 → 1.75× ATR (moderate widening).
+        if action == "BUY" and rsi is not None:
+            if rsi < 30:
+                stop_mult = 2.0
+            elif rsi < 35:
+                stop_mult = 1.75
 
     stop = round(entry - stop_mult * atr, 2) if action == "BUY" else round(entry + stop_mult * atr, 2)
     target = round(entry + tgt_mult * atr, 2) if action == "BUY" else round(entry - tgt_mult * atr, 2)

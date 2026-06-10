@@ -114,7 +114,14 @@ async def list_sources(db: AsyncSession = Depends(get_db), _user: User = Depends
 
 @router.patch("/{source_id}")
 @router.put("/{source_id}")
-async def toggle_source(source_id: str, body: Optional[dict] = Body(default=None), db: AsyncSession = Depends(get_db)):
+async def toggle_source(
+    source_id: str,
+    body: Optional[dict] = Body(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not user.is_owner:
+        raise HTTPException(403, detail="Owner access required")
     src = (await db.execute(select(Source).where(Source.id == source_id))).scalar_one_or_none()
     if not src:
         raise HTTPException(404, "Source not found")

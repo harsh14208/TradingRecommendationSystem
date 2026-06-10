@@ -175,7 +175,7 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
 
             if channel == "telegram":
                 s = get_settings()
-                url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
+                url = f"https://api.telegram.org/bot{s.telegram_bot_token.get_secret_value()}/sendMessage"
                 async with shared_session() as session:
                     async with session.post(url, json=payload, timeout=5.0) as resp:
                         latency_ms = (time.monotonic() - start_time) * 1000
@@ -212,9 +212,8 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
                     err = "Missing subscription_info"
                 else:
                     # Run blocking call in thread
-                    await asyncio.to_thread(send_web_push, sub_info, push_payload)
+                    success = await asyncio.to_thread(send_web_push, sub_info, push_payload)
                     latency_ms = (time.monotonic() - start_time) * 1000
-                    success = True
 
             elif channel == "webhook":
                 webhook_url = payload.get("webhook_url")
@@ -229,7 +228,8 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
                     # Get user's webhook_secret or default to jwt_secret
                     async with AsyncSessionLocal() as db:
                         user = await db.get(User, user_id)
-                        secret = (user.webhook_secret or get_settings().jwt_secret or "").encode()
+                        _jwt_secret = get_settings().jwt_secret
+                        secret = (user.webhook_secret or (_jwt_secret.get_secret_value() if _jwt_secret else "") or "").encode()
 
                     payload_bytes = json.dumps(sig_data, default=str).encode()
                     sig_hdr = "sha256=" + hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest()

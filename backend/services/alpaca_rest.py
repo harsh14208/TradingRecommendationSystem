@@ -12,7 +12,7 @@ import time
 from typing import Any, Optional
 
 import aiohttp
-from services.http_client import get_ssl_context
+from services.http_client import get_ssl_context, shared_session
 
 PAPER_BASE = "https://paper-api.alpaca.markets"
 LIVE_BASE = "https://api.alpaca.markets"
@@ -40,7 +40,7 @@ def _ssl_ctx() -> ssl.SSLContext:
 
 
 async def get_account(api_key: str, api_secret: str, live: bool = False) -> dict:
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.get(
             f"{_base(live)}/v2/account",
             headers=_headers(api_key, api_secret),
@@ -51,7 +51,7 @@ async def get_account(api_key: str, api_secret: str, live: bool = False) -> dict
 
 
 async def get_positions(api_key: str, api_secret: str, live: bool = False) -> list:
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.get(
             f"{_base(live)}/v2/positions",
             headers=_headers(api_key, api_secret),
@@ -62,7 +62,7 @@ async def get_positions(api_key: str, api_secret: str, live: bool = False) -> li
 
 
 async def get_orders(api_key: str, api_secret: str, status: str = "all", limit: int = 50, live: bool = False) -> list:
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.get(
             f"{_base(live)}/v2/orders",
             headers=_headers(api_key, api_secret),
@@ -161,7 +161,7 @@ async def place_order(
     }
     if order_type == "limit" and limit_price is not None:
         body["limit_price"] = str(round(limit_price, 2))
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.post(
             f"{_base(live)}/v2/orders",
             headers=_headers(api_key, api_secret),
@@ -195,7 +195,7 @@ async def place_notional_order(
         "type": "market",
         "time_in_force": "day",  # fractional orders require "day"
     }
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.post(
             f"{_base(live)}/v2/orders",
             headers=_headers(api_key, api_secret),
@@ -237,7 +237,7 @@ async def place_bracket_order(
     if take_profit_price is not None:
         body["take_profit"] = {"limit_price": str(round(take_profit_price, 2))}
 
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.post(
             f"{_base(live)}/v2/orders",
             headers=_headers(api_key, api_secret),
@@ -249,7 +249,7 @@ async def place_bracket_order(
 
 
 async def close_position(api_key: str, api_secret: str, symbol: str, live: bool = False) -> dict:
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.delete(
             f"{_base(live)}/v2/positions/{symbol.upper()}",
             headers=_headers(api_key, api_secret),
@@ -262,7 +262,7 @@ async def close_position(api_key: str, api_secret: str, symbol: str, live: bool 
 
 
 async def cancel_order(api_key: str, api_secret: str, order_id: str, live: bool = False) -> dict:
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.delete(
             f"{_base(live)}/v2/orders/{order_id}",
             headers=_headers(api_key, api_secret),
@@ -314,7 +314,7 @@ async def submit_bracket_stop_order(
     if take_profit_price is not None:
         body["take_profit"] = {"limit_price": str(round(take_profit_price, 2))}
 
-    async with aiohttp.ClientSession() as s:
+    async with shared_session() as s:
         async with s.post(
             f"{_base(live)}/v2/orders",
             headers=_headers(api_key, api_secret),

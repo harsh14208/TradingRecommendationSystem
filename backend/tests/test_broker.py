@@ -10,6 +10,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _patch_alpaca_account():
+    """Provide a healthy Alpaca account so drawdown fail-closed logic doesn't block broker tests."""
+    with patch(
+        "services.alpaca_rest.get_account",
+        new_callable=AsyncMock,
+        return_value={"equity": "10000.00", "unrealized_pl": "0.00"},
+    ):
+        yield
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
