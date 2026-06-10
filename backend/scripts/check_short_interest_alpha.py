@@ -32,8 +32,12 @@ def _stats(rets: list[float]) -> dict:
     a = np.array(rets, dtype=float)
     mu = float(a.mean())
     sd = float(a.std(ddof=1)) if len(a) > 1 else 0.0
-    return {"n": len(a), "wr": round(float((a > 0).mean()) * 100, 1), "avg": round(mu, 2),
-            "sharpe": round(mu / sd, 3) if sd > 0 and len(a) >= 10 else None}
+    return {
+        "n": len(a),
+        "wr": round(float((a > 0).mean()) * 100, 1),
+        "avg": round(mu, 2),
+        "sharpe": round(mu / sd, 3) if sd > 0 and len(a) >= 10 else None,
+    }
 
 
 async def _load_si() -> pd.DataFrame:
@@ -74,17 +78,24 @@ def main():
     # AS-OF join: each trade gets the latest settlement on/before its entry date.
     trades_s = trades.sort_values("date")
     j = pd.merge_asof(
-        trades_s, si.sort_values("date"),
-        on="date", by="ticker", direction="backward",
+        trades_s,
+        si.sort_values("date"),
+        on="date",
+        by="ticker",
+        direction="backward",
     )
     have = j.dropna(subset=["dtc"])
 
     print("## Short-Interest / Days-to-Cover Alpha Check vs MR Trade Outcomes\n")
-    print(f"> {len(have)}/{len(trades)} MR trades have a short-interest reading at entry "
-          f"(as-of join, history ~2017-12+). DTC = short_interest / avg_daily_volume.\n")
+    print(
+        f"> {len(have)}/{len(trades)} MR trades have a short-interest reading at entry "
+        f"(as-of join, history ~2017-12+). DTC = short_interest / avg_daily_volume.\n"
+    )
     if len(have) < 15:
-        print("> Too few overlapping trades for a tercile read — accrue more live trades, "
-              "then re-run. Backfill + as-of join are in place for forward use.\n")
+        print(
+            "> Too few overlapping trades for a tercile read — accrue more live trades, "
+            "then re-run. Backfill + as-of join are in place for forward use.\n"
+        )
         return
 
     # ── Absolute days-to-cover terciles ───────────────────────────────────────
@@ -98,7 +109,9 @@ def main():
     print("|:---|---:|---:|---:|---:|")
     for lbl, g in buckets:
         s = _stats(g["net_pct"].tolist())
-        print(f"| {lbl} | {s['n']} | {s['wr']:.1f}% | {s['avg']:+.2f}% | {s['sharpe'] if s['sharpe'] is not None else '—'} |")
+        print(
+            f"| {lbl} | {s['n']} | {s['wr']:.1f}% | {s['avg']:+.2f}% | {s['sharpe'] if s['sharpe'] is not None else '—'} |"
+        )
 
     # ── Rising vs falling short interest (vs prior bi-weekly reading) ──────────
     rel = have.dropna(subset=["si_prev"]).copy()
@@ -108,12 +121,18 @@ def main():
         lo = _stats(rel[~rel["rising"]]["net_pct"].tolist())
         print("\n| Short interest vs prior reading | N | WR | Avg Ret | Sharpe |")
         print("|:---|---:|---:|---:|---:|")
-        print(f"| Rising (SI up) | {hi['n']} | {hi['wr']:.1f}% | {hi['avg']:+.2f}% | {hi['sharpe'] if hi['sharpe'] is not None else '—'} |")
-        print(f"| Falling (SI down) | {lo['n']} | {lo['wr']:.1f}% | {lo['avg']:+.2f}% | {lo['sharpe'] if lo['sharpe'] is not None else '—'} |")
+        print(
+            f"| Rising (SI up) | {hi['n']} | {hi['wr']:.1f}% | {hi['avg']:+.2f}% | {hi['sharpe'] if hi['sharpe'] is not None else '—'} |"
+        )
+        print(
+            f"| Falling (SI down) | {lo['n']} | {lo['wr']:.1f}% | {lo['avg']:+.2f}% | {lo['sharpe'] if lo['sharpe'] is not None else '—'} |"
+        )
         _spread = (hi["avg"] or 0) - (lo["avg"] or 0)
-        print(f"\n> Rising-minus-falling avg-return spread = {_spread:+.2f}pp. "
-              "Positive ⇒ building short interest into an oversold name is squeeze fuel (size up); "
-              "negative ⇒ shorts are right / falling-knife (gate down). Directional at this N.\n")
+        print(
+            f"\n> Rising-minus-falling avg-return spread = {_spread:+.2f}pp. "
+            "Positive ⇒ building short interest into an oversold name is squeeze fuel (size up); "
+            "negative ⇒ shorts are right / falling-knife (gate down). Directional at this N.\n"
+        )
 
 
 if __name__ == "__main__":

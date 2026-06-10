@@ -19,9 +19,7 @@ from sqlalchemy.sql import func
 
 class Signal(Base):
     __tablename__ = "signals"
-    __table_args__ = (
-        CheckConstraint("action IN ('BUY', 'SELL')", name="ck_signal_action"),
-    )
+    __table_args__ = (CheckConstraint("action IN ('BUY', 'SELL')", name="ck_signal_action"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
     ticker = Column(String(10), index=True, nullable=False)
     company = Column(String(100))
@@ -141,7 +139,9 @@ class User(Base):
     stripe_customer_id = Column(String(50), nullable=True)
     stripe_subscription_id = Column(String(50), nullable=True)
     subscription_tier = Column(String(20), default="free", nullable=False, server_default="free")  # free | basic | pro
-    subscription_status = Column(String(20), default="inactive", nullable=False, server_default="inactive")  # active | inactive | past_due | canceled
+    subscription_status = Column(
+        String(20), default="inactive", nullable=False, server_default="inactive"
+    )  # active | inactive | past_due | canceled
     subscription_period_end = Column(DateTime, nullable=True)
     # Per-user signal preferences
     min_confidence_override = Column(Float, nullable=True)  # None = use global setting
@@ -442,9 +442,7 @@ class Fill(Base):
     """Individual execution against a broker order (an order may fill in parts)."""
 
     __tablename__ = "fills"
-    __table_args__ = (
-        UniqueConstraint("broker_fill_id", name="uq_fills_broker_fill_id"),
-    )
+    __table_args__ = (UniqueConstraint("broker_fill_id", name="uq_fills_broker_fill_id"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
     broker_order_id = Column(Integer, ForeignKey("broker_orders.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -567,9 +565,7 @@ class BackgroundJobRun(Base):
     """Tracks background job execution history (TSYS-4a)."""
 
     __tablename__ = "background_job_runs"
-    __table_args__ = (
-        UniqueConstraint("job_name", "digest_week", name="uq_background_job_runs_weekly_digest_week"),
-    )
+    __table_args__ = (UniqueConstraint("job_name", "digest_week", name="uq_background_job_runs_weekly_digest_week"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
     job_name = Column(String(100), nullable=False)
     cycle_id = Column(String(100), nullable=True, index=True)

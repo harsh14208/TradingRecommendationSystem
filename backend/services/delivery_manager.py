@@ -229,7 +229,9 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
                     async with AsyncSessionLocal() as db:
                         user = await db.get(User, user_id)
                         _jwt_secret = get_settings().jwt_secret
-                        secret = (user.webhook_secret or (_jwt_secret.get_secret_value() if _jwt_secret else "") or "").encode()
+                        secret = (
+                            user.webhook_secret or (_jwt_secret.get_secret_value() if _jwt_secret else "") or ""
+                        ).encode()
 
                     payload_bytes = json.dumps(sig_data, default=str).encode()
                     sig_hdr = "sha256=" + hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest()

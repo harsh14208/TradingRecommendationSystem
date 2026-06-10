@@ -38,12 +38,12 @@ except Exception:
 # Corrected formulation: trade the cumulative PRICE-SPREAD residual (Engle-Granger /
 # Avellaneda-Lee), which mean-reverts over days, NOT the daily-return residual the
 # live sleeve uses (that churns at a 1-day half-life and dies on friction).
-LOOKBACK = 60          # spread regression / z-score window (days)
-Z_ENTRY = 2.0          # enter when |spread z| > 2
-Z_EXIT = 0.5           # exit when spread reverts toward the mean
-HALF_LIFE_MAX = 30.0   # OU half-life filter on the spread (days)
-MAX_HOLD = 30          # safety time-exit (days) — spread reversion is multi-day
-FRICTION_2LEG = 0.65   # round-trip friction, stock leg (~0.50%) + liquid ETF leg (~0.15%)
+LOOKBACK = 60  # spread regression / z-score window (days)
+Z_ENTRY = 2.0  # enter when |spread z| > 2
+Z_EXIT = 0.5  # exit when spread reverts toward the mean
+HALF_LIFE_MAX = 30.0  # OU half-life filter on the spread (days)
+MAX_HOLD = 30  # safety time-exit (days) — spread reversion is multi-day
+FRICTION_2LEG = 0.65  # round-trip friction, stock leg (~0.50%) + liquid ETF leg (~0.15%)
 
 
 def _close_series(df):
@@ -123,11 +123,18 @@ def simulate_from_signals(sig, ticker, etf, z_entry, z_exit=Z_EXIT, max_hold=MAX
                 cum_s = s[i] / s[ei] - 1.0
                 cum_e = e[i] / e[ei] - 1.0
                 resid_ret = pos["direction"] * (cum_s - pos["beta"] * cum_e) * 100.0
-                trades.append({
-                    "date": dates[ei], "exit_date": dates[i], "ticker": ticker, "etf": etf,
-                    "direction": pos["direction"], "held": held,
-                    "z_entry": round(pos["z_entry"], 2), "net_pct": round(resid_ret - FRICTION_2LEG, 3),
-                })
+                trades.append(
+                    {
+                        "date": dates[ei],
+                        "exit_date": dates[i],
+                        "ticker": ticker,
+                        "etf": etf,
+                        "direction": pos["direction"],
+                        "held": held,
+                        "z_entry": round(pos["z_entry"], 2),
+                        "net_pct": round(resid_ret - FRICTION_2LEG, 3),
+                    }
+                )
                 pos = None
     return trades
 
@@ -172,8 +179,14 @@ def backtest_tsmom(closes: dict[str, pd.Series], long_short: bool) -> dict:
         mdd = max(mdd, (peak - eq) / peak * 100)
     yrs = len(a) / 252
     cagr = round((eq ** (1 / yrs) - 1) * 100, 2) if yrs > 0 and eq > 0 else None
-    return {"ann_sharpe": ann_sharpe, "cagr": cagr, "max_dd": round(mdd, 2),
-            "n_days": len(a), "etfs": list(per_etf_daily.keys()), "daily": basket}
+    return {
+        "ann_sharpe": ann_sharpe,
+        "cagr": cagr,
+        "max_dd": round(mdd, 2),
+        "n_days": len(a),
+        "etfs": list(per_etf_daily.keys()),
+        "daily": basket,
+    }
 
 
 def stats(rets: list[float]) -> dict:
@@ -188,8 +201,13 @@ def stats(rets: list[float]) -> dict:
         cap *= 1 + 0.05 * (r / 100)  # 5% position size, sequential
         peak = max(peak, cap)
         mdd = max(mdd, (peak - cap) / peak * 100)
-    return {"n": n, "wr": round(float((a > 0).mean()) * 100, 1), "avg": round(mu, 2),
-            "sharpe": sharpe, "max_dd": round(mdd, 2)}
+    return {
+        "n": n,
+        "wr": round(float((a > 0).mean()) * 100, 1),
+        "avg": round(mu, 2),
+        "sharpe": sharpe,
+        "max_dd": round(mdd, 2),
+    }
 
 
 def run_tsmom():
@@ -202,7 +220,8 @@ def run_tsmom():
     for etf, cs in closes.items():
         if cs is not None and len(cs) > SMA_N + 50:
             px = cs.to_numpy(dtype=float)
-            r = np.zeros(len(px)); r[1:] = px[1:] / px[:-1] - 1.0
+            r = np.zeros(len(px))
+            r[1:] = px[1:] / px[:-1] - 1.0
             bh_daily[etf] = pd.Series(r, index=cs.index)
     if bh_daily:
         bh = pd.DataFrame(bh_daily).dropna(how="all").mean(axis=1).dropna().iloc[SMA_N:]
@@ -210,9 +229,13 @@ def run_tsmom():
         bh_sh = round((a.mean() / a.std()) * np.sqrt(252), 3) if a.std() > 0 else None
         eq, peak, mdd = 1.0, 1.0, 0.0
         for x in a:
-            eq *= 1 + x; peak = max(peak, eq); mdd = max(mdd, (peak - eq) / peak * 100)
-        print(f"> Buy-hold equal-weight basket baseline: Ann.Sharpe {bh_sh}, MaxDD -{mdd:.1f}% "
-              f"(trend-timing must beat this to be real alpha).\n")
+            eq *= 1 + x
+            peak = max(peak, eq)
+            mdd = max(mdd, (peak - eq) / peak * 100)
+        print(
+            f"> Buy-hold equal-weight basket baseline: Ann.Sharpe {bh_sh}, MaxDD -{mdd:.1f}% "
+            f"(trend-timing must beat this to be real alpha).\n"
+        )
 
     print("| Variant | ETFs | Days | CAGR | Ann.Sharpe | MaxDD |")
     print("|:---|---:|---:|---:|---:|---:|")
@@ -222,9 +245,11 @@ def run_tsmom():
         if not r:
             print(f"| {lbl} | — | — | — | — | — |")
             continue
-        print(f"| {lbl} | {len(r['etfs'])} | {r['n_days']} | "
-              f"{r['cagr'] if r['cagr'] is not None else '—'}% | "
-              f"{r['ann_sharpe'] if r['ann_sharpe'] else '—'} | -{r['max_dd']:.1f}% |")
+        print(
+            f"| {lbl} | {len(r['etfs'])} | {r['n_days']} | "
+            f"{r['cagr'] if r['cagr'] is not None else '—'}% | "
+            f"{r['ann_sharpe'] if r['ann_sharpe'] else '—'} | -{r['max_dd']:.1f}% |"
+        )
         if saved is None or (r.get("ann_sharpe") or -9) > (saved.get("ann_sharpe") or -9):
             saved = r
     if saved and saved.get("daily") is not None:
@@ -232,10 +257,16 @@ def run_tsmom():
         m.index = m.index.to_period("M").astype(str)  # match mr_monthly.csv key format
         m.to_csv("data/tsmom_monthly.csv")
         sh = saved.get("ann_sharpe") or 0
-        print(f"\n> Best ann.Sharpe {sh}. " + (
-            "✅ standalone trend edge — proceed to MR-correlation (diversification) test."
-            if sh > 0.2 else "➖ weak standalone; correlation with MR may still make it a useful hedge."
-            if sh > 0 else "⚠ no standalone trend edge on this basket."))
+        print(
+            f"\n> Best ann.Sharpe {sh}. "
+            + (
+                "✅ standalone trend edge — proceed to MR-correlation (diversification) test."
+                if sh > 0.2
+                else "➖ weak standalone; correlation with MR may still make it a useful hedge."
+                if sh > 0
+                else "⚠ no standalone trend edge on this basket."
+            )
+        )
         print("> Monthly series → data/tsmom_monthly.csv (for MR-correlation step).\n")
 
 
@@ -244,6 +275,7 @@ def run_corr():
     book and compute the combined-portfolio Sharpe vs MR-only. Requires data/mr_monthly.csv
     (from a backtest_technicals run) + data/tsmom_monthly.csv / data/statarb_monthly_is.csv."""
     import os
+
     print("## Sleeve × MR Diversification Test (monthly returns)\n")
     if not os.path.exists("data/mr_monthly.csv"):
         print("> Missing data/mr_monthly.csv — run `python scripts/backtest_technicals.py --sequential` first.\n")
@@ -289,8 +321,10 @@ def main():
     label = "OOS held-out" if oos else "IS"
     z_sweep = [2.0, 2.5, 3.0, 3.5]
     print(f"## Residual Stat-Arb Sleeve Backtest — {label} ({START} → {END})\n")
-    print(f"> Spread-level (log-price cointegration), half-life<{HALF_LIFE_MAX}d; exit |z|<{Z_EXIT} or "
-          f"{MAX_HOLD}d; friction {FRICTION_2LEG}% (2 legs). Sweeping entry |z|.\n")
+    print(
+        f"> Spread-level (log-price cointegration), half-life<{HALF_LIFE_MAX}d; exit |z|<{Z_EXIT} or "
+        f"{MAX_HOLD}d; friction {FRICTION_2LEG}% (2 legs). Sweeping entry |z|.\n"
+    )
 
     etfs = sorted({_sector_etf(t) for t in universe if _sector_etf(t)})
     etf_close = {etf: _close_series(cached_yf_download(etf, START, END)) for etf in etfs}
@@ -326,8 +360,10 @@ def main():
         avg_hold = tdf["held"].mean()
         periods_yr = 252 / max(avg_hold, 1)
         ann = round(s["sharpe"] * np.sqrt(periods_yr), 3) if s["sharpe"] else None
-        print(f"| {ze:.1f} | {s['n']} | {s['wr']:.1f}% | {s['avg']:+.2f}% | {avg_hold:.1f}d | "
-              f"{s['sharpe'] if s['sharpe'] is not None else '—'} | {ann if ann else '—'} | -{s['max_dd']:.1f}% |")
+        print(
+            f"| {ze:.1f} | {s['n']} | {s['wr']:.1f}% | {s['avg']:+.2f}% | {avg_hold:.1f}d | "
+            f"{s['sharpe'] if s['sharpe'] is not None else '—'} | {ann if ann else '—'} | -{s['max_dd']:.1f}% |"
+        )
         if (s["sharpe"] or -9) > (best[1]["sharpe"] if best else -9):
             best = (ze, s, tdf, ann)
 
@@ -337,12 +373,16 @@ def main():
     ze, s, tdf, ann = best
     pos_edge = (s["sharpe"] or 0) > 0.02
     print(f"\n> Best entry |z|={ze}: per-trade Sharpe {s['sharpe']}, ann {ann}.")
-    print("> Verdict: " + (
-        f"✅ positive standalone edge at |z|≥{ze} — proceed to MR-correlation test"
-        if pos_edge else
-        "⚠ even at higher thresholds the sector-ETF residual edge stays below friction — "
-        "sector-ETF stat-arb is not viable on this universe; next try true stock-stock cointegrated pairs "
-        "or the TS-momentum sleeve."))
+    print(
+        "> Verdict: "
+        + (
+            f"✅ positive standalone edge at |z|≥{ze} — proceed to MR-correlation test"
+            if pos_edge
+            else "⚠ even at higher thresholds the sector-ETF residual edge stays below friction — "
+            "sector-ETF stat-arb is not viable on this universe; next try true stock-stock cointegrated pairs "
+            "or the TS-momentum sleeve."
+        )
+    )
     # Save best-config monthly series for the MR-correlation step.
     tdf["_m"] = pd.to_datetime(tdf["exit_date"]).dt.to_period("M").astype(str)
     tdf.groupby("_m")["net_pct"].mean().to_csv(f"data/statarb_monthly_{'oos' if oos else 'is'}.csv")

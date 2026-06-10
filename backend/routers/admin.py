@@ -951,7 +951,7 @@ async def cohort_analytics(
     stmt = select(Signal)
     res = await db.execute(stmt)
     all_signals = res.scalars().all()
-    
+
     cohorts = {"delivered": [], "shadow": [], "withheld": []}
     for s in all_signals:
         cohort = "delivered"
@@ -959,15 +959,15 @@ async def cohort_analytics(
             cohort = s.extra_data.get("cohort") or "delivered"
         if cohort in cohorts:
             cohorts[cohort].append(s)
-            
+
     summary = {}
     for name, sigs in cohorts.items():
         resolved = [s for s in sigs if s.outcome_pct is not None]
         wins = [s for s in resolved if (s.outcome_pct or 0) > 0]
-        
+
         wr = round(len(wins) / len(resolved) * 100, 1) if resolved else None
         avg_ret = round(sum(s.outcome_pct for s in resolved) / len(resolved), 3) if resolved else None
-        
+
         brier = None
         if resolved:
             total_sq = sum(
@@ -976,9 +976,9 @@ async def cohort_analytics(
                 if s.confidence is not None
             )
             brier = round(total_sq / len(resolved), 4)
-            
+
         lo, hi = _wilson_ci(len(wins), len(resolved)) if resolved else (None, None)
-        
+
         summary[name] = {
             "total_signals": len(sigs),
             "total_resolved": len(resolved),
@@ -988,7 +988,7 @@ async def cohort_analytics(
             "avg_return_pct": avg_ret,
             "brier_score": brier,
         }
-        
+
     return summary
 
 

@@ -5,15 +5,17 @@ Revises: 4f12a8563a99
 Create Date: 2026-06-08 07:09:50.596891
 
 """
-from typing import Sequence, Union
+
+from typing import Union
+from collections.abc import Sequence
 
 from alembic import op
 import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'b6605ce75bd9'
-down_revision: Union[str, Sequence[str], None] = '4f12a8563a99'
+revision: str = "b6605ce75bd9"
+down_revision: Union[str, Sequence[str], None] = "4f12a8563a99"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -50,4 +52,3 @@ def downgrade() -> None:
     op.drop_column("broker_orders", "spread")
     op.drop_column("broker_orders", "nbbo_mid")
     op.drop_column("broker_orders", "arrival_price")
-

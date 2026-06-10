@@ -1,7 +1,7 @@
 import json
 import math
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer
 from services.auth_svc import decode_access_token
 

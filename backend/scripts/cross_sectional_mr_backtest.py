@@ -31,8 +31,6 @@ import os
 import sys
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from datetime import datetime
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _BACKEND = os.path.abspath(os.path.join(_HERE, ".."))
@@ -52,13 +50,15 @@ _OHLCV_DIR = os.path.join(_BACKEND, "data", "cache_ohlcv")
 _CONSTITUENTS_JSON = os.path.join(_BACKEND, "data", "sp500_historical_constituents.json")
 _MEMBERSHIP_CSV = os.path.join(_BACKEND, "data", "sp500_ticker_start_end.csv")
 
+
 def _norm_ticker(ticker: str) -> str:
     return ticker.replace(".", "-")
+
 
 def load_and_compute_ticker(args):
     ticker, start, end, cache_indicators_dir = args
     ticker_clean = ticker.replace("^", "_").replace("-", "_").replace(" ", "_")
-    
+
     # Check if indicator cache exists
     matches = sorted(glob.glob(os.path.join(cache_indicators_dir, f"{ticker_clean}_{start}_*.csv")))
     df = None
@@ -68,7 +68,7 @@ def load_and_compute_ticker(args):
             df = pd.read_csv(path, index_col=0, parse_dates=True)
         except Exception:
             df = None
-            
+
     if df is None:
         df = load_ohlcv(ticker)
         if df is None or len(df) < 100:
@@ -80,8 +80,9 @@ def load_and_compute_ticker(args):
             df.to_csv(cache_path)
         except Exception:
             return ticker, None
-            
+
     return ticker, df
+
 
 def compute_coint_z_series(ticker_prices: pd.Series, etf_prices: pd.Series, window: int = 252) -> pd.Series:
     combined = pd.DataFrame({"s": ticker_prices, "e": etf_prices}).dropna()
@@ -105,14 +106,7 @@ def compute_coint_z_series(ticker_prices: pd.Series, etf_prices: pd.Series, wind
     alpha = np.where(denom_valid, (sum_s - beta * sum_e) / N, np.nan)
 
     resid_last = s_col - (beta * e_col + alpha)
-    ss = (
-        sum_ss
-        + beta**2 * sum_ee
-        + N * alpha**2
-        - 2 * beta * sum_se
-        - 2 * alpha * sum_s
-        + 2 * beta * alpha * sum_e
-    )
+    ss = sum_ss + beta**2 * sum_ee + N * alpha**2 - 2 * beta * sum_se - 2 * alpha * sum_s + 2 * beta * alpha * sum_e
     var = np.maximum(ss / (N - 1), 0.0)
     sigma = np.sqrt(var)
 
@@ -143,13 +137,11 @@ def compute_coint_z_series(ticker_prices: pd.Series, etf_prices: pd.Series, wind
 
     return pd.Series(z_score, index=combined.index)
 
+
 def load_universe(source: str = "full") -> dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]]:
     """Load point-in-time S&P 500 index constituent intervals."""
-    cached = {
-        os.path.basename(p).split("_")[0]
-        for p in glob.glob(os.path.join(_OHLCV_DIR, "*_1d_adjTrue.csv"))
-    }
-    
+    cached = {os.path.basename(p).split("_")[0] for p in glob.glob(os.path.join(_OHLCV_DIR, "*_1d_adjTrue.csv"))}
+
     allowed = None
     if source == "curated":
         allowed = {_norm_ticker(str(t)) for t in CURATED_TICKERS}
@@ -157,8 +149,11 @@ def load_universe(source: str = "full") -> dict[str, list[tuple[pd.Timestamp, pd
     universe = {}
 
     def _eligible(ticker: str) -> bool:
-        return bool(ticker) and ticker not in {"SPY", "QQQ"} and ticker in cached and (
-            allowed is None or ticker in allowed
+        return (
+            bool(ticker)
+            and ticker not in {"SPY", "QQQ"}
+            and ticker in cached
+            and (allowed is None or ticker in allowed)
         )
 
     # Try CSV first
@@ -193,8 +188,9 @@ def load_universe(source: str = "full") -> dict[str, list[tuple[pd.Timestamp, pd
                 spans.append((start, pd.to_datetime(end_raw)))
             if spans:
                 universe[ticker] = spans
-                
+
     return universe
+
 
 def load_ohlcv(ticker: str) -> pd.DataFrame | None:
     """Load adjusted price history for a ticker, stripping multirow headers if any."""
@@ -216,17 +212,18 @@ def load_ohlcv(ticker: str) -> pd.DataFrame | None:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["Close"])
-    
+
     # Clean bad data/penny stock anomalies (S&P 500 constituents shouldn't be under $1)
     df = df[df["Close"] >= 1.0]
-    
+
     # Filter extreme daily return outliers (unadjusted stock splits or data errors)
     if len(df) > 1:
         pct = df["Close"].pct_change()
         valid_mask = (pct.isna()) | ((pct > -0.8) & (pct < 1.5))
         df = df[valid_mask]
-        
+
     return df[["Open", "High", "Low", "Close", "Volume"]] if not df.empty else None
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -242,8 +239,8 @@ def main():
     print("\n# Cross-Sectional Mean-Reversion Backtest — Signal.Trade")
     print(f"  Period   : {args.start} to {args.end}")
     print(f"  Horizon  : {args.horizon}d rebalance")
-    print(f"  Decile   : {args.decile:.2f} ({args.decile*100:.0f}%)")
-    print(f"  Friction : {args.cost_bps:.1f} bps per trade ({args.cost_bps*2:.1f} bps round-trip per turn)\n")
+    print(f"  Decile   : {args.decile:.2f} ({args.decile * 100:.0f}%)")
+    print(f"  Friction : {args.cost_bps:.1f} bps per trade ({args.cost_bps * 2:.1f} bps round-trip per turn)\n")
 
     # 1. Load S&P universe membership
     print("Loading index constituent intervals...")
@@ -258,9 +255,9 @@ def main():
     print("Loading OHLCV data & computing technical reversion scores...")
     cache_ind_dir = os.path.join(_BACKEND, "data", "cache_indicators")
     os.makedirs(cache_ind_dir, exist_ok=True)
-    
+
     args_list = [(t, START, END, cache_ind_dir) for t in tickers]
-    
+
     print(f"Loading/calculating technical indicators for {len(tickers)} tickers sequentially...")
     raw_ticker_dfs = {}
     n_processed = 0
@@ -270,10 +267,12 @@ def main():
             raw_ticker_dfs[ticker] = df
         n_processed += 1
         if n_processed % 50 == 0:
-            print(f"  Processed {n_processed}/{len(tickers)} tickers (loaded {len(raw_ticker_dfs)} valid)...", flush=True)
-            
+            print(
+                f"  Processed {n_processed}/{len(tickers)} tickers (loaded {len(raw_ticker_dfs)} valid)...", flush=True
+            )
+
     print(f"Successfully loaded {len(raw_ticker_dfs)} tickers. Computing sector cointegration Z-scores...")
-    
+
     # Compute cointegration Z-scores
     _sector_etfs = list({TICKER_TO_SECTOR.get(t, "XLK") for t in raw_ticker_dfs})
     try:
@@ -285,7 +284,7 @@ def main():
         else:
             _etf_close = _etf_raw[["Close"]] if "Close" in _etf_raw.columns else _etf_raw
         _etf_close.index = pd.to_datetime([str(i)[:10] for i in _etf_close.index])
-        
+
         for t, df in raw_ticker_dfs.items():
             etf_name = TICKER_TO_SECTOR.get(t, "XLK")
             if etf_name in _etf_close.columns:
@@ -294,7 +293,7 @@ def main():
                 df["coint_z"] = cz.reindex(df.index)
     except Exception as e:
         print(f"Warning: Cointegration calculation failed ({e}), scores will be computed without it.")
-        
+
     print("Computing technical scores...")
     ticker_data = {}
     for t, df in raw_ticker_dfs.items():
@@ -303,39 +302,39 @@ def main():
             ticker_data[t] = df
         except Exception as e:
             print(f"Failed to score {t}: {e}")
-            
+
     print(f"Successfully processed {len(ticker_data)} tickers with technical scores.")
 
     # 3. Align daily cross-sectional panel
     print("Aligning panel dates...")
     start_ts = pd.Timestamp(args.start)
     end_ts = pd.Timestamp(args.end)
-    
+
     # Generate unified trading calendar (use SPY or union of dates)
     spy_df = load_ohlcv("SPY")
     if spy_df is not None:
         all_dates = spy_df.index
     else:
         all_dates = pd.DatetimeIndex(sorted(list(set().union(*(df.index for df in ticker_data.values())))))
-        
+
     trading_dates = all_dates[(all_dates >= start_ts) & (all_dates <= end_ts)]
     print(f"Aligned {len(trading_dates)} trading days.")
 
     # 4. Run the rebalance simulation
     print("Simulating cross-sectional long/short book...")
-    
+
     gross_returns = []
     turnovers = []
     dates_run = []
-    
+
     prev_long = set()
     prev_short = set()
-    
+
     # We step by the rebalance horizon
     for idx in range(0, len(trading_dates) - args.horizon, args.horizon):
         date = trading_dates[idx]
         next_date = trading_dates[idx + args.horizon]
-        
+
         # Collect active constituents and their scores on this date
         candidates = []
         for t, df in ticker_data.items():
@@ -346,50 +345,50 @@ def main():
                 if start <= date <= end:
                     is_member = True
                     break
-            
+
             if is_member and date in df.index and next_date in df.index:
                 row = df.loc[date]
                 next_row = df.loc[next_date]
-                
+
                 score = row["score"]
                 # Forward return close-to-close over the horizon
                 fwd_ret = (next_row["Close"] / row["Close"]) - 1.0
-                
+
                 if pd.notna(score) and pd.notna(fwd_ret):
                     if row["Close"] >= 1.0 and next_row["Close"] >= 1.0 and abs(fwd_ret) < 0.5:
                         candidates.append({"ticker": t, "score": score, "fwd_ret": fwd_ret})
-                    
+
         n_names = len(candidates)
-        if n_names < 20: # don't trade on thin days
+        if n_names < 20:  # don't trade on thin days
             continue
-            
+
         df_candidates = pd.DataFrame(candidates)
         df_candidates = df_candidates.sort_values("score", ascending=False).reset_index(drop=True)
-        
+
         k = max(1, int(round(n_names * args.decile)))
-        
+
         # Long the highest scores (most oversold)
         long_set = set(df_candidates["ticker"].iloc[:k])
         # Short the lowest scores (most overbought)
-        short_set = set(df_candidates["ticker"].iloc[n_names - k:])
-        
+        short_set = set(df_candidates["ticker"].iloc[n_names - k :])
+
         # Compute returns
         ret_map = dict(zip(df_candidates["ticker"], df_candidates["fwd_ret"]))
         long_ret = np.mean([ret_map[t] for t in long_set])
         short_ret = np.mean([ret_map[t] for t in short_set])
-        
+
         # L/S gross return
         gross = long_ret - short_ret
-        
+
         # Calculate one-way turnover per leg
         long_turnover = len(long_set ^ prev_long) / (2 * k) if prev_long else 1.0
         short_turnover = len(short_set ^ prev_short) / (2 * k) if prev_short else 1.0
         total_turnover = long_turnover + short_turnover
-        
+
         gross_returns.append(gross)
         turnovers.append(total_turnover)
         dates_run.append(date)
-        
+
         prev_long = long_set
         prev_short = short_set
 
@@ -399,28 +398,25 @@ def main():
 
     # 5. Compute statistics
     print("Computing metrics...")
-    df_perf = pd.DataFrame({
-        "gross": gross_returns,
-        "turnover": turnovers
-    }, index=dates_run)
-    
+    df_perf = pd.DataFrame({"gross": gross_returns, "turnover": turnovers}, index=dates_run)
+
     # Net returns
     df_perf["net"] = df_perf["gross"] - df_perf["turnover"] * (args.cost_bps * 1e-4)
-    
+
     # Annualization factor
     periods_per_year = 252.0 / args.horizon
-    
+
     avg_gross = df_perf["gross"].mean() * periods_per_year
     vol_gross = df_perf["gross"].std() * np.sqrt(periods_per_year)
     sharpe_gross = avg_gross / vol_gross if vol_gross > 0 else 0.0
-    
+
     avg_net = df_perf["net"].mean() * periods_per_year
     vol_net = df_perf["net"].std() * np.sqrt(periods_per_year)
     sharpe_net = avg_net / vol_net if vol_net > 0 else 0.0
-    
+
     avg_turnover = df_perf["turnover"].mean()
     max_dd = (df_perf["net"].cumsum() - df_perf["net"].cumsum().cummax()).min()
-    
+
     print("\n## Backtest Results\n")
     print("| Metric | Gross (Before Costs) | Net (After Costs) |")
     print("|:---|---:|---:|")
@@ -431,6 +427,7 @@ def main():
     print(f"| Rebalance Periods | {len(df_perf)} | {len(df_perf)} |")
     print(f"| Avg Turnover/Period| {avg_turnover * 100:.1f}% | (100% = full portfolio turn) |")
     print()
+
 
 if __name__ == "__main__":
     main()

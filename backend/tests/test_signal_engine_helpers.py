@@ -1,4 +1,5 @@
 """Tests for signal_engine.py pure helper functions."""
+
 import json
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -9,9 +10,11 @@ import pandas as pd
 
 # ── _get_analyst_redis ────────────────────────────────────────────────────────
 
+
 def test_get_analyst_redis_unavailable():
     """Redis unavailable → returns None gracefully."""
     import services.signal_engine as se
+
     # Reset state
     se._analyst_redis_checked = False
     se._analyst_redis = None
@@ -29,6 +32,7 @@ def test_get_analyst_redis_unavailable():
 def test_get_analyst_redis_cached():
     """Second call returns cached result without re-checking."""
     import services.signal_engine as se
+
     se._analyst_redis_checked = True
     se._analyst_redis = MagicMock()  # fake Redis
 
@@ -42,9 +46,11 @@ def test_get_analyst_redis_cached():
 
 # ── _analyst_cache_get ────────────────────────────────────────────────────────
 
+
 def test_analyst_cache_get_no_redis():
     from services.signal_engine import _analyst_cache_get
     import services.signal_engine as se
+
     se._analyst_redis_checked = True
     se._analyst_redis = None
 
@@ -57,6 +63,7 @@ def test_analyst_cache_get_no_redis():
 def test_analyst_cache_get_hit():
     from services.signal_engine import _analyst_cache_get
     import services.signal_engine as se
+
     mock_r = MagicMock()
     mock_r.get.return_value = json.dumps({"rating": "BUY", "target": 200.0})
     se._analyst_redis_checked = True
@@ -73,6 +80,7 @@ def test_analyst_cache_get_hit():
 def test_analyst_cache_get_miss():
     from services.signal_engine import _analyst_cache_get
     import services.signal_engine as se
+
     mock_r = MagicMock()
     mock_r.get.return_value = None
     se._analyst_redis_checked = True
@@ -88,6 +96,7 @@ def test_analyst_cache_get_miss():
 def test_analyst_cache_get_error():
     from services.signal_engine import _analyst_cache_get
     import services.signal_engine as se
+
     mock_r = MagicMock()
     mock_r.get.side_effect = Exception("redis error")
     se._analyst_redis_checked = True
@@ -102,9 +111,11 @@ def test_analyst_cache_get_error():
 
 # ── _analyst_cache_set ────────────────────────────────────────────────────────
 
+
 def test_analyst_cache_set_no_redis():
     from services.signal_engine import _analyst_cache_set
     import services.signal_engine as se
+
     se._analyst_redis_checked = True
     se._analyst_redis = None
 
@@ -117,6 +128,7 @@ def test_analyst_cache_set_no_redis():
 def test_analyst_cache_set_success():
     from services.signal_engine import _analyst_cache_set
     import services.signal_engine as se
+
     mock_r = MagicMock()
     se._analyst_redis_checked = True
     se._analyst_redis = mock_r
@@ -131,6 +143,7 @@ def test_analyst_cache_set_success():
 def test_analyst_cache_set_error():
     from services.signal_engine import _analyst_cache_set
     import services.signal_engine as se
+
     mock_r = MagicMock()
     mock_r.setex.side_effect = Exception("redis error")
     se._analyst_redis_checked = True
@@ -144,6 +157,7 @@ def test_analyst_cache_set_error():
 
 
 # ── _apply_q1_rebalancing ─────────────────────────────────────────────────────
+
 
 def test_q1_rebalancing_high_vix():
     """VIX >= 30 in Q1 → stress regime, no change."""
@@ -206,6 +220,7 @@ def test_q1_rebalancing_no_vix():
 
 
 # ── _compute_1h_techs ─────────────────────────────────────────────────────────
+
 
 def test_compute_1h_techs_basic():
     from services.signal_engine import _compute_1h_techs

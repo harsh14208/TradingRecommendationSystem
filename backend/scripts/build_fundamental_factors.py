@@ -17,6 +17,7 @@ CIKs are reused from data/edgar_fundamentals.pkl (no CIK-map fetch needed).
 
     cd backend && source venv/bin/activate && python scripts/build_fundamental_factors.py
 """
+
 from __future__ import annotations
 
 import pickle

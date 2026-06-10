@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -492,10 +493,7 @@ def main():
     # expects (ou_halflife, hurst, vix, rvol, etc.).
     _nan_rate = np.isnan(X_all).mean(axis=0)
     if np.any(_nan_rate > 0.20):
-        bad = [
-            f"{_META_FEATURE_NAMES[i]}:{_nan_rate[i]:.1%}"
-            for i in np.where(_nan_rate > 0.20)[0]
-        ]
+        bad = [f"{_META_FEATURE_NAMES[i]}:{_nan_rate[i]:.1%}" for i in np.where(_nan_rate > 0.20)[0]]
         raise ValueError(
             f"Meta-feature NaN rate >20% — train/serve skew likely. "
             f"Re-run backtest with --save-trades including all meta features. Bad: {', '.join(bad)}"

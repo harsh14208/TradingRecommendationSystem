@@ -1,8 +1,7 @@
 """Tests for services/breadth.py, services/cross_sectional_shadow.py, services/cointegration.py."""
+
 from __future__ import annotations
 
-import asyncio
-import sys
 import time
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -655,7 +654,9 @@ class TestCointegrationGetPairsSignals:
     @pytest.mark.asyncio
     @patch("services.cointegration.get_history", new_callable=AsyncMock)
     @patch("services.mst_cointegration.load_mst_pairs")
-    async def test_get_pairs_signals_mst_pairs_exception_graceful(self, mock_load_mst: MagicMock, mock_get_history: AsyncMock):
+    async def test_get_pairs_signals_mst_pairs_exception_graceful(
+        self, mock_load_mst: MagicMock, mock_get_history: AsyncMock
+    ):
         from services import cointegration
 
         mock_load_mst.side_effect = RuntimeError("disk fail")
@@ -675,7 +676,9 @@ class TestCointegrationGetPairsSignals:
     @pytest.mark.asyncio
     @patch("services.cointegration.get_history", new_callable=AsyncMock)
     @patch("services.mst_cointegration.load_mst_pairs")
-    async def test_get_pairs_signals_mst_skips_static_duplicates(self, mock_load_mst: MagicMock, mock_get_history: AsyncMock):
+    async def test_get_pairs_signals_mst_skips_static_duplicates(
+        self, mock_load_mst: MagicMock, mock_get_history: AsyncMock
+    ):
         from services import cointegration
 
         # MST returns a pair that already exists in static PAIRS
@@ -704,7 +707,9 @@ class TestCointegrationGetPairsSignals:
     @pytest.mark.asyncio
     @patch("services.cointegration.get_history", new_callable=AsyncMock)
     @patch("services.mst_cointegration.load_mst_pairs")
-    async def test_get_pairs_signals_mst_skips_if_not_in_watchlist(self, mock_load_mst: MagicMock, mock_get_history: AsyncMock):
+    async def test_get_pairs_signals_mst_skips_if_not_in_watchlist(
+        self, mock_load_mst: MagicMock, mock_get_history: AsyncMock
+    ):
         from services import cointegration
 
         mock_load_mst.return_value = [
@@ -725,7 +730,9 @@ class TestCointegrationGetPairsSignals:
     @pytest.mark.asyncio
     @patch("services.cointegration.get_history", new_callable=AsyncMock)
     @patch("services.mst_cointegration.load_mst_pairs")
-    async def test_get_pairs_signals_mst_skips_low_corr_or_z(self, mock_load_mst: MagicMock, mock_get_history: AsyncMock):
+    async def test_get_pairs_signals_mst_skips_low_corr_or_z(
+        self, mock_load_mst: MagicMock, mock_get_history: AsyncMock
+    ):
         from services import cointegration
 
         mock_load_mst.return_value = [

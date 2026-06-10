@@ -70,6 +70,7 @@ def test_calculate_indicators_short_df_returns_empty():
 
 # ── Extended calculate_indicators tests ──────────────────────────────────────
 
+
 def test_calculate_indicators_none_returns_empty():
     assert calculate_indicators(None) == {}
 
@@ -142,14 +143,17 @@ def test_calculate_indicators_atr_pct():
 
 # ── batch_calculate_indicators ────────────────────────────────────────────────
 
+
 def test_batch_calculate_indicators_empty():
     from services.technicals import batch_calculate_indicators
+
     result = batch_calculate_indicators({})
     assert result == {}
 
 
 def test_batch_calculate_indicators_single_ticker():
     from services.technicals import batch_calculate_indicators
+
     df = _make_ohlcv(80)
     result = batch_calculate_indicators({"AAPL": df})
     assert "AAPL" in result
@@ -158,6 +162,7 @@ def test_batch_calculate_indicators_single_ticker():
 
 def test_batch_calculate_indicators_multiple():
     from services.technicals import batch_calculate_indicators
+
     df1 = _make_ohlcv(80)
     df2 = _make_ohlcv(60)
     result = batch_calculate_indicators({"AAPL": df1, "NVDA": df2})
@@ -167,6 +172,7 @@ def test_batch_calculate_indicators_multiple():
 
 def test_batch_calculate_indicators_none_df():
     from services.technicals import batch_calculate_indicators
+
     result = batch_calculate_indicators({"AAPL": None, "NVDA": _make_ohlcv(80)})
     assert isinstance(result, dict)
     # NVDA should still be calculated
@@ -175,30 +181,36 @@ def test_batch_calculate_indicators_none_df():
 
 # ── _safe ─────────────────────────────────────────────────────────────────────
 
+
 def test_safe_normal():
     from services.technicals import _safe
+
     s = pd.Series([1.0, 2.0, 3.0])
     assert _safe(s) == 3.0
 
 
 def test_safe_nan():
     from services.technicals import _safe
+
     s = pd.Series([1.0, float("nan")])
     assert _safe(s) is None
 
 
 def test_safe_exception():
     from services.technicals import _safe
+
     assert _safe(None) is None
 
 
 def test_safe_index():
     from services.technicals import _safe
+
     s = pd.Series([10.0, 20.0, 30.0])
     assert _safe(s, idx=0) == 10.0
 
 
 # ── _np_sma edge cases ────────────────────────────────────────────────────────
+
 
 def test_np_sma_too_short():
     c = np.array([1.0, 2.0])
@@ -213,6 +225,7 @@ def test_np_sma_preserves_length():
 
 
 # ── _np_atr edge cases ────────────────────────────────────────────────────────
+
 
 def test_np_atr_zero_range():
     h = np.full(20, 100.0)

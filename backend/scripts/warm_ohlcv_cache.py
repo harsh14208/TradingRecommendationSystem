@@ -27,8 +27,23 @@ def _symbols() -> list[str]:
             except TypeError:
                 pass
     syms |= {
-        "SPY", "^VIX", "^VIX3M", "^IRX", "TLT", "UUP",
-        "XLE", "XLK", "XLF", "XLY", "XLC", "XLB", "XLV", "XLI", "XLP", "XLU", "XLRE",
+        "SPY",
+        "^VIX",
+        "^VIX3M",
+        "^IRX",
+        "TLT",
+        "UUP",
+        "XLE",
+        "XLK",
+        "XLF",
+        "XLY",
+        "XLC",
+        "XLB",
+        "XLV",
+        "XLI",
+        "XLP",
+        "XLU",
+        "XLRE",
     }
     return sorted(syms)
 

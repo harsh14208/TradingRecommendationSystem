@@ -187,7 +187,13 @@ def test_assemble_signal_risk_free_rate_dampener():
         res = _assemble_signal(
             ticker="AAPL",
             info={"company": "Apple"},
-            tech={"price": 100.0, "atr": 1.0, "rsi": 38.0, "bb_pct_b": 0.20, "ibs": 0.14},  # 2 MR conditions for count≥2
+            tech={
+                "price": 100.0,
+                "atr": 1.0,
+                "rsi": 38.0,
+                "bb_pct_b": 0.20,
+                "ibs": 0.14,
+            },  # 2 MR conditions for count≥2
             score=50.0,  # BUY
             rationale=[],
             sources=set(),
@@ -489,7 +495,15 @@ def _mr_buy_kwargs(**overrides):
     defaults = dict(
         ticker="NVDA",
         info={"company": "NVIDIA"},
-        tech={"price": 100.0, "atr": 2.0, "rsi": 38.0, "bb_pct_b": 0.20, "ibs": 0.14, "volume": 5_000_000, "avg_volume": 4_000_000},
+        tech={
+            "price": 100.0,
+            "atr": 2.0,
+            "rsi": 38.0,
+            "bb_pct_b": 0.20,
+            "ibs": 0.14,
+            "volume": 5_000_000,
+            "avg_volume": 4_000_000,
+        },
         score=45.0,
         rationale=[],
         sources=set(),

@@ -1322,9 +1322,9 @@ def _supervise(name: str, coro_fn, restart: bool = True):
         # Per-job lock TTLs: weekly_digest sleeps for days, so its lock must
         # outlast the sleep or multiple instances will all fire on Sunday.
         _lock_ttls = {
-            "weekly_digest": 691200,        # 8 days
+            "weekly_digest": 691200,  # 8 days
             "weekly_factor_mining": 14400,  # 4 hours
-            "weekly_ml_retrain": 14400,     # 4 hours
+            "weekly_ml_retrain": 14400,  # 4 hours
             "nightly_outcome_resolution": 14400,  # 4 hours
         }
 
@@ -1518,7 +1518,9 @@ async def lifespan(app: FastAPI):
 
     _supervise("prewarm_sectors", _prewarm_sectors, restart=False)
     if settings.alpaca_api_key and settings.alpaca_api_secret:
-        alpaca_ws.start(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), settings.tickers, manager.broadcast)
+        alpaca_ws.start(
+            settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), settings.tickers, manager.broadcast
+        )
     from services.dark_pool import start_dark_pool_stream
 
     _supervise("dark_pool_stream", start_dark_pool_stream, restart=True)

@@ -197,9 +197,7 @@ async def oauth_exchange(
 
     await _prune_expired_oauth_data(db)
 
-    code_entry = (
-        await db.execute(select(OAuthOneTimeCode).where(OAuthOneTimeCode.code == code))
-    ).scalar_one_or_none()
+    code_entry = (await db.execute(select(OAuthOneTimeCode).where(OAuthOneTimeCode.code == code))).scalar_one_or_none()
     if not code_entry or code_entry.expires_at < _utcnow_naive():
         if code_entry:
             await db.delete(code_entry)

@@ -2190,6 +2190,8 @@ def simulate_ticker(
     mr_bb_ceil_override: float | None = None,
     mr_ibs_ceil_override: float | None = None,
     score_accel: bool = False,
+    # §87: conviction-tier sizing — consecutive-score as sizing multiplier
+    consec_score_sizing: bool = False,
     # Meta-label feature passthrough (QUANT_ENGINE_REVIEW §1.3)
     entry_model=None,
     hmm_cache: dict | None = None,

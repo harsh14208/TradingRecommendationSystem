@@ -2,12 +2,10 @@
 
 import asyncio
 import json
-import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -128,9 +126,7 @@ def _make_app_quotes(tier="basic", is_owner=True):
 
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[get_current_user] = lambda: _make_user(
-        is_owner=is_owner, tier=tier
-    )
+    app.dependency_overrides[get_current_user] = lambda: _make_user(is_owner=is_owner, tier=tier)
     return app
 
 
@@ -287,10 +283,7 @@ class TestSignalsBackfillOutcomes:
 class TestSignalsAlphaDecay:
     def test_alpha_decay_success(self):
         app = _make_app_signals()
-        rows = [
-            (json.dumps(["RSI", "MACD"]), "BUY", 0.5, 1.0, 2.0, 1.5)
-            for _ in range(10)
-        ]
+        rows = [(json.dumps(["RSI", "MACD"]), "BUY", 0.5, 1.0, 2.0, 1.5) for _ in range(10)]
         get_db_fn, _ = _mock_db([_result(all_values=rows)])
         app.dependency_overrides[get_db] = get_db_fn
 
@@ -390,6 +383,7 @@ class TestSignalsBacktestOOS:
 
     def test_backtest_oos_empty(self):
         from routers.signals import clear_analytics_cache
+
         clear_analytics_cache()
         app = _make_app_signals()
         get_db_fn, _ = _mock_db([_result(scalars_all=[])])
@@ -637,10 +631,7 @@ class TestAdminDeliverySLA:
     def test_delivery_sla(self):
         app = _make_app_admin(is_owner=True)
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        rows = [
-            MagicMock(created_at=now - timedelta(minutes=2), sent_at=now)
-            for _ in range(10)
-        ]
+        rows = [MagicMock(created_at=now - timedelta(minutes=2), sent_at=now) for _ in range(10)]
         get_db_fn, _ = _mock_db([_result(all_values=rows)])
         app.dependency_overrides[get_db] = get_db_fn
 
@@ -1076,7 +1067,9 @@ class TestQuotesMassive:
             patch.dict("os.environ", {"MASSIVE_API_KEY": "key123"}),
         ):
             with TestClient(app) as client:
-                resp = client.post("/api/massive/proxy", json={"endpoint": "/v1/reference/tickers/AAPL", "method": "GET"})
+                resp = client.post(
+                    "/api/massive/proxy", json={"endpoint": "/v1/reference/tickers/AAPL", "method": "GET"}
+                )
         assert resp.status_code == 200
         assert "data" in resp.json()
 
@@ -1110,7 +1103,9 @@ class TestQuotesSectors:
     def test_sector_detail(self):
         app = _make_app_quotes()
         # Patch sector_heatmap to avoid external calls
-        with patch("routers.quotes.sector_heatmap", new_callable=AsyncMock, return_value=[{"etf": "XLK", "ret_1m": 2.0}]):
+        with patch(
+            "routers.quotes.sector_heatmap", new_callable=AsyncMock, return_value=[{"etf": "XLK", "ret_1m": 2.0}]
+        ):
             # Patch AsyncSessionLocal used inside sector_detail
             mock_db = MagicMock()
             wl_result = MagicMock()
@@ -1123,8 +1118,10 @@ class TestQuotesSectors:
                 class CM:
                     async def __aenter__(self):
                         return mock_db
+
                     async def __aexit__(self, *args):
                         pass
+
                 return CM()
 
             with patch("database.AsyncSessionLocal", side_effect=_async_session):
@@ -1147,8 +1144,10 @@ class TestQuotesSectors:
             class CM:
                 async def __aenter__(self):
                     return mock_db
+
                 async def __aexit__(self, *args):
                     pass
+
             return CM()
 
         with (

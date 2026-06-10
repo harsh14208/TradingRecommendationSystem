@@ -16,6 +16,7 @@ all series are PIT (filing-date) ffilled to daily. Judge IC at 21d/42d/63d.
 
     cd backend && source venv/bin/activate && python scripts/research/exp7_factor_zoo_ic.py
 """
+
 from __future__ import annotations
 
 import pickle
@@ -127,8 +128,10 @@ print("-" * 86)
 for name, f in factors.items():
     f = f.replace([np.inf, -np.inf], np.nan)
     st = _ic_stats(f, close)
-    print(f"{name:<16}{st[5][0]:>9.4f}{st[21][0]:>9.4f}{st[42][0]:>9.4f}{st[63][0]:>9.4f}"
-          f"{st[42][1]:>9.3f}{st[42][2]:>9.1f}  {f.notna().mean().mean():>4.0%}")
+    print(
+        f"{name:<16}{st[5][0]:>9.4f}{st[21][0]:>9.4f}{st[42][0]:>9.4f}{st[63][0]:>9.4f}"
+        f"{st[42][1]:>9.3f}{st[42][2]:>9.1f}  {f.notna().mean().mean():>4.0%}"
+    )
 
 # ── orthogonality vs price + among fundamentals ────────────────────────────────
 ret1 = close.pct_change()
@@ -141,8 +144,10 @@ price_feats = {
     "dist_ma50": close / close.rolling(50).mean() - 1,
     "rsi_14": 100 - 100 / (1 + gain / loss.replace(0, np.nan)),
 }
-allz = {**{k: xs_z(v.replace([np.inf, -np.inf], np.nan)) for k, v in factors.items()},
-        **{k: xs_z(v) for k, v in price_feats.items()}}
+allz = {
+    **{k: xs_z(v.replace([np.inf, -np.inf], np.nan)) for k, v in factors.items()},
+    **{k: xs_z(v) for k, v in price_feats.items()},
+}
 corr = pd.DataFrame({k: v.stack() for k, v in allz.items()}).dropna().corr(method="spearman")
 pf = list(price_feats.keys())
 print("\nORTHOGONALITY — max |corr| vs price features:")

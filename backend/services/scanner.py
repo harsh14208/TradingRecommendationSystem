@@ -356,10 +356,10 @@ async def _update_outcomes(quotes: list[dict]):
     cutoff = now - timedelta(days=45)
     async with AsyncSessionLocal() as db:
         rows = (
-            await db.execute(
-                select(Signal).where(Signal.is_sent == True, Signal.created_at >= cutoff)
-            )
-        ).scalars().all()
+            (await db.execute(select(Signal).where(Signal.is_sent == True, Signal.created_at >= cutoff)))
+            .scalars()
+            .all()
+        )
         for sig in rows:
             current = price_map.get(sig.ticker)
             if not current or not sig.entry or sig.entry <= 0:
@@ -846,7 +846,9 @@ async def _maybe_paper_trade(
 
         else:  # SELL
             if pos and pos.get("side") == "long":
-                order = await alpaca_rest.close_position(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), ticker)
+                order = await alpaca_rest.close_position(
+                    settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), ticker
+                )
                 log.info(f" ✓ AUTO CLOSE long {ticker} — SELL signal received")
             else:
                 if pos and pos.get("side") == "short":
@@ -1183,7 +1185,9 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
             from services import alpaca_rest
             from services.sector import SECTOR_MAP as SECTOR_ETF_MAP
 
-            positions_list = await alpaca_rest.get_positions(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value())
+            positions_list = await alpaca_rest.get_positions(
+                settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value()
+            )
             if positions_list:
                 total_mv = sum(abs(float(p.get("market_value") or 0)) for p in positions_list)
                 sector_exposure: dict[str, float] = {}
@@ -2112,7 +2116,9 @@ async def _run_scan_impl(broadcast_fn=None):
         try:
             from services import alpaca_rest
 
-            positions_list = await alpaca_rest.get_positions(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value())
+            positions_list = await alpaca_rest.get_positions(
+                settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value()
+            )
             positions_map = {p["symbol"].upper(): p for p in positions_list}
         except Exception as e:
             log.info(f" positions fetch failed: {e}")

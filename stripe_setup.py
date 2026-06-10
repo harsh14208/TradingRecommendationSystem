@@ -53,7 +53,9 @@ Step 7 — Restart the server
 cd backend && python app.py
 Quickest path: Use stripe listen from the CLI — it gives you the secret immediately without needing ngrok or a public URL.
 """
-import os, sys
+
+import os
+import sys
 import subprocess
 import tempfile
 
@@ -95,20 +97,20 @@ print(f"\n🔑  Using Stripe {mode} mode key: {secret_key[:4]}…{'*' * 12}\n")
 
 PLANS = [
     {
-        "key":         "STRIPE_PRICE_BASIC",
-        "name":        "Signal.Trade Basic",
+        "key": "STRIPE_PRICE_BASIC",
+        "name": "Signal.Trade Basic",
         "description": (
             "65+ signal blocks · Polygon.io primary data · 13F institutional flow · "
             "Telegram + Discord + Web Push delivery · Backtest analytics (1d/3d/7d/14d) · "
             "Price alerts · Excel signal export · 164-ticker watchlist. "
             "7-day free trial."
         ),
-        "amount":      2900,   # $29/mo
-        "tier":        "basic",
+        "amount": 2900,  # $29/mo
+        "tier": "basic",
     },
     {
-        "key":         "STRIPE_PRICE_PRO",
-        "name":        "Signal.Trade Pro",
+        "key": "STRIPE_PRICE_PRO",
+        "name": "Signal.Trade Pro",
         "description": (
             "Everything in Basic + Alpaca paper trading · Signal correlation matrix · "
             "Bayesian predictive confidence intervals · Portfolio volatility targeting · "
@@ -116,8 +118,8 @@ PLANS = [
             "Weekly performance digest · Simulated backtest with slippage. "
             "7-day free trial."
         ),
-        "amount":      7900,  # $79/mo
-        "tier":        "pro",
+        "amount": 7900,  # $79/mo
+        "tier": "pro",
     },
 ]
 
@@ -143,7 +145,7 @@ for plan in PLANS:
     monthly = [p for p in prices.data if p.recurring and p.recurring.interval == "month"]
     if monthly:
         price = monthly[0]
-        print(f"  ✓ Price already exists: {price.id}  (${price.unit_amount/100:.2f}/mo)")
+        print(f"  ✓ Price already exists: {price.id}  (${price.unit_amount / 100:.2f}/mo)")
     else:
         price = stripe.Price.create(
             product=product.id,
@@ -152,11 +154,11 @@ for plan in PLANS:
             recurring={"interval": "month"},
             metadata={"tier": plan["tier"]},
         )
-        print(f"  ✓ Created price: {price.id}  (${price.unit_amount/100:.2f}/mo)")
+        print(f"  ✓ Created price: {price.id}  (${price.unit_amount / 100:.2f}/mo)")
 
     results[plan["key"]] = price.id
 
-print("\n" + "─"*60)
+print("\n" + "─" * 60)
 print("✅  Done! Add these lines to backend/.env:\n")
 for k, v in results.items():
     print(f"  {k}={v}")

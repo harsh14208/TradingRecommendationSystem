@@ -1,4 +1,5 @@
 """Tests for admin.py pure helper functions and endpoints."""
+
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI
@@ -10,14 +11,14 @@ from services.auth_svc import get_current_user
 
 
 def _make_owner():
-    u = User(id=1, email="o@t.com", is_owner=True,
-              subscription_tier="pro", subscription_status="active")
+    u = User(id=1, email="o@t.com", is_owner=True, subscription_tier="pro", subscription_status="active")
     u.full_name = "Owner"
     return u
 
 
 def _make_app():
     from routers.admin import router
+
     app = FastAPI()
     app.include_router(router)
     return app
@@ -40,8 +41,10 @@ def _mock_db(signals=None):
 
 # ── _wilson_ci ────────────────────────────────────────────────────────────────
 
+
 def test_wilson_ci_zero_n():
     from routers.admin import _wilson_ci
+
     lo, hi = _wilson_ci(0, 0)
     assert lo == 0.0
     assert hi == 100.0
@@ -49,6 +52,7 @@ def test_wilson_ci_zero_n():
 
 def test_wilson_ci_all_wins():
     from routers.admin import _wilson_ci
+
     lo, hi = _wilson_ci(100, 100)
     assert lo > 90.0
     assert hi == 100.0
@@ -56,6 +60,7 @@ def test_wilson_ci_all_wins():
 
 def test_wilson_ci_half():
     from routers.admin import _wilson_ci
+
     lo, hi = _wilson_ci(50, 100)
     assert 40 < lo < 60
     assert 40 < hi < 60
@@ -64,6 +69,7 @@ def test_wilson_ci_half():
 
 def test_wilson_ci_no_wins():
     from routers.admin import _wilson_ci
+
     lo, hi = _wilson_ci(0, 100)
     assert lo == 0.0
     assert hi < 10.0
@@ -71,6 +77,7 @@ def test_wilson_ci_no_wins():
 
 def test_wilson_ci_small_sample():
     from routers.admin import _wilson_ci
+
     lo, hi = _wilson_ci(3, 5)
     assert 0 <= lo <= 100
     assert lo <= hi <= 100
@@ -78,19 +85,23 @@ def test_wilson_ci_small_sample():
 
 # ── _find_flagged ─────────────────────────────────────────────────────────────
 
+
 def test_find_flagged_empty():
     from routers.admin import _find_flagged
+
     assert _find_flagged({}) == []
 
 
 def test_find_flagged_no_flags():
     from routers.admin import _find_flagged
+
     d = {"metric": {"value": 5, "flag": False}}
     assert _find_flagged(d) == []
 
 
 def test_find_flagged_single_flag():
     from routers.admin import _find_flagged
+
     d = {"wr": {"value": 0.42, "flag": True, "before": 0.50, "after": 0.42, "delta": -0.08, "delta_pct": -16.0}}
     result = _find_flagged(d)
     assert len(result) == 1
@@ -100,11 +111,8 @@ def test_find_flagged_single_flag():
 
 def test_find_flagged_nested():
     from routers.admin import _find_flagged
-    d = {
-        "section1": {
-            "sub": {"flag": True, "before": 1, "after": 2, "delta": 1, "delta_pct": 100.0}
-        }
-    }
+
+    d = {"section1": {"sub": {"flag": True, "before": 1, "after": 2, "delta": 1, "delta_pct": 100.0}}}
     result = _find_flagged(d)
     assert len(result) == 1
     assert result[0]["metric"] == "section1.sub"
@@ -112,6 +120,7 @@ def test_find_flagged_nested():
 
 def test_find_flagged_multiple():
     from routers.admin import _find_flagged
+
     d = {
         "a": {"flag": True, "before": 1, "after": 2, "delta": 1, "delta_pct": 50.0},
         "b": {"flag": False},
@@ -125,6 +134,7 @@ def test_find_flagged_multiple():
 
 
 # ── GET /api/admin/live-wr-stats ──────────────────────────────────────────────
+
 
 def test_live_wr_stats_no_signals():
     app = _make_app()
@@ -175,10 +185,10 @@ def test_live_wr_stats_with_signals():
 
 # ── GET /api/admin/users ──────────────────────────────────────────────────────
 
+
 def test_list_users_non_owner():
     app = _make_app()
-    non_owner = User(id=2, email="u@t.com", is_owner=False,
-                     subscription_tier="free", subscription_status="active")
+    non_owner = User(id=2, email="u@t.com", is_owner=False, subscription_tier="free", subscription_status="active")
     app.dependency_overrides[get_db] = _mock_db()
     app.dependency_overrides[get_current_user] = lambda: non_owner
 

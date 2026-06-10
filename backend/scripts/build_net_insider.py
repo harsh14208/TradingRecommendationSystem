@@ -14,6 +14,7 @@ Output: data/net_insider.pkl = {ticker: Series(date → trailing-90d net shares 
 
     cd backend && source venv/bin/activate && python scripts/build_net_insider.py --max-filings 120
 """
+
 from __future__ import annotations
 
 import argparse

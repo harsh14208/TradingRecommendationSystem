@@ -961,7 +961,9 @@ async def test_execute_signal_capacity_resize():
 
     with (
         patch("services.tca_service.check_capacity_limits", new_callable=AsyncMock, return_value=(False, 50.0, 1.0)),
-        patch("services.alpaca_rest.place_notional_order", new_callable=AsyncMock, return_value=fake_order) as mock_place,
+        patch(
+            "services.alpaca_rest.place_notional_order", new_callable=AsyncMock, return_value=fake_order
+        ) as mock_place,
     ):
         await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY"}, None, db)
 
@@ -994,11 +996,25 @@ async def test_execute_portfolio_for_user_success():
 
     with (
         patch("services.broker_svc.check_portfolio_drawdown", new_callable=AsyncMock, return_value=False),
-        patch("services.alpaca_rest.get_account", new_callable=AsyncMock, return_value={"equity": "50000", "unrealized_pl": "1000", "cash": "25000"}),
-        patch("services.portfolio_allocator.allocate_portfolio", new_callable=AsyncMock, return_value=[{"ticker": "AAPL", "action": "BUY", "notional": 1000.0, "target_weight": 0.1, "signal_id": 1}]),
+        patch(
+            "services.alpaca_rest.get_account",
+            new_callable=AsyncMock,
+            return_value={"equity": "50000", "unrealized_pl": "1000", "cash": "25000"},
+        ),
+        patch(
+            "services.portfolio_allocator.allocate_portfolio",
+            new_callable=AsyncMock,
+            return_value=[
+                {"ticker": "AAPL", "action": "BUY", "notional": 1000.0, "target_weight": 0.1, "signal_id": 1}
+            ],
+        ),
         patch("services.broker_svc.check_runtime_risk_limits", new_callable=AsyncMock, return_value=None),
         patch("services.tca_service.check_capacity_limits", new_callable=AsyncMock, return_value=(False, 1000.0, 0.0)),
-        patch("services.alpaca_rest.place_notional_order", new_callable=AsyncMock, return_value={"id": "ord1", "status": "accepted"}),
+        patch(
+            "services.alpaca_rest.place_notional_order",
+            new_callable=AsyncMock,
+            return_value={"id": "ord1", "status": "accepted"},
+        ),
         patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "cycle-1")),
     ):
         await execute_portfolio_for_user(user, active_signals, db)

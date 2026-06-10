@@ -94,16 +94,13 @@ def _dt_type() -> str:
 
 
 def _bool_default(false_value: str = "FALSE") -> str:
-    return f"BOOLEAN DEFAULT {false_value.upper()}" if _IS_POSTGRES else f"INTEGER DEFAULT 0"
+    return f"BOOLEAN DEFAULT {false_value.upper()}" if _IS_POSTGRES else "INTEGER DEFAULT 0"
 
 
 async def _pg_column_exists(conn, table: str, column: str) -> bool:
     """Check whether a column already exists on a PostgreSQL table."""
     result = await conn.execute(
-        text(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_name = :table AND column_name = :column"
-        ),
+        text("SELECT 1 FROM information_schema.columns WHERE table_name = :table AND column_name = :column"),
         {"table": table, "column": column},
     )
     return result.scalar() is not None
@@ -112,10 +109,7 @@ async def _pg_column_exists(conn, table: str, column: str) -> bool:
 async def _pg_index_exists(conn, table: str, index: str) -> bool:
     """Check whether an index already exists on a PostgreSQL table."""
     result = await conn.execute(
-        text(
-            "SELECT 1 FROM pg_indexes "
-            "WHERE schemaname = 'public' AND tablename = :table AND indexname = :index"
-        ),
+        text("SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = :table AND indexname = :index"),
         {"table": table, "index": index},
     )
     return result.scalar() is not None
@@ -147,7 +141,11 @@ async def init_db():
             # (table_or_kind, sql, object_name_for_idempotency_check)
             # users table
             ("users", "ALTER TABLE users ADD COLUMN min_confidence_override REAL", "min_confidence_override"),
-            ("users", f"ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL", "referred_by"),
+            (
+                "users",
+                "ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
+                "referred_by",
+            ),
             ("users", f"ALTER TABLE users ADD COLUMN referral_rewarded {bd('FALSE')}", "referral_rewarded"),
             ("users", "ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20)", "oauth_provider"),
             ("users", "ALTER TABLE users ADD COLUMN oauth_sub VARCHAR(255)", "oauth_sub"),
@@ -164,7 +162,11 @@ async def init_db():
             # indexes for created_at (CREATE INDEX IF NOT EXISTS is idempotent on its own)
             ("signals", "CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at)", None),
             ("send_log", "CREATE INDEX IF NOT EXISTS idx_send_log_created_at ON send_log(created_at)", None),
-            ("broker_orders", "CREATE INDEX IF NOT EXISTS idx_broker_orders_created_at ON broker_orders(created_at)", None),
+            (
+                "broker_orders",
+                "CREATE INDEX IF NOT EXISTS idx_broker_orders_created_at ON broker_orders(created_at)",
+                None,
+            ),
         ]
         for table, sql, obj_name in _migrations:
             try:

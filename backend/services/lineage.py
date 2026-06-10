@@ -32,19 +32,17 @@ LINEAGE_CONFIG = {
         "signals": "v8.0",
         "feature_snapshots": "v2.0",
         "broker_orders": "v2.0",
-        "research_experiments": "v1.0"
-    }
+        "research_experiments": "v1.0",
+    },
 }
+
 
 def get_lineage_hash() -> str:
     """Return a unique hash of the lineage config for verification."""
     config_str = json.dumps(LINEAGE_CONFIG, sort_keys=True)
     return hashlib.sha256(config_str.encode("utf-8")).hexdigest()
 
+
 def get_lineage_meta() -> dict:
     """Return the complete metadata block for tracing."""
-    return {
-        "lineage_hash": get_lineage_hash(),
-        "timestamp": datetime.now().isoformat(),
-        **LINEAGE_CONFIG
-    }
+    return {"lineage_hash": get_lineage_hash(), "timestamp": datetime.now().isoformat(), **LINEAGE_CONFIG}

@@ -36,15 +36,12 @@ async def get_or_create_instrument(db, ticker: str) -> Instrument:
     inst = res.scalar_one_or_none()
     if not inst:
         inst = Instrument(
-            ticker=ticker,
-            name=f"{ticker} Common Stock",
-            asset_type="equity",
-            currency="USD",
-            is_active=True
+            ticker=ticker, name=f"{ticker} Common Stock", asset_type="equity", currency="USD", is_active=True
         )
         db.add(inst)
         await db.flush()
     return inst
+
 
 async def save_feature_snapshot(
     db,
@@ -55,7 +52,7 @@ async def save_feature_snapshot(
     effective_time: Optional[datetime] = None,
     provider_timestamp: Optional[datetime] = None,
     provider: str = "polygon",
-    signal_policy_version: str = "1.0"
+    signal_policy_version: str = "1.0",
 ) -> FeatureSnapshot:
     """
     QENG-2a: Persist immutable feature snapshots keyed by ticker, observation time,
@@ -69,7 +66,7 @@ async def save_feature_snapshot(
 
     # Calculate feature vector hash
     features_json = json.dumps(features, sort_keys=True)
-    vector_hash = hashlib.sha256(features_json.encode('utf-8')).hexdigest()
+    vector_hash = hashlib.sha256(features_json.encode("utf-8")).hexdigest()
 
     # Extract hot scalars for indexing if present
     rsi = features.get("rsi")
@@ -96,7 +93,7 @@ async def save_feature_snapshot(
         provider_timestamp=provider_timestamp or ts,
         provider=provider,
         feature_vector_hash=vector_hash,
-        signal_policy_version=signal_policy_version
+        signal_policy_version=signal_policy_version,
     )
     db.add(snapshot)
     await db.flush()

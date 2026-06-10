@@ -476,7 +476,12 @@ async def _run_brier_drift(after_date: datetime | None, window_days: int = 30) -
         # is_sent filter: live audits must mirror the delivered track record
         # (matches /live-wr-stats). validate_predictions only resolves delivered
         # signals today, so this is currently a no-op guard against future drift.
-        stmt = select(Signal).where(Signal.outcome_pct.isnot(None)).where(Signal.is_sent == True).where(Signal.confidence.isnot(None))
+        stmt = (
+            select(Signal)
+            .where(Signal.outcome_pct.isnot(None))
+            .where(Signal.is_sent == True)
+            .where(Signal.confidence.isnot(None))
+        )
         if after_date:
             stmt = stmt.where(Signal.created_at >= after_date)
         result = await db.execute(stmt)

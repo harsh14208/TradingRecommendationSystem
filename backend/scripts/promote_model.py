@@ -16,11 +16,12 @@ sys.path.insert(0, _PARENT)
 
 from database import AsyncSessionLocal
 from models import ModelRegistry, ResearchExperiment, ActionAuditLog
-from sqlalchemy import select, update
+from sqlalchemy import select
+
 
 async def promote_model(args):
     print("## QENG-1c: Model/Policy Promotion Checklist Validator\n")
-    
+
     # Checklist validation
     if not args.model_id:
         print("Error: --model-id is required.")
@@ -47,11 +48,9 @@ async def promote_model(args):
     # Check database model registry
     async with AsyncSessionLocal() as db:
         # Check if model exists in registry
-        res = await db.execute(
-            select(ModelRegistry).where(ModelRegistry.model_id == args.model_id)
-        )
+        res = await db.execute(select(ModelRegistry).where(ModelRegistry.model_id == args.model_id))
         model = res.scalar_one_or_none()
-        
+
         if not model:
             print(f"Warning: Model '{args.model_id}' was not found in ModelRegistry.")
             print("Creating a new ModelRegistry entry automatically...")
@@ -62,7 +61,7 @@ async def promote_model(args):
                 hyperparameters={},
                 metrics={},
                 approval_decision="pending",
-                is_active=False
+                is_active=False,
             )
             db.add(model)
             await db.flush()
@@ -74,10 +73,10 @@ async def promote_model(args):
         print(f"  [x] Live shadow result: Sharpe {args.shadow_sharpe}")
         print(f"  [x] Cost-adjusted result: Sharpe {args.cost_adjusted_sharpe}")
         print(f"  [x] Rollback plan: {args.rollback_plan}")
-        
+
         retest_date = datetime.now() + timedelta(days=args.expiration_days)
         print(f"  [x] Expiration / retest date: {retest_date.strftime('%Y-%m-%d')} (in {args.expiration_days} days)")
-        
+
         # Check performance thresholds: cost-adjusted Sharpe must be positive
         if args.cost_adjusted_sharpe < 0:
             print("\nError: Promotion REJECTED. Cost-adjusted Sharpe must be positive.")
@@ -95,7 +94,8 @@ async def promote_model(args):
                 ResearchExperiment.hypothesis == f"Promotion of model {args.model_id} with verified checklist",
                 ResearchExperiment.universe == {"oos_universe": args.oos_universe},
                 ResearchExperiment.is_metrics == {"replay_sharpe": args.replay_sharpe},
-                ResearchExperiment.oos_metrics == {
+                ResearchExperiment.oos_metrics
+                == {
                     "shadow_sharpe": args.shadow_sharpe,
                     "cost_adjusted_sharpe": args.cost_adjusted_sharpe,
                 },
@@ -121,10 +121,10 @@ async def promote_model(args):
             oos_metrics={"shadow_sharpe": args.shadow_sharpe, "cost_adjusted_sharpe": args.cost_adjusted_sharpe},
             dsr_pbo={"retest_date": retest_date.isoformat()},
             decision="promoted",
-            promotion_status="live"
+            promotion_status="live",
         )
         db.add(exp)
-        
+
         # Log action in ActionAuditLog (TSYS-13c)
         audit = ActionAuditLog(
             action="promote_model",
@@ -136,30 +136,42 @@ async def promote_model(args):
                 "cost_adjusted_sharpe": args.cost_adjusted_sharpe,
                 "rollback_plan": args.rollback_plan,
                 "expiration_days": args.expiration_days,
-                "retest_date": retest_date.isoformat()
-            }
+                "retest_date": retest_date.isoformat(),
+            },
         )
         db.add(audit)
-        
+
         await db.commit()
         print(f"\nSUCCESS: Model '{args.model_id}' has been promoted and activated in the database!")
         print(f"Created ResearchExperiment ID: {exp.id}")
         print(f"Audit Log ID: {audit.id}")
 
+
 def main():
     parser = argparse.ArgumentParser(description="Model/policy promotion checklist validator.")
     parser.add_argument("--model-id", type=str, required=True, help="ID of the model or policy version to promote.")
-    parser.add_argument("--oos-universe", type=str, required=True, help="Comma-separated list of tickers locked in OOS.")
+    parser.add_argument(
+        "--oos-universe", type=str, required=True, help="Comma-separated list of tickers locked in OOS."
+    )
     parser.add_argument("--replay-sharpe", type=float, required=True, help="Sharpe ratio from backtest/replay.")
-    parser.add_argument("--shadow-sharpe", type=float, required=True, help="Sharpe ratio from live paper/shadow testing.")
-    parser.add_argument("--cost-adjusted-sharpe", type=float, required=True, help="Expected Sharpe ratio after transaction costs.")
-    parser.add_argument("--rollback-plan", type=str, required=True, help="Description of how to roll back this model/policy.")
-    parser.add_argument("--expiration-days", type=int, required=True, help="Number of days before expiration and re-testing.")
-    
+    parser.add_argument(
+        "--shadow-sharpe", type=float, required=True, help="Sharpe ratio from live paper/shadow testing."
+    )
+    parser.add_argument(
+        "--cost-adjusted-sharpe", type=float, required=True, help="Expected Sharpe ratio after transaction costs."
+    )
+    parser.add_argument(
+        "--rollback-plan", type=str, required=True, help="Description of how to roll back this model/policy."
+    )
+    parser.add_argument(
+        "--expiration-days", type=int, required=True, help="Number of days before expiration and re-testing."
+    )
+
     args = parser.parse_args()
     args.oos_universe = [t.strip() for t in args.oos_universe.split(",")]
-    
+
     asyncio.run(promote_model(args))
+
 
 if __name__ == "__main__":
     main()

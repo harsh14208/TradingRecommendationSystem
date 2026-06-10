@@ -4,7 +4,7 @@
 import json
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 
 def find_project_root() -> Path:
@@ -32,7 +32,17 @@ def infer_type(header: str, body: str) -> str:
         return "parameter_sweep"
     if any(w in low for w in ("ablation", "remove one family", "removing", "families removed", "gate removed")):
         return "gate_ablation"
-    if any(w in low for w in ("walk-forward", "walk forward", "oos validation", "oos walk-forward", "fixed parameters applied oos", "per-window results")):
+    if any(
+        w in low
+        for w in (
+            "walk-forward",
+            "walk forward",
+            "oos validation",
+            "oos walk-forward",
+            "fixed parameters applied oos",
+            "per-window results",
+        )
+    ):
         return "walk_forward"
     return "backtest_run"
 
@@ -71,9 +81,9 @@ def count_trials(body: str, exp_type: str) -> int:
             data_rows = data_rows[1:]
 
         if exp_type == "gate_ablation":
-            if any("family" in r.lower() or "removed" in r.lower() or "gate removed" in r.lower() for r in data_rows[:2]):
-                best_count = max(best_count, len(data_rows))
-            elif any("gate" in r.lower() for r in data_rows[:2]):
+            if any(
+                "family" in r.lower() or "removed" in r.lower() or "gate removed" in r.lower() for r in data_rows[:2]
+            ) or any("gate" in r.lower() for r in data_rows[:2]):
                 best_count = max(best_count, len(data_rows))
         elif exp_type == "parameter_sweep":
             if len(data_rows) > 1:
@@ -90,7 +100,11 @@ def count_trials(body: str, exp_type: str) -> int:
                 best_count = max(best_count, len(data_rows))
 
     if best_count == 1:
-        m = re.search(r"(\d+)\s+(?:configs?|configurations?|trials?|values?|windows?|epochs?|approaches?|families?|experiments?)", body, re.IGNORECASE)
+        m = re.search(
+            r"(\d+)\s+(?:configs?|configurations?|trials?|values?|windows?|epochs?|approaches?|families?|experiments?)",
+            body,
+            re.IGNORECASE,
+        )
         if m:
             best_count = int(m.group(1))
 
@@ -118,7 +132,7 @@ def is_summary_header(header: str) -> bool:
     return False
 
 
-def extract_sections(text: str) -> List[dict]:
+def extract_sections(text: str) -> list[dict]:
     """Parse Stats.md into experiment sections."""
     lines = text.splitlines()
     sections = []
@@ -127,19 +141,17 @@ def extract_sections(text: str) -> List[dict]:
     header_re = re.compile(
         r"^(#{1,4}\s+)"
         r"("
-        r"§\S+.*|"                       # §11a., §QuantEngine, §83
-        r"\d+[a-z]?\.\s+.*|"             # 10a. Ablation, 11a. Performance
-        r"Inv\d+[a-z]?.*|"               # Inv1, Inv2
-        r"QENG-\d+[a-z]?.*|"             # QENG-5a
-        r"R\d+[a-z]?\b.*|"               # R1, R7
-        r"[A-D]\.\s+.*"                  # A. Beta Hedge, B. Portfolio...
+        r"§\S+.*|"  # §11a., §QuantEngine, §83
+        r"\d+[a-z]?\.\s+.*|"  # 10a. Ablation, 11a. Performance
+        r"Inv\d+[a-z]?.*|"  # Inv1, Inv2
+        r"QENG-\d+[a-z]?.*|"  # QENG-5a
+        r"R\d+[a-z]?\b.*|"  # R1, R7
+        r"[A-D]\.\s+.*"  # A. Beta Hedge, B. Portfolio...
         r")$"
     )
 
     # Pattern 2: blockquote bullets for R1-R7 and QENG items in header block
-    bullet_re = re.compile(
-        r"^>\s*•\s*\*\*.*\b(R\d+|QENG-\d+[a-z]?)\b.*\*\*"
-    )
+    bullet_re = re.compile(r"^>\s*•\s*\*\*.*\b(R\d+|QENG-\d+[a-z]?)\b.*\*\*")
 
     current = None
     for line in lines:
@@ -184,14 +196,16 @@ def extract_sections(text: str) -> List[dict]:
         trials = count_trials(body, exp_type)
         date = parse_date(header) or parse_date(body) or "2026-01-01T00:00:00"
         hypothesis = header[:200]
-        experiments.append({
-            "experiment_type": exp_type,
-            "hypothesis": hypothesis,
-            "number_of_trials": trials,
-            "git_sha": None,
-            "is_metrics": {},
-            "created_at": date,
-        })
+        experiments.append(
+            {
+                "experiment_type": exp_type,
+                "hypothesis": hypothesis,
+                "number_of_trials": trials,
+                "git_sha": None,
+                "is_metrics": {},
+                "created_at": date,
+            }
+        )
 
     return experiments
 

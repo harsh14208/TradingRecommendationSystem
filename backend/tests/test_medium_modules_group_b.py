@@ -14,8 +14,7 @@ import asyncio
 import json
 import math
 import types
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -331,7 +330,7 @@ class TestEvalFactor:
         assert _eval_factor(rows, "src") is None
 
     def test_eval_factor_too_few_oos(self):
-        from services.factor_miner import _eval_factor, _MIN_SIGNALS, _MIN_OOS_N
+        from services.factor_miner import _eval_factor, _MIN_SIGNALS
 
         # Need enough total rows (>= _MIN_SIGNALS) but OOS < _MIN_OOS_N
         n_total = _MIN_SIGNALS + 1  # small enough that test slice is tiny
@@ -343,10 +342,7 @@ class TestEvalFactor:
         from services.factor_miner import _eval_factor, _MIN_OOS_N
 
         n_total = 100
-        rows = [
-            {"outcome_pct": float(i % 5 - 2), "created_at": datetime(2026, 1, 1)}
-            for i in range(n_total)
-        ]
+        rows = [{"outcome_pct": float(i % 5 - 2), "created_at": datetime(2026, 1, 1)} for i in range(n_total)]
         result = _eval_factor(rows, "src")
         assert result is not None
         assert result["label"] == "src"
@@ -363,7 +359,9 @@ class TestRunFactorMining:
     async def test_db_read_fails(self):
         from services import factor_miner
 
-        with patch.object(factor_miner, "_load_resolved_signals", new_callable=AsyncMock, side_effect=RuntimeError("db bust")):
+        with patch.object(
+            factor_miner, "_load_resolved_signals", new_callable=AsyncMock, side_effect=RuntimeError("db bust")
+        ):
             result = await factor_miner.run_factor_mining()
         assert "error" in result
         assert "db bust" in result["error"]
@@ -382,10 +380,7 @@ class TestRunFactorMining:
     async def test_no_combinations_meet_threshold(self):
         from services import factor_miner
 
-        rows = [
-            {"outcome_pct": 1.0, "sources": ["s1"], "created_at": datetime(2026, 1, i)}
-            for i in range(1, 21)
-        ]
+        rows = [{"outcome_pct": 1.0, "sources": ["s1"], "created_at": datetime(2026, 1, i)} for i in range(1, 21)]
         with patch.object(factor_miner, "_load_resolved_signals", new_callable=AsyncMock, return_value=rows):
             result = await factor_miner.run_factor_mining()
         assert result.get("combinations_tested") == 0
@@ -427,7 +422,11 @@ class TestRunFactorMining:
 
         n_total = 200
         rows = [
-            {"outcome_pct": float(i % 10 - 3), "sources": ["s1"], "created_at": datetime(2026, 1, 1, 0, i // 60, i % 60)}
+            {
+                "outcome_pct": float(i % 10 - 3),
+                "sources": ["s1"],
+                "created_at": datetime(2026, 1, 1, 0, i // 60, i % 60),
+            }
             for i in range(n_total)
         ]
         mock_data_dir = MagicMock()
@@ -656,9 +655,9 @@ class TestFetchAnalystRecs:
         news._rec_cache.clear()
         fake_settings = types.SimpleNamespace(finnhub_api_key="FAKE_KEY")
         mock_client = MagicMock()
-        mock_client.recommendation_trends = MagicMock(return_value=[
-            {"period": "2026-05", "strongBuy": 5, "buy": 4, "hold": 3, "sell": 2, "strongSell": 1}
-        ])
+        mock_client.recommendation_trends = MagicMock(
+            return_value=[{"period": "2026-05", "strongBuy": 5, "buy": 4, "hold": 3, "sell": 2, "strongSell": 1}]
+        )
         mock_client.company_basic_financials = MagicMock(return_value=None)
         mock_finnhub = MagicMock()
         mock_finnhub.Client = MagicMock(return_value=mock_client)
@@ -675,10 +674,12 @@ class TestFetchAnalystRecs:
         news._rec_cache.clear()
         fake_settings = types.SimpleNamespace(finnhub_api_key="FAKE_KEY")
         mock_client = MagicMock()
-        mock_client.recommendation_trends = MagicMock(return_value=[
-            {"period": "2026-05", "strongBuy": 5, "buy": 4, "hold": 3, "sell": 2, "strongSell": 1},
-            {"period": "2026-04", "strongBuy": 3, "buy": 3, "hold": 3, "sell": 2, "strongSell": 2},
-        ])
+        mock_client.recommendation_trends = MagicMock(
+            return_value=[
+                {"period": "2026-05", "strongBuy": 5, "buy": 4, "hold": 3, "sell": 2, "strongSell": 1},
+                {"period": "2026-04", "strongBuy": 3, "buy": 3, "hold": 3, "sell": 2, "strongSell": 2},
+            ]
+        )
         mock_client.company_basic_financials = MagicMock(return_value=None)
         mock_finnhub = MagicMock()
         mock_finnhub.Client = MagicMock(return_value=mock_client)
@@ -696,17 +697,21 @@ class TestFetchAnalystRecs:
         news._rec_cache.clear()
         fake_settings = types.SimpleNamespace(finnhub_api_key="FAKE_KEY")
         mock_client = MagicMock()
-        mock_client.recommendation_trends = MagicMock(return_value=[
-            {"period": "2026-05", "strongBuy": 1, "buy": 1, "hold": 1, "sell": 1, "strongSell": 1},
-        ])
-        mock_client.company_basic_financials = MagicMock(return_value={
-            "metric": {
-                "13WeekPriceReturnDaily": 3.0,
-                "26WeekPriceReturnDaily": 9.0,
-                "52WeekHigh": 200.0,
-                "52WeekLow": 100.0,
+        mock_client.recommendation_trends = MagicMock(
+            return_value=[
+                {"period": "2026-05", "strongBuy": 1, "buy": 1, "hold": 1, "sell": 1, "strongSell": 1},
+            ]
+        )
+        mock_client.company_basic_financials = MagicMock(
+            return_value={
+                "metric": {
+                    "13WeekPriceReturnDaily": 3.0,
+                    "26WeekPriceReturnDaily": 9.0,
+                    "52WeekHigh": 200.0,
+                    "52WeekLow": 100.0,
+                }
             }
-        })
+        )
         mock_finnhub = MagicMock()
         mock_finnhub.Client = MagicMock(return_value=mock_client)
         with patch.dict("sys.modules", {"finnhub": mock_finnhub}):
@@ -738,9 +743,11 @@ class TestFetchAnalystRecs:
         news._rec_cache.clear()
         fake_settings = types.SimpleNamespace(finnhub_api_key="FAKE_KEY")
         mock_client = MagicMock()
-        mock_client.recommendation_trends = MagicMock(return_value=[
-            {"period": "2026-05", "strongBuy": 1, "buy": 1, "hold": 1, "sell": 1, "strongSell": 1},
-        ])
+        mock_client.recommendation_trends = MagicMock(
+            return_value=[
+                {"period": "2026-05", "strongBuy": 1, "buy": 1, "hold": 1, "sell": 1, "strongSell": 1},
+            ]
+        )
         mock_client.company_basic_financials = MagicMock(side_effect=Exception("fin down"))
         mock_finnhub = MagicMock()
         mock_finnhub.Client = MagicMock(return_value=mock_client)
@@ -757,12 +764,12 @@ class TestFetchAnalystRecs:
         news._rec_cache.clear()
         fake_settings = types.SimpleNamespace(finnhub_api_key="FAKE_KEY")
         mock_client = MagicMock()
-        mock_client.recommendation_trends = MagicMock(return_value=[
-            {"period": "2026-05", "strongBuy": 1, "buy": 1, "hold": 1, "sell": 1, "strongSell": 1},
-        ])
-        mock_client.company_basic_financials = MagicMock(return_value={
-            "metric": {"26WeekPriceReturnDaily": 9.0}
-        })
+        mock_client.recommendation_trends = MagicMock(
+            return_value=[
+                {"period": "2026-05", "strongBuy": 1, "buy": 1, "hold": 1, "sell": 1, "strongSell": 1},
+            ]
+        )
+        mock_client.company_basic_financials = MagicMock(return_value={"metric": {"26WeekPriceReturnDaily": 9.0}})
         mock_finnhub = MagicMock()
         mock_finnhub.Client = MagicMock(return_value=mock_client)
         with patch.dict("sys.modules", {"finnhub": mock_finnhub}):
@@ -919,7 +926,9 @@ class TestGetCompanyNews:
         from services import news
 
         loop = asyncio.get_running_loop()
-        raw = [{"headline": f"H{i}", "summary": "S", "datetime": 0, "source": "src", "url": "http://x"} for i in range(20)]
+        raw = [
+            {"headline": f"H{i}", "summary": "S", "datetime": 0, "source": "src", "url": "http://x"} for i in range(20)
+        ]
         with patch("services.news.cache_get", new_callable=AsyncMock, return_value=None):
             with patch("services.news.cache_set", new_callable=AsyncMock):
                 with patch.object(loop, "run_in_executor", new_callable=AsyncMock, return_value=raw):

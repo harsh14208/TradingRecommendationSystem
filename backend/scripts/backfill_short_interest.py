@@ -22,6 +22,7 @@ from services.polygon_client import get_polygon_short_interest  # noqa: E402
 
 def _universe() -> list[str]:
     import scripts.backtest_technicals as bt
+
     syms = set(bt.TICKERS)
     for name in ("HELD_OUT_TICKERS",):
         v = getattr(bt, name, None)
@@ -35,6 +36,7 @@ async def backfill_ticker(db, ticker: str) -> int:
     if not rows:
         return 0
     import datetime as _dt
+
     payload = [
         {
             "ticker": ticker,

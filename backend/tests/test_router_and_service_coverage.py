@@ -19,12 +19,14 @@ from services.auth_svc import get_current_user
 try:
     from routers.oauth import router as oauth_router
     from routers.price_alerts import router as price_alerts_router
+
     _ROUTERS_OK = True
 except ImportError:
     _ROUTERS_OK = False
 
 try:
     from services import delivery_manager as dm
+
     _DM_OK = True
 except ImportError:
     _DM_OK = False
@@ -53,11 +55,14 @@ def _make_mock_db():
 
 def _make_async_session_local(db_mock):
     """Factory that returns a class usable as ``async with AsyncSessionLocal() as db:``."""
+
     class _AsyncSessionLocal:
         async def __aenter__(self):
             return db_mock
+
         async def __aexit__(self, *args):
             pass
+
     return _AsyncSessionLocal
 
 
@@ -100,6 +105,7 @@ class TestOAuthRouter:
     def client(self, app, mock_db_session):
         async def _override():
             yield mock_db_session
+
         app.dependency_overrides[get_db] = _override
         with TestClient(app) as c:
             yield c
@@ -148,10 +154,11 @@ class TestOAuthRouter:
         user.referred_by = None
 
         # Patch _upsert_oauth_user and _issue_otc to avoid deep mocking
-        with patch.object(oauth_mod, "_upsert_oauth_user", new_callable=AsyncMock) as mock_upsert, \
-             patch.object(oauth_mod, "_issue_otc", new_callable=AsyncMock) as mock_issue, \
-             patch("routers.oauth.aiohttp.ClientSession") as MockSession:
-
+        with (
+            patch.object(oauth_mod, "_upsert_oauth_user", new_callable=AsyncMock) as mock_upsert,
+            patch.object(oauth_mod, "_issue_otc", new_callable=AsyncMock) as mock_issue,
+            patch("routers.oauth.aiohttp.ClientSession") as MockSession,
+        ):
             mock_upsert.return_value = user
             mock_issue.return_value = "OTC123"
 
@@ -162,12 +169,14 @@ class TestOAuthRouter:
 
             info_resp = AsyncMock()
             info_resp.status = 200
-            info_resp.json = AsyncMock(return_value={
-                "email": "test@example.com",
-                "id": "google_sub_1",
-                "name": "Test User",
-                "verified_email": True,
-            })
+            info_resp.json = AsyncMock(
+                return_value={
+                    "email": "test@example.com",
+                    "id": "google_sub_1",
+                    "name": "Test User",
+                    "verified_email": True,
+                }
+            )
 
             session_instance = AsyncMock()
             session_instance.post = AsyncMock(return_value=token_resp)
@@ -189,7 +198,6 @@ class TestOAuthRouter:
         assert resp.status_code == 400
 
     def test_google_callback_token_exchange_fail(self, client, mock_db_session, mock_settings):
-        from routers import oauth as oauth_mod
 
         state_entry = MagicMock()
         state_entry.referred_by = None
@@ -215,7 +223,6 @@ class TestOAuthRouter:
             assert resp.status_code == 502
 
     def test_google_callback_no_verified_email(self, client, mock_db_session, mock_settings):
-        from routers import oauth as oauth_mod
 
         state_entry = MagicMock()
         state_entry.referred_by = None
@@ -233,12 +240,14 @@ class TestOAuthRouter:
 
             info_resp = AsyncMock()
             info_resp.status = 200
-            info_resp.json = AsyncMock(return_value={
-                "email": "test@example.com",
-                "id": "g1",
-                "name": "Test",
-                "verified_email": False,
-            })
+            info_resp.json = AsyncMock(
+                return_value={
+                    "email": "test@example.com",
+                    "id": "g1",
+                    "name": "Test",
+                    "verified_email": False,
+                }
+            )
 
             session_instance = AsyncMock()
             session_instance.post = AsyncMock(return_value=token_resp)
@@ -289,10 +298,11 @@ class TestOAuthRouter:
         user.telegram_link_code = "CODE"
         user.referred_by = None
 
-        with patch.object(oauth_mod, "_upsert_oauth_user", new_callable=AsyncMock) as mock_upsert, \
-             patch.object(oauth_mod, "_issue_otc", new_callable=AsyncMock) as mock_issue, \
-             patch("routers.oauth.aiohttp.ClientSession") as MockSession:
-
+        with (
+            patch.object(oauth_mod, "_upsert_oauth_user", new_callable=AsyncMock) as mock_upsert,
+            patch.object(oauth_mod, "_issue_otc", new_callable=AsyncMock) as mock_issue,
+            patch("routers.oauth.aiohttp.ClientSession") as MockSession,
+        ):
             mock_upsert.return_value = user
             mock_issue.return_value = "OTC_DISC"
 
@@ -302,13 +312,15 @@ class TestOAuthRouter:
 
             info_resp = AsyncMock()
             info_resp.status = 200
-            info_resp.json = AsyncMock(return_value={
-                "email": "discord@example.com",
-                "id": "123456789",
-                "username": "discuser",
-                "global_name": "Global Disc",
-                "verified": True,
-            })
+            info_resp.json = AsyncMock(
+                return_value={
+                    "email": "discord@example.com",
+                    "id": "123456789",
+                    "username": "discuser",
+                    "global_name": "Global Disc",
+                    "verified": True,
+                }
+            )
 
             session_instance = AsyncMock()
             session_instance.post = AsyncMock(return_value=token_resp)
@@ -325,7 +337,6 @@ class TestOAuthRouter:
             assert call_kwargs["ref_user_id"] == 7
 
     def test_discord_callback_no_email(self, client, mock_db_session, mock_settings):
-        from routers import oauth as oauth_mod
 
         state_entry = MagicMock()
         state_entry.referred_by = None
@@ -343,11 +354,13 @@ class TestOAuthRouter:
 
             info_resp = AsyncMock()
             info_resp.status = 200
-            info_resp.json = AsyncMock(return_value={
-                "email": "",
-                "id": "123",
-                "verified": True,
-            })
+            info_resp.json = AsyncMock(
+                return_value={
+                    "email": "",
+                    "id": "123",
+                    "verified": True,
+                }
+            )
 
             session_instance = AsyncMock()
             session_instance.post = AsyncMock(return_value=token_resp)
@@ -361,7 +374,6 @@ class TestOAuthRouter:
             assert "discord_no_email" in resp.headers["location"]
 
     def test_discord_callback_unverified_email(self, client, mock_db_session, mock_settings):
-        from routers import oauth as oauth_mod
 
         state_entry = MagicMock()
         state_entry.referred_by = None
@@ -379,11 +391,13 @@ class TestOAuthRouter:
 
             info_resp = AsyncMock()
             info_resp.status = 200
-            info_resp.json = AsyncMock(return_value={
-                "email": "unverified@example.com",
-                "id": "123",
-                "verified": False,
-            })
+            info_resp.json = AsyncMock(
+                return_value={
+                    "email": "unverified@example.com",
+                    "id": "123",
+                    "verified": False,
+                }
+            )
 
             session_instance = AsyncMock()
             session_instance.post = AsyncMock(return_value=token_resp)
@@ -398,7 +412,6 @@ class TestOAuthRouter:
 
     # ── OAuth exchange ──
     def test_oauth_exchange_success(self, client, mock_db_session, mock_settings):
-        from routers import oauth as oauth_mod
 
         code_entry = MagicMock()
         code_entry.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
@@ -443,7 +456,6 @@ class TestOAuthRouter:
 
     def test_oauth_exchange_integrity_error(self, client, mock_db_session, mock_settings):
         from sqlalchemy.exc import IntegrityError
-        from routers import oauth as oauth_mod
 
         code_entry = MagicMock()
         code_entry.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
@@ -463,7 +475,6 @@ class TestOAuthRouter:
         assert resp.status_code == 400
 
     def test_oauth_exchange_generic_error(self, client, mock_db_session, mock_settings):
-        from routers import oauth as oauth_mod
 
         code_entry = MagicMock()
         code_entry.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
@@ -508,8 +519,10 @@ class TestPriceAlertsRouter:
     def client(self, app, mock_user, mock_db_session):
         async def _override_user():
             return mock_user
+
         async def _override_db():
             yield mock_db_session
+
         app.dependency_overrides[get_current_user] = _override_user
         app.dependency_overrides[get_db] = _override_db
         with TestClient(app) as c:
@@ -545,9 +558,11 @@ class TestPriceAlertsRouter:
         alert_mock = MagicMock()
         alert_mock.id = 77
         mock_db_session.add = MagicMock()
+
         # commit doesn't return anything; alert.id is set on the mock after add
         def _capture_add(obj):
             obj.id = 77
+
         mock_db_session.add.side_effect = _capture_add
 
         resp = client.post("/api/alerts/", json={"ticker": "TSLA", "target_price": 250.0, "condition": "above"})
@@ -620,6 +635,7 @@ class TestDeliveryManagerQuietHours:
     def test_is_in_quiet_hours_within_range(self):
         # 02:00 UTC = 21:00 EST (winter) or 22:00 EDT — choose a winter date
         import pytz
+
         tz = pytz.timezone("America/New_York")
         local = tz.localize(datetime(2024, 1, 15, 23, 0, 0))
         now = local.astimezone(pytz.utc)
@@ -627,6 +643,7 @@ class TestDeliveryManagerQuietHours:
 
     def test_is_in_quiet_hours_outside_range(self):
         import pytz
+
         tz = pytz.timezone("America/New_York")
         local = tz.localize(datetime(2024, 1, 15, 14, 0, 0))
         now = local.astimezone(pytz.utc)
@@ -696,11 +713,12 @@ class TestDeliveryManagerDelivery:
         exec_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = exec_result
 
-        with patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)), \
-             patch("config.get_settings") as mock_settings, \
-             patch("services.delivery_manager.is_in_quiet_hours", return_value=False), \
-             patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")):
-
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=False),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+        ):
             s = MagicMock()
             s.telegram_bot_token = MagicMock()
             s.telegram_bot_token.get_secret_value.return_value = "tok"
@@ -730,8 +748,10 @@ class TestDeliveryManagerDelivery:
         exec_result.scalar_one_or_none.return_value = existing
         mock_db.execute.return_value = exec_result
 
-        with patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)), \
-             patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")):
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+        ):
             await dm.deliver_with_retry(1, 1, "telegram", {"text": "hello"}, max_retries=1)
             # Should return early; no commit for creating receipt
             # Only the duplicate check execute is called
@@ -750,8 +770,10 @@ class TestDeliveryManagerDelivery:
         exec_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = exec_result
 
-        with patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)), \
-             patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")):
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+        ):
             await dm.deliver_with_retry(1, 1, "telegram", {"text": "hello"}, max_retries=1)
             # Should return early after user not found warning
 
@@ -774,17 +796,20 @@ class TestDeliveryManagerDelivery:
         mock_db.get.side_effect = _db_get
         mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
 
-        with patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)), \
-             patch("config.get_settings") as mock_settings, \
-             patch("services.delivery_manager.is_in_quiet_hours", return_value=False), \
-             patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")):
-
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=False),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+        ):
             s = MagicMock()
             s.jwt_secret = MagicMock()
             s.jwt_secret.get_secret_value.return_value = "jwt"
             mock_settings.return_value = s
 
-            await dm.deliver_with_retry(1, 1, "discord", {"webhook_url": "http://discord.wh", "payload": {"content": "hi"}}, max_retries=1)
+            await dm.deliver_with_retry(
+                1, 1, "discord", {"webhook_url": "http://discord.wh", "payload": {"content": "hi"}}, max_retries=1
+            )
 
     @pytest.mark.asyncio
     async def test_deliver_with_retry_discord_missing_webhook_url(self, mock_db):
@@ -802,11 +827,12 @@ class TestDeliveryManagerDelivery:
         mock_db.get.side_effect = _db_get
         mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
 
-        with patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)), \
-             patch("config.get_settings") as mock_settings, \
-             patch("services.delivery_manager.is_in_quiet_hours", return_value=False), \
-             patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")):
-
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=False),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+        ):
             s = MagicMock()
             s.jwt_secret = MagicMock()
             s.jwt_secret.get_secret_value.return_value = "jwt"
@@ -831,11 +857,12 @@ class TestDeliveryManagerDelivery:
         mock_db.get.side_effect = _db_get
         mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
 
-        with patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)), \
-             patch("config.get_settings") as mock_settings, \
-             patch("services.delivery_manager.is_in_quiet_hours", return_value=False), \
-             patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")):
-
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=False),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+        ):
             s = MagicMock()
             s.jwt_secret = MagicMock()
             s.jwt_secret.get_secret_value.return_value = "jwt"
@@ -844,7 +871,9 @@ class TestDeliveryManagerDelivery:
             with patch("services.delivery_manager.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
                 mock_to_thread.return_value = True
                 await dm.deliver_with_retry(
-                    1, 1, "push",
+                    1,
+                    1,
+                    "push",
                     {"subscription_info": {"endpoint": "e"}, "payload": {"title": "t"}},
                     max_retries=1,
                 )
@@ -865,12 +894,13 @@ class TestDeliveryManagerDelivery:
         mock_db.get.side_effect = _db_get
         mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
 
-        with patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)), \
-             patch("config.get_settings") as mock_settings, \
-             patch("services.delivery_manager.is_in_quiet_hours", return_value=False), \
-             patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")), \
-             patch("services.http_client.shared_session") as mock_shared:
-
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=False),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+            patch("services.http_client.shared_session") as mock_shared,
+        ):
             s = MagicMock()
             s.jwt_secret = MagicMock()
             s.jwt_secret.get_secret_value.return_value = "jwt"
@@ -885,7 +915,9 @@ class TestDeliveryManagerDelivery:
             mock_shared.return_value = session_mock
 
             await dm.deliver_with_retry(
-                1, 1, "webhook",
+                1,
+                1,
+                "webhook",
                 {"webhook_url": "http://hook.url", "signal_data": {"ticker": "AAPL"}},
                 max_retries=1,
             )
@@ -909,13 +941,14 @@ class TestDeliveryManagerDelivery:
         mock_db.get.side_effect = _db_get
         mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
 
-        with patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)), \
-             patch("config.get_settings") as mock_settings, \
-             patch("services.delivery_manager.is_in_quiet_hours", return_value=True), \
-             patch("services.delivery_manager.seconds_until_quiet_hours_end", return_value=0.01), \
-             patch("services.delivery_manager.asyncio.sleep", new_callable=AsyncMock), \
-             patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")):
-
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=True),
+            patch("services.delivery_manager.seconds_until_quiet_hours_end", return_value=0.01),
+            patch("services.delivery_manager.asyncio.sleep", new_callable=AsyncMock),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+        ):
             s = MagicMock()
             s.telegram_bot_token = MagicMock()
             s.telegram_bot_token.get_secret_value.return_value = "tok"
@@ -944,13 +977,14 @@ class TestDeliveryManagerDelivery:
         mock_db.get.side_effect = _db_get
         mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
 
-        with patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)), \
-             patch("config.get_settings") as mock_settings, \
-             patch("services.delivery_manager.is_in_quiet_hours", return_value=False), \
-             patch("services.delivery_manager.asyncio.sleep", new_callable=AsyncMock), \
-             patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")), \
-             patch("services.http_client.shared_session") as mock_shared:
-
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=False),
+            patch("services.delivery_manager.asyncio.sleep", new_callable=AsyncMock),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+            patch("services.http_client.shared_session") as mock_shared,
+        ):
             s = MagicMock()
             s.telegram_bot_token = MagicMock()
             s.telegram_bot_token.get_secret_value.return_value = "tok"

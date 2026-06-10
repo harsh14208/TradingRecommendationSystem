@@ -24,9 +24,7 @@ def send_web_push(subscription_info: dict, message: dict):
         return False
 
     vapid_private_key = (
-        _vapid_private_key.get_secret_value()
-        if hasattr(_vapid_private_key, "get_secret_value")
-        else _vapid_private_key
+        _vapid_private_key.get_secret_value() if hasattr(_vapid_private_key, "get_secret_value") else _vapid_private_key
     )
 
     try:

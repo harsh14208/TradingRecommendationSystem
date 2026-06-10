@@ -11,7 +11,6 @@ import ssl
 import time
 from typing import Any, Optional
 
-import aiohttp
 from services.http_client import get_ssl_context, shared_session
 
 PAPER_BASE = "https://paper-api.alpaca.markets"

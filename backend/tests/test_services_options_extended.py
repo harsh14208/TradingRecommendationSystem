@@ -1,7 +1,8 @@
 """Extended unit tests for services/options.py — edge cases, error handling,
 fetchers, and scoring branches not covered by test_services_options_unit.py.
 """
-from unittest.mock import MagicMock, AsyncMock, patch
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -116,8 +117,7 @@ def test_fetch_options_polygon_403():
 
     mock_resp = MagicMock()
     mock_resp.status_code = 403
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         assert _fetch_options_polygon("AAPL") is None
 
 
@@ -126,16 +126,17 @@ def test_fetch_options_polygon_non_200():
 
     mock_resp = MagicMock()
     mock_resp.status_code = 500
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         assert _fetch_options_polygon("AAPL") is None
 
 
 def test_fetch_options_polygon_exception():
     from services.options import _fetch_options_polygon
 
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", side_effect=Exception("net fail")):
+    with (
+        patch("services.options.os.getenv", return_value="fake_key"),
+        patch("requests.get", side_effect=Exception("net fail")),
+    ):
         assert _fetch_options_polygon("AAPL") is None
 
 
@@ -145,8 +146,7 @@ def test_fetch_options_polygon_empty_results():
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {"results": []}
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         assert _fetch_options_polygon("AAPL") is None
 
 
@@ -165,8 +165,7 @@ def test_fetch_options_polygon_total_vol_too_low():
             }
         ]
     }
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         assert _fetch_options_polygon("AAPL") is None
 
 
@@ -194,8 +193,7 @@ def test_fetch_options_polygon_success_minimal():
             },
         ]
     }
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         result = _fetch_options_polygon("AAPL")
     assert result is not None
     assert result["source"] == "polygon"
@@ -229,8 +227,7 @@ def test_fetch_options_polygon_spot_from_delta():
             },
         ]
     }
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         result = _fetch_options_polygon("AAPL")
     assert result is not None
     assert result["spot"] == 150.0
@@ -273,8 +270,7 @@ def test_fetch_options_polygon_pagination():
             return resp2
         return resp1
 
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", side_effect=_get):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", side_effect=_get):
         result = _fetch_options_polygon("AAPL")
     assert result is not None
     assert result["total_vol"] == 300
@@ -304,8 +300,7 @@ def test_fetch_options_polygon_sweep_detection():
             },
         ]
     }
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         result = _fetch_options_polygon("AAPL")
     assert result is not None
     assert len(result["sweep_calls"]) >= 1
@@ -336,8 +331,7 @@ def test_fetch_options_polygon_iv_rank_and_skew():
             },
         ]
     }
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         result = _fetch_options_polygon("AAPL")
     assert result is not None
     assert result["skew_25d"] is not None
@@ -385,8 +379,7 @@ def test_fetch_options_polygon_zero_dte_and_max_pain():
             },
         ]
     }
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         result = _fetch_options_polygon("AAPL")
     assert result is not None
     assert "zero_dte_ratio" in result
@@ -417,8 +410,7 @@ def test_fetch_options_polygon_gex_flip_level():
             },
         ]
     }
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         result = _fetch_options_polygon("AAPL")
     assert result is not None
     assert "gex_flip_level" in result
@@ -449,8 +441,7 @@ def test_fetch_options_polygon_delta_flow():
             },
         ]
     }
-    with patch("services.options.os.getenv", return_value="fake_key"), \
-         patch("requests.get", return_value=mock_resp):
+    with patch("services.options.os.getenv", return_value="fake_key"), patch("requests.get", return_value=mock_resp):
         result = _fetch_options_polygon("AAPL")
     assert result is not None
     assert "net_delta_flow" in result
@@ -472,26 +463,33 @@ def test_fetch_options_polygon_fallback_then_yfinance():
     from services.options import _fetch_options
 
     # Polygon returns None, then yfinance path
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker") as MockTicker:
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker") as MockTicker,
+    ):
         mock_ticker = MagicMock()
         mock_ticker.options = ("2026-07-18",)
         mock_chain = MagicMock()
         import pandas as pd
-        mock_chain.calls = pd.DataFrame({
-            "strike": [150.0],
-            "volume": [1000],
-            "openInterest": [500],
-            "impliedVolatility": [0.25],
-            "inTheMoney": [False],
-        })
-        mock_chain.puts = pd.DataFrame({
-            "strike": [145.0],
-            "volume": [500],
-            "openInterest": [300],
-            "impliedVolatility": [0.30],
-            "inTheMoney": [False],
-        })
+
+        mock_chain.calls = pd.DataFrame(
+            {
+                "strike": [150.0],
+                "volume": [1000],
+                "openInterest": [500],
+                "impliedVolatility": [0.25],
+                "inTheMoney": [False],
+            }
+        )
+        mock_chain.puts = pd.DataFrame(
+            {
+                "strike": [145.0],
+                "volume": [500],
+                "openInterest": [300],
+                "impliedVolatility": [0.30],
+                "inTheMoney": [False],
+            }
+        )
         mock_ticker.option_chain.return_value = mock_chain
         MockTicker.return_value = mock_ticker
 
@@ -506,8 +504,10 @@ def test_fetch_options_polygon_fallback_then_yfinance():
 def test_fetch_options_yfinance_no_expirations():
     from services.options import _fetch_options
 
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker") as MockTicker:
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker") as MockTicker,
+    ):
         mock_ticker = MagicMock()
         mock_ticker.options = []
         MockTicker.return_value = mock_ticker
@@ -517,8 +517,10 @@ def test_fetch_options_yfinance_no_expirations():
 def test_fetch_options_yfinance_chain_exception():
     from services.options import _fetch_options
 
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker") as MockTicker:
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker") as MockTicker,
+    ):
         mock_ticker = MagicMock()
         mock_ticker.options = ("2026-07-18",)
         mock_ticker.option_chain.side_effect = Exception("chain fail")
@@ -529,12 +531,15 @@ def test_fetch_options_yfinance_chain_exception():
 def test_fetch_options_yfinance_no_calls():
     from services.options import _fetch_options
 
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker") as MockTicker:
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker") as MockTicker,
+    ):
         mock_ticker = MagicMock()
         mock_ticker.options = ("2026-07-18",)
         mock_chain = MagicMock()
         import pandas as pd
+
         mock_chain.calls = pd.DataFrame(columns=["strike", "volume", "openInterest", "impliedVolatility", "inTheMoney"])
         mock_chain.puts = pd.DataFrame(columns=["strike", "volume", "openInterest", "impliedVolatility", "inTheMoney"])
         mock_ticker.option_chain.return_value = mock_chain
@@ -545,26 +550,33 @@ def test_fetch_options_yfinance_no_calls():
 def test_fetch_options_yfinance_total_vol_too_low():
     from services.options import _fetch_options
 
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker") as MockTicker:
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker") as MockTicker,
+    ):
         mock_ticker = MagicMock()
         mock_ticker.options = ("2026-07-18",)
         mock_chain = MagicMock()
         import pandas as pd
-        mock_chain.calls = pd.DataFrame({
-            "strike": [150.0],
-            "volume": [10],
-            "openInterest": [5],
-            "impliedVolatility": [0.25],
-            "inTheMoney": [False],
-        })
-        mock_chain.puts = pd.DataFrame({
-            "strike": [145.0],
-            "volume": [5],
-            "openInterest": [3],
-            "impliedVolatility": [0.30],
-            "inTheMoney": [False],
-        })
+
+        mock_chain.calls = pd.DataFrame(
+            {
+                "strike": [150.0],
+                "volume": [10],
+                "openInterest": [5],
+                "impliedVolatility": [0.25],
+                "inTheMoney": [False],
+            }
+        )
+        mock_chain.puts = pd.DataFrame(
+            {
+                "strike": [145.0],
+                "volume": [5],
+                "openInterest": [3],
+                "impliedVolatility": [0.30],
+                "inTheMoney": [False],
+            }
+        )
         mock_ticker.option_chain.return_value = mock_chain
         MockTicker.return_value = mock_ticker
         assert _fetch_options("AAPL") == {}
@@ -573,41 +585,52 @@ def test_fetch_options_yfinance_total_vol_too_low():
 def test_fetch_options_yfinance_full_success():
     from services.options import _fetch_options
 
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker") as MockTicker:
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker") as MockTicker,
+    ):
         mock_ticker = MagicMock()
         mock_ticker.options = ("2026-07-18", "2026-08-15")
         mock_chain1 = MagicMock()
         import pandas as pd
-        mock_chain1.calls = pd.DataFrame({
-            "strike": [150.0, 155.0],
-            "volume": [1000, 800],
-            "openInterest": [500, 400],
-            "impliedVolatility": [0.25, 0.26],
-            "inTheMoney": [False, False],
-        })
-        mock_chain1.puts = pd.DataFrame({
-            "strike": [145.0, 140.0],
-            "volume": [600, 400],
-            "openInterest": [300, 200],
-            "impliedVolatility": [0.30, 0.32],
-            "inTheMoney": [False, False],
-        })
+
+        mock_chain1.calls = pd.DataFrame(
+            {
+                "strike": [150.0, 155.0],
+                "volume": [1000, 800],
+                "openInterest": [500, 400],
+                "impliedVolatility": [0.25, 0.26],
+                "inTheMoney": [False, False],
+            }
+        )
+        mock_chain1.puts = pd.DataFrame(
+            {
+                "strike": [145.0, 140.0],
+                "volume": [600, 400],
+                "openInterest": [300, 200],
+                "impliedVolatility": [0.30, 0.32],
+                "inTheMoney": [False, False],
+            }
+        )
         mock_chain2 = MagicMock()
-        mock_chain2.calls = pd.DataFrame({
-            "strike": [150.0],
-            "volume": [500],
-            "openInterest": [250],
-            "impliedVolatility": [0.24],
-            "inTheMoney": [False],
-        })
-        mock_chain2.puts = pd.DataFrame({
-            "strike": [145.0],
-            "volume": [300],
-            "openInterest": [150],
-            "impliedVolatility": [0.28],
-            "inTheMoney": [False],
-        })
+        mock_chain2.calls = pd.DataFrame(
+            {
+                "strike": [150.0],
+                "volume": [500],
+                "openInterest": [250],
+                "impliedVolatility": [0.24],
+                "inTheMoney": [False],
+            }
+        )
+        mock_chain2.puts = pd.DataFrame(
+            {
+                "strike": [145.0],
+                "volume": [300],
+                "openInterest": [150],
+                "impliedVolatility": [0.28],
+                "inTheMoney": [False],
+            }
+        )
         mock_ticker.option_chain.side_effect = [mock_chain1, mock_chain2]
         MockTicker.return_value = mock_ticker
 
@@ -626,27 +649,34 @@ def test_fetch_options_yfinance_full_success():
 def test_fetch_options_yfinance_gex_exception():
     from services.options import _fetch_options
 
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker") as MockTicker, \
-         patch("services.options._bs_gamma", side_effect=Exception("gex fail")):
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker") as MockTicker,
+        patch("services.options._bs_gamma", side_effect=Exception("gex fail")),
+    ):
         mock_ticker = MagicMock()
         mock_ticker.options = ("2026-07-18",)
         mock_chain = MagicMock()
         import pandas as pd
-        mock_chain.calls = pd.DataFrame({
-            "strike": [150.0],
-            "volume": [1000],
-            "openInterest": [500],
-            "impliedVolatility": [0.25],
-            "inTheMoney": [False],
-        })
-        mock_chain.puts = pd.DataFrame({
-            "strike": [145.0],
-            "volume": [500],
-            "openInterest": [300],
-            "impliedVolatility": [0.30],
-            "inTheMoney": [False],
-        })
+
+        mock_chain.calls = pd.DataFrame(
+            {
+                "strike": [150.0],
+                "volume": [1000],
+                "openInterest": [500],
+                "impliedVolatility": [0.25],
+                "inTheMoney": [False],
+            }
+        )
+        mock_chain.puts = pd.DataFrame(
+            {
+                "strike": [145.0],
+                "volume": [500],
+                "openInterest": [300],
+                "impliedVolatility": [0.30],
+                "inTheMoney": [False],
+            }
+        )
         mock_ticker.option_chain.return_value = mock_chain
         MockTicker.return_value = mock_ticker
 
@@ -658,26 +688,33 @@ def test_fetch_options_yfinance_gex_exception():
 def test_fetch_options_yfinance_avg_iv_exception():
     from services.options import _fetch_options
 
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker") as MockTicker:
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker") as MockTicker,
+    ):
         mock_ticker = MagicMock()
         mock_ticker.options = ("2026-07-18",)
         mock_chain = MagicMock()
         import pandas as pd
-        mock_chain.calls = pd.DataFrame({
-            "strike": [150.0],
-            "volume": [1000],
-            "openInterest": [500],
-            "impliedVolatility": [0.25],
-            "inTheMoney": [False],
-        })
-        mock_chain.puts = pd.DataFrame({
-            "strike": [145.0],
-            "volume": [500],
-            "openInterest": [300],
-            "impliedVolatility": [0.30],
-            "inTheMoney": [False],
-        })
+
+        mock_chain.calls = pd.DataFrame(
+            {
+                "strike": [150.0],
+                "volume": [1000],
+                "openInterest": [500],
+                "impliedVolatility": [0.25],
+                "inTheMoney": [False],
+            }
+        )
+        mock_chain.puts = pd.DataFrame(
+            {
+                "strike": [145.0],
+                "volume": [500],
+                "openInterest": [300],
+                "impliedVolatility": [0.30],
+                "inTheMoney": [False],
+            }
+        )
         mock_ticker.option_chain.return_value = mock_chain
         MockTicker.return_value = mock_ticker
 
@@ -690,26 +727,33 @@ def test_fetch_options_yfinance_avg_iv_exception():
 def test_fetch_options_yfinance_skew_exception():
     from services.options import _fetch_options
 
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker") as MockTicker:
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker") as MockTicker,
+    ):
         mock_ticker = MagicMock()
         mock_ticker.options = ("2026-07-18",)
         mock_chain = MagicMock()
         import pandas as pd
-        mock_chain.calls = pd.DataFrame({
-            "strike": [150.0],
-            "volume": [1000],
-            "openInterest": [500],
-            "impliedVolatility": [0.25],
-            "inTheMoney": [False],
-        })
-        mock_chain.puts = pd.DataFrame({
-            "strike": [145.0],
-            "volume": [500],
-            "openInterest": [300],
-            "impliedVolatility": [0.30],
-            "inTheMoney": [False],
-        })
+
+        mock_chain.calls = pd.DataFrame(
+            {
+                "strike": [150.0],
+                "volume": [1000],
+                "openInterest": [500],
+                "impliedVolatility": [0.25],
+                "inTheMoney": [False],
+            }
+        )
+        mock_chain.puts = pd.DataFrame(
+            {
+                "strike": [145.0],
+                "volume": [500],
+                "openInterest": [300],
+                "impliedVolatility": [0.30],
+                "inTheMoney": [False],
+            }
+        )
         mock_ticker.option_chain.return_value = mock_chain
         MockTicker.return_value = mock_ticker
 
@@ -722,8 +766,10 @@ def test_fetch_options_yfinance_skew_exception():
 def test_fetch_options_yfinance_overall_exception():
     from services.options import _fetch_options
 
-    with patch("services.options._fetch_options_polygon", return_value=None), \
-         patch("services.options.yf.Ticker", side_effect=Exception("boom")):
+    with (
+        patch("services.options._fetch_options_polygon", return_value=None),
+        patch("services.options.yf.Ticker", side_effect=Exception("boom")),
+    ):
         result = _fetch_options("AAPL")
     assert result == {}
 
@@ -950,6 +996,7 @@ def test_score_options_max_pain_convergence():
     from services.options import score_options
 
     from datetime import datetime, timezone, timedelta
+
     near_exp = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
     opt = {
         "max_pain": 155.0,
@@ -966,6 +1013,7 @@ def test_score_options_max_pain_far_away():
     from services.options import score_options
 
     from datetime import datetime, timezone, timedelta
+
     near_exp = (datetime.now(timezone.utc) + timedelta(days=10)).strftime("%Y-%m-%d")
     opt = {
         "max_pain": 155.0,
@@ -1036,10 +1084,12 @@ def test_score_options_vanna_charm_exception():
 
 def test_opt_cache_get_redis_hit():
     import services.options as opts
+
     mock_redis = MagicMock()
     mock_redis.get.return_value = b'{"pc_ratio": 1.2}'
     opts._opt_redis = mock_redis
     from services.options import _opt_cache_get
+
     result = _opt_cache_get("AAPL")
     assert result == {"pc_ratio": 1.2}
     opts._opt_redis = None
@@ -1047,30 +1097,36 @@ def test_opt_cache_get_redis_hit():
 
 def test_opt_cache_get_redis_error():
     import services.options as opts
+
     mock_redis = MagicMock()
     mock_redis.get.side_effect = Exception("redis down")
     opts._opt_redis = mock_redis
     opts._opt_cache = {}
     from services.options import _opt_cache_get
+
     assert _opt_cache_get("AAPL") is None
     opts._opt_redis = None
 
 
 def test_opt_cache_get_expired():
     import services.options as opts
+
     opts._opt_redis = None
     opts._opt_cache = {"AAPL": ({"pc_ratio": 1.2}, 0.0)}
     from services.options import _opt_cache_get
+
     assert _opt_cache_get("AAPL") is None
     opts._opt_cache = {}
 
 
 def test_opt_cache_set_redis_error():
     import services.options as opts
+
     mock_redis = MagicMock()
     mock_redis.setex.side_effect = Exception("redis down")
     opts._opt_redis = mock_redis
     from services.options import _opt_cache_set
+
     _opt_cache_set("AAPL", {"pc_ratio": 1.2})
     assert opts._opt_cache["AAPL"][0] == {"pc_ratio": 1.2}
     opts._opt_redis = None
@@ -1079,11 +1135,13 @@ def test_opt_cache_set_redis_error():
 
 def test_ivh_load_redis_longer():
     import services.options as opts
+
     mock_redis = MagicMock()
-    mock_redis.get.return_value = b'[0.20, 0.22, 0.24, 0.26]'
+    mock_redis.get.return_value = b"[0.20, 0.22, 0.24, 0.26]"
     opts._opt_redis = mock_redis
     opts._iv_history = {"AAPL": [0.20, 0.22]}
     from services.options import _ivh_load
+
     result = _ivh_load("AAPL")
     assert result == [0.20, 0.22, 0.24, 0.26]
     assert opts._iv_history["AAPL"] == [0.20, 0.22, 0.24, 0.26]
@@ -1093,10 +1151,12 @@ def test_ivh_load_redis_longer():
 
 def test_ivh_save_redis_error():
     import services.options as opts
+
     mock_redis = MagicMock()
     mock_redis.setex.side_effect = Exception("redis down")
     opts._opt_redis = mock_redis
     from services.options import _ivh_save
+
     _ivh_save("AAPL", [0.20, 0.22])
     assert opts._iv_history["AAPL"] == [0.20, 0.22]
     opts._opt_redis = None

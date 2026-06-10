@@ -9,6 +9,7 @@ import pytest
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _make_df(rows: int = 30) -> pd.DataFrame:
     return pd.DataFrame({"Close": [100.0 + i * 0.1 for i in range(rows)]})
 
@@ -69,7 +70,10 @@ def _setup_generate_signal_mocks(
     m_soc.return_value = {}
     m_trends.return_value = {}
     m_cong.return_value = {}
-    m_hist.side_effect = [df_daily if df_daily is not None else _make_df(), df_1h if df_1h is not None else _make_df_1h()]
+    m_hist.side_effect = [
+        df_daily if df_daily is not None else _make_df(),
+        df_1h if df_1h is not None else _make_df_1h(),
+    ]
     m_info.return_value = {"company": "Test Co"}
     m_sec.return_value = {}
     m_calc.return_value = {
@@ -86,6 +90,7 @@ def _setup_generate_signal_mocks(
 
 
 # ── _fetch_ticker_data ───────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_fetch_ticker_data_prefetched_path():
@@ -334,6 +339,7 @@ async def test_fetch_ticker_data_gather_exceptions():
 
 # ── generate_signal early exits ──────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_generate_signal_fetch_returns_none():
     from services.signal_engine import generate_signal
@@ -368,9 +374,23 @@ async def test_generate_signal_tech_none():
         patch("services.signal_engine.calculate_indicators") as m_calc,
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         m_calc.return_value = None
         result = await generate_signal("AAPL")
@@ -401,9 +421,23 @@ async def test_generate_signal_tech_no_price():
         patch("services.signal_engine.calculate_indicators") as m_calc,
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         m_calc.return_value = {"rsi": 50.0}  # missing price key
         result = await generate_signal("AAPL")
@@ -411,6 +445,7 @@ async def test_generate_signal_tech_no_price():
 
 
 # ── generate_signal exception branches ───────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_generate_signal_worker_import_fails():
@@ -437,9 +472,23 @@ async def test_generate_signal_worker_import_fails():
         patch("services.signal_engine.asyncio.ensure_future", side_effect=Exception("boom")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -471,9 +520,23 @@ async def test_generate_signal_polygon_indicators_exception():
         patch("services.polygon_indicators.get_indicators", side_effect=RuntimeError("polygon down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -505,9 +568,23 @@ async def test_generate_signal_weekly_trend_exception():
         patch("services.signal_engine.calculate_indicators") as m_calc,
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -538,9 +615,23 @@ async def test_generate_signal_polygon_weekly_bars_exception():
         patch("services.polygon_client.get_polygon_weekly_bars", side_effect=RuntimeError("polygon weekly down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -571,9 +662,23 @@ async def test_generate_signal_exdiv_lookup_exception():
         patch("services.polygon_client.get_polygon_dividends", side_effect=RuntimeError("divs down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -604,9 +709,23 @@ async def test_generate_signal_local_llm_exception():
         patch("services.local_llm.get_llm_client", side_effect=RuntimeError("llm down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         # Force earnings window so LLM path is reached
         m_ecal.return_value = {"days_to_earnings": 7}
@@ -640,9 +759,23 @@ async def test_generate_signal_1h_techs_exception():
         patch("services.signal_engine.asyncio.to_thread", side_effect=RuntimeError("thread pool down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -673,9 +806,23 @@ async def test_generate_signal_massive_ratios_exception():
         patch("services.massive_ratios.get_ratios", side_effect=RuntimeError("ratios down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -706,9 +853,23 @@ async def test_generate_signal_8k_events_exception():
         patch("services.eightk_events.get_8k_signals", side_effect=RuntimeError("8k down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -739,9 +900,23 @@ async def test_generate_signal_supply_chain_exception():
         patch("services.supply_chain.get_supply_chain_score", side_effect=RuntimeError("sc down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -772,9 +947,23 @@ async def test_generate_signal_corp_events_exception():
         patch("services.corporate_events.get_event_score", side_effect=RuntimeError("ce down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
@@ -805,15 +994,30 @@ async def test_generate_signal_etf_flows_exception():
         patch("services.etf_flows.get_flow_score_for_ticker", side_effect=RuntimeError("etf flow down")),
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         result = await generate_signal("AAPL")
     assert result is not None
 
 
 # ── Blackout / gate branches ─────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_generate_signal_post_earnings_blackout():
@@ -839,9 +1043,23 @@ async def test_generate_signal_post_earnings_blackout():
         patch("services.signal_engine.calculate_indicators") as m_calc,
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         # Post-earnings blackout: days_since=1 forces HOLD
         m_ecal.return_value = {"days_since_earnings": 1, "last_earnings_date": "2026-05-01"}
@@ -875,9 +1093,23 @@ async def test_generate_signal_pre_earnings_blackout():
         patch("services.signal_engine.calculate_indicators") as m_calc,
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         # Pre-earnings blackout: days_to_earnings=1 forces HOLD
         m_ecal.return_value = {"days_to_earnings": 1, "next_earnings_date": "2026-05-15"}
@@ -915,9 +1147,23 @@ async def test_generate_signal_sector_downtrend_gate():
         patch("services.signal_engine.calculate_indicators") as m_calc,
     ):
         _setup_generate_signal_mocks(
-            m_news, m_snews, m_insider, m_arecs, m_ecal, m_esurp,
-            m_oflow, m_fund, m_soc, m_trends, m_cong, m_hist, m_info, m_sec, m_calc,
-            df_daily=mock_df, df_1h=mock_df_1h,
+            m_news,
+            m_snews,
+            m_insider,
+            m_arecs,
+            m_ecal,
+            m_esurp,
+            m_oflow,
+            m_fund,
+            m_soc,
+            m_trends,
+            m_cong,
+            m_hist,
+            m_info,
+            m_sec,
+            m_calc,
+            df_daily=mock_df,
+            df_1h=mock_df_1h,
         )
         # Mild bullish indicators → score > 0 but < 40 so gate fires
         m_calc.return_value = {
@@ -950,6 +1196,7 @@ async def test_generate_signal_unhandled_exception_returns_none():
 
 # ── scan_all ─────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_scan_all_with_tickers():
     from services.signal_engine import scan_all
@@ -957,7 +1204,14 @@ async def test_scan_all_with_tickers():
     with patch("services.signal_engine.generate_signal", new_callable=AsyncMock) as m_gen:
         m_gen.side_effect = [
             {"ticker": "AAPL", "action": "BUY", "confidence": 60.0, "sectorEtf": "XLK", "rationale": [], "sources": []},
-            {"ticker": "MSFT", "action": "HOLD", "confidence": 50.0, "sectorEtf": "XLK", "rationale": [], "sources": []},
+            {
+                "ticker": "MSFT",
+                "action": "HOLD",
+                "confidence": 50.0,
+                "sectorEtf": "XLK",
+                "rationale": [],
+                "sources": [],
+            },
         ]
         results = await scan_all(["AAPL", "MSFT"])
 
@@ -975,7 +1229,14 @@ async def test_scan_all_etf_histories_injected():
         "AAPL": pd.DataFrame({"Close": [100.0] * 70}),
     }
     with patch("services.signal_engine.generate_signal", new_callable=AsyncMock) as m_gen:
-        m_gen.return_value = {"ticker": "AAPL", "action": "BUY", "confidence": 60.0, "sectorEtf": "XLK", "rationale": [], "sources": []}
+        m_gen.return_value = {
+            "ticker": "AAPL",
+            "action": "BUY",
+            "confidence": 60.0,
+            "sectorEtf": "XLK",
+            "rationale": [],
+            "sources": [],
+        }
         await scan_all(["AAPL"], market_ctx={}, histories=histories, infos={})
 
     # Verify market_ctx was augmented with etf_histories
@@ -992,8 +1253,22 @@ async def test_scan_all_sector_peer_confirmation():
     with patch("services.signal_engine.generate_signal", new_callable=AsyncMock) as m_gen:
         m_gen.side_effect = [
             {"ticker": "AAPL", "action": "BUY", "confidence": 60.0, "sectorEtf": "XLK", "rationale": [], "sources": []},
-            {"ticker": "MSFT", "action": "HOLD", "confidence": 50.0, "sectorEtf": "XLK", "rationale": [], "sources": []},
-            {"ticker": "GOOGL", "action": "HOLD", "confidence": 50.0, "sectorEtf": "XLK", "rationale": [], "sources": []},
+            {
+                "ticker": "MSFT",
+                "action": "HOLD",
+                "confidence": 50.0,
+                "sectorEtf": "XLK",
+                "rationale": [],
+                "sources": [],
+            },
+            {
+                "ticker": "GOOGL",
+                "action": "HOLD",
+                "confidence": 50.0,
+                "sectorEtf": "XLK",
+                "rationale": [],
+                "sources": [],
+            },
         ]
         results = await scan_all(["AAPL", "MSFT", "GOOGL"])
 

@@ -33,10 +33,7 @@ def _add_column_if_missing(table: str, col: sa.Column) -> None:
     elif dialect == "postgresql":
         # PostgreSQL: query information_schema
         result = bind.execute(
-            sa.text(
-                "SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = :table AND column_name = :col"
-            ),
+            sa.text("SELECT 1 FROM information_schema.columns WHERE table_name = :table AND column_name = :col"),
             {"table": table, "col": col.name},
         )
         if result.scalar() is None:

@@ -132,16 +132,16 @@ def simulate_and_process_trades(raw_results: list, vix: dict, spy_trend: dict, s
         compute_scores,
         simulate_ticker,
     )
-    
+
     # Filter out empty results
     valid_results = [r for r in raw_results if r is not None and r[2] is not None]
     if not valid_results:
         return []
-        
+
     all_dfs = {r[0]: r[2] for r in valid_results}
     all_earnings_dates = {r[0]: r[3] for r in valid_results}
     bh_returns_map = {r[0]: r[1] for r in valid_results}
-    
+
     # ── Cointegration calculation ──
     try:
         _sector_etfs = list({TICKER_TO_SECTOR.get(t, "XLK") for t in all_dfs})
@@ -277,9 +277,7 @@ def main():
 
     # ── Run backtest for all IS tickers in parallel ───────────────────────────
     print(f"Running IS backtest on {len(TICKERS)} tickers…")
-    args_list = [
-        (ticker, vix_dict, spy_trend, stlfsi4, True, False, spy_prices, False) for ticker in TICKERS
-    ]
+    args_list = [(ticker, vix_dict, spy_trend, stlfsi4, True, False, spy_prices, False) for ticker in TICKERS]
     n_cpu = max(1, multiprocessing.cpu_count() - 1)
     with multiprocessing.Pool(n_cpu) as pool:
         raw_results = pool.map(process_ticker, args_list)

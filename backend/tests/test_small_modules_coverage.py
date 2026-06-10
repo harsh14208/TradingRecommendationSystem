@@ -1,10 +1,9 @@
 """Coverage tests for small uncovered modules."""
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
-import pytest
 
 
 # ── schemas.py ─────────────────────────────────────────────────────────────

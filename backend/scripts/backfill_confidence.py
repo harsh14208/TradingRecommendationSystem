@@ -161,9 +161,7 @@ async def backfill(apply: bool = False, min_delta: float = 0.5, force: bool = Fa
                 .order_by(Signal.created_at.asc())
             )
         ).all()
-        total_signals = (
-            await db.execute(select(func.count()).select_from(Signal))
-        ).scalar_one()
+        total_signals = (await db.execute(select(func.count()).select_from(Signal))).scalar_one()
     finally:
         await db.close()
 

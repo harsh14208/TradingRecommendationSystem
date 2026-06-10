@@ -45,8 +45,6 @@ log = logging.getLogger("signal.trade.auth")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-
-
 REFRESH_COOKIE = "st_refresh"
 
 
@@ -416,7 +414,9 @@ async def delete_account(
             s = get_settings()
             _stripe.api_key = s.stripe_secret_key.get_secret_value()
             _stripe.Subscription.modify(user.stripe_subscription_id, cancel_at_period_end=True)
-            log.info(f"[auth] marked Stripe subscription {user.stripe_subscription_id} cancel_at_period_end for user id={user.id}")
+            log.info(
+                f"[auth] marked Stripe subscription {user.stripe_subscription_id} cancel_at_period_end for user id={user.id}"
+            )
         except Exception as e:
             log.warning(f"[auth] Stripe cancellation failed for user id={user.id}: {e}")
 
@@ -696,7 +696,9 @@ async def update_signal_prefs(
 
 @router.get("/verify-email")
 @_limiter.limit("10/minute")
-async def verify_email(request: Request, response: Response, token: str = Query(...), db: AsyncSession = Depends(get_db)):
+async def verify_email(
+    request: Request, response: Response, token: str = Query(...), db: AsyncSession = Depends(get_db)
+):
     """Verify email address using the token from the verification email."""
     user = (await db.execute(select(User).where(User.email_verify_token == token))).scalar_one_or_none()
     if not user:

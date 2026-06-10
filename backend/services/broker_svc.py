@@ -13,7 +13,7 @@ import logging
 import os
 from typing import Optional
 
-from cryptography.fernet import Fernet, InvalidToken, MultiFernet
+from cryptography.fernet import Fernet, MultiFernet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger("broker_svc")
@@ -268,6 +268,7 @@ async def reconcile_broker_orders(db: AsyncSession) -> dict:
                     summary["updated"] += 1
                     if mapped == "filled":
                         from services.tca_service import record_fill_tca
+
                         await record_fill_tca(db, o, match)
             else:
                 age_h = (now - o.created_at).total_seconds() / 3600 if o.created_at else 0
@@ -396,14 +397,22 @@ async def execute_signal_for_user(
     # QENG-3c: Expected slippage & capacity check
     entry_price = float(sig.get("entry") or sig.get("price") or 1.0)
     from services.tca_service import check_capacity_limits
-    blocked, suggested_notional, expected_slip = await check_capacity_limits(
-        db, ticker, notional, entry_price
-    )
+
+    blocked, suggested_notional, expected_slip = await check_capacity_limits(db, ticker, notional, entry_price)
     if blocked:
-        log.info("broker_svc: user=%d — order blocked by capacity limits (expected slippage %.1f bps)", user.id, expected_slip)
+        log.info(
+            "broker_svc: user=%d — order blocked by capacity limits (expected slippage %.1f bps)",
+            user.id,
+            expected_slip,
+        )
         return
     if suggested_notional != notional:
-        log.info("broker_svc: user=%d — order sized down from %.2f to %.2f due to capacity limits", user.id, notional, suggested_notional)
+        log.info(
+            "broker_svc: user=%d — order sized down from %.2f to %.2f due to capacity limits",
+            user.id,
+            notional,
+            suggested_notional,
+        )
         notional = suggested_notional
 
     if broker_type == "ibkr":
@@ -500,7 +509,6 @@ async def execute_portfolio_for_user(
     QENG-4a/b/c: Portfolio allocator integration.
     Calculates target allocation weights using HRP, applies risk/TCA limits, and executes orders.
     """
-    from typing import List, Dict
     from models import BrokerOrder
     from services.portfolio_allocator import allocate_portfolio
 
@@ -606,7 +614,7 @@ async def execute_portfolio_for_user(
         notional = order["notional"]
         target_weight = order["target_weight"]
         signal_id = order["signal_id"]
-        
+
         side = "buy" if action == "BUY" else "sell"
         sig = sig_map.get(ticker)
         if not sig:
@@ -621,14 +629,22 @@ async def execute_portfolio_for_user(
         # QENG-3c: Capacity check
         entry_price = float(sig.get("entry") or sig.get("price") or 1.0)
         from services.tca_service import check_capacity_limits
-        blocked, suggested_notional, expected_slip = await check_capacity_limits(
-            db, ticker, notional, entry_price
-        )
+
+        blocked, suggested_notional, expected_slip = await check_capacity_limits(db, ticker, notional, entry_price)
         if blocked:
-            log.info("broker_svc: user=%d — order blocked by capacity limits (expected slippage %.1f bps)", user.id, expected_slip)
+            log.info(
+                "broker_svc: user=%d — order blocked by capacity limits (expected slippage %.1f bps)",
+                user.id,
+                expected_slip,
+            )
             continue
         if suggested_notional != notional:
-            log.info("broker_svc: user=%d — order sized down from %.2f to %.2f due to capacity limits", user.id, notional, suggested_notional)
+            log.info(
+                "broker_svc: user=%d — order sized down from %.2f to %.2f due to capacity limits",
+                user.id,
+                notional,
+                suggested_notional,
+            )
             notional = suggested_notional
 
         # Place order
@@ -709,7 +725,7 @@ async def execute_portfolio_for_user(
             order_record.error_msg = str(e)[:500]
             log.warning("broker_svc: user=%d order failed for %s: %s", user.id, ticker, e)
             from services.metrics import inc
+
             inc("order_error_total", broker=broker_type)
 
         db.add(order_record)
-

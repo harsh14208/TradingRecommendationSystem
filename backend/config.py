@@ -107,7 +107,9 @@ class Settings(BaseSettings):
     @property
     def jwt_secret_key(self) -> str:
         """Return JWT secret. Raises in production if unset; allows dev fallback only on localhost."""
-        raw = self.jwt_secret.get_secret_value() if hasattr(self.jwt_secret, "get_secret_value") else str(self.jwt_secret)
+        raw = (
+            self.jwt_secret.get_secret_value() if hasattr(self.jwt_secret, "get_secret_value") else str(self.jwt_secret)
+        )
         if raw:
             return raw
         is_local = self.app_url.startswith("http://localhost") or self.app_url.startswith("http://127.")
@@ -119,6 +121,7 @@ class Settings(BaseSettings):
         # Dev-only: generate an ephemeral secret so uvicorn --reload works without .env setup.
         # This secret is random per process start, so reload invalidates old tokens — acceptable for dev.
         import secrets as _secrets
+
         return hashlib.sha256(_secrets.token_hex(32).encode()).hexdigest()
 
     model_config = {"env_file": ".env", "case_sensitive": False, "extra": "ignore"}

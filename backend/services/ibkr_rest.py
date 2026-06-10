@@ -6,7 +6,6 @@ Supports paper/live routing via local gateway connection.
 import ssl
 import uuid
 import logging
-import aiohttp
 import certifi
 from services.http_client import shared_session
 
