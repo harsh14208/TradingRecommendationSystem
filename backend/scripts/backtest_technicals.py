@@ -2247,6 +2247,7 @@ def simulate_ticker(
     _vix_min = vix_min_override
     _require_mr_count = require_mr_count_override if require_mr_count_override is not None else 1
     _require_consec = require_consec_score_override if require_consec_score_override is not None else False
+    _consec_score_sizing = consec_score_sizing
     _consec_score_thresh = consec_score_thresh_override if consec_score_thresh_override is not None else _buy_thresh
     _mr_bb_ceil = mr_bb_ceil_override if mr_bb_ceil_override is not None else MR_BB_CEIL
     _mr_ibs_ceil = mr_ibs_ceil_override if mr_ibs_ceil_override is not None else MR_IBS_CEIL
@@ -2569,9 +2570,17 @@ def simulate_ticker(
         # indicates sustained selling pressure nearing exhaustion — higher conviction.
         # _consec_score_thresh defaults to _buy_thresh but can be graduated lower
         # (e.g. 45) to keep more trades while still filtering single-day spikes.
-        if is_buy_signal and _require_consec and i > 0:
+        # §87: when --consec-score-sizing is set, this becomes a sizing multiplier
+        # (1.3× for persistent oversold, 1.0× for single-day spikes) instead of a filter.
+        _consec_size_mult = 1.0
+        if is_buy_signal and i > 0:
             prev_score = float(df.iloc[i - 1]["score"]) if "score" in df.columns else 0.0
-            if prev_score < _consec_score_thresh:
+            if _consec_score_sizing:
+                # Sizing mode: boost size for persistent oversold, keep single-day at 1.0×
+                if prev_score >= _consec_score_thresh:
+                    _consec_size_mult = 1.3
+            elif _require_consec and prev_score < _consec_score_thresh:
+                # Filter mode: skip single-day spikes
                 continue
 
         # ── Gate 18b: Score acceleration — require rising conviction ────────────
@@ -2928,6 +2937,9 @@ def simulate_ticker(
             _size_mult = max(FORECAST_FLOOR, min(FORECAST_CAP, _forecast_val))
         if score_band_sizing and is_buy_signal:
             _size_mult = score_band_size_mult(score)
+        if _consec_score_sizing and is_buy_signal:
+            # §87: multiply base size by consec-score conviction tier
+            _size_mult *= _consec_size_mult
 
         _date_key = pd.Timestamp(str(date)[:10])
         _near_52wk_low_flag = (
@@ -4651,6 +4663,7 @@ def main():
     _no_family_discount_flag = "--no-family-discount" in sys.argv
     _entry_delay_flag = "--entry-delay" in sys.argv
     _consec_score_flag = "--consec-score" in sys.argv
+    _consec_score_sizing_flag = "--consec-score-sizing" in sys.argv
 
     # Parse --target-mult X.Y
     _target_mult_override = None
@@ -5021,6 +5034,7 @@ def main():
             no_family_discount=_no_family_discount_flag,
             entry_delay_override=_entry_delay_flag,
             require_consec_score_override=_consec_score_flag,
+            consec_score_sizing=_consec_score_sizing_flag,
             consec_score_thresh_override=_consec_score_thresh_override,
             target_mult_override=_target_mult_override,
             max_loss_days_override=_max_loss_days_override,
