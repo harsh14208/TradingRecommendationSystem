@@ -3109,6 +3109,11 @@ def simulate_ticker(
                 ),
                 "vix_9d_ratio": (_compute_vix_9d_ratio(vix, _date_key) if vix else None),
                 "ff_str": (round(float(ff_str.get(_date_key)), 4) if ff_str else None),
+                "si_rising": (
+                    si_rising_map.get(ticker, {}).get(_date_key)
+                    if si_rising_map
+                    else None
+                ),
             }
         )
 
