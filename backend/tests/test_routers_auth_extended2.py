@@ -1,4 +1,5 @@
 """Extended tests for routers/auth.py — covering uncovered endpoints."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
@@ -11,6 +12,11 @@ from services.auth_svc import get_current_user
 
 def _make_app():
     from routers.auth import router
+    from routers import auth as auth_mod
+
+    # Reset in-memory rate limit counters between test app instances
+    auth_mod._limiter.reset()
+
     app = FastAPI()
     app.include_router(router)
     return app
@@ -65,6 +71,7 @@ def _mock_db(user=None, second_user=None):
 
 # ── POST /api/auth/register ───────────────────────────────────────────────────
 
+
 def test_register_success_auto_verified():
     """Register when SMTP not configured → auto-verified, returns tokens."""
     app = _make_app()
@@ -99,16 +106,16 @@ def test_register_success_auto_verified():
     mock_db.refresh.side_effect = _refresh
 
     settings.refresh_token_expire_days = 30
-    with patch("routers.auth.get_settings", return_value=settings), \
-         patch("routers.auth.generate_refresh_token", return_value=("raw_token", "hashed_token")), \
-         patch("routers.auth.create_access_token", return_value="access_token_abc"), \
-         patch("asyncio.create_task"):
+    with (
+        patch("routers.auth.get_settings", return_value=settings),
+        patch("routers.auth.generate_refresh_token", return_value=("raw_token", "hashed_token")),
+        patch("routers.auth.create_access_token", return_value="access_token_abc"),
+        patch("asyncio.create_task"),
+    ):
         with TestClient(app) as client:
-            resp = client.post("/api/auth/register", json={
-                "email": "new@t.com",
-                "password": "StrongPass123!",
-                "full_name": "New User"
-            })
+            resp = client.post(
+                "/api/auth/register", json={"email": "new@t.com", "password": "StrongPass123!", "full_name": "New User"}
+            )
 
     # Should return 200/201 with tokens (auto-verified) or 201 with message
     assert resp.status_code in (200, 201)
@@ -142,13 +149,15 @@ def test_register_with_smtp_sends_verification():
     settings.owner_email = "owner@t.com"
     settings.app_url = "https://example.com"
 
-    with patch("routers.auth.get_settings", return_value=settings), \
-         patch("asyncio.create_task"):
+    with patch("routers.auth.get_settings", return_value=settings), patch("asyncio.create_task"):
         with TestClient(app) as client:
-            resp = client.post("/api/auth/register", json={
-                "email": "pending@t.com",
-                "password": "StrongPass123!",
-            })
+            resp = client.post(
+                "/api/auth/register",
+                json={
+                    "email": "pending@t.com",
+                    "password": "StrongPass123!",
+                },
+            )
 
     assert resp.status_code in (200, 201)
     # If 201, should have a message
@@ -157,6 +166,7 @@ def test_register_with_smtp_sends_verification():
 
 
 # ── GET /api/auth/verify-email ────────────────────────────────────────────────
+
 
 def test_verify_email_invalid_token():
     app = _make_app()
@@ -193,10 +203,12 @@ def test_verify_email_success():
 
     mock_settings = MagicMock()
     mock_settings.refresh_token_expire_days = 30
-    with patch("routers.auth.create_access_token", return_value="access_token"), \
-         patch("routers.auth.generate_refresh_token", return_value=("raw_token", "hashed_token")), \
-         patch("asyncio.create_task"), \
-         patch("routers.auth.get_settings", return_value=mock_settings):
+    with (
+        patch("routers.auth.create_access_token", return_value="access_token"),
+        patch("routers.auth.generate_refresh_token", return_value=("raw_token", "hashed_token")),
+        patch("asyncio.create_task"),
+        patch("routers.auth.get_settings", return_value=mock_settings),
+    ):
         with TestClient(app) as client:
             resp = client.get("/api/auth/verify-email?token=valid_token")
     # 200 with tokens, or 400 if email_verified check fails
@@ -204,6 +216,7 @@ def test_verify_email_success():
 
 
 # ── PATCH /api/auth/me ────────────────────────────────────────────────────────
+
 
 def test_update_me():
     app = _make_app()
@@ -224,6 +237,7 @@ def test_update_me():
 
 
 # ── POST /api/auth/telegram-link-code ────────────────────────────────────────
+
 
 def test_telegram_link_code():
     app = _make_app()
@@ -247,6 +261,7 @@ def test_telegram_link_code():
 
 # ── DELETE /api/auth/telegram-unlink ─────────────────────────────────────────
 
+
 def test_telegram_unlink():
     app = _make_app()
     user = _make_user()
@@ -268,6 +283,7 @@ def test_telegram_unlink():
 
 
 # ── POST /api/auth/resend-verification ───────────────────────────────────────
+
 
 def test_resend_verification_not_found():
     app = _make_app()
@@ -295,14 +311,14 @@ def test_resend_verification_success():
     settings = MagicMock()
     settings.app_url = "https://example.com"
 
-    with patch("routers.auth.get_settings", return_value=settings), \
-         patch("asyncio.create_task"):
+    with patch("routers.auth.get_settings", return_value=settings), patch("asyncio.create_task"):
         with TestClient(app) as client:
             resp = client.post("/api/auth/resend-verification", json={"email": "t@t.com"})
     assert resp.status_code == 200
 
 
 # ── PATCH /api/auth/integrations ─────────────────────────────────────────────
+
 
 def test_update_integrations_discord():
     app = _make_app()
@@ -318,9 +334,9 @@ def test_update_integrations_discord():
     app.dependency_overrides[get_current_user] = lambda: user
 
     with TestClient(app) as client:
-        resp = client.patch("/api/auth/integrations", json={
-            "discord_webhook_url": "https://discord.com/api/webhooks/123/abc"
-        })
+        resp = client.patch(
+            "/api/auth/integrations", json={"discord_webhook_url": "https://discord.com/api/webhooks/123/abc"}
+        )
     assert resp.status_code == 200
 
 
@@ -338,9 +354,7 @@ def test_update_integrations_invalid_discord():
     app.dependency_overrides[get_current_user] = lambda: user
 
     with TestClient(app) as client:
-        resp = client.patch("/api/auth/integrations", json={
-            "discord_webhook_url": "https://not-discord.com/webhook"
-        })
+        resp = client.patch("/api/auth/integrations", json={"discord_webhook_url": "https://not-discord.com/webhook"})
     assert resp.status_code == 400
 
 
@@ -358,9 +372,12 @@ def test_update_integrations_webhook_ssrf_guard():
     app.dependency_overrides[get_current_user] = lambda: user
 
     with TestClient(app) as client:
-        resp = client.patch("/api/auth/integrations", json={
-            "webhook_url": "https://192.168.1.1/hook"  # private IP
-        })
+        resp = client.patch(
+            "/api/auth/integrations",
+            json={
+                "webhook_url": "https://192.168.1.1/hook"  # private IP
+            },
+        )
     assert resp.status_code == 400
 
 
@@ -378,9 +395,7 @@ def test_update_integrations_webhook_localhost():
     app.dependency_overrides[get_current_user] = lambda: user
 
     with TestClient(app) as client:
-        resp = client.patch("/api/auth/integrations", json={
-            "webhook_url": "https://localhost/hook"
-        })
+        resp = client.patch("/api/auth/integrations", json={"webhook_url": "https://localhost/hook"})
     assert resp.status_code == 400
 
 
@@ -406,6 +421,7 @@ def test_update_integrations_clear():
 
 # ── POST /api/auth/change-password ───────────────────────────────────────────
 
+
 def test_change_password_wrong_current():
     app = _make_app()
     user = _make_user()
@@ -421,10 +437,9 @@ def test_change_password_wrong_current():
 
     with patch("routers.auth.verify_password", return_value=False):
         with TestClient(app) as client:
-            resp = client.post("/api/auth/change-password", json={
-                "current_password": "wrong",
-                "new_password": "NewPassword123!"
-            })
+            resp = client.post(
+                "/api/auth/change-password", json={"current_password": "wrong", "new_password": "NewPassword123!"}
+            )
     assert resp.status_code == 400
 
 
@@ -441,17 +456,20 @@ def test_change_password_success():
     app.dependency_overrides[get_db] = _get_db
     app.dependency_overrides[get_current_user] = lambda: user
 
-    with patch("routers.auth.verify_password", return_value=True), \
-         patch("routers.auth.hash_password", return_value="new_hash"):
+    with (
+        patch("routers.auth.verify_password", return_value=True),
+        patch("routers.auth.hash_password", return_value="new_hash"),
+    ):
         with TestClient(app) as client:
-            resp = client.post("/api/auth/change-password", json={
-                "current_password": "CurrentPass123!",
-                "new_password": "NewPass456!strong"
-            })
+            resp = client.post(
+                "/api/auth/change-password",
+                json={"current_password": "CurrentPass123!", "new_password": "NewPass456!strong"},
+            )
     assert resp.status_code == 200
 
 
 # ── GET /api/auth/referral ────────────────────────────────────────────────────
+
 
 def test_get_referral_info():
     app = _make_app()

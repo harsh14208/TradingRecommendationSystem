@@ -7,17 +7,19 @@ Targeted coverage for uncovered public functions in:
 - services/institutional.py
 """
 
-import asyncio
 import json
-import math
 import sys
 import os
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from collections import namedtuple
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
+
+# SQLAlchemy Row-compatible mock for calibration queries
+_CalRow = namedtuple("_CalRow", ["action", "confidence", "outcome_14d", "outcome_pct", "created_at"])
 
 # Ensure backend is on path
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -76,6 +78,7 @@ class _MockRow:
 @pytest.mark.asyncio
 async def test_compute_etf_residual_stat_arb_empty_tickers():
     from services.alpha_sleeves import compute_etf_residual_stat_arb
+
     result = await compute_etf_residual_stat_arb([], {})
     assert result == {}
 
@@ -83,6 +86,7 @@ async def test_compute_etf_residual_stat_arb_empty_tickers():
 @pytest.mark.asyncio
 async def test_compute_etf_residual_stat_arb_missing_etf():
     from services.alpha_sleeves import compute_etf_residual_stat_arb
+
     with patch("services.alpha_sleeves.get_histories_batch", new=AsyncMock(return_value={})):
         result = await compute_etf_residual_stat_arb(["AAPL"], {"AAPL": "XLK"})
         assert result == {}
@@ -91,6 +95,7 @@ async def test_compute_etf_residual_stat_arb_missing_etf():
 @pytest.mark.asyncio
 async def test_compute_etf_residual_stat_arb_short_history():
     from services.alpha_sleeves import compute_etf_residual_stat_arb
+
     histories = {"AAPL": _MockDF([100.0] * 10), "XLK": _MockDF([100.0] * 10)}
     with patch("services.alpha_sleeves.get_histories_batch", new=AsyncMock(return_value=histories)):
         result = await compute_etf_residual_stat_arb(["AAPL"], {"AAPL": "XLK"}, lookback_days=60)
@@ -159,6 +164,7 @@ async def test_compute_etf_residual_stat_arb_actions():
 @pytest.mark.asyncio
 async def test_compute_etf_residual_stat_arb_exception():
     from services.alpha_sleeves import compute_etf_residual_stat_arb
+
     with patch("services.alpha_sleeves.get_histories_batch", side_effect=Exception("network")):
         result = await compute_etf_residual_stat_arb(["AAPL"], {"AAPL": "XLK"})
         assert result == {}
@@ -167,6 +173,7 @@ async def test_compute_etf_residual_stat_arb_exception():
 @pytest.mark.asyncio
 async def test_compute_time_series_momentum_exception():
     from services.alpha_sleeves import compute_time_series_momentum
+
     with patch("services.alpha_sleeves.get_histories_batch", side_effect=Exception("network")):
         result = await compute_time_series_momentum()
         assert result == {}
@@ -175,6 +182,7 @@ async def test_compute_time_series_momentum_exception():
 @pytest.mark.asyncio
 async def test_compute_cross_sectional_factor_scores_empty():
     from services.alpha_sleeves import compute_cross_sectional_factor_scores
+
     result = await compute_cross_sectional_factor_scores([])
     assert result == {}
 
@@ -182,6 +190,7 @@ async def test_compute_cross_sectional_factor_scores_empty():
 @pytest.mark.asyncio
 async def test_compute_cross_sectional_factor_scores_missing_data():
     from services.alpha_sleeves import compute_cross_sectional_factor_scores
+
     histories = {"AAPL": _MockDF(_make_price_series(250)), "MSFT": _MockDF(_make_price_series(50))}
     with patch("services.alpha_sleeves.get_histories_batch", new=AsyncMock(return_value=histories)):
         result = await compute_cross_sectional_factor_scores(["AAPL", "MSFT"])
@@ -193,6 +202,7 @@ async def test_compute_cross_sectional_factor_scores_missing_data():
 @pytest.mark.asyncio
 async def test_compute_cross_sectional_factor_scores_exception():
     from services.alpha_sleeves import compute_cross_sectional_factor_scores
+
     with patch("services.alpha_sleeves.get_histories_batch", side_effect=Exception("network")):
         result = await compute_cross_sectional_factor_scores(["AAPL"])
         assert result == {}
@@ -210,6 +220,7 @@ async def test_get_dynamic_sleeve_sharpes():
 
     # Build histories for all tickers used by Trend / StatArb / Factor
     from services.alpha_sleeves import TREND_ETFS
+
     histories = {}
     for etf in TREND_ETFS:
         histories[etf] = _MockDF(_make_price_series(250, drift=0.2))
@@ -238,6 +249,7 @@ async def test_get_dynamic_sleeve_sharpes():
 @pytest.mark.asyncio
 async def test_get_dynamic_sleeve_sharpes_db_exception():
     from services.alpha_sleeves import get_dynamic_sleeve_sharpes
+
     mock_db = AsyncMock()
     mock_db.execute.side_effect = Exception("db error")
     fixed_now = datetime(2026, 6, 1, 12, 0, 0)
@@ -250,6 +262,7 @@ async def test_get_dynamic_sleeve_sharpes_db_exception():
 
 def test_allocate_cross_sleeve_capital_no_active():
     from services.alpha_sleeves import allocate_cross_sleeve_capital
+
     sharpes = {"MR": 0.0, "StatArb": -0.5, "Trend": 0.0}
     alloc = allocate_cross_sleeve_capital(sharpes, 1000.0)
     assert alloc == {"MR": 1000.0 / 3, "StatArb": 1000.0 / 3, "Trend": 1000.0 / 3}
@@ -257,6 +270,7 @@ def test_allocate_cross_sleeve_capital_no_active():
 
 def test_allocate_cross_sleeve_capital_floor_and_ceiling():
     from services.alpha_sleeves import allocate_cross_sleeve_capital
+
     # MR capped (>50%), Trend floored (<10%), StatArb stays unconstrained
     sharpes = {"MR": 0.8, "StatArb": 0.1, "Trend": 0.05}
     alloc = allocate_cross_sleeve_capital(sharpes, 1000.0)
@@ -267,6 +281,7 @@ def test_allocate_cross_sleeve_capital_floor_and_ceiling():
 
 def test_allocate_cross_sleeve_capital_all_constrained():
     from services.alpha_sleeves import allocate_cross_sleeve_capital
+
     # Two sleeves, both would be >50% or <10% so they all hit constraints
     sharpes = {"A": 10.0, "B": 9.0}
     alloc = allocate_cross_sleeve_capital(sharpes, 1000.0)
@@ -282,6 +297,7 @@ def test_allocate_cross_sleeve_capital_all_constrained():
 
 def test_fit_isotonic_exception():
     from services.calibration import _fit_isotonic
+
     with patch("sklearn.isotonic.IsotonicRegression", side_effect=Exception("sklearn fail")):
         result = _fit_isotonic(list(range(25)), [0] * 25)
         assert result is None
@@ -290,6 +306,7 @@ def test_fit_isotonic_exception():
 def test_build_spy_regime_cache_bear():
     from services.calibration import _build_spy_regime_cache
     import numpy as np
+
     dates = pd.date_range("2024-01-01", periods=400, freq="B")
     # SMA200 forms on flat 120, then price drops to 80 → bear
     prices = np.concatenate([np.full(300, 120), np.full(100, 80)])
@@ -304,6 +321,7 @@ def test_build_spy_regime_cache_bear():
 def test_build_spy_regime_cache_neutral():
     from services.calibration import _build_spy_regime_cache
     import numpy as np
+
     dates = pd.date_range("2024-01-01", periods=400, freq="B")
     # Flat prices → ratio == 1.0 → neutral once SMA200 forms
     prices = np.full(400, 100.0)
@@ -317,6 +335,7 @@ def test_build_spy_regime_cache_neutral():
 
 def test_build_spy_regime_cache_multiindex():
     from services.calibration import _build_spy_regime_cache
+
     dates = pd.date_range("2025-06-01", periods=210, freq="B")
     prices = np.linspace(100, 110, 210)
     df = pd.DataFrame({"Close": prices}, index=dates)
@@ -347,14 +366,14 @@ async def test_run_calibration_no_signals():
 
 @pytest.mark.asyncio
 async def test_run_calibration_full_flow(tmp_path):
-    from services.calibration import run_calibration, _CONF_CEIL, _CONF_FLOOR
+    from services.calibration import run_calibration
 
     # Build mock signal rows as tuples matching the SELECT order:
     # action, confidence, outcome_14d, outcome_pct, created_at
     rows = [
-        ("BUY", 55.0, 2.0, None, datetime(2026, 5, 1, tzinfo=timezone.utc)),
-        ("SELL", 60.0, -1.5, None, datetime(2026, 5, 10, tzinfo=timezone.utc)),
-        ("BUY", 65.0, None, 1.0, datetime(2026, 5, 15, tzinfo=timezone.utc)),
+        _CalRow("BUY", 55.0, 2.0, None, datetime(2026, 5, 1, tzinfo=timezone.utc)),
+        _CalRow("SELL", 60.0, -1.5, None, datetime(2026, 5, 10, tzinfo=timezone.utc)),
+        _CalRow("BUY", 65.0, None, 1.0, datetime(2026, 5, 15, tzinfo=timezone.utc)),
     ]
 
     mock_db = AsyncMock()
@@ -368,6 +387,7 @@ async def test_run_calibration_full_flow(tmp_path):
 
     # Mock yfinance SPY download
     import numpy as np
+
     dates = pd.date_range("2026-01-01", periods=150, freq="B")
     prices = np.linspace(100, 110, 150)
     spy_df = pd.DataFrame({"Close": prices}, index=dates)
@@ -397,9 +417,7 @@ async def test_run_calibration_sell_logic_and_brier():
         action = "BUY" if i % 2 == 0 else "SELL"
         conf = 40.0 + i
         pct = 1.0 if action == "BUY" else -1.0
-        rows.append(
-            (action, conf, pct, None, base_date + timedelta(days=i))
-        )
+        rows.append(_CalRow(action, conf, pct, None, base_date + timedelta(days=i)))
 
     mock_db = AsyncMock()
     mock_res = MagicMock()
@@ -427,6 +445,7 @@ async def test_run_calibration_sell_logic_and_brier():
 @pytest.mark.asyncio
 async def test_archive_current_calibration_empty():
     from services.calibration import archive_current_calibration
+
     mock_db = AsyncMock()
     with patch("services.calibration.load_calibration", return_value={}):
         version = await archive_current_calibration(mock_db)
@@ -473,6 +492,7 @@ async def test_archive_current_calibration_new_version(tmp_path):
 @pytest.mark.asyncio
 async def test_restore_calibration_version_missing():
     from services.calibration import restore_calibration_version
+
     mock_db = AsyncMock()
     mock_scalar = MagicMock()
     mock_scalar.scalar_one_or_none.return_value = None
@@ -521,6 +541,7 @@ def _aiohttp_session(mock_resp):
 @pytest.fixture(autouse=True)
 def _clear_institutional_cache():
     from services.institutional import _CACHE
+
     _CACHE.clear()
     yield
     _CACHE.clear()
@@ -529,6 +550,7 @@ def _clear_institutional_cache():
 @pytest.mark.asyncio
 async def test_get_success():
     from services.institutional import _get
+
     mock_resp = MagicMock()
     mock_resp.status = 200
     mock_resp.json = AsyncMock(return_value={"foo": "bar"})
@@ -540,6 +562,7 @@ async def test_get_success():
 @pytest.mark.asyncio
 async def test_get_non_200():
     from services.institutional import _get
+
     mock_resp = MagicMock()
     mock_resp.status = 404
     session = _aiohttp_session(mock_resp)
@@ -550,6 +573,7 @@ async def test_get_non_200():
 @pytest.mark.asyncio
 async def test_get_exception():
     from services.institutional import _get
+
     session = MagicMock()
     session.get.side_effect = Exception("timeout")
     result = await _get(session, "http://example.com")
@@ -559,6 +583,7 @@ async def test_get_exception():
 @pytest.mark.asyncio
 async def test_fetch_latest_13f_holdings_cache_hit():
     from services.institutional import _fetch_latest_13f_holdings, _CACHE
+
     cik = "0009999999"
     _CACHE[f"13f_{cik}"] = {"ts": __import__("time").time(), "data": [{"ticker": "AAPL"}]}
     session = MagicMock()
@@ -569,8 +594,12 @@ async def test_fetch_latest_13f_holdings_cache_hit():
 @pytest.mark.asyncio
 async def test_fetch_latest_13f_holdings_no_filings():
     from services.institutional import _fetch_latest_13f_holdings
+
     session = MagicMock()
-    with patch("services.institutional._get", new=AsyncMock(return_value={"filings": {"recent": {"form": [], "filingDate": [], "accessionNumber": []}}})):
+    with patch(
+        "services.institutional._get",
+        new=AsyncMock(return_value={"filings": {"recent": {"form": [], "filingDate": [], "accessionNumber": []}}}),
+    ):
         result = await _fetch_latest_13f_holdings(session, "0009999998")
         assert result == []
 
@@ -595,11 +624,39 @@ async def test_fetch_latest_13f_holdings_actions_and_trends():
         return None
 
     # Build holdings for three quarters to test all actions/trends
-    q0 = [{"name": "Apple", "ticker": "AAPL", "cusip": "037833100", "value_k": 5000, "shares": 10000, "filing_date": "2026-05-10"}]
-    q1 = [{"name": "Apple", "ticker": "AAPL", "cusip": "037833100", "value_k": 4500, "shares": 8000, "filing_date": "2026-02-10"}]
-    q2 = [{"name": "Apple", "ticker": "AAPL", "cusip": "037833100", "value_k": 4000, "shares": 7000, "filing_date": "2025-11-10"}]
+    q0 = [
+        {
+            "name": "Apple",
+            "ticker": "AAPL",
+            "cusip": "037833100",
+            "value_k": 5000,
+            "shares": 10000,
+            "filing_date": "2026-05-10",
+        }
+    ]
+    q1 = [
+        {
+            "name": "Apple",
+            "ticker": "AAPL",
+            "cusip": "037833100",
+            "value_k": 4500,
+            "shares": 8000,
+            "filing_date": "2026-02-10",
+        }
+    ]
+    q2 = [
+        {
+            "name": "Apple",
+            "ticker": "AAPL",
+            "cusip": "037833100",
+            "value_k": 4000,
+            "shares": 7000,
+            "filing_date": "2025-11-10",
+        }
+    ]
 
     call_idx = 0
+
     async def mock_parse(session, url, filing_date):
         nonlocal call_idx
         holdings = [q0, q1, q2][call_idx]
@@ -636,11 +693,39 @@ async def test_fetch_latest_13f_holdings_decreased_trends():
         return None
 
     # Decreased this quarter, decreased last quarter → falling
-    q0 = [{"name": "A", "ticker": "AAPL", "cusip": "037833100", "value_k": 5000, "shares": 6000, "filing_date": "2026-05-10"}]
-    q1 = [{"name": "A", "ticker": "AAPL", "cusip": "037833100", "value_k": 4500, "shares": 8000, "filing_date": "2026-02-10"}]
-    q2 = [{"name": "A", "ticker": "AAPL", "cusip": "037833100", "value_k": 4000, "shares": 10000, "filing_date": "2025-11-10"}]
+    q0 = [
+        {
+            "name": "A",
+            "ticker": "AAPL",
+            "cusip": "037833100",
+            "value_k": 5000,
+            "shares": 6000,
+            "filing_date": "2026-05-10",
+        }
+    ]
+    q1 = [
+        {
+            "name": "A",
+            "ticker": "AAPL",
+            "cusip": "037833100",
+            "value_k": 4500,
+            "shares": 8000,
+            "filing_date": "2026-02-10",
+        }
+    ]
+    q2 = [
+        {
+            "name": "A",
+            "ticker": "AAPL",
+            "cusip": "037833100",
+            "value_k": 4000,
+            "shares": 10000,
+            "filing_date": "2025-11-10",
+        }
+    ]
 
     call_idx = 0
+
     async def mock_parse(session, url, filing_date):
         nonlocal call_idx
         holdings = [q0, q1, q2][call_idx]
@@ -676,10 +761,29 @@ async def test_fetch_latest_13f_holdings_unchanged():
             return {"directory": {"item": [{"name": "infotable.xml"}]}}
         return None
 
-    q0 = [{"name": "A", "ticker": "AAPL", "cusip": "037833100", "value_k": 5000, "shares": 10000, "filing_date": "2026-05-10"}]
-    q1 = [{"name": "A", "ticker": "AAPL", "cusip": "037833100", "value_k": 4500, "shares": 10000, "filing_date": "2026-02-10"}]
+    q0 = [
+        {
+            "name": "A",
+            "ticker": "AAPL",
+            "cusip": "037833100",
+            "value_k": 5000,
+            "shares": 10000,
+            "filing_date": "2026-05-10",
+        }
+    ]
+    q1 = [
+        {
+            "name": "A",
+            "ticker": "AAPL",
+            "cusip": "037833100",
+            "value_k": 4500,
+            "shares": 10000,
+            "filing_date": "2026-02-10",
+        }
+    ]
 
     call_idx = 0
+
     async def mock_parse(session, url, filing_date):
         nonlocal call_idx
         holdings = [q0, q1][call_idx]
@@ -714,10 +818,20 @@ async def test_fetch_latest_13f_holdings_new_position():
             return {"directory": {"item": [{"name": "infotable.xml"}]}}
         return None
 
-    q0 = [{"name": "A", "ticker": "AAPL", "cusip": "037833100", "value_k": 5000, "shares": 10000, "filing_date": "2026-05-10"}]
+    q0 = [
+        {
+            "name": "A",
+            "ticker": "AAPL",
+            "cusip": "037833100",
+            "value_k": 5000,
+            "shares": 10000,
+            "filing_date": "2026-05-10",
+        }
+    ]
     q1 = []  # no previous holding
 
     call_idx = 0
+
     async def mock_parse(session, url, filing_date):
         nonlocal call_idx
         holdings = [q0, q1][call_idx]
@@ -736,6 +850,7 @@ async def test_fetch_latest_13f_holdings_new_position():
 @pytest.mark.asyncio
 async def test_parse_infotable_xml_success():
     from services.institutional import _parse_infotable_xml
+
     xml = """<?xml version="1.0" encoding="UTF-8"?>
 <informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable">
   <infoTable>
@@ -759,6 +874,7 @@ async def test_parse_infotable_xml_success():
 @pytest.mark.asyncio
 async def test_parse_infotable_xml_non_200():
     from services.institutional import _parse_infotable_xml
+
     mock_resp = MagicMock()
     mock_resp.status = 404
     session = _aiohttp_session(mock_resp)
@@ -769,6 +885,7 @@ async def test_parse_infotable_xml_non_200():
 @pytest.mark.asyncio
 async def test_parse_infotable_xml_parse_error():
     from services.institutional import _parse_infotable_xml
+
     mock_resp = MagicMock()
     mock_resp.status = 200
     mock_resp.text = AsyncMock(return_value="<<<not xml")
@@ -825,8 +942,22 @@ async def test_get_institutional_signals_watchlist_filter():
 
     async def mock_fetch(session, cik):
         return [
-            {"ticker": "AAPL", "value_k": 5000, "shares": 10000, "action": "increased", "filing_date": "2026-05-10", "qoq_trend": "neutral"},
-            {"ticker": "TSLA", "value_k": 2000, "shares": 2000, "action": "increased", "filing_date": "2026-05-10", "qoq_trend": "neutral"},
+            {
+                "ticker": "AAPL",
+                "value_k": 5000,
+                "shares": 10000,
+                "action": "increased",
+                "filing_date": "2026-05-10",
+                "qoq_trend": "neutral",
+            },
+            {
+                "ticker": "TSLA",
+                "value_k": 2000,
+                "shares": 2000,
+                "action": "increased",
+                "filing_date": "2026-05-10",
+                "qoq_trend": "neutral",
+            },
         ]
 
     with patch("services.institutional._fetch_latest_13f_holdings", side_effect=mock_fetch):
@@ -841,13 +972,21 @@ async def test_get_institutional_signals_exception_in_fund_loop():
     from services.institutional import get_institutional_signals
 
     call_count = 0
+
     async def mock_fetch(session, cik):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             raise Exception("blow up")
         return [
-            {"ticker": "AAPL", "value_k": 5000, "shares": 10000, "action": "increased", "filing_date": "2026-05-10", "qoq_trend": "neutral"},
+            {
+                "ticker": "AAPL",
+                "value_k": 5000,
+                "shares": 10000,
+                "action": "increased",
+                "filing_date": "2026-05-10",
+                "qoq_trend": "neutral",
+            },
         ]
 
     with patch("services.institutional._fetch_latest_13f_holdings", side_effect=mock_fetch):
@@ -863,7 +1002,14 @@ async def test_get_institutional_signals_aggregation_multiple_funds():
 
     async def mock_fetch(session, cik):
         return [
-            {"ticker": "AAPL", "value_k": 5000, "shares": 10000, "action": "increased", "filing_date": "2026-05-10", "qoq_trend": "neutral"},
+            {
+                "ticker": "AAPL",
+                "value_k": 5000,
+                "shares": 10000,
+                "action": "increased",
+                "filing_date": "2026-05-10",
+                "qoq_trend": "neutral",
+            },
         ]
 
     with patch("services.institutional._fetch_latest_13f_holdings", side_effect=mock_fetch):
