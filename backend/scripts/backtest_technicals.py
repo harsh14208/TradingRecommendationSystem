@@ -3741,11 +3741,15 @@ def fetch_ff_str(start: str, end: str) -> dict[pd.Timestamp, float]:
         r = _req.get(url, timeout=30)
         r.raise_for_status()
         with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-            csv_name = [n for n in z.namelist() if n.endswith(".CSV")][0]
+            csv_name = [n for n in z.namelist() if n.lower().endswith(".csv")][0]
             with z.open(csv_name) as f:
-                df = pd.read_csv(f, skiprows=13)
+                df = pd.read_csv(f, skiprows=13, engine="python")
         df.columns = [c.strip() for c in df.columns]
-        df["date"] = pd.to_datetime(df.iloc[:, 0].astype(str), format="%Y%m%d")
+        # Robust date parse: drop footer rows that don't look like YYYYMMDD
+        _date_col = df.columns[0]
+        _valid = df[_date_col].astype(str).str.match(r"^\d{8}$")
+        df = df[_valid].copy()
+        df["date"] = pd.to_datetime(df[_date_col].astype(str), format="%Y%m%d")
         df = df[(df["date"] >= start) & (df["date"] <= end)]
         result = {row["date"]: float(row["ST_Rev"]) for _, row in df.iterrows()}
         with open(cache_path, "w") as f:
