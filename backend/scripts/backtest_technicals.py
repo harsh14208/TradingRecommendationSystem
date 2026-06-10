@@ -748,16 +748,16 @@ TICKER_TO_SECTOR: dict[str, str] = {
 # are tracked by the scanner but the ETF signal itself would be blocked.
 # §94: per-sector hold-days (matches live _SECTOR_MR_CONFIG in helpers.py)
 _SECTOR_HOLD_DAYS: dict[str, int] = {
-    "XLK": 5,   # Tech — fastest recovery
-    "XLF": 7,   # Financials
+    "XLK": 5,  # Tech — fastest recovery
+    "XLF": 7,  # Financials
     "XLY": 10,  # Consumer Disc
     "XLP": 10,  # Consumer Staples
-    "XLE": 5,   # Energy
+    "XLE": 5,  # Energy
     "XLC": 10,  # Telecom/Comm
-    "XLB": 5,   # Materials
+    "XLB": 5,  # Materials
     "XLU": 10,  # Utilities (blocked)
-    "XLV": 7,   # Healthcare (blocked)
-    "XLI": 7,   # Industrials (blocked)
+    "XLV": 7,  # Healthcare (blocked)
+    "XLI": 7,  # Industrials (blocked)
     "XLRE": 5,  # Real Estate (blocked)
 }
 
@@ -2101,8 +2101,17 @@ def simulate_alt_exit(df, fill_bar, hold_days, entry, atr, action, stop0, target
 
 
 _SECTOR_ORD_META: dict[str, int] = {
-    "XLK": 0, "XLY": 1, "XLC": 2, "XLF": 3, "XLB": 4,
-    "XLI": 5, "XLV": 6, "XLE": 7, "XLP": 8, "XLRE": 9, "XLU": 10,
+    "XLK": 0,
+    "XLY": 1,
+    "XLC": 2,
+    "XLF": 3,
+    "XLB": 4,
+    "XLI": 5,
+    "XLV": 6,
+    "XLE": 7,
+    "XLP": 8,
+    "XLRE": 9,
+    "XLU": 10,
 }
 
 
@@ -2131,8 +2140,20 @@ def _compute_entry_prob(row, atr, entry_price, vix_today, date, ticker, entry_mo
             float(date.month),
         ]
         _names = [
-            "bb_pct_b", "ibs", "vwap_pct", "rsi", "adx", "rvol", "atr_pct",
-            "price_zscore", "ou_halflife", "hurst", "vix", "sector_ord", "dow", "month",
+            "bb_pct_b",
+            "ibs",
+            "vwap_pct",
+            "rsi",
+            "adx",
+            "rvol",
+            "atr_pct",
+            "price_zscore",
+            "ou_halflife",
+            "hurst",
+            "vix",
+            "sector_ord",
+            "dow",
+            "month",
         ]
         dm = xgb.DMatrix(np.array([feats], dtype=float), feature_names=_names)
         return float(entry_model.predict(dm)[0])
@@ -2213,6 +2234,7 @@ def simulate_ticker(
     vix3m_series: pd.Series | None = None,
     sector_momentum_map: dict | None = None,
     sector_etf_close: pd.Series | None = None,
+    ff_str: dict | None = None,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -3050,14 +3072,10 @@ def simulate_ticker(
                     else None
                 ),
                 "hmm_bull_prob": (
-                    round(float(hmm_cache.get(_date_key, {}).get("bull_prob", 0.5)), 4)
-                    if hmm_cache
-                    else 0.5
+                    round(float(hmm_cache.get(_date_key, {}).get("bull_prob", 0.5)), 4) if hmm_cache else 0.5
                 ),
                 "hmm_trans_risk": (
-                    round(float(hmm_cache.get(_date_key, {}).get("transition_risk", 0.1)), 4)
-                    if hmm_cache
-                    else 0.1
+                    round(float(hmm_cache.get(_date_key, {}).get("transition_risk", 0.1)), 4) if hmm_cache else 0.1
                 ),
                 "vix_term_ratio": (
                     round(float(vix_today) / float(vix3m_series.get(_date_key, vix_today)), 4)
@@ -3069,11 +3087,8 @@ def simulate_ticker(
                     if sector_momentum_map
                     else None
                 ),
-                "vix_9d_ratio": (
-                    _compute_vix_9d_ratio(vix, _date_key)
-                    if vix
-                    else None
-                ),
+                "vix_9d_ratio": (_compute_vix_9d_ratio(vix, _date_key) if vix else None),
+                "ff_str": (round(float(ff_str.get(_date_key)), 4) if ff_str else None),
             }
         )
 
@@ -3678,6 +3693,45 @@ def fetch_stlfsi4(start: str, end: str, api_key: str) -> dict[pd.Timestamp, floa
     Values: negative = below-average stress; > 1.0 = elevated; > 1.5 = crisis.
     """
     return fetch_fred_series("STLFSI4", start, end, api_key)
+
+
+def fetch_ff_str(start: str, end: str) -> dict[pd.Timestamp, float]:
+    """
+    Fama-French Short-Term Reversal factor (daily) from Ken French Data Library.
+    Returns {date: ST_Rev_return_pct} for the requested range.
+    Cached to disk to avoid repeated downloads.
+    """
+    import io
+    import zipfile
+
+    cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_ff"))
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"ff_str_{start}_{end}.json")
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            raw = json.load(f)
+        return {pd.Timestamp(k): float(v) for k, v in raw.items()}
+
+    url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_ST_Reversal_Factor_daily_CSV.zip"
+    result: dict[pd.Timestamp, float] = {}
+    try:
+        import requests as _req
+
+        r = _req.get(url, timeout=30)
+        r.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            csv_name = [n for n in z.namelist() if n.endswith(".CSV")][0]
+            with z.open(csv_name) as f:
+                df = pd.read_csv(f, skiprows=13)
+        df.columns = [c.strip() for c in df.columns]
+        df["date"] = pd.to_datetime(df.iloc[:, 0].astype(str), format="%Y%m%d")
+        df = df[(df["date"] >= start) & (df["date"] <= end)]
+        result = {row["date"]: float(row["ST_Rev"]) for _, row in df.iterrows()}
+        with open(cache_path, "w") as f:
+            json.dump({str(k): v for k, v in result.items()}, f)
+    except Exception as e:
+        print(f"[ff_str] fetch failed: {e}")
+    return result
 
 
 def fetch_fred_panel(start: str, end: str, api_key: str) -> dict[str, dict]:
@@ -4927,7 +4981,9 @@ def main():
     _entry_model = None
     if xgb is not None:
         try:
-            _entry_model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "backtest_ml_model.json")
+            _entry_model_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "backtest_ml_model.json"
+            )
             if os.path.exists(_entry_model_path):
                 _entry_model = xgb.Booster()
                 _entry_model.load_model(_entry_model_path)
@@ -4953,8 +5009,12 @@ def main():
             _tnx_s = pd.Series(dtype=float)
             _irx_s = pd.Series(dtype=float)
             try:
-                _tnx_df = cached_yf_download("^TNX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
-                _irx_df = cached_yf_download("^IRX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
+                _tnx_df = cached_yf_download(
+                    "^TNX", start=START, end=END, interval="1d", auto_adjust=False, progress=False
+                )
+                _irx_df = cached_yf_download(
+                    "^IRX", start=START, end=END, interval="1d", auto_adjust=False, progress=False
+                )
                 if "Close" in _tnx_df.columns:
                     _tnx_s = _tnx_df["Close"]
                     _tnx_s.index = pd.to_datetime([str(i)[:10] for i in _tnx_s.index])
@@ -4992,8 +5052,14 @@ def main():
                 _Xn = (_Xv - _means) / _stds
 
                 _hmm_model = GaussianHMM(
-                    n_components=2, covariance_type="full", n_iter=25, tol=1e-4,
-                    random_state=42, init_params="mc", params="stmc", min_covar=1e-4,
+                    n_components=2,
+                    covariance_type="full",
+                    n_iter=25,
+                    tol=1e-4,
+                    random_state=42,
+                    init_params="mc",
+                    params="stmc",
+                    min_covar=1e-4,
                 )
                 _hmm_model.startprob_ = np.full(2, 0.5)
                 _tm = np.full((2, 2), 0.05)
@@ -5024,7 +5090,7 @@ def main():
     if _etf_close is not None and not _etf_close.empty:
         print("[meta] pre-computing sector momentum…", end=" ", flush=True)
         try:
-            for _etf_col in (_etf_close.columns if hasattr(_etf_close, "columns") else [_etf_close.name or "Close"]):
+            for _etf_col in _etf_close.columns if hasattr(_etf_close, "columns") else [_etf_close.name or "Close"]:
                 _s = _etf_close[_etf_col] if hasattr(_etf_close, "columns") else _etf_close
                 _mom = _s.pct_change(5).fillna(0)
                 _sector_momentum_map[_etf_col] = {
@@ -5033,6 +5099,15 @@ def main():
             print(f"ok ({len(_sector_momentum_map)} sectors)")
         except Exception as _sm_err:
             print(f"failed ({_sm_err})")
+
+    # §89: Fama-French Short-Term Reversal factor
+    _ff_str: dict = {}
+    print("[meta] fetching FF ST_Rev…", end=" ", flush=True)
+    try:
+        _ff_str = fetch_ff_str(START, END)
+        print(f"ok ({len(_ff_str)} daily obs)")
+    except Exception as _ff_err:
+        print(f"failed ({_ff_err})")
 
     # Generate trades now that cointegration and scores are final!
     all_trades = []
@@ -5068,6 +5143,7 @@ def main():
             hmm_cache=_hmm_cache,
             vix3m_series=_vix3m_series,
             sector_momentum_map=_sector_momentum_map,
+            ff_str=_ff_str,
         )
         if t is not None and not t.empty:
             all_trades.append(t)
@@ -6576,6 +6652,7 @@ def main():
                     stlfsi4,
                     mr_only=True,
                     fred_panel=fred_panel_data,
+                    ff_str=_ff_str,
                 )
                 if not t_fp.empty:
                     fp_list.append(t_fp)

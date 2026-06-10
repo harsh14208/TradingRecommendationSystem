@@ -1047,6 +1047,8 @@ def _assemble_signal(
                 vix_term_ratio=macro.get("vix_term_ratio"),
                 sector_momentum=(sector_rs or {}).get("sector_5d_ret"),
                 vix_9d_ratio=macro.get("vix_9d_ratio"),
+                # §89: FF ST_Rev — fetched daily in backtest; live cache TBD
+                ff_str=None,
             )
 
             if _live_prob is not None or _entry_prob is not None or _challenger_prob is not None:

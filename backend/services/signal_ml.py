@@ -1326,6 +1326,7 @@ _META_FEATURE_NAMES = [
     "vix_term_ratio",  # VIX / VIX3M ratio
     "sector_momentum",  # 5-day sector ETF return
     "vix_9d_ratio",  # VIX9D / VIX ratio
+    "ff_str",  # Fama-French Short-Term Reversal factor
 ]
 
 
@@ -1340,8 +1341,9 @@ def _extract_meta_features(
     vix_term_ratio: float | None = None,
     sector_momentum: float | None = None,
     vix_9d_ratio: float | None = None,
+    ff_str: float | None = None,
 ) -> list[float]:
-    """Build the 14-feature meta-label vector."""
+    """Build the 15-feature meta-label vector."""
 
     def _f(key: str) -> float:
         v = tech.get(key)
@@ -1374,6 +1376,10 @@ def _extract_meta_features(
     if vix_9d is None:
         vix_9d = float("nan")
 
+    _ff_str = ff_str if ff_str is not None else tech.get("ff_str")
+    if _ff_str is None:
+        _ff_str = float("nan")
+
     return [
         float(entry_prob) if entry_prob is not None else float("nan"),
         _f("ou_halflife"),
@@ -1389,6 +1395,7 @@ def _extract_meta_features(
         float(vix_tr),
         float(sec_mom),
         float(vix_9d),
+        float(_ff_str),
     ]
 
 
@@ -1442,6 +1449,7 @@ def predict_meta_prob(
     vix_term_ratio: float | None = None,
     sector_momentum: float | None = None,
     vix_9d_ratio: float | None = None,
+    ff_str: float | None = None,
 ) -> float | None:
     """
     Predict P(primary model is correct | context) using the meta-label model.
@@ -1470,6 +1478,7 @@ def predict_meta_prob(
             vix_term_ratio=vix_term_ratio,
             sector_momentum=sector_momentum,
             vix_9d_ratio=vix_9d_ratio,
+            ff_str=ff_str,
         )
         _check_feature_drift(feats, label="meta")
         dm = xgb.DMatrix(np.array([feats], dtype=float), feature_names=_META_FEATURE_NAMES)

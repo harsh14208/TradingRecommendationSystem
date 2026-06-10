@@ -256,7 +256,7 @@ def _to_float(v, default: float = float("nan")) -> float:
 
 def extract_meta_features(trades: pd.DataFrame) -> np.ndarray:
     """
-    Build the 14-feature meta-label matrix from backtest trade columns.
+    Build the 15-feature meta-label matrix from backtest trade columns.
     Uses NaN for missing fields — XGBoost handles NaN natively.
     """
     rows = []
@@ -286,6 +286,7 @@ def extract_meta_features(trades: pd.DataFrame) -> np.ndarray:
             _to_float(r.get("vix_term_ratio")),
             _to_float(r.get("sector_momentum") or r.get("sector_momentum_5d")),
             _to_float(r.get("vix_9d_ratio")),
+            _to_float(r.get("ff_str")),
         ]
         rows.append(row)
 
