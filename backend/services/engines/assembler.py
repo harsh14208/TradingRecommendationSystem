@@ -1008,7 +1008,9 @@ def _assemble_signal(
             )
 
             _live_model = _get_live_model()
-            _sector_etf_ml = (sector_rs or {}).get("sector_etf")
+            # §93a: decouple static sector lookup from RS fetch — sector-specific
+            # entry models were under-applied when RS data failed (81% of signals).
+            _sector_etf_ml = (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper())
 
             _sig_dict_ml = {
                 "raw_score": score,

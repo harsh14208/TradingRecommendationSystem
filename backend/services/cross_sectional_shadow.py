@@ -32,6 +32,20 @@ _FEAT_FILE = os.path.join(_DATA, "cross_sectional_features.json")
 _MIN_NAMES = 10  # don't rank a thin cross-section (matches the backtest's MIN_NAMES_PER_DAY intent)
 _Z_CLIP = 3.0
 
+# §92: Pre-specified promotion criteria — locked BEFORE peeking at live shadow data.
+# These criteria must be met before the bottom-decile sizing haircut is activated.
+# Changing these criteria after viewing live data invalidates the forward test.
+SHADOW_PROMOTION_CRITERIA = {
+    "min_resolved_signals": 150,  # signals carrying crossSectionalShadowPct that have resolved
+    "bottom_decile_wr_delta_pp": 3.0,  # bottom-decile live WR ≥3pp WORSE than rest
+    "monotonic_direction": "top_gt_bottom",  # top decile WR ≥ bottom decile WR (directional)
+    "sizing_haircut": 0.75,  # bottom-decile positionSizeScale multiplier when activated
+    "decile_threshold": 10.0,  # percentile ≤ this qualifies as bottom decile
+}
+
+# Master switch — NEVER flip to True until check_promotion_criteria() returns True.
+_SHADOW_SIZING_ACTIVE: bool = False
+
 _cache: dict = {"model": None, "feature_cols": None, "loaded": False, "ok": False}
 
 
@@ -123,3 +137,82 @@ def score_batch(histories: dict[str, pd.DataFrame]) -> dict[str, float]:
 
     pct = pd.Series(preds, index=z.index).rank(pct=True) * 100.0
     return {t: round(float(p), 1) for t, p in pct.items()}
+
+
+def check_promotion_criteria(
+    resolved_shadow_signals: list[dict],
+) -> tuple[bool, dict]:
+    """
+    Evaluate whether the pre-specified §92 promotion criteria are met.
+
+    Args:
+        resolved_shadow_signals: list of dicts with keys:
+            - crossSectionalShadowPct (float)
+            - outcome_14d (float | None): net return %, or None if unresolved
+
+    Returns:
+        (activated: bool, diagnostics: dict)
+    """
+    crit = SHADOW_PROMOTION_CRITERIA
+    diag: dict = {"n_total": len(resolved_shadow_signals), "n_resolved": 0, "bottom_wr": None, "rest_wr": None, "top_wr": None, "monotonic": False, "activated": False}
+
+    resolved = [s for s in resolved_shadow_signals if s.get("outcome_14d") is not None]
+    diag["n_resolved"] = len(resolved)
+    if len(resolved) < crit["min_resolved_signals"]:
+        return False, diag
+
+    bottom = [s for s in resolved if s.get("crossSectionalShadowPct", 50) <= crit["decile_threshold"]]
+    rest = [s for s in resolved if s.get("crossSectionalShadowPct", 50) > crit["decile_threshold"]]
+    top = [s for s in resolved if s.get("crossSectionalShadowPct", 50) >= (100 - crit["decile_threshold"])]
+
+    def _wr(signals: list[dict]) -> float | None:
+        if not signals:
+            return None
+        wins = sum(1 for s in signals if s["outcome_14d"] > 0)
+        return wins / len(signals) * 100.0
+
+    diag["bottom_wr"] = _wr(bottom)
+    diag["rest_wr"] = _wr(rest)
+    diag["top_wr"] = _wr(top)
+
+    if diag["bottom_wr"] is None or diag["rest_wr"] is None:
+        return False, diag
+
+    # Criterion 1: bottom-decile WR ≥3pp worse than the rest
+    c1 = (diag["rest_wr"] - diag["bottom_wr"]) >= crit["bottom_decile_wr_delta_pp"]
+    # Criterion 2: top-vs-bottom monotonic in at least direction
+    c2 = (diag["top_wr"] or 0.0) >= diag["bottom_wr"]
+    diag["monotonic"] = c2
+
+    activated = c1 and c2
+    diag["activated"] = activated
+    return activated, diag
+
+
+def apply_shadow_sizing(signals: list[dict]) -> None:
+    """
+    Apply the §92 bottom-decile sizing haircut when _SHADOW_SIZING_ACTIVE is True.
+    Mutates signals in-place (modifies positionSizeScale on bottom-decile names).
+    """
+    if not _SHADOW_SIZING_ACTIVE:
+        return
+    crit = SHADOW_PROMOTION_CRITERIA
+    for sig in signals:
+        pct = sig.get("crossSectionalShadowPct")
+        if pct is not None and pct <= crit["decile_threshold"]:
+            sig["positionSizeScale"] = round(
+                sig.get("positionSizeScale", 1.0) * crit["sizing_haircut"], 2
+            )
+            sig["rationale"] = list(sig.get("rationale", [])) + [
+                {
+                    "src": "Cross-Sectional Alpha (shadow)",
+                    "head": "XS shadow: bottom-decile sizing haircut (§92)",
+                    "body": (
+                        f"Cross-sectional model places this name in the bottom {crit['decile_threshold']:.0f}% "
+                        f"of predicted relative returns. Applying a {crit['sizing_haircut']:.0%} sizing "
+                        "haircut per the pre-specified §92 promotion criteria."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"xs_shadow_sizing=1 haircut={crit['sizing_haircut']}",
+                }
+            ]

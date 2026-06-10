@@ -5827,6 +5827,8 @@ async def scan_all(
                     }
                 ]
                 _scored += 1
+            # §92: apply shadow sizing ONLY when promotion criteria are pre-locked and met.
+            _css.apply_shadow_sizing(signals)
             if _scored:
                 log.info("[scan_all] cross-sectional SHADOW scored %d directional signals", _scored)
     except Exception as _xs_err:
