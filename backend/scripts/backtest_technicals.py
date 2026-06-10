@@ -2235,6 +2235,8 @@ def simulate_ticker(
     sector_momentum_map: dict | None = None,
     sector_etf_close: pd.Series | None = None,
     ff_str: dict | None = None,
+    si_rising_map: dict | None = None,
+    calm_sleeve: bool = False,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -2283,9 +2285,17 @@ def simulate_ticker(
     _sector_etf_hold = TICKER_TO_SECTOR.get(ticker, "XLK")
     _sector_hold_days = _SECTOR_HOLD_DAYS.get(_sector_etf_hold, _hold_days)
     _hold_days = _sector_hold_days
+    # §88: calm-regime sleeve uses shorter hold (5d) for faster turnaround in low-vol
+    if calm_sleeve:
+        _hold_days = 5
     _mr_rsi_ceil = mr_rsi_ceil_override if mr_rsi_ceil_override is not None else MR_RSI_CEIL
     _buy_thresh = buy_thresh_override if buy_thresh_override is not None else BUY_THRESH
-    _vix_min = vix_min_override
+    # §88: calm-regime sleeve overrides
+    if calm_sleeve:
+        _buy_thresh = 38
+        _vix_min = 0.0
+    else:
+        _vix_min = vix_min_override
     _require_mr_count = require_mr_count_override if require_mr_count_override is not None else 1
     _require_consec = require_consec_score_override if require_consec_score_override is not None else False
     _consec_score_sizing = consec_score_sizing
@@ -2689,6 +2699,9 @@ def simulate_ticker(
         if is_buy_signal and _vix_min is not None and vix_today is not None:
             if vix_today < _vix_min:
                 continue
+        # §88: calm-regime sleeve — ONLY generates trades when VIX < 20
+        if calm_sleeve and is_buy_signal and vix_today is not None and vix_today >= 20:
+            continue
 
         # ── Gate 19: Cross-asset macro headwind (§55) ─────────────────────────
         # When TLT+UUP+XLE all signal macro breakdown simultaneously (3/3),
@@ -2981,6 +2994,14 @@ def simulate_ticker(
         if _consec_score_sizing and is_buy_signal:
             # §87: multiply base size by consec-score conviction tier
             _size_mult *= _consec_size_mult
+        # §91: rising short-interest sizing tilt (squeeze-fuel thesis)
+        if si_rising_map and is_buy_signal:
+            _si_flag = si_rising_map.get(ticker, {}).get(_date_key)
+            if _si_flag is True:
+                _size_mult *= 1.15
+        # §88: calm-regime sleeve — 0.5× risk budget on relaxed low-VIX entries
+        if calm_sleeve and is_buy_signal:
+            _size_mult *= 0.5
 
         _date_key = pd.Timestamp(str(date)[:10])
         _near_52wk_low_flag = (
@@ -5109,6 +5130,23 @@ def main():
     except Exception as _ff_err:
         print(f"failed ({_ff_err})")
 
+    # §91: Short-interest rising flag (as-of join from bi-weekly FINRA data)
+    _si_rising_map: dict[str, dict] = {}
+    _si_rising_sizing_flag = "--si-rising-sizing" in sys.argv
+    _si_cache_path = os.path.join(os.path.abspath(os.path.join(_HERE, "..", "data", "cache_si")), "si_panel.json")
+    if _si_rising_sizing_flag and os.path.exists(_si_cache_path):
+        print("[meta] loading short-interest panel…", end=" ", flush=True)
+        try:
+            with open(_si_cache_path) as f:
+                _si_raw = json.load(f)
+            # Flatten to {ticker: {pd.Timestamp: rising_bool}}
+            for _t, _dates in _si_raw.items():
+                _si_rising_map[_t] = {pd.Timestamp(d): v["rising"] for d, v in _dates.items() if v.get("rising") is not None}
+            print(f"ok ({len(_si_rising_map)} tickers)")
+        except Exception as _si_err:
+            print(f"failed ({_si_err})")
+            _si_rising_map = {}
+
     # Generate trades now that cointegration and scores are final!
     all_trades = []
     for ticker, df in all_dfs.items():
@@ -5144,9 +5182,43 @@ def main():
             vix3m_series=_vix3m_series,
             sector_momentum_map=_sector_momentum_map,
             ff_str=_ff_str,
+            si_rising_map=_si_rising_map,
         )
         if t is not None and not t.empty:
             all_trades.append(t)
+
+    # §88: Calm-regime sleeve — add low-VIX trades with relaxed config
+    _calm_sleeve_flag = "--calm-sleeve" in sys.argv
+    if _calm_sleeve_flag and all_dfs:
+        print("\n## §88. Calm-Regime Sleeve (VIX<20, thresh=38, hold=5d, 0.5× size)\n")
+        _calm_list = []
+        for ticker, df in all_dfs.items():
+            _ct = simulate_ticker(
+                ticker, df, vix, spy_trend, stlfsi4,
+                mr_only=BACKTEST_MR_DEFAULT,
+                calm_sleeve=True,
+                earnings_dates=all_earnings_dates.get(ticker),
+                beta_hedge=_beta_hedge_flag,
+                spy_prices=spy_prices,
+                entry_model=_entry_model,
+                hmm_cache=_hmm_cache,
+                vix3m_series=_vix3m_series,
+                sector_momentum_map=_sector_momentum_map,
+                ff_str=_ff_str,
+                si_rising_map=_si_rising_map,
+            )
+            if _ct is not None and not _ct.empty:
+                _calm_list.append(_ct)
+        if _calm_list:
+            _calm_trades = pd.concat(_calm_list, ignore_index=True)
+            _cs = stats(_calm_trades["net_pct"].tolist())
+            print(
+                f"> Calm sleeve: N={_cs['n']}  WR={_cs['wr']:.1f}%  "
+                f"Avg={_cs['avg']:+.2f}%  Sharpe={_cs['sharpe'] if _cs['sharpe'] is not None else '—'}\n"
+            )
+            all_trades.extend(_calm_list)
+        else:
+            print("[no calm-sleeve trades generated]\n")
 
     if not all_trades:
         print("\n[error] No trades generated.")
@@ -6653,6 +6725,7 @@ def main():
                     mr_only=True,
                     fred_panel=fred_panel_data,
                     ff_str=_ff_str,
+                    si_rising_map=_si_rising_map,
                 )
                 if not t_fp.empty:
                     fp_list.append(t_fp)
