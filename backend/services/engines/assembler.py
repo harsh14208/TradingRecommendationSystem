@@ -1049,15 +1049,6 @@ def _assemble_signal(
                 vix_9d_ratio=macro.get("vix_9d_ratio"),
             )
 
-            # CRITICAL — Meta-model train/serve skew (QUANT_ENGINE_REVIEW §1.3):
-            # The meta-model was trained on backtest_trades_is.csv which lacks
-            # entry_prob, ou_halflife, hurst, vix (column is vix_entry), rvol,
-            # vix_term_ratio, sector_momentum, vix_9d_ratio, and HMM columns.
-            # At training time 8 of 14 features are NaN / constants; at serve time
-            # all are real values.  Disabling meta_prob until the model is retrained
-            # on a trades file that actually carries its features.
-            _meta_prob = None
-
             if _live_prob is not None or _entry_prob is not None or _challenger_prob is not None:
                 confidence = _ml_blend(confidence, _entry_prob, _live_prob, _challenger_prob, _meta_prob)
                 if _challenger_prob is not None:

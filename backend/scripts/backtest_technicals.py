@@ -58,6 +58,20 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+# Meta-label feature generation (QUANT_ENGINE_REVIEW §1.3)
+try:
+    import xgboost as xgb
+    from services.signal_ml import predict_entry_prob, get_entry_model
+except Exception:
+    xgb = None  # type: ignore[assignment]
+    predict_entry_prob = None  # type: ignore[assignment]
+    get_entry_model = None  # type: ignore[assignment]
+
+try:
+    from hmmlearn.hmm import GaussianHMM
+except Exception:
+    GaussianHMM = None  # type: ignore[assignment,misc]
+
 
 def _log_experiment(
     experiment_type: str,
@@ -72,7 +86,9 @@ def _log_experiment(
 
         git_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout.strip()
     except Exception:
         git_sha = None
@@ -2066,6 +2082,66 @@ def simulate_alt_exit(df, fill_bar, hold_days, entry, atr, action, stop0, target
     return round(gross - friction, 3)
 
 
+# ── Meta-label helpers (QUANT_ENGINE_REVIEW §1.3) ───────────────────────────
+
+
+_SECTOR_ORD_META: dict[str, int] = {
+    "XLK": 0, "XLY": 1, "XLC": 2, "XLF": 3, "XLB": 4,
+    "XLI": 5, "XLV": 6, "XLE": 7, "XLP": 8, "XLRE": 9, "XLU": 10,
+}
+
+
+def _compute_entry_prob(row, atr, entry_price, vix_today, date, ticker, entry_model):
+    """Run the entry XGBoost model on a historical signal."""
+    if entry_model is None or xgb is None:
+        return None
+    try:
+        _atr_pct = (float(atr) / float(entry_price) * 100.0) if entry_price and entry_price > 0 else float("nan")
+        _sector = TICKER_TO_SECTOR.get(ticker, "XLK")
+        _sector_ord = float(_SECTOR_ORD_META.get(_sector.upper(), -1))
+        feats = [
+            float(row.get("bb_pct_b")) if pd.notna(row.get("bb_pct_b")) else float("nan"),
+            float(row.get("ibs")) if pd.notna(row.get("ibs")) else float("nan"),
+            float(row.get("vwap_pct")) if pd.notna(row.get("vwap_pct")) else float("nan"),
+            float(row.get("rsi")) if pd.notna(row.get("rsi")) else float("nan"),
+            float(row.get("adx")) if pd.notna(row.get("adx")) else float("nan"),
+            float(row.get("rvol")) if pd.notna(row.get("rvol")) else float("nan"),
+            _atr_pct,
+            float(row.get("price_zscore")) if pd.notna(row.get("price_zscore")) else float("nan"),
+            float(row.get("ou_halflife")) if pd.notna(row.get("ou_halflife")) else float("nan"),
+            float(row.get("hurst")) if pd.notna(row.get("hurst")) else float("nan"),
+            float(vix_today) if vix_today is not None else float("nan"),
+            _sector_ord,
+            float(date.weekday()),
+            float(date.month),
+        ]
+        _names = [
+            "bb_pct_b", "ibs", "vwap_pct", "rsi", "adx", "rvol", "atr_pct",
+            "price_zscore", "ou_halflife", "hurst", "vix", "sector_ord", "dow", "month",
+        ]
+        dm = xgb.DMatrix(np.array([feats], dtype=float), feature_names=_names)
+        return float(entry_model.predict(dm)[0])
+    except Exception:
+        return None
+
+
+def _compute_vix_9d_ratio(vix_dict: dict, date_key: pd.Timestamp) -> float | None:
+    """VIX / 9-day rolling mean of VIX."""
+    if not vix_dict:
+        return None
+    try:
+        _dates = sorted(vix_dict.keys())
+        _idx = _dates.index(date_key)
+        _window = _dates[max(0, _idx - 8) : _idx + 1]
+        _vals = [vix_dict[d] for d in _window if vix_dict.get(d) is not None]
+        if not _vals:
+            return None
+        _mean = sum(_vals) / len(_vals)
+        return round(vix_dict[date_key] / _mean, 4) if _mean > 0 else None
+    except Exception:
+        return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Trade simulation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2114,6 +2190,12 @@ def simulate_ticker(
     mr_bb_ceil_override: float | None = None,
     mr_ibs_ceil_override: float | None = None,
     score_accel: bool = False,
+    # Meta-label feature passthrough (QUANT_ENGINE_REVIEW §1.3)
+    entry_model=None,
+    hmm_cache: dict | None = None,
+    vix3m_series: pd.Series | None = None,
+    sector_momentum_map: dict | None = None,
+    sector_etf_close: pd.Series | None = None,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -2662,7 +2744,9 @@ def simulate_ticker(
 
         # Anchor stop/target to actual fill price, not signal-bar close.
         # Using signal close misplaces stops by the overnight gap distance.
-        stop_price, target_price = atr_levels(entry_price, atr, action, adx_v, _effective_stop_mult, target_mult_override)
+        stop_price, target_price = atr_levels(
+            entry_price, atr, action, adx_v, _effective_stop_mult, target_mult_override
+        )
 
         # ── Scan next HOLD_DAYS bars for stop/target/time-loss exit ──────────
         exit_price = None
@@ -2911,6 +2995,52 @@ def simulate_ticker(
                 "change_pct_entry": round(float(row.get("change_pct", 0.0)), 3)
                 if pd.notna(row.get("change_pct"))
                 else None,
+                # ── Meta-label features (QUANT_ENGINE_REVIEW §1.3) ─────────────────
+                # Stored so backtest_trades_is.csv can train the meta-model without
+                # train/serve skew.  All 14 features must be real values — no NaN
+                # fallbacks — so the model learns true conditional relationships.
+                "entry_price": round(entry_price, 2),
+                "atr": round(float(atr), 4) if pd.notna(atr) else None,
+                "ou_halflife": round(float(row.get("ou_halflife")), 2) if pd.notna(row.get("ou_halflife")) else None,
+                "hurst": round(float(row.get("hurst")), 3) if pd.notna(row.get("hurst")) else None,
+                "rvol": round(float(row.get("rvol")), 3) if pd.notna(row.get("rvol")) else None,
+                "vix": round(float(vix_today), 2) if vix_today is not None else None,
+                "sector_etf": TICKER_TO_SECTOR.get(ticker, "XLK"),
+                "bb_pct_b": round(float(row.get("bb_pct_b")), 4) if pd.notna(row.get("bb_pct_b")) else None,
+                "vwap_pct": round(float(row.get("vwap_pct")), 4) if pd.notna(row.get("vwap_pct")) else None,
+                "price_zscore": round(float(row.get("price_zscore")), 4) if pd.notna(row.get("price_zscore")) else None,
+                "month": date.month,
+                # Computed / looked-up meta features
+                "entry_prob": (
+                    _compute_entry_prob(row, atr, entry_price, vix_today, date, ticker, entry_model)
+                    if entry_model is not None
+                    else None
+                ),
+                "hmm_bull_prob": (
+                    round(float(hmm_cache.get(_date_key, {}).get("bull_prob", 0.5)), 4)
+                    if hmm_cache
+                    else 0.5
+                ),
+                "hmm_trans_risk": (
+                    round(float(hmm_cache.get(_date_key, {}).get("transition_risk", 0.1)), 4)
+                    if hmm_cache
+                    else 0.1
+                ),
+                "vix_term_ratio": (
+                    round(float(vix_today) / float(vix3m_series.get(_date_key, vix_today)), 4)
+                    if vix_today is not None and vix3m_series is not None
+                    else None
+                ),
+                "sector_momentum": (
+                    round(float(sector_momentum_map.get(TICKER_TO_SECTOR.get(ticker, "XLK"), {}).get(_date_key)), 4)
+                    if sector_momentum_map
+                    else None
+                ),
+                "vix_9d_ratio": (
+                    _compute_vix_9d_ratio(vix, _date_key)
+                    if vix
+                    else None
+                ),
             }
         )
 
@@ -3441,11 +3571,7 @@ def fetch_earnings_dates_polygon(ticker: str, api_key: str, start: str) -> set:
                 # period_of_report_date ≈ quarter end (closest to earnings)
                 # filing_date = SEC submission (lags by days-to-weeks)
                 # start_date = fallback
-                fd = (
-                    result.get("period_of_report_date")
-                    or result.get("filing_date")
-                    or result.get("start_date")
-                )
+                fd = result.get("period_of_report_date") or result.get("filing_date") or result.get("start_date")
                 if fd:
                     dates.add(pd.Timestamp(str(fd)[:10]))
             # Polygon paginates via next_url
@@ -4749,6 +4875,131 @@ def main():
     except Exception as _coint_err:
         print(f"skipped ({_coint_err})")
 
+    # ── Meta-label feature pre-computation (QUANT_ENGINE_REVIEW §1.3) ──────────
+    # VIX3M for term-structure ratio
+    print("Fetching VIX3M…", end=" ", flush=True)
+    _vix3m_series: pd.Series | None = None
+    try:
+        _vix3m_df = cached_yf_download("^VIX3M", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
+        if isinstance(_vix3m_df.columns, pd.MultiIndex):
+            _vix3m_df.columns = _vix3m_df.columns.get_level_values(0)
+        _vix3m_raw = _vix3m_df["Close"] if "Close" in _vix3m_df.columns else pd.Series(dtype=float)
+        _vix3m_series = {pd.Timestamp(str(k)[:10]): float(v) for k, v in _vix3m_raw.items() if pd.notna(v)}
+        print(f"ok ({len(_vix3m_series)} bars)")
+    except Exception as _v3m_err:
+        print(f"failed ({_v3m_err})")
+
+    # Entry model for meta-label training
+    _entry_model = None
+    if xgb is not None:
+        try:
+            _entry_model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "backtest_ml_model.json")
+            if os.path.exists(_entry_model_path):
+                _entry_model = xgb.Booster()
+                _entry_model.load_model(_entry_model_path)
+                print(f"[meta] entry model loaded ({_entry_model_path})")
+        except Exception as _em_err:
+            print(f"[meta] entry model load failed: {_em_err}")
+
+    # HMM regime cache (daily bull_prob + transition_risk)
+    _hmm_cache: dict = {}
+    if GaussianHMM is not None and vix:
+        print("[meta] pre-computing HMM regimes…", end=" ", flush=True)
+        try:
+            _vix_dates = sorted(vix.keys())
+            _spy_hist = cached_yf_download("SPY", start=START, end=END, interval="1d", auto_adjust=True, progress=False)
+            if isinstance(_spy_hist.columns, pd.MultiIndex):
+                _spy_hist.columns = _spy_hist.columns.get_level_values(0)
+            _spy_close = _spy_hist["Close"] if "Close" in _spy_hist.columns else pd.Series(dtype=float)
+            _spy_close.index = pd.to_datetime([str(i)[:10] for i in _spy_close.index])
+            _spy_ret = _spy_close.pct_change(20).fillna(0)
+            _spy_rvol = _spy_close.pct_change().fillna(0).rolling(30).std().fillna(0) * np.sqrt(252)
+
+            # Try to fetch TNX/IRX for yield curve
+            _tnx_s = pd.Series(dtype=float)
+            _irx_s = pd.Series(dtype=float)
+            try:
+                _tnx_df = cached_yf_download("^TNX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
+                _irx_df = cached_yf_download("^IRX", start=START, end=END, interval="1d", auto_adjust=False, progress=False)
+                if "Close" in _tnx_df.columns:
+                    _tnx_s = _tnx_df["Close"]
+                    _tnx_s.index = pd.to_datetime([str(i)[:10] for i in _tnx_s.index])
+                if "Close" in _irx_df.columns:
+                    _irx_s = _irx_df["Close"]
+                    _irx_s.index = pd.to_datetime([str(i)[:10] for i in _irx_s.index])
+            except Exception:
+                pass
+
+            # Fit HMM on expanding windows with 21-day stride (monthly cadence).
+            # Forward-fill between refits so each date gets the MOST RECENT regime
+            # estimate that was available at that time — no lookahead bias.
+            _stride = 21
+            _last_entry = None
+            for _idx in range(0, len(_vix_dates), _stride):
+                _d = _vix_dates[_idx]
+                _window = _vix_dates[max(0, _idx - 251) : _idx + 1]
+                if len(_window) < 60:
+                    continue
+                _f_vix = np.array([vix.get(d, np.nan) for d in _window])
+                _f_spy = np.array([_spy_ret.get(d, 0.0) for d in _window])
+                _f_rvol = np.array([_spy_rvol.get(d, 0.0) for d in _window])
+                _f_curve = np.zeros(len(_window))
+                if not _tnx_s.empty and not _irx_s.empty:
+                    _f_curve = np.array([(_tnx_s.get(d, 0.0) - _irx_s.get(d, 0.0)) for d in _window])
+
+                _X = np.column_stack([_f_vix, _f_spy, _f_curve, _f_rvol])
+                _valid = ~np.isnan(_X).any(axis=1)
+                _Xv = _X[_valid]
+                if len(_Xv) < 60:
+                    continue
+                _means = _Xv.mean(axis=0)
+                _stds = _Xv.std(axis=0)
+                _stds[_stds < 1e-6] = 1.0
+                _Xn = (_Xv - _means) / _stds
+
+                _hmm_model = GaussianHMM(
+                    n_components=2, covariance_type="full", n_iter=25, tol=1e-4,
+                    random_state=42, init_params="mc", params="stmc", min_covar=1e-4,
+                )
+                _hmm_model.startprob_ = np.full(2, 0.5)
+                _tm = np.full((2, 2), 0.05)
+                np.fill_diagonal(_tm, 0.95)
+                _hmm_model.transmat_ = _tm
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    _hmm_model.fit(_Xn)
+                    _post = _hmm_model.predict_proba(_Xn)
+                    _bull_prob = float(_post[-1][0])
+                    _trans_risk = float(1.0 - np.trace(_hmm_model.transmat_) / 2.0)
+                    _entry = {"bull_prob": _bull_prob, "transition_risk": _trans_risk}
+                    # Fill all dates from this refit point until next stride
+                    for _fill_d in _vix_dates[_idx : min(len(_vix_dates), _idx + _stride)]:
+                        _hmm_cache[_fill_d] = _entry
+                    _last_entry = _entry
+            # Ensure any trailing dates (after last full stride) are filled
+            if _last_entry:
+                for _fill_d in _vix_dates[len(_vix_dates) - (len(_vix_dates) % _stride) :]:
+                    if _fill_d not in _hmm_cache:
+                        _hmm_cache[_fill_d] = _last_entry
+            print(f"ok ({len(_hmm_cache)} dates, refit every {_stride}d)")
+        except Exception as _hmm_err:
+            print(f"failed ({_hmm_err})")
+
+    # Sector momentum (5-day return per sector ETF)
+    _sector_momentum_map: dict = {}
+    if _etf_close is not None and not _etf_close.empty:
+        print("[meta] pre-computing sector momentum…", end=" ", flush=True)
+        try:
+            for _etf_col in (_etf_close.columns if hasattr(_etf_close, "columns") else [_etf_close.name or "Close"]):
+                _s = _etf_close[_etf_col] if hasattr(_etf_close, "columns") else _etf_close
+                _mom = _s.pct_change(5).fillna(0)
+                _sector_momentum_map[_etf_col] = {
+                    pd.Timestamp(str(k)[:10]): float(v) for k, v in _mom.items() if pd.notna(v)
+                }
+            print(f"ok ({len(_sector_momentum_map)} sectors)")
+        except Exception as _sm_err:
+            print(f"failed ({_sm_err})")
+
     # Generate trades now that cointegration and scores are final!
     all_trades = []
     for ticker, df in all_dfs.items():
@@ -4778,6 +5029,10 @@ def main():
             mr_ibs_ceil_override=_ibs_ceil_override,
             buy_thresh_override=_buy_thresh_override,
             score_accel=_score_accel_flag,
+            entry_model=_entry_model,
+            hmm_cache=_hmm_cache,
+            vix3m_series=_vix3m_series,
+            sector_momentum_map=_sector_momentum_map,
         )
         if t is not None and not t.empty:
             all_trades.append(t)
@@ -6526,8 +6781,10 @@ def main():
     # ── §QuantEngine: non-linear score-band sizing report ────────────────────
     if _score_band_sizing_flag and "size_mult" in trades.columns:
         print("\n## §QuantEngine: Non-linear Score-Band Sizing\n")
-        print("> Position size steps by backtest-validated Sharpe band.\n"
-              ">  <50→0.5×  50-55→0.75×  55-60→1.0×  60-65→1.15×  65-70→1.3×  70-75→1.45×  ≥75→1.55×\n")
+        print(
+            "> Position size steps by backtest-validated Sharpe band.\n"
+            ">  <50→0.5×  50-55→0.75×  55-60→1.0×  60-65→1.15×  65-70→1.3×  70-75→1.45×  ≥75→1.55×\n"
+        )
         _sm = trades["size_mult"].fillna(1.0).tolist()
         _rets = trades["net_pct"].tolist()
         sw = stats_weighted(_rets, _sm)

@@ -1,9 +1,9 @@
 {
-  "trained_at": "2026-06-08T15:33:19.181517",
-  "n_train": 221,
-  "pos_rate": 0.8869,
-  "cv_auc_mean": 0.4249,
-  "cv_auc_std": 0.0926,
+  "trained_at": "2026-06-10T08:29:29.618730",
+  "n_train": 217,
+  "pos_rate": 0.9032,
+  "cv_auc_mean": 0.4364,
+  "cv_auc_std": 0.0767,
   "feature_names": [
     "entry_prob",
     "ou_halflife",
@@ -21,22 +21,23 @@
     "vix_9d_ratio"
   ],
   "feature_importance": {
-    "entry_prob": 0.0,
-    "ou_halflife": 0.0,
-    "hurst": 0.0,
-    "vix": 0.0,
-    "atr_pct": 0.3612,
-    "rvol": 0.0,
-    "hmm_bull_prob": 0.0,
-    "hmm_trans_risk": 0.0,
-    "dte_bucket": 0.3547,
-    "sector_ord": 0.0,
-    "dow": 0.2841,
-    "vix_term_ratio": 0.0,
-    "sector_momentum": 0.0,
-    "vix_9d_ratio": 0.0
+    "entry_prob": 0.0701,
+    "ou_halflife": 0.0732,
+    "hurst": 0.0701,
+    "vix": 0.0555,
+    "atr_pct": 0.0648,
+    "rvol": 0.0497,
+    "hmm_bull_prob": 0.0825,
+    "hmm_trans_risk": 0.084,
+    "dte_bucket": 0.0632,
+    "sector_ord": 0.0587,
+    "dow": 0.0598,
+    "vix_term_ratio": 0.1069,
+    "sector_momentum": 0.0908,
+    "vix_9d_ratio": 0.0705
   },
   "upper_mult": 2.0,
   "lower_mult": 1.5,
-  "hold_days": 10
+  "hold_days": 10,
+  "barrier_vol_mode": "atr"
 }

@@ -1,7 +1,7 @@
 """Extended tests for services/signal_ml.py — edge cases, error handling, DB, model loading."""
+
 import json
 import math
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -168,7 +168,7 @@ def test_predict_challenger_prob_no_model():
 
 
 def test_predict_challenger_prob_schema_failure():
-    from services.signal_ml import predict_challenger_prob, _CHALLENGER_FEATURE_NAMES
+    from services.signal_ml import predict_challenger_prob
 
     mock_model = MagicMock()
     with patch("services.signal_ml.validate_feature_schema", return_value=False):
@@ -447,7 +447,11 @@ def test_get_meta_model_load_success():
     mock_path.name = "meta_label_model.json"
 
     orig_file = ml._META_MODEL_FILE
+    orig_feat_file = ml._META_FEATURE_FILE
     ml._META_MODEL_FILE = mock_path
+    ml._META_FEATURE_FILE = MagicMock()
+    ml._META_FEATURE_FILE.exists.return_value = True
+    ml._META_FEATURE_FILE.read_text.return_value = json.dumps({"cv_auc_mean": 0.65})
     try:
         with patch.dict(sys.modules, {"xgboost": xgb_mock}):
             result = get_meta_model()
@@ -455,6 +459,7 @@ def test_get_meta_model_load_success():
         mock_booster.load_model.assert_called_once()
     finally:
         ml._META_MODEL_FILE = orig_file
+        ml._META_FEATURE_FILE = orig_feat_file
         ml._meta_model = None
         ml._meta_model_mtime = 0.0
 
@@ -473,7 +478,11 @@ def test_get_meta_model_cache_hit():
     mock_path.name = "meta_label_model.json"
 
     orig_file = ml._META_MODEL_FILE
+    orig_feat_file = ml._META_FEATURE_FILE
     ml._META_MODEL_FILE = mock_path
+    ml._META_FEATURE_FILE = MagicMock()
+    ml._META_FEATURE_FILE.exists.return_value = True
+    ml._META_FEATURE_FILE.read_text.return_value = json.dumps({"cv_auc_mean": 0.65})
     try:
         with patch.dict(sys.modules, {"xgboost": xgb_mock}):
             r1 = get_meta_model()
@@ -482,6 +491,7 @@ def test_get_meta_model_cache_hit():
         assert mock_booster.load_model.call_count == 1
     finally:
         ml._META_MODEL_FILE = orig_file
+        ml._META_FEATURE_FILE = orig_feat_file
         ml._meta_model = None
         ml._meta_model_mtime = 0.0
 
@@ -511,7 +521,9 @@ def test_predict_meta_prob_no_model():
     from services.signal_ml import predict_meta_prob
 
     with patch("services.signal_ml.get_meta_model", return_value=None):
-        assert predict_meta_prob(_make_tech(), entry_prob=0.6, hmm_regime={}, vix=20.0, sector_etf="XLK", dte=30) is None
+        assert (
+            predict_meta_prob(_make_tech(), entry_prob=0.6, hmm_regime={}, vix=20.0, sector_etf="XLK", dte=30) is None
+        )
 
 
 def test_predict_meta_prob_success():
@@ -552,7 +564,18 @@ def test_extract_meta_features_full():
 
     tech = _make_tech()
     hmm = {"bull_prob": 0.7, "transition_risk": 0.2}
-    feats = _extract_meta_features(tech, entry_prob=0.6, hmm_regime=hmm, vix=20.0, sector_etf="XLK", dow=1, dte=30, vix_term_ratio=1.1, sector_momentum=0.02, vix_9d_ratio=0.95)
+    feats = _extract_meta_features(
+        tech,
+        entry_prob=0.6,
+        hmm_regime=hmm,
+        vix=20.0,
+        sector_etf="XLK",
+        dow=1,
+        dte=30,
+        vix_term_ratio=1.1,
+        sector_momentum=0.02,
+        vix_9d_ratio=0.95,
+    )
     assert len(feats) == 14
     assert feats[0] == 0.6  # entry_prob
     assert not math.isnan(feats[7])  # transition_risk
@@ -562,7 +585,9 @@ def test_extract_meta_features_defaults_from_tech():
     from services.signal_ml import _extract_meta_features
 
     tech = _make_tech(vix_term_ratio=1.2, sector_momentum=0.03, vix_9d_ratio=0.9)
-    feats = _extract_meta_features(tech, entry_prob=None, hmm_regime=None, vix=None, sector_etf=None, dow=None, dte=None)
+    feats = _extract_meta_features(
+        tech, entry_prob=None, hmm_regime=None, vix=None, sector_etf=None, dow=None, dte=None
+    )
     assert len(feats) == 14
     assert math.isnan(feats[0])  # entry_prob
     assert feats[11] == 1.2  # vix_term_ratio from tech
@@ -666,6 +691,7 @@ def test_load_model_import_error():
     with patch.dict(sys.modules, {"xgboost": None}):
         # Force ImportError by removing xgboost from sys.modules and blocking import
         import builtins
+
         real_import = builtins.__import__
 
         def fake_import(name, *args, **kwargs):
@@ -874,6 +900,7 @@ def test_train_model_xgboost_missing():
     from services.signal_ml import train_model
 
     import builtins
+
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -889,6 +916,7 @@ def test_train_model_sklearn_missing():
     from services.signal_ml import train_model
 
     import builtins
+
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -916,19 +944,21 @@ def test_train_model_insufficient_samples():
 
 
 def test_train_model_training_only():
-    from services.signal_ml import train_model, _MIN_SAMPLES, _MIN_LIVE_N_FOR_DEPLOYMENT
+    from services.signal_ml import train_model, _MIN_SAMPLES
     import numpy as np
 
     # Enough for training but below deployment threshold
     rows = []
     for i in range(_MIN_SAMPLES + 20):
-        rows.append({
-            "action": "BUY",
-            "outcome_pct": 1.0 if i % 2 == 0 else -1.0,
-            "created_at": f"2024-01-{i+1:02d}T00:00:00",
-            "sources": ["technicals"],
-            "rationale": [],
-        })
+        rows.append(
+            {
+                "action": "BUY",
+                "outcome_pct": 1.0 if i % 2 == 0 else -1.0,
+                "created_at": f"2024-01-{i + 1:02d}T00:00:00",
+                "sources": ["technicals"],
+                "rationale": [],
+            }
+        )
 
     mock_model = MagicMock()
     mock_booster = MagicMock()
@@ -952,6 +982,7 @@ def test_train_model_training_only():
     mock_path.exists.return_value = False
 
     import services.signal_ml as ml
+
     orig_model_file = ml._MODEL_FILE
     ml._MODEL_FILE = mock_path
     try:
@@ -972,13 +1003,15 @@ def test_train_model_deploys_first_run():
 
     rows = []
     for i in range(_MIN_LIVE_N_FOR_DEPLOYMENT + 100):
-        rows.append({
-            "action": "BUY" if i % 2 == 0 else "SELL",
-            "outcome_pct": 2.0 if i % 3 != 0 else -1.5,
-            "created_at": f"2024-01-{ (i % 30) + 1:02d}T00:00:00",
-            "sources": ["technicals"],
-            "rationale": [{"sentiment": "pos"}],
-        })
+        rows.append(
+            {
+                "action": "BUY" if i % 2 == 0 else "SELL",
+                "outcome_pct": 2.0 if i % 3 != 0 else -1.5,
+                "created_at": f"2024-01-{(i % 30) + 1:02d}T00:00:00",
+                "sources": ["technicals"],
+                "rationale": [{"sentiment": "pos"}],
+            }
+        )
 
     mock_model = MagicMock()
     mock_booster = MagicMock()
@@ -1004,6 +1037,7 @@ def test_train_model_deploys_first_run():
     mock_path.write_text.return_value = None
 
     import services.signal_ml as ml
+
     orig_model_file = ml._MODEL_FILE
     orig_feature_file = ml._FEATURE_FILE
     ml._MODEL_FILE = mock_path
@@ -1027,13 +1061,15 @@ def test_train_model_single_class_test_set():
 
     rows = []
     for i in range(_MIN_LIVE_N_FOR_DEPLOYMENT + 100):
-        rows.append({
-            "action": "BUY",
-            "outcome_pct": 1.0,
-            "created_at": f"2024-01-{ (i % 30) + 1:02d}T00:00:00",
-            "sources": ["technicals"],
-            "rationale": [],
-        })
+        rows.append(
+            {
+                "action": "BUY",
+                "outcome_pct": 1.0,
+                "created_at": f"2024-01-{(i % 30) + 1:02d}T00:00:00",
+                "sources": ["technicals"],
+                "rationale": [],
+            }
+        )
 
     mock_model = MagicMock()
     mock_booster = MagicMock()
@@ -1056,6 +1092,7 @@ def test_train_model_single_class_test_set():
     mock_path.exists.return_value = False
 
     import services.signal_ml as ml
+
     orig_model_file = ml._MODEL_FILE
     ml._MODEL_FILE = mock_path
     try:
@@ -1075,13 +1112,15 @@ def test_train_model_oos_too_small():
     # Create just enough rows that split yields <15 test samples
     rows = []
     for i in range(_MIN_SAMPLES + 10):
-        rows.append({
-            "action": "BUY",
-            "outcome_pct": 1.0 if i % 2 == 0 else -1.0,
-            "created_at": f"2024-01-{i+1:02d}T00:00:00",
-            "sources": ["technicals"],
-            "rationale": [],
-        })
+        rows.append(
+            {
+                "action": "BUY",
+                "outcome_pct": 1.0 if i % 2 == 0 else -1.0,
+                "created_at": f"2024-01-{i + 1:02d}T00:00:00",
+                "sources": ["technicals"],
+                "rationale": [],
+            }
+        )
 
     with patch("services.signal_ml._load_resolved_signals_sync", return_value=rows):
         assert train_model() is None
@@ -1094,6 +1133,7 @@ def test_train_challenger_model_xgboost_missing():
     from services.signal_ml import train_challenger_model
 
     import builtins
+
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -1109,6 +1149,7 @@ def test_train_challenger_model_sklearn_missing():
     from services.signal_ml import train_challenger_model
 
     import builtins
+
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -1141,14 +1182,16 @@ def test_train_challenger_model_single_class():
 
     rows = []
     for i in range(_MIN_SAMPLES + 50):
-        rows.append({
-            "action": "BUY",
-            "outcome_pct": 1.0,
-            "created_at": f"2024-01-{i+1:02d}T00:00:00",
-            "sources": ["technicals"],
-            "rationale": [],
-            "raw_score": 50,
-        })
+        rows.append(
+            {
+                "action": "BUY",
+                "outcome_pct": 1.0,
+                "created_at": f"2024-01-{i + 1:02d}T00:00:00",
+                "sources": ["technicals"],
+                "rationale": [],
+                "raw_score": 50,
+            }
+        )
 
     mock_model = MagicMock()
     mock_model.feature_importances_ = np.array([0.1] * 24)
@@ -1173,14 +1216,16 @@ def test_train_challenger_model_success_no_baseline():
 
     rows = []
     for i in range(_MIN_LIVE_N_FOR_DEPLOYMENT + 100):
-        rows.append({
-            "action": "BUY" if i % 2 == 0 else "SELL",
-            "outcome_pct": 2.0 if i % 3 != 0 else -1.5,
-            "created_at": f"2024-01-{ (i % 30) + 1:02d}T00:00:00",
-            "sources": ["technicals"],
-            "rationale": [{"sentiment": "pos"}],
-            "raw_score": 50 + (i % 20),
-        })
+        rows.append(
+            {
+                "action": "BUY" if i % 2 == 0 else "SELL",
+                "outcome_pct": 2.0 if i % 3 != 0 else -1.5,
+                "created_at": f"2024-01-{(i % 30) + 1:02d}T00:00:00",
+                "sources": ["technicals"],
+                "rationale": [{"sentiment": "pos"}],
+                "raw_score": 50 + (i % 20),
+            }
+        )
 
     mock_model = MagicMock()
     mock_booster = MagicMock()
@@ -1199,6 +1244,7 @@ def test_train_challenger_model_success_no_baseline():
     mock_path.write_text.return_value = None
 
     import services.signal_ml as ml
+
     orig_challenger_file = ml._CHALLENGER_MODEL_FILE
     orig_challenger_feature_file = ml._CHALLENGER_FEATURE_FILE
     ml._CHALLENGER_MODEL_FILE = mock_path
@@ -1223,14 +1269,16 @@ def test_train_challenger_model_rejected_removes_stale(tmp_path):
 
     rows = []
     for i in range(_MIN_LIVE_N_FOR_DEPLOYMENT + 100):
-        rows.append({
-            "action": "BUY" if i % 2 == 0 else "SELL",
-            "outcome_pct": 2.0 if i % 3 != 0 else -1.5,
-            "created_at": f"2024-01-{ (i % 30) + 1:02d}T00:00:00",
-            "sources": ["technicals"],
-            "rationale": [{"sentiment": "pos"}],
-            "raw_score": 50,
-        })
+        rows.append(
+            {
+                "action": "BUY" if i % 2 == 0 else "SELL",
+                "outcome_pct": 2.0 if i % 3 != 0 else -1.5,
+                "created_at": f"2024-01-{(i % 30) + 1:02d}T00:00:00",
+                "sources": ["technicals"],
+                "rationale": [{"sentiment": "pos"}],
+                "raw_score": 50,
+            }
+        )
 
     mock_model = MagicMock()
     mock_model.feature_importances_ = np.array([0.1] * 24)
@@ -1249,6 +1297,7 @@ def test_train_challenger_model_rejected_removes_stale(tmp_path):
     stale_file.write_text("{}")
 
     import services.signal_ml as ml
+
     orig_challenger_file = ml._CHALLENGER_MODEL_FILE
     orig_challenger_feature_file = ml._CHALLENGER_FEATURE_FILE
     ml._CHALLENGER_MODEL_FILE = stale_file
@@ -1468,5 +1517,7 @@ def test_entry_feature_names_length():
 def test_meta_feature_names_length():
     from services.signal_ml import _extract_meta_features, _META_FEATURE_NAMES
 
-    feats = _extract_meta_features(_make_tech(), entry_prob=0.6, hmm_regime={}, vix=20.0, sector_etf="XLK", dow=1, dte=30)
+    feats = _extract_meta_features(
+        _make_tech(), entry_prob=0.6, hmm_regime={}, vix=20.0, sector_etf="XLK", dow=1, dte=30
+    )
     assert len(feats) == len(_META_FEATURE_NAMES)

@@ -45,6 +45,11 @@ _CHALLENGER_FEATURE_FILE = _DATA_DIR / "signal_ml_challenger_features.json"
 # the primary signal is reliable, not just which direction to trade.
 _META_MODEL_FILE = _DATA_DIR / "meta_label_model.json"
 _META_FEATURE_FILE = _DATA_DIR / "meta_label_features.json"
+
+# Minimum CV-AUC for meta-model to be used live. Below this threshold the model
+# adds noise rather than signal (QUANT_ENGINE_REVIEW §1.3).
+_MIN_META_AUC = 0.52
+
 _MAX_CONFIDENCE = 72.0
 
 # Minimum resolved signals before we attempt training
@@ -124,7 +129,9 @@ def _check_feature_drift(features: list[float], label: str = "live") -> None:
         if not stats:
             # Only log once per process so we don't spam on every prediction
             if not getattr(_check_feature_drift, "_warned_missing_stats", False):
-                log.info("[signal_ml] feature_stats absent in model metadata — drift monitor inactive until next retrain")
+                log.info(
+                    "[signal_ml] feature_stats absent in model metadata — drift monitor inactive until next retrain"
+                )
                 _check_feature_drift._warned_missing_stats = True
             return
         for i, name in enumerate(_FEATURE_NAMES):
@@ -1317,8 +1324,8 @@ _META_FEATURE_NAMES = [
     "sector_ord",  # sector ETF ordinal
     "dow",  # day of week
     "vix_term_ratio",  # VIX / VIX3M ratio
-    "sector_momentum", # 5-day sector ETF return
-    "vix_9d_ratio",    # VIX9D / VIX ratio
+    "sector_momentum",  # 5-day sector ETF return
+    "vix_9d_ratio",  # VIX9D / VIX ratio
 ]
 
 
@@ -1386,7 +1393,12 @@ def _extract_meta_features(
 
 
 def get_meta_model():
-    """Load meta-label XGBoost model from disk, caching by mtime."""
+    """Load meta-label XGBoost model from disk, caching by mtime.
+
+    Returns None when the model file is missing OR when the stored CV-AUC is
+    below _MIN_META_AUC (default 0.52).  This prevents a weak meta-model from
+    degrading live confidence blends.
+    """
     global _meta_model, _meta_model_mtime
     try:
         import xgboost as xgb
@@ -1396,6 +1408,19 @@ def get_meta_model():
         mtime = _META_MODEL_FILE.stat().st_mtime
         if _meta_model is not None and mtime == _meta_model_mtime:
             return _meta_model
+
+        # Quality gate: check stored CV-AUC before loading into memory
+        if _META_FEATURE_FILE.exists():
+            _meta_meta = json.loads(_META_FEATURE_FILE.read_text())
+            _cv_auc = float(_meta_meta.get("cv_auc_mean") or 0.0)
+            if _cv_auc < _MIN_META_AUC:
+                log.warning(
+                    "[signal_ml] Meta-model CV-AUC %.3f < %.3f threshold — disabled until retrain improves it",
+                    _cv_auc,
+                    _MIN_META_AUC,
+                )
+                return None
+
         m = xgb.Booster()
         m.load_model(str(_META_MODEL_FILE))
         _meta_model = m
