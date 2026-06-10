@@ -42,6 +42,7 @@ def _require_basic(user: User):
 _QUOTES_CACHE_TTL_S = 5.0
 _quotes_cache: list[dict] | None = None
 _quotes_cache_at = 0.0
+_quotes_fetch_lock = asyncio.Lock()
 
 SECTOR_ETFS = ["XLK", "XLF", "XLY", "XLC", "XLV", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
 
@@ -52,10 +53,15 @@ async def ticker_tape():
     now = time.monotonic()
     if _quotes_cache is not None and (now - _quotes_cache_at) < _QUOTES_CACHE_TTL_S:
         return _quotes_cache
-    settings = get_settings()
-    _quotes_cache = await get_quotes(settings.tickers)
-    _quotes_cache_at = now
-    return _quotes_cache
+    async with _quotes_fetch_lock:
+        # Double-check after acquiring lock
+        now = time.monotonic()
+        if _quotes_cache is not None and (now - _quotes_cache_at) < _QUOTES_CACHE_TTL_S:
+            return _quotes_cache
+        settings = get_settings()
+        _quotes_cache = await get_quotes(settings.tickers)
+        _quotes_cache_at = time.monotonic()
+        return _quotes_cache
 
 
 @router.get("/chart/{ticker}")
