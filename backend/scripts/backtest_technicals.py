@@ -746,6 +746,21 @@ TICKER_TO_SECTOR: dict[str, str] = {
 # XLF individual stocks (JPM/WFC/etc.) are NOT blocked — only XLF ETF itself.
 # We include XLF here for the §10 "sector-neutral" view since sectorEtf=XLF stocks
 # are tracked by the scanner but the ETF signal itself would be blocked.
+# §94: per-sector hold-days (matches live _SECTOR_MR_CONFIG in helpers.py)
+_SECTOR_HOLD_DAYS: dict[str, int] = {
+    "XLK": 5,   # Tech — fastest recovery
+    "XLF": 7,   # Financials
+    "XLY": 10,  # Consumer Disc
+    "XLP": 10,  # Consumer Staples
+    "XLE": 5,   # Energy
+    "XLC": 10,  # Telecom/Comm
+    "XLB": 5,   # Materials
+    "XLU": 10,  # Utilities (blocked)
+    "XLV": 7,   # Healthcare (blocked)
+    "XLI": 7,   # Industrials (blocked)
+    "XLRE": 5,  # Real Estate (blocked)
+}
+
 _BLOCKED_SECTORS = {"XLP", "XLU", "XLRE"}
 
 START = "2003-01-01"  # extended from 2006 — captures Pre-GFC Bull fully (was only 2006-07)
@@ -2242,6 +2257,10 @@ def simulate_ticker(
     trades = []
     in_trade_until = pd.Timestamp("2000-01-01")
     _hold_days = hold_days_override if hold_days_override is not None else HOLD_DAYS
+    # §94: per-sector hold-days parity with live engine
+    _sector_etf_hold = TICKER_TO_SECTOR.get(ticker, "XLK")
+    _sector_hold_days = _SECTOR_HOLD_DAYS.get(_sector_etf_hold, _hold_days)
+    _hold_days = _sector_hold_days
     _mr_rsi_ceil = mr_rsi_ceil_override if mr_rsi_ceil_override is not None else MR_RSI_CEIL
     _buy_thresh = buy_thresh_override if buy_thresh_override is not None else BUY_THRESH
     _vix_min = vix_min_override
