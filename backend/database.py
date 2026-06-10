@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 from sqlalchemy import event, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -97,6 +97,30 @@ def _bool_default(false_value: str = "FALSE") -> str:
     return f"BOOLEAN DEFAULT {false_value.upper()}" if _IS_POSTGRES else f"INTEGER DEFAULT 0"
 
 
+async def _pg_column_exists(conn, table: str, column: str) -> bool:
+    """Check whether a column already exists on a PostgreSQL table."""
+    result = await conn.execute(
+        text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = :table AND column_name = :column"
+        ),
+        {"table": table, "column": column},
+    )
+    return result.scalar() is not None
+
+
+async def _pg_index_exists(conn, table: str, index: str) -> bool:
+    """Check whether an index already exists on a PostgreSQL table."""
+    result = await conn.execute(
+        text(
+            "SELECT 1 FROM pg_indexes "
+            "WHERE schemaname = 'public' AND tablename = :table AND indexname = :index"
+        ),
+        {"table": table, "index": index},
+    )
+    return result.scalar() is not None
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -119,30 +143,42 @@ async def init_db():
         # proper Alembic migration with a downgrade() to be safely reversible.
         dt = _dt_type()
         bd = _bool_default
-        _migrations: list[tuple[str, str]] = [
+        _migrations: list[tuple[str, str, str | None]] = [
+            # (table_or_kind, sql, object_name_for_idempotency_check)
             # users table
-            ("users", "ALTER TABLE users ADD COLUMN min_confidence_override REAL"),
-            ("users", f"ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL"),
-            ("users", f"ALTER TABLE users ADD COLUMN referral_rewarded {bd('FALSE')}"),
-            ("users", "ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20)"),
-            ("users", "ALTER TABLE users ADD COLUMN oauth_sub VARCHAR(255)"),
-            ("users", "ALTER TABLE users ADD COLUMN discord_webhook_url VARCHAR(500)"),
-            ("users", "ALTER TABLE users ADD COLUMN webhook_url VARCHAR(500)"),
+            ("users", "ALTER TABLE users ADD COLUMN min_confidence_override REAL", "min_confidence_override"),
+            ("users", f"ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL", "referred_by"),
+            ("users", f"ALTER TABLE users ADD COLUMN referral_rewarded {bd('FALSE')}", "referral_rewarded"),
+            ("users", "ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20)", "oauth_provider"),
+            ("users", "ALTER TABLE users ADD COLUMN oauth_sub VARCHAR(255)", "oauth_sub"),
+            ("users", "ALTER TABLE users ADD COLUMN discord_webhook_url VARCHAR(500)", "discord_webhook_url"),
+            ("users", "ALTER TABLE users ADD COLUMN webhook_url VARCHAR(500)", "webhook_url"),
+            ("users", f"ALTER TABLE users ADD COLUMN trial_consumed_at {dt}", "trial_consumed_at"),
+            # oauth_state table
+            ("oauth_state", "ALTER TABLE oauth_state ADD COLUMN code_challenge VARCHAR(255)", "code_challenge"),
+            ("oauth_state", "ALTER TABLE oauth_state ADD COLUMN code_verifier VARCHAR(255)", "code_verifier"),
             # signals table
-            ("signals", f"ALTER TABLE signals ADD COLUMN expires_at {dt}"),
+            ("signals", f"ALTER TABLE signals ADD COLUMN expires_at {dt}", "expires_at"),
             # performance_snapshots table
-            ("performance_snapshots", "ALTER TABLE performance_snapshots ADD COLUMN alpha REAL"),
-            # indexes for created_at
-            ("signals", "CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at)"),
-            ("send_log", "CREATE INDEX IF NOT EXISTS idx_send_log_created_at ON send_log(created_at)"),
-            ("broker_orders", "CREATE INDEX IF NOT EXISTS idx_broker_orders_created_at ON broker_orders(created_at)"),
+            ("performance_snapshots", "ALTER TABLE performance_snapshots ADD COLUMN alpha REAL", "alpha"),
+            # indexes for created_at (CREATE INDEX IF NOT EXISTS is idempotent on its own)
+            ("signals", "CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at)", None),
+            ("send_log", "CREATE INDEX IF NOT EXISTS idx_send_log_created_at ON send_log(created_at)", None),
+            ("broker_orders", "CREATE INDEX IF NOT EXISTS idx_broker_orders_created_at ON broker_orders(created_at)", None),
         ]
-        for _tbl, sql in _migrations:
+        for table, sql, obj_name in _migrations:
             try:
+                if obj_name and _IS_POSTGRES:
+                    if sql.strip().upper().startswith("CREATE INDEX"):
+                        if await _pg_index_exists(conn, table, obj_name):
+                            continue
+                    else:
+                        if await _pg_column_exists(conn, table, obj_name):
+                            continue
                 await conn.execute(text(sql))
-            except OperationalError as exc:
+            except (OperationalError, ProgrammingError) as exc:
                 err = str(exc).lower()
-                if any(k in err for k in ("duplicate column", "already exists")):
+                if any(k in err for k in ("duplicate column", "already exists", "duplicate relation")):
                     continue
                 logger.warning(f"Migration operational error ({sql}): {exc}")
             except Exception as exc:
