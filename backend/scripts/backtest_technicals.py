@@ -3100,8 +3100,16 @@ def simulate_ticker(
                     _ftd_pctile = float(_ftd_match.iloc[0]["ftd_63d_pctile"])
                     if _ftd_pctile > 75.0:
                         _size_mult *= 1.15
-        # §106: NAAIM/AAII sentiment capitulation tilt
-        if _alt_data_panels.get("naaim") is not None and is_buy_signal:
+        # §106: Sentiment capitulation tilt (UMCSENT primary, NAAIM fallback)
+        if _alt_data_panels.get("umcsent") is not None and is_buy_signal:
+            _umcsent = _alt_data_panels["umcsent"]
+            if isinstance(_umcsent, pd.DataFrame):
+                _umcsent_match = _umcsent[_umcsent["date"] == _date_key.date()]
+                if not _umcsent_match.empty:
+                    _umcsent_val = float(_umcsent_match.iloc[0]["umcsent"])
+                    if _umcsent_val < 60.0:  # low sentiment = fear/capitulation
+                        _size_mult *= 1.10
+        elif _alt_data_panels.get("naaim") is not None and is_buy_signal:
             _naaim = _alt_data_panels["naaim"]
             if isinstance(_naaim, pd.DataFrame):
                 _naaim_match = _naaim[_naaim["date"] == _date_key.date()]
@@ -3272,17 +3280,17 @@ def simulate_ticker(
                     ].empty
                     else None
                 ),
-                "naaim_exposure": (
+                "umcsent": (
                     round(
                         float(
-                            _alt_data_panels["naaim"][_alt_data_panels["naaim"]["date"] == _date_key.date()].iloc[0][
-                                "naaim_exposure"
-                            ]
+                            _alt_data_panels["umcsent"][_alt_data_panels["umcsent"]["date"] == _date_key.date()].iloc[
+                                0
+                            ]["umcsent"]
                         ),
                         4,
                     )
-                    if _alt_data_panels.get("naaim") is not None
-                    and not _alt_data_panels["naaim"][_alt_data_panels["naaim"]["date"] == _date_key.date()].empty
+                    if _alt_data_panels.get("umcsent") is not None
+                    and not _alt_data_panels["umcsent"][_alt_data_panels["umcsent"]["date"] == _date_key.date()].empty
                     else None
                 ),
                 "tone_z": (
@@ -4976,15 +4984,21 @@ def main():
         except Exception as e:
             print(f"failed ({e})")
     if _naaim_flag:
-        print("Loading NAAIM/AAII panels…", end=" ", flush=True)
+        print("Loading sentiment panels…", end=" ", flush=True)
         try:
-            from services.sentiment_naaim_aaii import load_naaim_panel, load_aaii_panel
+            from services.sentiment_naaim_aaii import load_umcsent_panel, load_naaim_panel, load_aaii_panel
 
+            _alt_data_panels["umcsent"] = load_umcsent_panel()
             _alt_data_panels["naaim"] = load_naaim_panel()
             _alt_data_panels["aaii"] = load_aaii_panel()
-            print(
-                f"ok (naaim={len(_alt_data_panels['naaim']) if _alt_data_panels['naaim'] is not None else 0}, aaii={len(_alt_data_panels['aaii']) if _alt_data_panels['aaii'] is not None else 0})"
-            )
+            _parts = []
+            if _alt_data_panels["umcsent"] is not None:
+                _parts.append(f"umcsent={len(_alt_data_panels['umcsent'])}")
+            if _alt_data_panels["naaim"] is not None:
+                _parts.append(f"naaim={len(_alt_data_panels['naaim'])}")
+            if _alt_data_panels["aaii"] is not None:
+                _parts.append(f"aaii={len(_alt_data_panels['aaii'])}")
+            print(f"ok ({', '.join(_parts)})" if _parts else "not found")
         except Exception as e:
             print(f"failed ({e})")
     if _gdelt_flag:

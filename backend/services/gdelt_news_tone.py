@@ -26,7 +26,7 @@ from pathlib import Path
 import aiohttp
 import pandas as pd
 
-from backend.services.http_client import shared_session
+from services.http_client import shared_session
 
 log = logging.getLogger("signal.trade.gdelt_news_tone")
 

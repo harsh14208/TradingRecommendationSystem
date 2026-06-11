@@ -23,13 +23,13 @@ from pathlib import Path
 import aiohttp
 import pandas as pd
 
-from backend.services.http_client import shared_session
+from services.http_client import shared_session
 
 log = logging.getLogger("signal.trade.sec_ftd")
 
 # SEC FTD archive URL template
 # Files are named: cnsfails{YYYYMM}.zip  (full month, contains two half-month CSVs)
-_SEC_FTD_URL = "https://www.sec.gov/files/data/fails-deliver-data/cnsfails{yyyymm}.zip"
+_SEC_FTD_URL = "https://www.sec.gov/files/data/fails-deliver-data/cnsfails{yyyymm}{half}.zip"
 
 _CACHE_DIR = Path(__file__).parent.parent / "data" / "cache_sec_ftd"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,10 +47,11 @@ _SEC_USER_AGENT = os.getenv(
 
 
 def _parse_ftd_csv(content: bytes) -> pd.DataFrame | None:
-    """Parse an SEC FTD CSV file (comma-delimited, with header)."""
+    """Parse an SEC FTD file (pipe-delimited, with header)."""
     try:
         df = pd.read_csv(
             io.BytesIO(content),
+            sep="|",
             dtype={
                 "SETTLEMENT DATE": str,
                 "CUSIP": str,
@@ -71,9 +72,10 @@ def _parse_ftd_csv(content: bytes) -> pd.DataFrame | None:
             }
         )
         df = df.assign(
-            settlement_date=pd.to_datetime(df["settlement_date"], format="%Y%m%d").dt.date,
+            settlement_date=pd.to_datetime(df["settlement_date"], format="%Y%m%d", errors="coerce").dt.date,
             ftd_shares=df["ftd_shares"].astype(str).str.replace(",", "").astype(int, errors="ignore"),
         )
+        df = df.dropna(subset=["settlement_date"])
         df = df[df["symbol"].notna() & (df["symbol"] != "")]
         return df
     except Exception as exc:
@@ -86,48 +88,65 @@ async def download_sec_ftd(
     month: int,
     session: aiohttp.ClientSession | None = None,
 ) -> pd.DataFrame | None:
-    """Download SEC FTD ZIP for a given year+month. Never raises."""
+    """Download SEC FTD ZIPs for a given year+month (both halves). Never raises."""
     cache_key = f"ftd_{year:04d}{month:02d}"
     cached = _cache.get(cache_key)
     if cached and (time.monotonic() - cached[1] < _CACHE_TTL):
         return cached[0]
 
     yyyymm = f"{year:04d}{month:02d}"
-    zip_path = _CACHE_DIR / f"cnsfails{yyyymm}.zip"
-    if zip_path.exists():
-        try:
-            return _extract_ftd_from_zip(zip_path)
-        except Exception:
-            pass
-
-    url = _SEC_FTD_URL.format(yyyymm=yyyymm)
     headers = {"User-Agent": _SEC_USER_AGENT}
+    frames: list[pd.DataFrame] = []
+    _sess = session
     try:
-        _sess = session or await shared_session().__aenter__()
-        async with _sess.get(url, headers=headers, timeout=60) as resp:
-            if resp.status != 200:
-                log.debug(f"[sec_ftd] {yyyymm} HTTP {resp.status}")
-                return None
-            content = await resp.read()
-            if not content:
-                return None
-            zip_path.write_bytes(content)
-            return _extract_ftd_from_zip(zip_path)
+        _sess = _sess or await shared_session().__aenter__()
+        for half in ("a", "b"):
+            zip_path = _CACHE_DIR / f"cnsfails{yyyymm}{half}.zip"
+            if zip_path.exists():
+                try:
+                    df = _extract_ftd_from_zip(zip_path)
+                    if df is not None:
+                        frames.append(df)
+                    continue
+                except Exception:
+                    pass
+            url = _SEC_FTD_URL.format(yyyymm=yyyymm, half=half)
+            try:
+                async with _sess.get(url, headers=headers, timeout=60) as resp:
+                    if resp.status != 200:
+                        log.debug(f"[sec_ftd] {yyyymm}{half} HTTP {resp.status}")
+                        continue
+                    content = await resp.read()
+                    if not content:
+                        continue
+                    zip_path.write_bytes(content)
+                    df = _extract_ftd_from_zip(zip_path)
+                    if df is not None:
+                        frames.append(df)
+            except Exception as exc:
+                log.debug(f"[sec_ftd] {yyyymm}{half} download error: {exc}")
     except Exception as exc:
         log.warning(f"[sec_ftd] {yyyymm} download error: {exc}")
-        return None
     finally:
         if session is None and _sess is not None:
             await _sess.__aexit__(None, None, None)
 
+    if not frames:
+        return None
+    df = pd.concat(frames, ignore_index=True)
+    _cache[cache_key] = (df, time.monotonic())
+    return df
+
 
 def _extract_ftd_from_zip(zip_path: Path) -> pd.DataFrame | None:
-    """Extract and parse all CSVs inside an SEC FTD ZIP."""
+    """Extract and parse all CSV/TXT files inside an SEC FTD ZIP."""
     frames: list[pd.DataFrame] = []
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
             for name in zf.namelist():
-                if not name.lower().endswith(".txt") and not name.lower().endswith(".csv"):
+                # SEC FTD files often have no extension (e.g. "cnsfails202401a")
+                base = name.lower().split("/")[-1]
+                if base.endswith(".zip") or base.startswith("__"):
                     continue
                 content = zf.read(name)
                 df = _parse_ftd_csv(content)
@@ -147,10 +166,10 @@ import zipfile
 def _compute_ftd_features(df: pd.DataFrame) -> pd.DataFrame:
     """Compute FTD ratio and 63d percentile per ticker."""
     df = df.copy()
-    df = df.sort_values(["symbol", "settlement_date"])
+    df = df.sort_values(["symbol", "settlement_date"]).copy()
     # 63-day rolling percentile within ticker
-    df["ftd_63d_pctile"] = (
-        df.groupby("symbol")["ftd_shares"]
+    df = df.assign(
+        ftd_63d_pctile=df.groupby("symbol")["ftd_shares"]
         .rolling(63, min_periods=10)
         .apply(lambda x: x.rank(pct=True).iloc[-1] * 100, raw=False)
         .reset_index(level=0, drop=True)
@@ -202,9 +221,9 @@ async def build_ftd_panel(
         tickers_upper = [t.upper() for t in tickers]
         panel = panel[panel["symbol"].isin(tickers_upper)].copy()
 
-    panel.rename(columns={"symbol": "ticker"}, inplace=True)
+    panel = panel.rename(columns={"symbol": "ticker"})
     # Apply conservative 30-day publication lag for PIT
-    panel["effective_date"] = panel["settlement_date"] + timedelta(days=30)
+    panel = panel.assign(effective_date=panel["settlement_date"] + timedelta(days=30))
 
     panel.to_pickle(_PANEL_PATH)
     log.info(f"[sec_ftd] panel saved: {len(panel)} rows → {_PANEL_PATH}")

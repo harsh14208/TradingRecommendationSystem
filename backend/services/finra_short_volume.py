@@ -22,7 +22,7 @@ from pathlib import Path
 import aiohttp
 import pandas as pd
 
-from backend.services.http_client import shared_session
+from services.http_client import shared_session
 
 log = logging.getLogger("signal.trade.finra_short_volume")
 
@@ -47,32 +47,35 @@ def _yymmdd(d: date) -> str:
 
 
 def _parse_finra_sv_txt(content: bytes) -> pd.DataFrame | None:
-    """Parse a FINRA short-volume TXT file (pipe-delimited, no header)."""
+    """Parse a FINRA short-volume TXT file (pipe-delimited, with header)."""
     try:
         df = pd.read_csv(
             io.BytesIO(content),
             sep="|",
-            header=None,
-            names=[
-                "date",
-                "symbol",
-                "short_volume",
-                "short_exempt_volume",
-                "total_volume",
-                "market",
-            ],
+            header=0,
             dtype={
-                "date": str,
-                "symbol": str,
-                "short_volume": int,
-                "short_exempt_volume": int,
-                "total_volume": int,
-                "market": str,
+                "Date": str,
+                "Symbol": str,
+                "ShortVolume": "Int64",
+                "ShortExemptVolume": "Int64",
+                "TotalVolume": "Int64",
+                "Market": str,
             },
         )
-        df = df.assign(date=pd.to_datetime(df["date"], format="%Y%m%d").dt.date)
-        # Filter to consolidated NMS only (CNMS)
-        df = df[df["market"] == _FINRA_CONSOLIDATED_PREFIX].copy()
+        df = df.rename(
+            columns={
+                "Date": "date",
+                "Symbol": "symbol",
+                "ShortVolume": "short_volume",
+                "ShortExemptVolume": "short_exempt_volume",
+                "TotalVolume": "total_volume",
+                "Market": "market",
+            }
+        )
+        df = df.assign(date=pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce").dt.date)
+        df = df.dropna(subset=["date"])
+        # The CNMS file already contains consolidated NMS data;
+        # keep rows with valid symbols (some rows may have placeholder symbols).
         df = df[df["symbol"].notna() & (df["symbol"] != "")]
         return df
     except Exception as exc:
@@ -126,9 +129,9 @@ async def download_finra_short_volume(
 def _compute_sv_features(df: pd.DataFrame) -> pd.DataFrame:
     """Compute short-volume ratio and 5d delta per ticker."""
     df = df.copy()
-    df["short_volume_ratio"] = (df["short_volume"] / df["total_volume"] * 100.0).where(df["total_volume"] > 0)
-    df = df.sort_values(["symbol", "date"])
-    df["sv_ratio_5d_delta"] = df.groupby("symbol")["short_volume_ratio"].diff(5)
+    df = df.assign(short_volume_ratio=(df["short_volume"] / df["total_volume"] * 100.0).where(df["total_volume"] > 0))
+    df = df.sort_values(["symbol", "date"]).copy()
+    df = df.assign(sv_ratio_5d_delta=df.groupby("symbol")["short_volume_ratio"].diff(5))
     return df
 
 

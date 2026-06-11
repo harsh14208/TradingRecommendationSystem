@@ -711,10 +711,18 @@ def build_panel(
 
     if use_naaim:
         try:
-            from services.sentiment_naaim_aaii import load_naaim_panel, load_aaii_panel
+            from services.sentiment_naaim_aaii import load_umcsent_panel, load_naaim_panel, load_aaii_panel
 
+            _umcsent = load_umcsent_panel()
             _naaim = load_naaim_panel()
             _aaii = load_aaii_panel()
+            if _umcsent is not None and not _umcsent.empty:
+                _umcsent["date"] = pd.to_datetime(_umcsent["date"])
+                panel = pd.merge_asof(
+                    panel.sort_values("date"), _umcsent[["date", "umcsent"]], on="date", direction="backward"
+                )
+                if "umcsent" not in RAW_FEATURE_COLS:
+                    RAW_FEATURE_COLS.append("umcsent")
             if _naaim is not None and not _naaim.empty:
                 _naaim["date"] = pd.to_datetime(_naaim["date"])
                 panel = pd.merge_asof(
@@ -729,9 +737,14 @@ def build_panel(
                 )
                 if "aaii_bull_bear_spread" not in RAW_FEATURE_COLS:
                     RAW_FEATURE_COLS.append("aaii_bull_bear_spread")
-            print(
-                f"  Sentiment merged: naaim={panel['naaim_exposure'].notna().mean():.0%}, aaii={panel['aaii_bull_bear_spread'].notna().mean():.0%}"
-            )
+            _cov = []
+            if "umcsent" in panel.columns:
+                _cov.append(f"umcsent={panel['umcsent'].notna().mean():.0%}")
+            if "naaim_exposure" in panel.columns:
+                _cov.append(f"naaim={panel['naaim_exposure'].notna().mean():.0%}")
+            if "aaii_bull_bear_spread" in panel.columns:
+                _cov.append(f"aaii={panel['aaii_bull_bear_spread'].notna().mean():.0%}")
+            print(f"  Sentiment merged: {', '.join(_cov)}")
         except Exception as e:
             print(f"  Sentiment merge failed: {e}")
 

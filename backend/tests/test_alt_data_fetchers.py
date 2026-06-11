@@ -20,7 +20,7 @@ from services.finra_short_volume import _parse_finra_sv_txt, merge_sv_pit
 # §105: SEC FTD
 from services.sec_ftd import _parse_ftd_csv, merge_ftd_pit
 
-# §106: NAAIM / AAII
+# §106: Sentiment (UMCSENT primary + optional NAAIM/AAII)
 from services.sentiment_naaim_aaii import _parse_naaim_json, merge_sentiment_pit
 
 # §107: GDELT
@@ -40,7 +40,7 @@ class TestFinraShortVolume:
     """§104 — FINRA daily short-sale volume."""
 
     def test_parse_finra_sv_txt(self) -> None:
-        content = b"20240102|AAPL|1000000|5000|5000000|CNMS\n20240102|MSFT|800000|3000|4000000|CNMS\n"
+        content = b"Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market\n20240102|AAPL|1000000|5000|5000000|CNMS\n20240102|MSFT|800000|3000|4000000|CNMS\n"
         df = _parse_finra_sv_txt(content)
         assert df is not None
         assert len(df) == 2
@@ -75,7 +75,7 @@ class TestSecFtd:
     """§105 — SEC fails-to-deliver."""
 
     def test_parse_ftd_csv(self) -> None:
-        content = b"SETTLEMENT DATE,CUSIP,SYMBOL,QUANTITY (FAILS),DESCRIPTION,PRICE\n20240102,037833100,AAPL,50000,Apple Inc,185.50\n"
+        content = b"SETTLEMENT DATE|CUSIP|SYMBOL|QUANTITY (FAILS)|DESCRIPTION|PRICE\n20240102|037833100|AAPL|50000|Apple Inc|185.50\n"
         df = _parse_ftd_csv(content)
         assert df is not None
         assert len(df) == 1
@@ -103,7 +103,7 @@ class TestSentimentNaaimAaii:
     """§106 — NAAIM / AAII sentiment."""
 
     def test_parse_naaim_json(self) -> None:
-        data = {"data": {"series": [{"data": [[1704067200000, 45.2], [1704153600000, 42.1]]}]}}
+        data = {"success": 1, "data": {"series": [{"data": [[1704067200000, 45.2], [1704153600000, 42.1]]}]}}
         df = _parse_naaim_json(data)
         assert df is not None
         assert len(df) == 2
@@ -112,6 +112,12 @@ class TestSentimentNaaimAaii:
     def test_merge_sentiment_pit(self) -> None:
         idx = pd.date_range("2024-01-02", periods=3)
         df = pd.DataFrame({"Close": [100, 101, 102]}, index=idx)
+        umcsent = pd.DataFrame(
+            {
+                "date": [date(2024, 1, 1), date(2024, 1, 2)],  # +14d lag baked in
+                "umcsent": [65.0, 62.0],
+            }
+        )
         naaim = pd.DataFrame(
             {
                 "date": [date(2024, 1, 2), date(2024, 1, 3)],
@@ -126,10 +132,11 @@ class TestSentimentNaaimAaii:
                 "aaii_bull_bear_spread": [-10.0],
             }
         )
-        result = merge_sentiment_pit(df, naaim, aaii)
+        result = merge_sentiment_pit(df, umcsent, naaim, aaii)
+        assert "umcsent" in result.columns
         assert "naaim_exposure" in result.columns
         assert "aaii_bull_bear_spread" in result.columns
-        assert result["naaim_exposure"].iloc[0] == 45.0
+        assert result["umcsent"].iloc[0] == 62.0
 
 
 class TestGdeltNewsTone:

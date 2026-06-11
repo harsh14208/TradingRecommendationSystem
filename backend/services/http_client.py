@@ -101,7 +101,17 @@ def get_session() -> aiohttp.ClientSession:
         trace_config.on_request_start.append(on_request_start)
         trace_config.on_request_end.append(on_request_end)
 
-        sess = aiohttp.ClientSession(connector=connector, trace_configs=[trace_config])
+        sess = aiohttp.ClientSession(
+            connector=connector,
+            trace_configs=[trace_config],
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/125.0.0.0 Safari/537.36"
+                ),
+            },
+        )
         _sessions[loop] = sess
     return sess
 

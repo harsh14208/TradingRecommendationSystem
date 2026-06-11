@@ -1,59 +1,142 @@
 #!/usr/bin/env python3
-"""§106 — NAAIM Exposure Index + AAII Sentiment Survey fetchers.
+"""§106 — Investor Sentiment fetchers (FRED UMCSENT + optional NAAIM/AAII).
 
-NAAIM: actual manager equity exposure, weekly since 2006.
-  https://en.macromicro.me/charts/46198/naaim-exposure-index
-  (or official NAAIM site for raw data)
+Primary: FRED UMCSENT (University of Michigan Consumer Sentiment)
+  - Monthly, since 1952, free via FRED API
+  - Well-known contrarian washout marker
+  - PIT: 2-week publication lag (survey month → mid-month release)
 
-AAII: bull/bear survey, weekly since 1987.
-  https://www.aaii.com/sentimentsurvey/sent_results
+Optional fallbacks (require working external endpoints):
+  NAAIM: actual manager equity exposure, weekly since 2006.
+  AAII: bull/bear survey, weekly since 1987.
 
 Both are classic contrarian washout markers — orthogonal to VIX level
-(positioning vs implied vol). Lag to release day (Wed/Thu) in the join.
-
-PIT discipline: join with release-day lag (Wed/Thu of survey week).
+(positioning vs implied vol).
 """
 
 from __future__ import annotations
 
 import io
 import logging
-import time
 import os
+import time
 from pathlib import Path
 
 import aiohttp
 import pandas as pd
 
-from backend.services.http_client import shared_session
+from services.http_client import shared_session
+
+# Load .env so FRED_API_KEY is available at module import time
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except Exception:
+    pass
 
 log = logging.getLogger("signal.trade.sentiment_naaim_aaii")
 
 _CACHE_DIR = Path(__file__).parent.parent / "data" / "cache_sentiment"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+_UMCSENT_PANEL_PATH = _CACHE_DIR / "umcsent_panel.pkl"
 _NAAIM_PANEL_PATH = _CACHE_DIR / "naaim_panel.pkl"
 _AAII_PANEL_PATH = _CACHE_DIR / "aaii_panel.pkl"
 
 _cache: dict[str, tuple[pd.DataFrame, float]] = {}
 _CACHE_TTL = 86400.0
 
-# NAAIM publishes full history as a downloadable CSV on some mirrors;
-# fallback: macromicro.me has a chart API; we use a public data source.
+_FRED_KEY = os.getenv("FRED_API_KEY")
 _NAAIM_URL = os.getenv(
     "NAAIM_DATA_URL",
-    "https://en.macromicro.me/charts/data/46198",  # JSON endpoint for NAAIM
+    "https://en.macromicro.me/charts/data/46198",
 )
 _AAII_URL = os.getenv(
     "AAII_DATA_URL",
-    "https://www.aaii.com/files/surveys/sentiment.xls",  # Historical XLS
+    "https://www.aaii.com/files/surveys/sentiment.xls",
 )
+
+
+# ── FRED UMCSENT (primary, robust) ──────────────────────────────────────────
+
+
+async def download_umcsent_panel(
+    session: aiohttp.ClientSession | None = None,
+) -> pd.DataFrame | None:
+    """Download UMCSENT from FRED API."""
+    cached = _cache.get("umcsent")
+    if cached and (time.monotonic() - cached[1] < _CACHE_TTL):
+        return cached[0]
+    if _UMCSENT_PANEL_PATH.exists():
+        try:
+            df = pd.read_pickle(_UMCSENT_PANEL_PATH)
+            _cache["umcsent"] = (df, time.monotonic())
+            return df
+        except Exception:
+            pass
+
+    if not _FRED_KEY:
+        log.warning("[umcsent] FRED_API_KEY not set")
+        return None
+
+    url = "https://api.stlouisfed.org/fred/series/observations"
+    params = {
+        "series_id": "UMCSENT",
+        "api_key": _FRED_KEY,
+        "file_type": "json",
+        "observation_start": "2000-01-01",
+    }
+    try:
+        _sess = session or await shared_session().__aenter__()
+        async with _sess.get(url, params=params, timeout=30) as resp:
+            if resp.status != 200:
+                log.warning(f"[umcsent] HTTP {resp.status}")
+                return None
+            data = await resp.json()
+            obs = data.get("observations", [])
+            rows = []
+            for o in obs:
+                v = o.get("value", ".")
+                if v == ".":
+                    continue
+                rows.append(
+                    {
+                        "date": pd.to_datetime(o["date"]).date(),
+                        "umcsent": float(v),
+                    }
+                )
+            if not rows:
+                return None
+            df = pd.DataFrame(rows)
+            df = df.sort_values("date").reset_index(drop=True)
+            # 2-week publication lag: monthly survey released mid-next-month
+            df = df.assign(date=df["date"] + pd.Timedelta(days=14))
+            df.to_pickle(_UMCSENT_PANEL_PATH)
+            _cache["umcsent"] = (df, time.monotonic())
+            return df
+    except Exception as exc:
+        log.warning(f"[umcsent] download error: {exc}")
+        return None
+    finally:
+        if session is None and "_sess" in locals() and _sess is not None:
+            await _sess.__aexit__(None, None, None)
+
+
+# ── NAAIM (optional fallback) ───────────────────────────────────────────────
 
 
 def _parse_naaim_json(data: dict) -> pd.DataFrame | None:
     """Parse NAAIM JSON from macromicro chart endpoint."""
     try:
-        series = data.get("data", {}).get("series", [])
+        if data.get("success") != 1:
+            log.warning(f"[naaim] API error: {data.get('msg')}")
+            return None
+        _data = data.get("data")
+        if not isinstance(_data, dict):
+            log.warning("[naaim] unexpected data structure")
+            return None
+        series = _data.get("series", [])
         if not series:
             return None
         rows = []
@@ -100,15 +183,17 @@ async def download_naaim_panel(
         log.warning(f"[naaim] download error: {exc}")
         return None
     finally:
-        if session is None and _sess is not None:
+        if session is None and "_sess" in locals() and _sess is not None:
             await _sess.__aexit__(None, None, None)
+
+
+# ── AAII (optional fallback) ────────────────────────────────────────────────
 
 
 def _parse_aaii_xls(content: bytes) -> pd.DataFrame | None:
     """Parse AAII historical sentiment XLS."""
     try:
-        df = pd.read_excel(io.BytesIO(content), skiprows=4)
-        # Expected columns after skip: Date, Bullish, Neutral, Bearish, etc.
+        df = pd.read_excel(io.BytesIO(content), engine="openpyxl", skiprows=4)
         df = df.rename(
             columns={
                 "Date": "date",
@@ -150,6 +235,10 @@ async def download_aaii_panel(
                 log.debug(f"[aaii] HTTP {resp.status}")
                 return None
             content = await resp.read()
+            # AAII endpoint often returns HTML block page instead of XLS
+            if content[:5] == b"<!DOC":
+                log.warning("[aaii] received HTML block page instead of XLS")
+                return None
             df = _parse_aaii_xls(content)
             if df is not None and not df.empty:
                 df.to_pickle(_AAII_PANEL_PATH)
@@ -159,8 +248,17 @@ async def download_aaii_panel(
         log.warning(f"[aaii] download error: {exc}")
         return None
     finally:
-        if session is None and _sess is not None:
+        if session is None and "_sess" in locals() and _sess is not None:
             await _sess.__aexit__(None, None, None)
+
+
+# ── Loaders (used by backtest / cross-sectional model) ──────────────────────
+
+
+def load_umcsent_panel() -> pd.DataFrame | None:
+    if _UMCSENT_PANEL_PATH.exists():
+        return pd.read_pickle(_UMCSENT_PANEL_PATH)
+    return None
 
 
 def load_naaim_panel() -> pd.DataFrame | None:
@@ -175,24 +273,38 @@ def load_aaii_panel() -> pd.DataFrame | None:
     return None
 
 
+# ── PIT merge ───────────────────────────────────────────────────────────────
+
+
 def merge_sentiment_pit(
     df: pd.DataFrame,
-    naaim: pd.DataFrame | None,
-    aaii: pd.DataFrame | None,
+    umcsent: pd.DataFrame | None = None,
+    naaim: pd.DataFrame | None = None,
+    aaii: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Merge NAAIM + AAII into a ticker DataFrame with PIT discipline.
-
-    Both publish Wed/Thu of the survey week. We merge_asof backward
-    to ensure we only use released data.
-    """
+    """Merge sentiment features into ticker DataFrame with PIT lag."""
     df = df.copy()
     df["_merge_date"] = pd.to_datetime(df.index)
+
+    if umcsent is not None and not umcsent.empty:
+        umcsent = umcsent.assign(date=pd.to_datetime(umcsent["date"])).sort_values("date")
+        df = pd.merge_asof(
+            df.sort_values("_merge_date"),
+            umcsent[["date", "umcsent"]],
+            left_on="_merge_date",
+            right_on="date",
+            direction="backward",
+        ).copy()
+        df.drop(columns=["date"], inplace=True, errors="ignore")
+        df = df.assign(umcsent=df["umcsent"].ffill())
+    else:
+        df = df.assign(umcsent=pd.NA)
 
     if naaim is not None and not naaim.empty:
         naaim = naaim.assign(date=pd.to_datetime(naaim["date"])).sort_values("date")
         df = pd.merge_asof(
             df.sort_values("_merge_date"),
-            naaim,
+            naaim[["date", "naaim_exposure"]],
             left_on="_merge_date",
             right_on="date",
             direction="backward",

@@ -25,7 +25,7 @@ from pathlib import Path
 import aiohttp
 import pandas as pd
 
-from backend.services.http_client import shared_session
+from services.http_client import shared_session
 
 log = logging.getLogger("signal.trade.wikipedia_pageviews")
 
@@ -158,10 +158,14 @@ async def build_wikipedia_panel(
         if df is not None and not df.empty:
             df = df.copy()
             # Compute 63d rolling z-score
-            df["views_63d_mean"] = df["views"].rolling(63, min_periods=21).mean()
-            df["views_63d_std"] = df["views"].rolling(63, min_periods=21).std()
-            df["views_z"] = ((df["views"] - df["views_63d_mean"]) / df["views_63d_std"].replace(0, 1)).fillna(0.0)
-            df["ticker"] = ticker.upper()
+            df = df.assign(
+                views_63d_mean=df["views"].rolling(63, min_periods=21).mean(),
+                views_63d_std=df["views"].rolling(63, min_periods=21).std(),
+            )
+            df = df.assign(
+                views_z=((df["views"] - df["views_63d_mean"]) / df["views_63d_std"].replace(0, 1)).fillna(0.0),
+                ticker=ticker.upper(),
+            )
             all_frames.append(df)
 
     if not all_frames:
