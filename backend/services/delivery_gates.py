@@ -122,6 +122,11 @@ async def check_delivery_gates(
     if action not in ("BUY", "SELL"):
         return f"action={action} not BUY/SELL", sig_dict
 
+    # Item 3: SELL delivery disabled — long-only regime until SELL-specific
+    # MR-setup validation (overbought mirror of BUY gates) is implemented.
+    if action == "SELL":
+        return "SELL delivery disabled — long-only regime", sig_dict
+
     # ── MR gate — hard block for BUY signals without a mean-reversion setup ──
     # Root-cause fix for live WR 42% vs backtest WR 68% gap (audit 2026-06-02).
     # Updated 2026-06-09: MR-count=2 (was 1). Backtest: 154 trades, Sharpe 0.21
@@ -190,18 +195,10 @@ async def check_delivery_gates(
     ticker_as_sector = sig_dict.get("ticker", "")
     if (sector and sector in BLOCKED_SECTORS) or (ticker_as_sector in BLOCKED_SECTORS):
         _blocked_key = sector if (sector and sector in BLOCKED_SECTORS) else ticker_as_sector
-
-        # Check if the sector-specific model exists. If so, unblock dynamically.
-        from pathlib import Path
-
-        data_dir = Path(__file__).parent.parent / "data"
-        model_file = data_dir / f"backtest_ml_model_{_blocked_key}.json"
-
-        if not model_file.exists():
-            return (
-                f"sector {_blocked_key} blocked (low PF) — awaiting retraining",
-                sig_dict,
-            )
+        return (
+            f"sector {_blocked_key} blocked (low PF) — awaiting retraining",
+            sig_dict,
+        )
 
     # ── §54 VIX<15 suspension (ultra-low vol — MR setups statistically fail) ───
     # Backtest §54: VIX<15 regime shows mean-reversion entries cluster at bottom
@@ -211,54 +208,6 @@ async def check_delivery_gates(
         _vix_now = sig_dict.get("vix")
         if _vix_now is not None and _vix_now < 15.0:
             return f"VIX={_vix_now:.1f} < 15 — MR entry suspended in ultra-low vol regime (§54)", sig_dict
-
-    # ── §55 Cross-asset macro hard block (3/3 headwinds) ─────────────────────
-    # Backtest §55: 3/3 headwinds (TLT+UUP+XLE stress) → +0.03 Sharpe when blocked.
-    # macro.py applies −10 soft score reduction; this adds a hard block for
-    # extreme confluence. 5 trades/23yr blocked, all were losers.
-    if action == "BUY":
-        _ca = sig_dict.get("crossAssetHeadwinds")
-        if _ca is not None and _ca >= 3:
-            return "3/3 cross-asset macro headwinds (TLT+UUP+XLE) — hard block (§55)", sig_dict
-
-    # ── §14 FRED Macro-Regime Panel (NFCI + BAA10Y + T10Y3M) ──────────────────
-    # Backtest §14: blocks trades under systemic credit/financial/recession stress.
-    # - NFCI: >0.5 hard block; >0.0 and score < 50 blocked (marginal block).
-    # - Baa-10Y: >4.0% hard block; >3.0% and score < 50 blocked (marginal block).
-    # - T10Y3M: <0.0% (inverted) and score < 55 blocked (marginal block).
-    if action == "BUY":
-        _nfci = sig_dict.get("nfci")
-        _baa = sig_dict.get("baa10y")
-        _t10y3m = sig_dict.get("t10y3m")
-        _score = sig_dict.get("score", 0.0)
-
-        # NFCI gates
-        if _nfci is not None:
-            if _nfci > 0.5:
-                return f"NFCI={_nfci:.2f} > 0.5 — financial conditions tight, MR hard block (§14)", sig_dict
-            if _nfci > 0.0 and _score < 50:
-                return (
-                    f"NFCI={_nfci:.2f} > 0.0 and score={_score:.1f} < 50 — financial stress marginal block (§14)",
-                    sig_dict,
-                )
-
-        # BAA10Y gates
-        if _baa is not None:
-            if _baa > 4.0:
-                return f"Baa-10Y spread={_baa:.2f}% > 4.0% — high credit risk, MR hard block (§14)", sig_dict
-            if _baa > 3.0 and _score < 50:
-                return (
-                    f"Baa-10Y spread={_baa:.2f}% > 3.0% and score={_score:.1f} < 50 — credit stress marginal block (§14)",
-                    sig_dict,
-                )
-
-        # T10Y3M yield curve inversion gates
-        if _t10y3m is not None:
-            if _t10y3m < 0.0 and _score < 55:
-                return (
-                    f"Yield Curve Inverted (T10Y3M={_t10y3m:+.2f}%) and score={_score:.1f} < 55 — recession regime marginal block (§14)",
-                    sig_dict,
-                )
 
     # ── Pre-earnings blackout (≤2 trading days) ───────────────────────────────
     dte = sig_dict.get("daysToEarnings")

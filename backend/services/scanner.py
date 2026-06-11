@@ -413,11 +413,16 @@ async def _maybe_send(
     skip_reason, sig_dict = await check_delivery_gates(sig_dict, db, settings)
     if skip_reason:
         log.info(f" {sig_dict['ticker']} skipped ({label}) — {skip_reason}")
+        db_row.skip_reason = skip_reason
+        db_row.is_skipped = True
         return
 
     # ── Time-of-day filter ──────────────────────────────────────────────────
     if not bypass_market_hours and not _market_hours_ok():
-        log.info(f" {sig_dict['ticker']} notification suppressed — outside clean market window")
+        _mh_reason = "outside clean market window"
+        log.info(f" {sig_dict['ticker']} notification suppressed — {_mh_reason}")
+        db_row.skip_reason = _mh_reason
+        db_row.is_skipped = True
         return
 
     # §93d: midday microstructure warning — Hour 11–12 ET has shown catastrophic
@@ -1518,6 +1523,63 @@ async def _precompute_analytics() -> None:
         log.warning("[analytics] pre-compute failed: %s", e, exc_info=True)
 
 
+_L10_CONVICTION_MULT = 1.3  # §87 backtest-validated boost for persistent oversold
+_SIZE_SCALE_CLAMP = (0.10, 3.00)  # global cap on the multiplicative L1–L10 sizing stack
+
+
+async def _apply_l10_conviction_sizing(signals: list[dict]) -> None:
+    """§87 L10: boost positionSizeScale 1.3× for BUYs whose ticker also produced a
+    BUY signal on the prior trading day (persistent oversold = conviction tier).
+
+    Mutates sig dicts in place. Also clamps every signal's positionSizeScale to
+    _SIZE_SCALE_CLAMP — the nine upstream layers are individually clamped but
+    their product was previously unbounded (~10× theoretical max).
+    """
+    buy_tickers = {s["ticker"] for s in signals if s.get("action") == "BUY"}
+    prev_day_buys: set[str] = set()
+    if buy_tickers:
+        # Prior trading day ≈ created_at within [today−4d, today) with action BUY;
+        # the 4-day lookback window covers weekends and Monday holidays. Restricting
+        # to the most recent prior calendar day with signals keeps the semantic at
+        # "consecutive scan days", mirroring the backtest's consecutive daily bars.
+        _today_utc = _today_start_utc()
+        async with AsyncSessionLocal() as db:
+            rows = (
+                await db.execute(
+                    select(Signal.ticker, Signal.created_at).where(
+                        Signal.ticker.in_(sorted(buy_tickers)),
+                        Signal.action == "BUY",
+                        Signal.created_at >= _today_utc - timedelta(days=4),
+                        Signal.created_at < _today_utc,
+                    )
+                )
+            ).all()
+        if rows:
+            _latest_day = max(r.created_at.date() for r in rows)
+            prev_day_buys = {r.ticker for r in rows if r.created_at.date() == _latest_day}
+
+    for sig in signals:
+        scale = sig.get("positionSizeScale")
+        if not isinstance(scale, (int, float)) or scale <= 0:
+            continue
+        if sig.get("action") == "BUY" and sig["ticker"] in prev_day_buys:
+            scale *= _L10_CONVICTION_MULT
+            sig.setdefault("rationale", []).append(
+                {
+                    "src": "Backtest",
+                    "head": "Persistent Oversold — Conviction Size Boost (§87)",
+                    "body": (
+                        f"{sig['ticker']} also scored a BUY on the prior trading day. "
+                        f"Two consecutive qualifying days mark the highest-Sharpe tier in the 23-yr "
+                        f"backtest (0.30 vs 0.24 baseline); position size scaled ×{_L10_CONVICTION_MULT}."
+                    ),
+                    "sentiment": "pos",
+                    "meta": f"L10 conviction tier: ×{_L10_CONVICTION_MULT}",
+                }
+            )
+        sig["positionSizeScale"] = round(min(max(scale, _SIZE_SCALE_CLAMP[0]), _SIZE_SCALE_CLAMP[1]), 2)
+
+
 async def _persist_scan_signals(
     signals: list[dict],
     today_start: datetime,
@@ -1604,12 +1666,24 @@ async def _persist_scan_signals(
                         f"(Δ{conf_delta:.0f}pp)"
                     )
 
-            await db.execute(
-                update(Signal)
-                .where(Signal.ticker == sig["ticker"])
-                .where(Signal.is_active == True)
-                .values(is_active=False)
-            )
+            # Priority 1: Don't deactivate an unsent BUY/SELL when the new signal is
+            # a HOLD — the EOD batch still needs to deliver it. Deactivate only if
+            # the new signal is actionable (BUY/SELL) or the old one was already sent.
+            _should_deactivate = True
+            if existing and sig["action"] == "HOLD" and existing.action in ("BUY", "SELL") and not existing.is_sent:
+                _should_deactivate = False
+                log.info(
+                    f" {sig['ticker']} HOLD skipped deactivation — "
+                    f"unsent {existing.action} conf={existing.confidence:.0f}% still active"
+                )
+
+            if _should_deactivate:
+                await db.execute(
+                    update(Signal)
+                    .where(Signal.ticker == sig["ticker"])
+                    .where(Signal.is_active == True)
+                    .values(is_active=False)
+                )
 
             _now_et = datetime.now(_ET)
             _style = sig.get("style", "swing")
@@ -1809,7 +1883,6 @@ async def eod_batch_send() -> None:
                 await db.execute(
                     select(Signal)
                     .where(
-                        Signal.is_active == True,
                         Signal.is_sent == False,
                         Signal.action.in_(["BUY", "SELL"]),
                         Signal.created_at >= today_start,
@@ -1828,6 +1901,29 @@ async def eod_batch_send() -> None:
     log.info("[eod_batch] %d unsent signal(s) to process", len(rows))
     sent_count = 0
     batch_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # DELIV-1: batch-fetch current prices once for the entry-validity guard below.
+    # Empty dict (Polygon down / no key) → guard passes signals through: clean-sector
+    # delayed deliveries measured +2.12%/trade net, so quote availability must not
+    # become a silent delivery blocker.
+    try:
+        from services.polygon_client import get_polygon_snapshot_batch
+
+        _eod_snaps = await get_polygon_snapshot_batch(sorted({r.ticker for r in rows}))
+    except Exception:
+        log.warning("[eod_batch] snapshot fetch failed — entry-validity guard disabled", exc_info=True)
+        _eod_snaps = {}
+
+    def _eod_current_price(ticker: str) -> float | None:
+        snap = _eod_snaps.get(ticker.upper()) or {}
+        for src in (snap.get("lastTrade") or {}, snap.get("min") or {}, snap.get("day") or {}):
+            try:
+                px = float(src.get("p") or src.get("c") or 0)
+            except (TypeError, ValueError):
+                continue
+            if px > 0:
+                return px
+        return None
 
     async with AsyncSessionLocal() as db:
         for row in rows:
@@ -1856,6 +1952,35 @@ async def eod_batch_send() -> None:
             for _k in ("hasMr", "vix", "crossAssetHeadwinds", "daysToExDiv"):
                 if _extra.get(_k) is not None:
                     sig_dict[_k] = _extra[_k]
+            # DELIV-1: entry-validity guard (replaces the 120-min stale cutoff).
+            # The deconfounded latency audit (2026-06-10) showed delayed clean-sector
+            # deliveries still earn +2.12%/trade — age alone is the wrong variable.
+            # What invalidates a delayed MR BUY is the PRICE having moved on:
+            #   • current ≥ entry + 0.5×ATR → bounce already underway, follower chases
+            #   • current ≤ stop            → setup already failed
+            # ATR is recovered from the signal's own levels (stop = entry − 1.5×ATR).
+            # Missing quote or levels → send (guard must not silently eat the book).
+            _guard_skip: str | None = None
+            if row.action == "BUY" and row.entry and row.stop and row.entry > row.stop:
+                _cur = _eod_current_price(row.ticker)
+                if _cur is not None:
+                    _atr_est = (row.entry - row.stop) / 1.5
+                    if _cur >= row.entry + 0.5 * _atr_est:
+                        _guard_skip = (
+                            f"entry no longer valid — price {_cur:.2f} ≥ entry {row.entry:.2f} "
+                            f"+ 0.5×ATR ({_atr_est:.2f}); bounce already underway"
+                        )
+                    elif _cur <= row.stop:
+                        _guard_skip = (
+                            f"entry no longer valid — price {_cur:.2f} ≤ stop {row.stop:.2f}; setup already failed"
+                        )
+            if _guard_skip:
+                log.info(f"[eod_batch] {row.ticker} skipped — {_guard_skip}")
+                _skipped = await db.merge(row)
+                _skipped.is_skipped = True
+                _skipped.skip_reason = f"eod_batch: {_guard_skip}"
+                continue
+
             merged = await db.merge(row)
             await _maybe_send(
                 sig_dict,
@@ -2065,52 +2190,71 @@ async def _run_scan_impl(broadcast_fn=None):
 
     # ── Step 5: generate signals ─────────────────────────────────────────
     _mark_scan_stage("signal_generation")
-    try:
-        signals = await scan_all(
-            active_tickers,
-            market_ctx=market_ctx,
-            histories={t: histories[t] for t in active_tickers if t in histories},
-            infos={t: infos.get(t, {}) for t in active_tickers},
-        )
+    signals: list[dict] = []
+    if _market_hours_ok():
+        try:
+            signals = await scan_all(
+                active_tickers,
+                market_ctx=market_ctx,
+                histories={t: histories[t] for t in active_tickers if t in histories},
+                infos={t: infos.get(t, {}) for t in active_tickers},
+            )
 
-        # QENG-6a/b/c: Enrich signals with Meta-Label probability and Cohort assignment
-        for sig in signals:
-            try:
-                from services.signal_ml import predict_meta_prob
-                from services.cohort_service import build_policy_version_meta
+            # QENG-6a/b/c: Enrich signals with Meta-Label probability and Cohort assignment
+            for sig in signals:
+                try:
+                    from services.signal_ml import predict_meta_prob
+                    from services.cohort_service import build_policy_version_meta
 
-                feats = sig.get("features", {})
-                entry_prob = sig.get("confidence", 50.0) / 100.0
-                hmm_regime = sig.get("hmmRegime", "")
-                vix_val = sig.get("vix")
-                sector_etf = sig.get("sectorEtf")
-                _macro = (market_ctx or {}).get("macro") or {}
+                    feats = sig.get("features", {})
+                    entry_prob = sig.get("confidence", 50.0) / 100.0
+                    hmm_regime = sig.get("hmmRegime", "")
+                    vix_val = sig.get("vix")
+                    sector_etf = sig.get("sectorEtf")
+                    _macro = (market_ctx or {}).get("macro") or {}
 
-                # dte is REQUIRED (REF-6, commit 49712cd added it to the signature).
-                # It was missing here, so this call raised on every signal and the
-                # cohort/shadow-control enrichment below never ran. Mirror the values
-                # assembler._pred_meta() passes (sector_momentum=sector_5d_ret isn't
-                # carried on the sig at this stage → left to its None default).
-                meta_prob = predict_meta_prob(
-                    tech=feats,
-                    entry_prob=entry_prob,
-                    hmm_regime=hmm_regime,
-                    vix=vix_val,
-                    sector_etf=sector_etf,
-                    dte=sig.get("daysToEarnings"),
-                    vix_term_ratio=_macro.get("vix_term_ratio"),
-                    vix_9d_ratio=_macro.get("vix_9d_ratio"),
-                )
+                    # dte is REQUIRED (REF-6, commit 49712cd added it to the signature).
+                    # It was missing here, so this call raised on every signal and the
+                    # cohort/shadow-control enrichment below never ran. Mirror the values
+                    # assembler._pred_meta() passes (sector_momentum=sector_5d_ret isn't
+                    # carried on the sig at this stage → left to its None default).
+                    meta_prob = predict_meta_prob(
+                        tech=feats,
+                        entry_prob=entry_prob,
+                        hmm_regime=hmm_regime,
+                        vix=vix_val,
+                        sector_etf=sector_etf,
+                        dte=sig.get("daysToEarnings"),
+                        vix_term_ratio=_macro.get("vix_term_ratio"),
+                        vix_9d_ratio=_macro.get("vix_9d_ratio"),
+                    )
 
-                cohort_meta = build_policy_version_meta(ticker=sig["ticker"], ts=datetime.utcnow(), meta_prob=meta_prob)
-                sig["cohort_meta"] = cohort_meta
-                sig["cohort"] = cohort_meta["cohort"]
-            except Exception as e_cohort:
-                log.warning(f"Failed to enrich signal with cohort/meta metadata: {e_cohort}")
+                    cohort_meta = build_policy_version_meta(
+                        ticker=sig["ticker"], ts=datetime.utcnow(), meta_prob=meta_prob
+                    )
+                    sig["cohort_meta"] = cohort_meta
+                    sig["cohort"] = cohort_meta["cohort"]
+                except Exception as e_cohort:
+                    log.warning(f"Failed to enrich signal with cohort/meta metadata: {e_cohort}")
 
-    except Exception as e:
-        log.info(f" scan_all failed: {e}")
-        raise RuntimeError(f"scan_all failed: {e}") from e
+        except Exception as e:
+            log.info(f" scan_all failed: {e}")
+            raise RuntimeError(f"scan_all failed: {e}") from e
+    else:
+        log.info("[scanner] outside market hours — signal generation skipped")
+
+    # ── Step 5b: §87 L10 conviction-tier sizing ───────────────────────────
+    # Backtest-validated 2026-06-10: prev-day score ≥ BUY_THRESH → 1.3× size;
+    # weighted A/B on the v10.9 canon: Sharpe 0.24→0.30 (+0.06), WR +1.6pp,
+    # 50/217 trades boosted, ΔN=0. Live proxy for "prev-day score cleared the
+    # threshold": a BUY signal existed for the ticker on the prior trading day
+    # (signals are only generated when scoring clears the action threshold).
+    # A global clamp caps the multiplicative L1–L10 stack.
+    if signals:
+        try:
+            await _apply_l10_conviction_sizing(signals)
+        except Exception:
+            log.warning("L10 conviction sizing failed — sizes left unscaled", exc_info=True)
 
     # ── Step 6: persist (smart daily deduplication) ──────────────────────
     _mark_scan_stage("persistence")

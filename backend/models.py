@@ -45,6 +45,7 @@ class Signal(Base):
     is_active = Column(Boolean, default=True, nullable=False, server_default="1")
     is_sent = Column(Boolean, default=False, index=True, nullable=False, server_default="0")  # TSYS-12c: hot filter
     is_skipped = Column(Boolean, default=False, nullable=False, server_default="0")
+    skip_reason = Column(Text, nullable=True)  # delivery-gate skip reason (Item 7)
     created_at = Column(DateTime, server_default=func.now(), index=True)
     sent_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)  # user journal notes

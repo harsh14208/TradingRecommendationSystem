@@ -1,7 +1,8 @@
 # Signal.Trade — Live Engine Signal Validation Status
 
 > Tracks every signal and gate in the live engine (`signal_engine.py`) against its backtest evidence.
-> Last updated: 2026-06-10 — v10.8+ IS baseline (N=217, WR=69.1%, Sharpe=0.24) + §93d gap decomposition findings.
+> Last updated: 2026-06-10 evening — v10.9 IS canon (N=217, WR=69.1%, Sharpe=0.24; DSR ⚠ fails at honest 744 trials) + live delivery overhaul.
+> **2026-06-10 delivery overhaul:** sector model-file unblock removed, SELL delivery disabled, §55/§14 hard blocks removed, DELIV-1 price-validity EOD guard, `skip_reason` persisted — see the 🔴 table + `Stats.md §DELIV`. ⚠ All pre-2026-06-10 live-WR evidence in this doc is contaminated by the delivery leaks (81% null `sector_rs`, unblocked sectors, SELL floor bypass) — re-validate findings against the post-fix forward window.
 >
 > **How to re-run backtest validation:**
 > ```bash
@@ -101,6 +102,11 @@ These gates are in the live engine but **cannot** be added to the backtest witho
 
 | Gate | What was tried | Evidence | Outcome |
 |---|---|---|---|
+| **Sector model-file dynamic unblock** | BLOCKED_SECTORS lifted when `backtest_ml_model_{SECTOR}.json` exists (v8.1 feature 2f0cdcd) | **The biggest live leak found to date (2026-06-10):** files existed for XLF/XLI/XLP → only XLU actually enforced. 60d delivered BUYs: XLF 72 @ 29.2% net WR (−1.52%/trade), XLP 50 @ 24.0% (−1.22%), XLI 35 @ 37.1% (−1.27%) = 32% of book at ≈−1.4%/trade. Training artifacts flipped delivery policy with no promotion gate. | **Removed** from `delivery_gates.py` (2026-06-10); 6 files quarantined to `data/quarantine/`; unblock now requires QENG-1c promotion record |
+| **SELL delivery** | SELL signals delivered live (backtest §32 had disabled them: Sharpe 0.20→−0.03) | 60d live: 71 resolved SELLs, net WR 35.2%, **−1.00%/trade**; some sent at conf 35 — below min_confidence=40 and swing floor 46 (gate bypass on a SELL path) | **Disabled** in `delivery_gates.py` (2026-06-10) — long-only regime until a SELL-specific validated path exists |
+| §55 Cross-asset 3/3 headwinds hard block | Hard block when TLT+UUP+XLE all stressed | `--validate-live-gates`: −18 trades (−8%) for −0.00 ΔSharpe — pure N destruction | **Removed** from `delivery_gates.py` (2026-06-10); soft −10 scoring in `macro.py` preserved |
+| §14 FRED panel hard blocks | NFCI>0.5 / Baa-10Y>4% hard blocks + score<50/55 marginal blocks | Original read +0.02 Sh (marginal, "not a live gate yet") but deployed anyway; **fresh v10.9 canon A/B: −0.06 Sharpe, WR −2.0pp — harmful** ("regime gates cut too many recoverable dips") | **Removed** from `delivery_gates.py` (2026-06-10); soft scoring preserved |
+| EOD 120-min stale cutoff | Skip EOD-batch signals older than 2h (interim Item 2, lived <1 day) | Latency was confounded with sector: clean-sector stale deliveries earn **+2.12%/trade** (N=91) vs fresh +3.61% (N=20); cutoff would drop ~82% of clean deliverable trades — the ATR≤70 trap on the delivery side. Also had a latent aware-vs-naive datetime TypeError | **Replaced** (2026-06-10) by DELIV-1 price-validity guard: skip iff price ≥ entry+0.5×ATR or ≤ stop |
 | §75 Buyback boost | Score boost during active repurchase window | Live WR 33.8%, −8.7pp drag vs no-buyback | **Disabled** — live engine `signal_engine.py` |
 | §77 Tax-loss boost | +4pp Nov/Dec near 52-wk low | Live WR 31% near 52-wk low (INVERTED vs theory) | **Inverted to −4pp penalty** |
 | §61 Idio vol gate | Block when realized vol > threshold | `--inv5`: +3N, +0.01Sh → dead gate. Backtest + live engine (`gates/statistical.py`) | **Removed** (2026-06-02) |

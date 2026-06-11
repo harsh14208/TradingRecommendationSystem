@@ -9,6 +9,7 @@ WATCH = ["PANW", "BWA", "FTI", "EQH", "TRGP", "APTV", "DHI", "FIVE", "ITW"]
 
 # Monkey-patch TICKERS for a focused run
 import scripts.backtest_technicals as bt
+
 bt.TICKERS = WATCH
 bt.START = "2004-01-01"
 bt.END = "2026-06-01"

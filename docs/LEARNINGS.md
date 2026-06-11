@@ -1,7 +1,7 @@
 # Signal.Trade — Research Learnings & Alpha Inventory
 
 > Living document. Updated as each research section completes.
-> Last updated: 2026-06-10 after §94 Sharpe×N agenda completion. Key new findings: (1) Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of 23yr backtest trades in that window; calm sleeve abandoned (0 trades). (2) Factor attribution confirms **genuine idiosyncratic alpha** (+0.87%/day, p=0.044) — not factor beta. (3) Live-vs-IS 25.5pp gap is **regime mismatch** (live period = rate-hike epoch with negative backtest Sharpe) + midday microstructure (hour 11–12 ET catastrophic, p=0.000). (4) WATCH bench all rejected — 111-name curated list is already well-filtered.
+> Last updated: 2026-06-10 evening after the §DELIV delivery audit. Key new findings: (1) **The live-vs-IS gap was mostly DELIVERY LEAKS, not signal** — clean book = 57.8% net WR, +2.06%/trade net (see §DELIV Lessons at bottom; supersedes the earlier "regime mismatch" attribution, which was measured on the contaminated sample). (2) Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of 23yr backtest trades in that window; calm sleeve abandoned (0 trades). (3) Factor attribution confirms **genuine idiosyncratic alpha** (+0.87%/day, p=0.044) — not factor beta. (4) WATCH bench all rejected — 111-name curated list is already well-filtered. (5) §87 L10 conviction sizing verified +0.06 Sharpe at ΔN=0, deployed live. (6) v10.9 canon **fails deflated Sharpe at honest 744 trials** — IS iteration is statistically spent.
 > Primary research script: `backend/scripts/signal_alpha_decomposition.py`
 > Primary backtest: `backend/scripts/backtest_technicals.py`
 > Live engine: `backend/services/signal_engine.py`
@@ -537,3 +537,49 @@ All bugs were present in both `screen_russell1000_mr_candidates.py` and `screen_
 4. ❌ Energy sub-sector (HAL/FTI/TRGP) — FTI/TRGP rejected; HAL still WATCH
 5. ⏳ Monitor midday 11–12 ET effect in May+ cohort — need N≥20 reliable signals to confirm persistence
 6. ⏳ Meta-model auto-activation — wait for CV-AUC to cross 0.52 (needs ~4–6 more months at current N)
+
+---
+
+## §87 Consecutive-Score Sizing A/B Validation (2026-06-10)
+
+**Question:** Does applying a 1.3× position-size multiplier to persistent-oversold signals (prev_score ≥ threshold) improve portfolio Sharpe vs. treating consecutive-score as a hard filter?
+
+**Method:** Full 23-year IS backtest (111 tickers, 2003–2026) with `--portfolio` concurrent-slot simulation (5 slots, T-bill on idle, compound DD).
+
+| Metric | Baseline (filter mode) | §87 (sizing mode) | Δ |
+|:---|---:|---:|---:|
+| Total Trades | 217 | 217 | +0 |
+| Win Rate | 69.1% | 69.1% | +0.0pp |
+| Avg Return | +0.80% | +0.80% | +0.00pp |
+| Per-Trade Sharpe | 0.24 | 0.24 | +0.00 |
+| Profit Factor | 1.73× | 1.73× | +0.00 |
+| MC P5 / P95 | 0.07 / 0.43 | 0.07 / 0.43 | — |
+| **Portfolio CAGR** | **+3.6%** | **+3.7%** | **+0.1pp** |
+| **Portfolio Ann.Sharpe** | **2.87** | **3.03** | **+0.16 (+5.6%)** |
+| **Portfolio Max DD** | **-6.16%** | **-6.33%** | **-0.17pp** |
+| Skipped (slots full) | 21 (9.7%) | 21 (9.7%) | +0 |
+
+**Verdict: DEPLOY with monitoring.**
+
+- Sizing-only layer yields +0.16 portfolio ann.Sharpe (+5.6% relative) with zero trade-count cost.
+- Per-trade metrics identical by construction (sizing does not change entry/exit selection).
+- MC P5 = 0.07 > 0 confirms edge survives block-bootstrap autocorrelation correction.
+- Slight DD worsening (-0.17pp) is acceptable given Sharpe gain; DD-throttle (R7) still deployable and additive.
+- The previous filter mode (skip single-day spikes) and sizing mode are not mutually exclusive — sizing mode is strictly superior because it retains marginal trades at reduced size rather than discarding them entirely.
+
+**Code change:** `simulate_ticker()` in `backtest_technicals.py` already supports `consec_score_sizing: bool`. The live engine equivalent is in `assembler.py` Gate 18a logic.
+
+---
+
+---
+
+## §DELIV Lessons — The Live-vs-IS Gap Was Mostly Delivery (2026-06-10)
+
+A DB-level audit of the delivered book overturned the working theory that the live-vs-IS WR gap (~43% vs ~69%) was regime mismatch or signal decay. **Most of it was delivery leaks** (full data: Stats.md §DELIV):
+
+1. **Audit delivery before blaming the signal.** Three leaks compounded: blocked sectors not actually blocked (model-file "dynamic unblock" — 32% of the book at ≈−1.4%/trade), SELL delivery with negative edge bypassing confidence floors, and per-sector calibration silently OFF (81% null `sector_rs`). Clean book (May+ BUYs ex-blocked): **57.8% net WR, +2.06%/trade net** — near-IS economics were there all along.
+2. **File existence is not a promotion gate.** A sector-model training run re-opened deliberately-blocked XLI 3 days after it was blocked, just by writing `backtest_ml_model_XLI.json`. Policy changes must go through an explicit promotion record (QENG-1c), never artifact side-effects.
+3. **Deconfound before filtering.** "Stale deliveries earn +0.38%/trade" was sector composition: within clean sectors, stale deliveries earn +2.12%. A 120-min staleness cutoff would have dropped ~82% of good deliverable trades — the ATR≤70 N-collapse trap, delivery edition. The correct guard is price-validity (entry ± 0.5×ATR / stop breach), not age.
+4. **Sizing > filtering, again (§87).** The consec-score signal worth +0.14 Sharpe as a filter (−73% N) captures +0.06 Sharpe as a 1.3× sizing tier at ΔN=0 — now live as L10. Same pattern as L7/L8.
+5. **Claims need instrumentation.** §87's original "+0.03, deployed" was unverifiable (no report section consumed the multiplier) and undeployed. If an A/B can't show the effect, the effect is a claim, not a result.
+6. **The IS statistical budget is spent.** v10.9 canon DSR fails at the honest 744-trial count (E[max]=0.25 > IS 0.24). Every additional IS sweep raises the bar retroactively. Edge proof now lives in the post-fix forward window (first uncontaminated live sample), OOS accrual, and orthogonal data.

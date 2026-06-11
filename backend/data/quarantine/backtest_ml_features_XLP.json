@@ -1,8 +1,8 @@
 {
-  "trained_at": "2026-06-09T16:08:59.345153",
-  "sector_etf": "XLI",
+  "trained_at": "2026-06-09T16:08:59.320079",
+  "sector_etf": "XLP",
   "n_train": 14,
-  "n_test": 6,
+  "n_test": 7,
   "oos_auc": 0.5,
   "champion_auc": null,
   "deployed": true,

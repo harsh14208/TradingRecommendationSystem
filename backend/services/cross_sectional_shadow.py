@@ -154,7 +154,15 @@ def check_promotion_criteria(
         (activated: bool, diagnostics: dict)
     """
     crit = SHADOW_PROMOTION_CRITERIA
-    diag: dict = {"n_total": len(resolved_shadow_signals), "n_resolved": 0, "bottom_wr": None, "rest_wr": None, "top_wr": None, "monotonic": False, "activated": False}
+    diag: dict = {
+        "n_total": len(resolved_shadow_signals),
+        "n_resolved": 0,
+        "bottom_wr": None,
+        "rest_wr": None,
+        "top_wr": None,
+        "monotonic": False,
+        "activated": False,
+    }
 
     resolved = [s for s in resolved_shadow_signals if s.get("outcome_14d") is not None]
     diag["n_resolved"] = len(resolved)
@@ -200,9 +208,7 @@ def apply_shadow_sizing(signals: list[dict]) -> None:
     for sig in signals:
         pct = sig.get("crossSectionalShadowPct")
         if pct is not None and pct <= crit["decile_threshold"]:
-            sig["positionSizeScale"] = round(
-                sig.get("positionSizeScale", 1.0) * crit["sizing_haircut"], 2
-            )
+            sig["positionSizeScale"] = round(sig.get("positionSizeScale", 1.0) * crit["sizing_haircut"], 2)
             sig["rationale"] = list(sig.get("rationale", [])) + [
                 {
                     "src": "Cross-Sectional Alpha (shadow)",

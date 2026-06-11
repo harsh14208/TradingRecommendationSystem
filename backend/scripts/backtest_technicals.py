@@ -3115,11 +3115,7 @@ def simulate_ticker(
                 ),
                 "vix_9d_ratio": (_compute_vix_9d_ratio(vix, _date_key) if vix else None),
                 "ff_str": (round(float(ff_str.get(_date_key)), 4) if ff_str else None),
-                "si_rising": (
-                    si_rising_map.get(ticker, {}).get(_date_key)
-                    if si_rising_map
-                    else None
-                ),
+                "si_rising": (si_rising_map.get(ticker, {}).get(_date_key) if si_rising_map else None),
             }
         )
 
@@ -5164,7 +5160,9 @@ def main():
                     _ff_str_regime_map[_d] = 0.5
                 else:
                     _ff_str_regime_map[_d] = 1.0
-            print(f"ok ({len(_ff_str_regime_map)} dates, negative regime = {sum(1 for v in _ff_str_regime_map.values() if v == 0.5)} days)")
+            print(
+                f"ok ({len(_ff_str_regime_map)} dates, negative regime = {sum(1 for v in _ff_str_regime_map.values() if v == 0.5)} days)"
+            )
         except Exception as _ff_reg_err:
             print(f"failed ({_ff_reg_err})")
 
@@ -5179,7 +5177,9 @@ def main():
                 _si_raw = json.load(f)
             # Flatten to {ticker: {pd.Timestamp: rising_bool}}
             for _t, _dates in _si_raw.items():
-                _si_rising_map[_t] = {pd.Timestamp(d): v["rising"] for d, v in _dates.items() if v.get("rising") is not None}
+                _si_rising_map[_t] = {
+                    pd.Timestamp(d): v["rising"] for d, v in _dates.items() if v.get("rising") is not None
+                }
             print(f"ok ({len(_si_rising_map)} tickers)")
         except Exception as _si_err:
             print(f"failed ({_si_err})")
@@ -5233,7 +5233,11 @@ def main():
         _calm_list = []
         for ticker, df in all_dfs.items():
             _ct = simulate_ticker(
-                ticker, df, vix, spy_trend, stlfsi4,
+                ticker,
+                df,
+                vix,
+                spy_trend,
+                stlfsi4,
                 mr_only=BACKTEST_MR_DEFAULT,
                 calm_sleeve=True,
                 earnings_dates=all_earnings_dates.get(ticker),
@@ -7005,6 +7009,35 @@ def main():
             print_table(["Score Band", "Avg Size Mult", "N"], sb_rows)
 
     # ── §QuantEngine: non-linear score-band sizing report ────────────────────
+    if _consec_score_sizing_flag and "size_mult" in trades.columns:
+        print("\n## §87. Consec-Score Conviction Sizing A/B\n")
+        print(
+            "> Prev-day score ≥ threshold → 1.3× size (conviction tier), else 1.0×.\n"
+            "> Sizing form of the §83d consec-score filter — keeps all trades (ΔN=0).\n"
+        )
+        _sm87 = trades["size_mult"].fillna(1.0).tolist()
+        _rets87 = trades["net_pct"].tolist()
+        sw87 = stats_weighted(_rets87, _sm87)
+        sf87 = stats(_rets87)
+        _n_boost = sum(1 for m in _sm87 if m > 1.0)
+        print_table(
+            ["Metric", "Flat Sizing", "Consec-Score Sizing", "Δ"],
+            [
+                ["Boosted trades", "—", f"{_n_boost}/{len(_sm87)}", "—"],
+                ["Win Rate", f"{sf87['wr']:.1f}%", f"{sw87['wr']:.1f}%", f"{sw87['wr'] - sf87['wr']:+.1f}pp"],
+                ["Weighted Avg", f"{sf87['avg']:+.2f}%", f"{sw87['avg']:+.2f}%", f"{sw87['avg'] - sf87['avg']:+.2f}pp"],
+                [
+                    "Sharpe",
+                    fmt_sharpe(sf87["sharpe"]),
+                    fmt_sharpe(sw87["sharpe"]),
+                    f"{(sw87.get('sharpe') or 0) - (sf87.get('sharpe') or 0):+.2f}",
+                ],
+            ],
+        )
+        _d87 = (sw87.get("sharpe") or 0) - (sf87.get("sharpe") or 0)
+        _v87 = "✅ deploy as L10" if _d87 >= 0.02 else "⚪ below +0.02 deploy bar — do not deploy"
+        print(f"\n> §87 verdict: ΔSharpe = {_d87:+.3f}  {_v87}")
+
     if _score_band_sizing_flag and "size_mult" in trades.columns:
         print("\n## §QuantEngine: Non-linear Score-Band Sizing\n")
         print(

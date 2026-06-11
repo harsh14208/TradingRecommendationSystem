@@ -12,12 +12,9 @@ Runs OLS: net_pct = α + β_mkt*MKT-RF + β_smb*SMB + β_hml*HML +
 from __future__ import annotations
 
 import io
-import json
-import os
 import zipfile
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import requests
 
@@ -112,7 +109,7 @@ def main():
     alpha = model.params.get("const", 0)
     alpha_p = model.pvalues.get("const", 1)
     r2 = model.rsquared
-    print(f"\n## Key Results")
+    print("\n## Key Results")
     print(f"  Alpha (daily): {alpha:.4f}%  (p={alpha_p:.3f})")
     print(f"  Annualized alpha: {alpha * 252:.2f}%")
     print(f"  R²: {r2:.3f}")
@@ -125,11 +122,11 @@ def main():
         mean_factor = merged[col].mean()
         factor_contrib[col] = beta * mean_factor * 252
 
-    print(f"\n## Annual Return Decomposition")
+    print("\n## Annual Return Decomposition")
     print(f"  Alpha:           {alpha * 252:+.2f}%")
     for col, val in factor_contrib.items():
         print(f"  {col.upper():15s} {val:+.2f}%  (β={model.params.get(col, 0):.3f})")
-    print(f"  ─────────────────────────────")
+    print("  ─────────────────────────────")
     print(f"  Predicted total: {sum(factor_contrib.values()) + alpha * 252:+.2f}%")
     print(f"  Actual total:    {merged['net_pct'].sum():+.2f}%")
 

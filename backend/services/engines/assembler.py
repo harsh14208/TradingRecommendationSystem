@@ -221,7 +221,7 @@ def _assemble_signal(
         RvolGate,
     )
 
-    _se_sector_etf_ctx = (sector_rs or {}).get("sector_etf", "")
+    _se_sector_etf_ctx = (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper(), "")
     _sig_ctx = _SCtx(
         action=action,
         confidence=confidence,
@@ -903,7 +903,7 @@ def _assemble_signal(
     if t10y_rate and t10y_rate > 2.0 and action == "BUY" and entry and target and entry > 0:
         projected_pct = abs(target - entry) / entry * 100
         # Growth / high-beta sectors require a larger premium (investors face more risk)
-        sector_etf_key = (sector_rs or {}).get("sector_etf", "")
+        sector_etf_key = (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper(), "")
         high_beta = sector_etf_key in {"XLK", "XLC", "XLY", "XLB"}
         required_premium = 3.5 if high_beta else 2.0  # pp above risk-free
         excess = projected_pct - t10y_rate - required_premium
@@ -966,7 +966,7 @@ def _assemble_signal(
     # ── §64/§65/§66/§68 macro extension gates ─────────────────────────────
     from services.gates.macro_extensions import score_macro_extensions as _macro_ext
 
-    _sector_etf_key = (sector_rs or {}).get("sector_etf", "")
+    _sector_etf_key = (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper(), "")
     confidence, _mext_cards, _mext_sources = _macro_ext(
         action=action,
         confidence=confidence,
@@ -1123,7 +1123,9 @@ def _assemble_signal(
     # Only added for BUY signals with a confirmed MR setup — not for momentum or
     # general BUYs — because the RSI45 threshold was calibrated on MR entries.
     if action == "BUY" and _has_mr:
-        _hold_rec = _SECTOR_MR_CONFIG.get((sector_rs or {}).get("sector_etf", ""), {}).get("hold_days", 10)
+        _hold_rec = _SECTOR_MR_CONFIG.get(
+            (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper(), ""), {}
+        ).get("hold_days", 10)
         rationale = list(rationale) + [
             {
                 "src": "Risk Gate",
@@ -1363,7 +1365,11 @@ def _assemble_signal(
             2,
         ),
         "recommendedHoldDays": (
-            _SECTOR_MR_CONFIG.get((sector_rs or {}).get("sector_etf", ""), {}).get("hold_days", 10) if _has_mr else 10
+            _SECTOR_MR_CONFIG.get((sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper(), ""), {}).get(
+                "hold_days", 10
+            )
+            if _has_mr
+            else 10
         ),
         "vix": vix,
         "crossAssetHeadwinds": macro.get("cross_asset_headwinds"),

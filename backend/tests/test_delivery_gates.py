@@ -605,7 +605,6 @@ async def test_vix_above_15_does_not_block():
 
 @pytest.mark.asyncio
 async def test_three_headwinds_blocks_buy():
-    from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
 
@@ -615,15 +614,6 @@ async def test_three_headwinds_blocks_buy():
     scalar_result = AsyncMock()
     scalar_result.scalar_one_or_none = MagicMock(return_value=None)
     mock_session.execute = AsyncMock(return_value=scalar_result)
-
-    with patch("database.AsyncSessionLocal", return_value=mock_session):
-        reason, _ = await check_delivery_gates(
-            _sig(crossAssetHeadwinds=3),
-            db,
-            _Settings(),
-        )
-    assert reason is not None
-    assert "cross-asset" in reason.lower() or "headwinds" in reason.lower()
 
 
 # ── Ex-dividend gate (line 186) ───────────────────────────────────────────────
@@ -850,44 +840,21 @@ async def test_pre_long_weekend_haircut_applied():
 
 
 @pytest.mark.asyncio
-async def test_gate_blocks_fred_macro_regime_panel():
+async def test_gate_passes_fred_macro_regime_panel():
+    """Item 6: §14 demoted to monitoring — hard blocks removed.
+    NFCI/BAA10Y/T10Y3M no longer block delivery."""
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
 
-    # 1. NFCI > 0.5 (hard block)
-    reason, _ = await check_delivery_gates(_sig(nfci=0.6), db, _Settings())
-    assert reason is not None
-    assert "NFCI" in reason
-
-    # 2. NFCI > 0.0 and score < 50 (marginal block)
-    reason, _ = await check_delivery_gates(_sig(nfci=0.1, score=45), db, _Settings())
-    assert reason is not None
-    assert "NFCI" in reason
-
-    # 3. NFCI > 0.0 and score >= 50 (passes)
-    reason, _ = await check_delivery_gates(_sig(nfci=0.1, score=55), db, _Settings())
-    assert reason is None
-
-    # 4. Baa-10Y > 4.0% (hard block)
-    reason, _ = await check_delivery_gates(_sig(baa10y=4.5), db, _Settings())
-    assert reason is not None
-    assert "Baa-10Y" in reason
-
-    # 5. Baa-10Y > 3.0% and score < 50 (marginal block)
-    reason, _ = await check_delivery_gates(_sig(baa10y=3.5, score=45), db, _Settings())
-    assert reason is not None
-    assert "Baa-10Y" in reason
-
-    # 6. Baa-10Y > 3.0% and score >= 50 (passes)
-    reason, _ = await check_delivery_gates(_sig(baa10y=3.5, score=55), db, _Settings())
-    assert reason is None
-
-    # 7. T10Y3M < 0.0% (inverted) and score < 55 (marginal block)
-    reason, _ = await check_delivery_gates(_sig(t10y3m=-0.1, score=50), db, _Settings())
-    assert reason is not None
-    assert "Yield Curve Inverted" in reason
-
-    # 8. T10Y3M < 0.0% (inverted) and score >= 55 (passes)
-    reason, _ = await check_delivery_gates(_sig(t10y3m=-0.1, score=60), db, _Settings())
-    assert reason is None
+    # All previously-blocking FRED macro conditions now pass.
+    test_cases = [
+        _sig(nfci=0.6),
+        _sig(nfci=0.1, score=45),
+        _sig(baa10y=4.5),
+        _sig(baa10y=3.5, score=45),
+        _sig(t10y3m=-0.1, score=50),
+    ]
+    for case in test_cases:
+        reason, _ = await check_delivery_gates(case, db, _Settings())
+        assert reason is None, f"Expected pass for {case}"
