@@ -598,6 +598,13 @@ def _simfin_factor_panel(tickers: list[str]) -> pd.DataFrame:
 def build_panel(
     use_short_interest: bool = False,
     use_simfin: bool = False,
+    use_finra_sv: bool = False,
+    use_sec_ftd: bool = False,
+    use_naaim: bool = False,
+    use_gdelt: bool = False,
+    use_finra_ats: bool = False,
+    use_wiki: bool = False,
+    use_occ: bool = False,
     min_price: float = 5.0,
     min_dollar_vol: float = 1e7,
     universe_source: str = "full",
@@ -657,6 +664,76 @@ def build_panel(
         for c in SIMFIN_FACTOR_COLS:
             if c in panel.columns and c not in RAW_FEATURE_COLS:
                 RAW_FEATURE_COLS.append(c)
+
+    # ── §104–§110: Alt-data panel merges ─────────────────────────────────────
+    if use_finra_sv:
+        try:
+            from services.finra_short_volume import load_short_volume_panel
+
+            _sv = load_short_volume_panel()
+            if _sv is not None and not _sv.empty:
+                _sv["date"] = pd.to_datetime(_sv["date"])
+                panel = pd.merge_asof(
+                    panel.sort_values("date"),
+                    _sv[["date", "ticker", "short_volume_ratio", "sv_ratio_5d_delta"]].rename(
+                        columns={"short_volume_ratio": "sv_ratio", "sv_ratio_5d_delta": "sv_ratio_5d_delta"}
+                    ),
+                    on="date",
+                    by="ticker",
+                    direction="backward",
+                )
+                for c in ["sv_ratio", "sv_ratio_5d_delta"]:
+                    if c not in RAW_FEATURE_COLS:
+                        RAW_FEATURE_COLS.append(c)
+                print(f"  FINRA SV merged: {panel['sv_ratio'].notna().mean():.0%} coverage")
+        except Exception as e:
+            print(f"  FINRA SV merge failed: {e}")
+
+    if use_sec_ftd:
+        try:
+            from services.sec_ftd import load_ftd_panel
+
+            _ftd = load_ftd_panel()
+            if _ftd is not None and not _ftd.empty:
+                _ftd["effective_date"] = pd.to_datetime(_ftd["effective_date"])
+                panel = pd.merge_asof(
+                    panel.sort_values("date"),
+                    _ftd[["effective_date", "ticker", "ftd_63d_pctile"]].rename(columns={"effective_date": "date"}),
+                    on="date",
+                    by="ticker",
+                    direction="backward",
+                )
+                if "ftd_63d_pctile" not in RAW_FEATURE_COLS:
+                    RAW_FEATURE_COLS.append("ftd_63d_pctile")
+                print(f"  SEC FTD merged: {panel['ftd_63d_pctile'].notna().mean():.0%} coverage")
+        except Exception as e:
+            print(f"  SEC FTD merge failed: {e}")
+
+    if use_naaim:
+        try:
+            from services.sentiment_naaim_aaii import load_naaim_panel, load_aaii_panel
+
+            _naaim = load_naaim_panel()
+            _aaii = load_aaii_panel()
+            if _naaim is not None and not _naaim.empty:
+                _naaim["date"] = pd.to_datetime(_naaim["date"])
+                panel = pd.merge_asof(
+                    panel.sort_values("date"), _naaim[["date", "naaim_exposure"]], on="date", direction="backward"
+                )
+                if "naaim_exposure" not in RAW_FEATURE_COLS:
+                    RAW_FEATURE_COLS.append("naaim_exposure")
+            if _aaii is not None and not _aaii.empty:
+                _aaii["date"] = pd.to_datetime(_aaii["date"])
+                panel = pd.merge_asof(
+                    panel.sort_values("date"), _aaii[["date", "aaii_bull_bear_spread"]], on="date", direction="backward"
+                )
+                if "aaii_bull_bear_spread" not in RAW_FEATURE_COLS:
+                    RAW_FEATURE_COLS.append("aaii_bull_bear_spread")
+            print(
+                f"  Sentiment merged: naaim={panel['naaim_exposure'].notna().mean():.0%}, aaii={panel['aaii_bull_bear_spread'].notna().mean():.0%}"
+            )
+        except Exception as e:
+            print(f"  Sentiment merge failed: {e}")
 
     panel = panel.sort_values(["date", "ticker"]).reset_index(drop=True)
     print(f"Panel: {len(panel):,} rows, {panel['date'].nunique():,} trading days")
@@ -1189,6 +1266,15 @@ def main() -> None:
         "(consumed by services/cross_sectional_shadow.py for live SHADOW scoring)",
     )
     ap.add_argument(
+        "--finra-sv", action="store_true", help="add FINRA short-volume features (sv_ratio, sv_ratio_5d_delta)"
+    )
+    ap.add_argument("--sec-ftd", action="store_true", help="add SEC FTD features (ftd_63d_pctile)")
+    ap.add_argument("--naaim", action="store_true", help="add NAAIM/AAII sentiment features")
+    ap.add_argument("--gdelt", action="store_true", help="add GDELT news-tone features (bounded pilot)")
+    ap.add_argument("--finra-ats", action="store_true", help="add FINRA ATS dark-pool features")
+    ap.add_argument("--wiki", action="store_true", help="add Wikipedia pageview features")
+    ap.add_argument("--occ", action="store_true", help="add OCC volume/OI features")
+    ap.add_argument(
         "--horizon",
         type=int,
         default=HORIZON,
@@ -1208,6 +1294,13 @@ def main() -> None:
     panel = build_panel(
         use_short_interest=args.short_interest,
         use_simfin=args.simfin,
+        use_finra_sv=args.finra_sv,
+        use_sec_ftd=args.sec_ftd,
+        use_naaim=args.naaim,
+        use_gdelt=args.gdelt,
+        use_finra_ats=args.finra_ats,
+        use_wiki=args.wiki,
+        use_occ=args.occ,
         min_price=args.min_price,
         min_dollar_vol=args.min_dollar_vol,
         universe_source=args.universe,

@@ -72,6 +72,18 @@ try:
 except Exception:
     GaussianHMM = None  # type: ignore[assignment,misc]
 
+# ── §104–§110: Alt-data panel globals (loaded in main(), used by simulate_ticker) ──
+_alt_data_panels: dict[str, pd.DataFrame | None] = {
+    "finra_sv": None,
+    "sec_ftd": None,
+    "naaim": None,
+    "aaii": None,
+    "gdelt": None,
+    "finra_ats": None,
+    "wikipedia": None,
+    "occ": None,
+}
+
 
 def _log_experiment(
     experiment_type: str,
@@ -2874,13 +2886,21 @@ def simulate_ticker(
                 _mae_pct = min(_mae_pct, (entry_price - day_high) / entry_price * 100)
 
             # §96a: overnight vs intraday decomposition
-            _prev_close = (
-                _signal_close
-                if (_fill_bar + j == _fill_bar and entry_at_close)
-                else float(df.iloc[_fill_bar + j - 1]["Close"])
-            )
-            _overnight_sum += (day_open - _prev_close) / entry_price * 100
-            _intraday_sum += (day_close - day_open) / entry_price * 100
+            # Bug-fix (1): day-0 overnight only for close-entry; open/limit entries
+            # start intraday at entry_price, not the prior close→open gap.
+            if j == 0:
+                if entry_at_close:
+                    # Trade entered at signal-day close; own the Close→Open gap
+                    _overnight_sum += (day_open - entry_price) / entry_price * 100
+                    _intraday_sum += (day_close - day_open) / entry_price * 100
+                else:
+                    # Open or limit entry: trade did not exist overnight
+                    _overnight_sum += 0.0
+                    _intraday_sum += (day_close - entry_price) / entry_price * 100
+            else:
+                _prev_close = float(df.iloc[_fill_bar + j - 1]["Close"])
+                _overnight_sum += (day_open - _prev_close) / entry_price * 100
+                _intraday_sum += (day_close - day_open) / entry_price * 100
 
             if action == "BUY":
                 if day_low <= stop_price:
@@ -2994,8 +3014,14 @@ def simulate_ticker(
             _exit_bar = df.iloc[_exit_bar_idx]
             _exit_open = float(_exit_bar["Open"])
             _exit_close = float(_exit_bar["Close"])
-            _intraday_sum -= (_exit_close - _exit_open) / entry_price * 100
-            _intraday_sum += (exit_price - _exit_open) / entry_price * 100
+            _exit_day = _exit_bar_idx - _fill_bar
+            if _exit_day == 0 and not entry_at_close:
+                # Day-0 intraday was (Close - entry_price), replace with (exit_price - entry_price)
+                _intraday_sum -= (_exit_close - entry_price) / entry_price * 100
+                _intraday_sum += (exit_price - entry_price) / entry_price * 100
+            else:
+                _intraday_sum -= (_exit_close - _exit_open) / entry_price * 100
+                _intraday_sum += (exit_price - _exit_open) / entry_price * 100
 
         # ── Return calculation ────────────────────────────────────────────────
         if action == "BUY":
@@ -3053,6 +3079,46 @@ def simulate_ticker(
             _si_flag = si_rising_map.get(ticker, {}).get(_date_key)
             if _si_flag is True:
                 _size_mult *= 1.15
+        # §104: FINRA short-volume squeeze-fuel tilt
+        if _alt_data_panels.get("finra_sv") is not None and is_buy_signal:
+            _sv_row = _alt_data_panels["finra_sv"]
+            if isinstance(_sv_row, pd.DataFrame):
+                _sv_match = _sv_row[(_sv_row["ticker"] == ticker.upper()) & (_sv_row["date"] == _date_key.date())]
+                if not _sv_match.empty:
+                    _sv_delta = float(_sv_match.iloc[0]["sv_ratio_5d_delta"])
+                    # Elevated-and-falling short pressure = fuel
+                    if _sv_delta < -2.0:
+                        _size_mult *= 1.15
+        # §105: SEC FTD dislocation tilt
+        if _alt_data_panels.get("sec_ftd") is not None and is_buy_signal:
+            _ftd_row = _alt_data_panels["sec_ftd"]
+            if isinstance(_ftd_row, pd.DataFrame):
+                _ftd_match = _ftd_row[
+                    (_ftd_row["ticker"] == ticker.upper()) & (_ftd_row["effective_date"] == _date_key.date())
+                ]
+                if not _ftd_match.empty:
+                    _ftd_pctile = float(_ftd_match.iloc[0]["ftd_63d_pctile"])
+                    if _ftd_pctile > 75.0:
+                        _size_mult *= 1.15
+        # §106: NAAIM/AAII sentiment capitulation tilt
+        if _alt_data_panels.get("naaim") is not None and is_buy_signal:
+            _naaim = _alt_data_panels["naaim"]
+            if isinstance(_naaim, pd.DataFrame):
+                _naaim_match = _naaim[_naaim["date"] == _date_key.date()]
+                if not _naaim_match.empty:
+                    _naaim_exp = float(_naaim_match.iloc[0]["naaim_exposure"])
+                    if _naaim_exp < 30.0:  # bottom-quintile = capitulation
+                        _size_mult *= 1.15
+        # §107: GDELT news-tone capitulation/repricing context
+        if _alt_data_panels.get("gdelt") is not None and is_buy_signal:
+            _gdelt = _alt_data_panels["gdelt"]
+            if isinstance(_gdelt, pd.DataFrame):
+                _gdelt_match = _gdelt[(_gdelt["ticker"] == ticker.upper()) & (_gdelt["date"] == _date_key.date())]
+                if not _gdelt_match.empty:
+                    _tone_z = float(_gdelt_match.iloc[0]["tone_z"])
+                    # Negative tone at oversold = potential capitulation (size up)
+                    if _tone_z < -1.5:
+                        _size_mult *= 1.10
         # §88: calm-regime sleeve — 0.5× risk budget on relaxed low-VIX entries
         if calm_sleeve and is_buy_signal:
             _size_mult *= 0.5
@@ -3171,6 +3237,71 @@ def simulate_ticker(
                 "vix_9d_ratio": (_compute_vix_9d_ratio(vix, _date_key) if vix else None),
                 "ff_str": (round(float(ff_str.get(_date_key)), 4) if ff_str else None),
                 "si_rising": (si_rising_map.get(ticker, {}).get(_date_key) if si_rising_map else None),
+                # ── §104–§110: Alt-data features at entry ────────────────────────
+                "sv_ratio": (
+                    round(
+                        float(
+                            _alt_data_panels["finra_sv"][
+                                (_alt_data_panels["finra_sv"]["ticker"] == ticker.upper())
+                                & (_alt_data_panels["finra_sv"]["date"] == _date_key.date())
+                            ].iloc[0]["short_volume_ratio"]
+                        ),
+                        4,
+                    )
+                    if _alt_data_panels.get("finra_sv") is not None
+                    and not _alt_data_panels["finra_sv"][
+                        (_alt_data_panels["finra_sv"]["ticker"] == ticker.upper())
+                        & (_alt_data_panels["finra_sv"]["date"] == _date_key.date())
+                    ].empty
+                    else None
+                ),
+                "ftd_63d_pctile": (
+                    round(
+                        float(
+                            _alt_data_panels["sec_ftd"][
+                                (_alt_data_panels["sec_ftd"]["ticker"] == ticker.upper())
+                                & (_alt_data_panels["sec_ftd"]["effective_date"] == _date_key.date())
+                            ].iloc[0]["ftd_63d_pctile"]
+                        ),
+                        4,
+                    )
+                    if _alt_data_panels.get("sec_ftd") is not None
+                    and not _alt_data_panels["sec_ftd"][
+                        (_alt_data_panels["sec_ftd"]["ticker"] == ticker.upper())
+                        & (_alt_data_panels["sec_ftd"]["effective_date"] == _date_key.date())
+                    ].empty
+                    else None
+                ),
+                "naaim_exposure": (
+                    round(
+                        float(
+                            _alt_data_panels["naaim"][_alt_data_panels["naaim"]["date"] == _date_key.date()].iloc[0][
+                                "naaim_exposure"
+                            ]
+                        ),
+                        4,
+                    )
+                    if _alt_data_panels.get("naaim") is not None
+                    and not _alt_data_panels["naaim"][_alt_data_panels["naaim"]["date"] == _date_key.date()].empty
+                    else None
+                ),
+                "tone_z": (
+                    round(
+                        float(
+                            _alt_data_panels["gdelt"][
+                                (_alt_data_panels["gdelt"]["ticker"] == ticker.upper())
+                                & (_alt_data_panels["gdelt"]["date"] == _date_key.date())
+                            ].iloc[0]["tone_z"]
+                        ),
+                        4,
+                    )
+                    if _alt_data_panels.get("gdelt") is not None
+                    and not _alt_data_panels["gdelt"][
+                        (_alt_data_panels["gdelt"]["ticker"] == ticker.upper())
+                        & (_alt_data_panels["gdelt"]["date"] == _date_key.date())
+                    ].empty
+                    else None
+                ),
             }
         )
 
@@ -4808,6 +4939,100 @@ def main():
             pass
     stlfsi4 = fetch_stlfsi4(START, END, _fred_key)
     print(f"ok ({len(stlfsi4)} daily obs)" if stlfsi4 else "skipped (no FRED_API_KEY)")
+
+    # ── §104–§110: Load alt-data panels (if available) ────────────────────────
+    _finra_sv_flag = "--finra-sv" in sys.argv
+    _sec_ftd_flag = "--sec-ftd" in sys.argv
+    _naaim_flag = "--naaim" in sys.argv
+    _gdelt_flag = "--gdelt" in sys.argv
+    _finra_ats_flag = "--finra-ats" in sys.argv
+    _wiki_flag = "--wiki" in sys.argv
+    _occ_flag = "--occ" in sys.argv
+
+    if _finra_sv_flag:
+        print("Loading FINRA short-volume panel…", end=" ", flush=True)
+        try:
+            from services.finra_short_volume import load_short_volume_panel
+
+            _alt_data_panels["finra_sv"] = load_short_volume_panel()
+            print(
+                f"ok ({len(_alt_data_panels['finra_sv'])} rows)"
+                if _alt_data_panels["finra_sv"] is not None
+                else "not found"
+            )
+        except Exception as e:
+            print(f"failed ({e})")
+    if _sec_ftd_flag:
+        print("Loading SEC FTD panel…", end=" ", flush=True)
+        try:
+            from services.sec_ftd import load_ftd_panel
+
+            _alt_data_panels["sec_ftd"] = load_ftd_panel()
+            print(
+                f"ok ({len(_alt_data_panels['sec_ftd'])} rows)"
+                if _alt_data_panels["sec_ftd"] is not None
+                else "not found"
+            )
+        except Exception as e:
+            print(f"failed ({e})")
+    if _naaim_flag:
+        print("Loading NAAIM/AAII panels…", end=" ", flush=True)
+        try:
+            from services.sentiment_naaim_aaii import load_naaim_panel, load_aaii_panel
+
+            _alt_data_panels["naaim"] = load_naaim_panel()
+            _alt_data_panels["aaii"] = load_aaii_panel()
+            print(
+                f"ok (naaim={len(_alt_data_panels['naaim']) if _alt_data_panels['naaim'] is not None else 0}, aaii={len(_alt_data_panels['aaii']) if _alt_data_panels['aaii'] is not None else 0})"
+            )
+        except Exception as e:
+            print(f"failed ({e})")
+    if _gdelt_flag:
+        print("Loading GDELT tone panel…", end=" ", flush=True)
+        try:
+            from services.gdelt_news_tone import load_gdelt_tone_panel
+
+            _alt_data_panels["gdelt"] = load_gdelt_tone_panel()
+            print(
+                f"ok ({len(_alt_data_panels['gdelt'])} rows)" if _alt_data_panels["gdelt"] is not None else "not found"
+            )
+        except Exception as e:
+            print(f"failed ({e})")
+    if _finra_ats_flag:
+        print("Loading FINRA ATS panel…", end=" ", flush=True)
+        try:
+            from services.finra_ats_dark_pool import load_ats_panel
+
+            _alt_data_panels["finra_ats"] = load_ats_panel()
+            print(
+                f"ok ({len(_alt_data_panels['finra_ats'])} rows)"
+                if _alt_data_panels["finra_ats"] is not None
+                else "not found"
+            )
+        except Exception as e:
+            print(f"failed ({e})")
+    if _wiki_flag:
+        print("Loading Wikipedia pageviews panel…", end=" ", flush=True)
+        try:
+            from services.wikipedia_pageviews import load_wikipedia_panel
+
+            _alt_data_panels["wikipedia"] = load_wikipedia_panel()
+            print(
+                f"ok ({len(_alt_data_panels['wikipedia'])} rows)"
+                if _alt_data_panels["wikipedia"] is not None
+                else "not found"
+            )
+        except Exception as e:
+            print(f"failed ({e})")
+    if _occ_flag:
+        print("Loading OCC volume/OI panel…", end=" ", flush=True)
+        try:
+            from services.occ_volume_oi import load_occ_panel
+
+            _alt_data_panels["occ"] = load_occ_panel()
+            print(f"ok ({len(_alt_data_panels['occ'])} rows)" if _alt_data_panels["occ"] is not None else "not found")
+        except Exception as e:
+            print(f"failed ({e})")
 
     # ── Download price data and compute signals ───────────────────────────────
     all_trades: list[pd.DataFrame] = []
@@ -6999,7 +7224,11 @@ def main():
     print()
 
     # ── §96a. Overnight vs Intraday Decomposition ────────────────────────────
-    if "overnight_pct" in trades.columns and "intraday_pct" in trades.columns:
+    # Bug-fix (2): only print for plain (default open-entry) book — variant books
+    # have their own sections (§96b / §97a) and mixing entry styles invalidates
+    # the canonical decomposition read.
+    _is_plain_book = not _entry_at_close_flag and not _entry_limit_flag
+    if "overnight_pct" in trades.columns and "intraday_pct" in trades.columns and _is_plain_book:
         print("\n## §96a. Overnight vs Intraday Decomposition\n")
         print(
             "> Split each held day's move into overnight (prev Close → Open) and intraday (Open → Close).\n"
@@ -7014,14 +7243,22 @@ def main():
         else:
             _ov_share = 0.0
             _iv_share = 0.0
+        # Bug-fix (3): reconciliation row — decomposition total must equal gross P&L
+        _gross_total = trades["gross_pct"].sum()
+        _recon = _total - _gross_total
+        _recon_pct_of_gross = (_recon / abs(_gross_total) * 100) if abs(_gross_total) > 0.01 else 0.0
         print_table(
             ["Component", "Cumulative %", "Share"],
             [
                 ["Overnight (prev Close → Open)", f"{_ov:+.2f}%", f"{_ov_share:.1f}%"],
                 ["Intraday (Open → Close)", f"{_iv:+.2f}%", f"{_iv_share:.1f}%"],
                 ["Total", f"{_total:+.2f}%", "100.0%"],
+                ["Gross P&L", f"{_gross_total:+.2f}%", "—"],
+                ["Residual (decomp − gross)", f"{_recon:+.2f}%", f"{_recon_pct_of_gross:.1f}%"],
             ],
         )
+        if abs(_recon) > 0.5:
+            print(f"> ⚠ Residual = {_recon:+.2f}% — decomposition does NOT reconcile to gross (expected ≈0).")
         # By exit reason
         print("\n### By Exit Reason\n")
         _er_rows = []
