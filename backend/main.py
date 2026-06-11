@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import logging.handlers
 import os
 import resource
 from datetime import datetime, timedelta
@@ -60,6 +61,19 @@ if _LOG_FORMAT == "json":
     _json_fmt = _StructuredFormatter()
     for _h in logging.root.handlers:
         _h.setFormatter(_json_fmt)
+
+# ── Rotating file handler for scanner logs (DISC-2) ──────────────────────────
+# Prevents Alpaca WS reconnect spam from drowning scanner logs in stderr.log.
+_log_dir = Path(__file__).parent / "logs"
+_log_dir.mkdir(exist_ok=True)
+_scanner_handler = logging.handlers.RotatingFileHandler(
+    _log_dir / "scanner.log",
+    maxBytes=10 * 1024 * 1024,  # 10 MB per file
+    backupCount=5,
+)
+_scanner_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s  %(message)s"))
+logging.getLogger("scanner").addHandler(_scanner_handler)
+
 # Silence noisy third-party loggers
 logging.getLogger("yfinance").setLevel(logging.WARNING)
 logging.getLogger("peewee").setLevel(logging.WARNING)

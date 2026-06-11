@@ -34,11 +34,20 @@ async def main() -> None:
     ap = argparse.ArgumentParser(description="Backfill SEC FTD panel")
     ap.add_argument("--start", type=_parse_date, default=date(2004, 1, 1))
     ap.add_argument("--end", type=_parse_date, default=date.today())
-    ap.add_argument("--tickers", type=str, default="", help="Comma-separated tickers (default: all)")
+    ap.add_argument("--tickers", type=str, default="", help="Comma-separated tickers (default: IS universe)")
+    ap.add_argument("--all-tickers", action="store_true", help="Backfill all symbols (slower)")
     args = ap.parse_args()
 
-    tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()] or None
-    log.info(f"Starting backfill: {args.start} to {args.end}, tickers={tickers}")
+    if args.all_tickers:
+        tickers = None
+    elif args.tickers:
+        tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+    else:
+        # Default to IS universe for fast feature computation
+        from scripts.backtest_technicals import TICKERS
+        tickers = list(TICKERS)
+
+    log.info(f"Starting backfill: {args.start} to {args.end}, tickers={len(tickers) if tickers else 'ALL'}")
     panel = await build_ftd_panel(tickers=tickers, start=args.start, end=args.end)
     log.info(f"Done: {len(panel)} rows")
 

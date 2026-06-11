@@ -42,6 +42,7 @@ USAGE
     cd backend && python scripts/cross_sectional_alpha_model.py
     cd backend && python scripts/cross_sectional_alpha_model.py --short-interest
     cd backend && python scripts/cross_sectional_alpha_model.py --split 2019-01-01 --decile 0.1 --cost-bps 10
+    cd backend && python scripts/cross_sectional_alpha_model.py --naaim --wiki --horizon 63  # research only — results pending corrected re-run
 
 The feature engineering is intentionally split into small add_*_features() helpers
 so you can iterate on signals without touching the pipeline or the backtester.
@@ -53,7 +54,14 @@ import argparse
 import glob
 import json
 import os
+import sys
 from dataclasses import dataclass
+
+# Allow imports from backend/ when running as script
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_BACKEND = os.path.abspath(os.path.join(_HERE, ".."))
+if _BACKEND not in sys.path:
+    sys.path.insert(0, _BACKEND)
 
 import numpy as np
 import pandas as pd
@@ -66,8 +74,6 @@ import xgboost as xgb
 # Paths & constants
 # ---------------------------------------------------------------------------
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_BACKEND = os.path.abspath(os.path.join(_HERE, ".."))
 _DATA = os.path.join(_BACKEND, "data")
 _OHLCV_DIR = os.path.join(_DATA, "cache_ohlcv")
 _EARNINGS_DIR = os.path.join(_DATA, "cache_earnings")
@@ -75,12 +81,18 @@ _CONSTITUENTS = os.path.join(_DATA, "sp500_historical_constituents.json")
 _MEMBERSHIP_CSV = os.path.join(_DATA, "sp500_ticker_start_end.csv")  # full PIT history
 
 # Forward-return horizon = rebalance period in trading days. Was 5 (weekly);
-# raised to 21 (~monthly) 2026-06-09 after the horizon sweep: net Sharpe goes
-# -0.058 (h=5) -> +0.347 (h=21), because fewer/larger rebalances slash annual
-# turnover cost (the binding constraint — per-rebalance turnover is flat ~1.34,
-# but ~12 rebalances/yr vs ~50 cuts total cost drag ~4x). h=21 is cost-robust to
-# ~20bps one-way and 11/15 OOS folds are net-positive. h=25 is a lower-drawdown
-# variant (net +0.322, MaxDD -24.7% vs -30.9%) — run `--horizon 25` for it.
+# raised to 21 (~monthly) 2026-06-09 after the first horizon sweep.
+#
+# Alt-data sweep (2026-06-11): first-pass results claimed h=21 net +0.308 with
+# --naaim --wiki and h=63 net +0.769. A code review found two defects that
+# invalidate those headline numbers:
+#   1. NAAIM/UMCSENT/AAII are market-wide series; cross_sectional_zscore() was
+#      z-scoring them per-date, producing std=0 -> NaN -> fillna(0) dead columns.
+#      They are now passed through raw (market-wide regime/context features).
+#   2. FINRA SV and Wikipedia were merged same-day in build_panel(), creating a
+#      ~1-day lookahead. They are now shifted +1 day before merge_asof (T data
+#      usable from T+1, matching the per-trade PIT merge functions).
+# Corrected results are pending re-run. Do not trust the pre-fix numbers.
 HORIZON = 21  # forward-return horizon in trading days; also the rebalance period
 MIN_NAMES_PER_DAY = 20  # don't z-score / trade a thin cross-section
 TRADING_DAYS = 252
@@ -298,6 +310,12 @@ RAW_FEATURE_COLS = [
     "rsi_14",  # Wilder RSI (overbought/oversold)
     "days_since_earn",  # earnings proximity (no surprise data available)
 ]
+
+# Market-wide features (identical value for every ticker on a given date). They
+# cannot be cross-sectionally z-scored (std=0 → NaN → fillna(0) kills them), so
+# they are fed RAW to the model. Trees can still use them as regime/context
+# splits interacting with z-scored per-ticker features.
+MARKET_WIDE_FEATURE_COLS: list[str] = []
 
 
 def add_price_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -605,6 +623,8 @@ def build_panel(
     use_finra_ats: bool = False,
     use_wiki: bool = False,
     use_occ: bool = False,
+    use_placebo: bool = False,
+    placebo_seed: int = 42,
     min_price: float = 5.0,
     min_dollar_vol: float = 1e7,
     universe_source: str = "full",
@@ -672,12 +692,14 @@ def build_panel(
 
             _sv = load_short_volume_panel()
             if _sv is not None and not _sv.empty:
-                _sv["date"] = pd.to_datetime(_sv["date"])
+                _sv["date"] = pd.to_datetime(_sv["date"]) + pd.Timedelta(days=1)
+                # PIT discipline: FINRA publishes ~6pm ET after the close, so T data
+                # is only tradable from T+1 onward. The +1d shift enforces this.
                 panel = pd.merge_asof(
                     panel.sort_values("date"),
                     _sv[["date", "ticker", "short_volume_ratio", "sv_ratio_5d_delta"]].rename(
                         columns={"short_volume_ratio": "sv_ratio", "sv_ratio_5d_delta": "sv_ratio_5d_delta"}
-                    ),
+                    ).sort_values("date"),
                     on="date",
                     by="ticker",
                     direction="backward",
@@ -698,7 +720,9 @@ def build_panel(
                 _ftd["effective_date"] = pd.to_datetime(_ftd["effective_date"])
                 panel = pd.merge_asof(
                     panel.sort_values("date"),
-                    _ftd[["effective_date", "ticker", "ftd_63d_pctile"]].rename(columns={"effective_date": "date"}),
+                    _ftd[["effective_date", "ticker", "ftd_63d_pctile"]]
+                    .rename(columns={"effective_date": "date"})
+                    .sort_values("date"),
                     on="date",
                     by="ticker",
                     direction="backward",
@@ -723,6 +747,8 @@ def build_panel(
                 )
                 if "umcsent" not in RAW_FEATURE_COLS:
                     RAW_FEATURE_COLS.append("umcsent")
+                if "umcsent" not in MARKET_WIDE_FEATURE_COLS:
+                    MARKET_WIDE_FEATURE_COLS.append("umcsent")
             if _naaim is not None and not _naaim.empty:
                 _naaim["date"] = pd.to_datetime(_naaim["date"])
                 panel = pd.merge_asof(
@@ -730,6 +756,8 @@ def build_panel(
                 )
                 if "naaim_exposure" not in RAW_FEATURE_COLS:
                     RAW_FEATURE_COLS.append("naaim_exposure")
+                if "naaim_exposure" not in MARKET_WIDE_FEATURE_COLS:
+                    MARKET_WIDE_FEATURE_COLS.append("naaim_exposure")
             if _aaii is not None and not _aaii.empty:
                 _aaii["date"] = pd.to_datetime(_aaii["date"])
                 panel = pd.merge_asof(
@@ -737,6 +765,8 @@ def build_panel(
                 )
                 if "aaii_bull_bear_spread" not in RAW_FEATURE_COLS:
                     RAW_FEATURE_COLS.append("aaii_bull_bear_spread")
+                if "aaii_bull_bear_spread" not in MARKET_WIDE_FEATURE_COLS:
+                    MARKET_WIDE_FEATURE_COLS.append("aaii_bull_bear_spread")
             _cov = []
             if "umcsent" in panel.columns:
                 _cov.append(f"umcsent={panel['umcsent'].notna().mean():.0%}")
@@ -747,6 +777,40 @@ def build_panel(
             print(f"  Sentiment merged: {', '.join(_cov)}")
         except Exception as e:
             print(f"  Sentiment merge failed: {e}")
+
+    if use_wiki:
+        try:
+            from services.wikipedia_pageviews import load_wikipedia_panel
+
+            _wiki = load_wikipedia_panel()
+            if _wiki is not None and not _wiki.empty:
+                _wiki["date"] = pd.to_datetime(_wiki["date"]) + pd.Timedelta(days=1)
+                # PIT discipline: Wikimedia pageviews for day T are final only after
+                # the day ends, so they are tradable from T+1 onward.
+                panel = pd.merge_asof(
+                    panel.sort_values("date"),
+                    _wiki[["date", "ticker", "views_z"]].sort_values("date"),
+                    on="date",
+                    by="ticker",
+                    direction="backward",
+                )
+                if "views_z" not in RAW_FEATURE_COLS:
+                    RAW_FEATURE_COLS.append("views_z")
+                print(f"  Wikipedia merged: {panel['views_z'].notna().mean():.0%} coverage")
+        except Exception as e:
+            print(f"  Wikipedia merge failed: {e}")
+
+    if use_placebo:
+        # Pure-noise features to measure the harness's own run-to-run noise floor.
+        # If a real feature's ΔSharpe is inside the placebo distribution, it is not
+        # distinguishable from sampling noise.
+        rng = np.random.default_rng(placebo_seed)
+        for i in range(3):
+            col = f"placebo_{placebo_seed}_{i}"
+            panel[col] = rng.standard_normal(len(panel))
+            if col not in RAW_FEATURE_COLS:
+                RAW_FEATURE_COLS.append(col)
+        print(f"  Placebo features added (seed={placebo_seed})")
 
     panel = panel.sort_values(["date", "ticker"]).reset_index(drop=True)
     print(f"Panel: {len(panel):,} rows, {panel['date'].nunique():,} trading days")
@@ -767,7 +831,11 @@ def cross_sectional_zscore(panel: pd.DataFrame, feature_cols: list[str]) -> pd.D
         z = (x - mean_today) / std_today
     Outliers are winsorized to ±3σ AFTER standardizing so a single blow-up name
     can't swamp the rank. Days with too few names are dropped (thin = noisy).
-    All inputs are same-day, so this introduces zero lookahead.
+
+    MARKET-WIDE features (e.g. UMCSENT, NAAIM) are identical for every ticker on
+    a date, so their per-date std is 0 and z-scoring would produce NaN→0 dead
+    columns. They are passed through RAW so trees can use them as regime/context
+    splits interacting with z-scored per-ticker features.
     """
     panel = panel.copy()
 
@@ -783,15 +851,22 @@ def cross_sectional_zscore(panel: pd.DataFrame, feature_cols: list[str]) -> pd.D
     # winsorize the forward return to ±FWD_RET_CAP before it reaches target or P&L.
     panel["fwd_ret"] = panel["fwd_ret"].clip(-FWD_RET_CAP, FWD_RET_CAP)
 
+    cs_cols = [c for c in feature_cols if c not in MARKET_WIDE_FEATURE_COLS]
+    mw_cols = [c for c in feature_cols if c in MARKET_WIDE_FEATURE_COLS]
+
     # Vectorized per-day standardization (transform avoids the apply-on-groups
     # deprecation and is far faster than a Python-level group loop). Winsorize to
     # ±3σ after standardizing so one blow-up name can't swamp the rank.
     by_date = panel.groupby("date")
-    for col in feature_cols:
+    for col in cs_cols:
         mu = by_date[col].transform("mean")
         sd = by_date[col].transform("std")  # ddof=1; equals 0 only for constant cols
         z = (panel[col] - mu) / sd.replace(0.0, np.nan)
         panel[col + "_z"] = z.clip(-3, 3)
+
+    # Pass market-wide features through raw (fill NaN with 0 = "average regime").
+    for col in mw_cols:
+        panel[col + "_z"] = panel[col].fillna(0.0)
 
     # The neutral target: forward return MINUS the equal-weight cross-sectional
     # mean forward return that day. This is exactly the P&L a dollar-neutral book
@@ -824,7 +899,10 @@ def train_model(panel: pd.DataFrame, feature_cols: list[str], split: str, quiet:
     into the test period (label leakage at the seam). No row shuffling, ever.
     A small validation tail of the training set drives early stopping.
     """
-    z_cols = [c + "_z" for c in feature_cols]
+    # Cross-sectional features are z-scored; market-wide features are fed raw.
+    cs_cols = [c for c in feature_cols if c not in MARKET_WIDE_FEATURE_COLS]
+    mw_cols = [c for c in feature_cols if c in MARKET_WIDE_FEATURE_COLS]
+    z_cols = [c + "_z" for c in cs_cols] + [c + "_z" for c in mw_cols]
     split_date = pd.to_datetime(split)
     embargo_start = split_date - pd.Timedelta(days=HORIZON * 2)  # calendar buffer
 
@@ -1287,6 +1365,8 @@ def main() -> None:
     ap.add_argument("--finra-ats", action="store_true", help="add FINRA ATS dark-pool features")
     ap.add_argument("--wiki", action="store_true", help="add Wikipedia pageview features")
     ap.add_argument("--occ", action="store_true", help="add OCC volume/OI features")
+    ap.add_argument("--placebo", action="store_true", help="add 3 pure-noise features to measure harness noise floor")
+    ap.add_argument("--placebo-seed", type=int, default=42, help="seed for placebo noise (default 42)")
     ap.add_argument(
         "--horizon",
         type=int,
@@ -1314,6 +1394,8 @@ def main() -> None:
         use_finra_ats=args.finra_ats,
         use_wiki=args.wiki,
         use_occ=args.occ,
+        use_placebo=args.placebo,
+        placebo_seed=args.placebo_seed,
         min_price=args.min_price,
         min_dollar_vol=args.min_dollar_vol,
         universe_source=args.universe,

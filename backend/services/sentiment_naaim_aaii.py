@@ -48,10 +48,8 @@ _cache: dict[str, tuple[pd.DataFrame, float]] = {}
 _CACHE_TTL = 86400.0
 
 _FRED_KEY = os.getenv("FRED_API_KEY")
-_NAAIM_URL = os.getenv(
-    "NAAIM_DATA_URL",
-    "https://en.macromicro.me/charts/data/46198",
-)
+_NAAIM_LANDING_URL = "https://naaim.org/programs/naaim-exposure-index/"
+_NAAIM_XLSX_BASE = "https://naaim.org"
 _AAII_URL = os.getenv(
     "AAII_DATA_URL",
     "https://www.aaii.com/files/surveys/sentiment.xls",
@@ -126,27 +124,23 @@ async def download_umcsent_panel(
 # ── NAAIM (optional fallback) ───────────────────────────────────────────────
 
 
-def _parse_naaim_json(data: dict) -> pd.DataFrame | None:
-    """Parse NAAIM JSON from macromicro chart endpoint."""
+def _parse_naaim_xlsx(content: bytes) -> pd.DataFrame | None:
+    """Parse NAAIM 'USE Data-since-Inception' xlsx."""
     try:
-        if data.get("success") != 1:
-            log.warning(f"[naaim] API error: {data.get('msg')}")
+        df = pd.read_excel(io.BytesIO(content), engine="openpyxl")
+        # Expected columns: Date, Mean/Average, Most Bearish Response, Quart 1, Quart 2, Quart 3, Most Bullish Response, Standard Deviation, NAAIM Number, S&P 500
+        if "Date" not in df.columns or "Mean/Average" not in df.columns:
+            log.warning("[naaim] unexpected xlsx columns")
             return None
-        _data = data.get("data")
-        if not isinstance(_data, dict):
-            log.warning("[naaim] unexpected data structure")
-            return None
-        series = _data.get("series", [])
-        if not series:
-            return None
-        rows = []
-        for point in series[0].get("data", []):
-            ts = point[0]
-            val = point[1]
-            rows.append({"date": pd.to_datetime(ts, unit="ms").date(), "naaim_exposure": float(val)})
-        df = pd.DataFrame(rows)
+        df = df.rename(columns={"Date": "date", "Mean/Average": "naaim_exposure"})
+        df = df.assign(date=pd.to_datetime(df["date"]).dt.date)
+        df = df.dropna(subset=["date", "naaim_exposure"])
         df = df.sort_values("date").reset_index(drop=True)
-        return df
+        # Deduplicate: some xlsx files have duplicate rows
+        df = df.drop_duplicates(subset=["date"], keep="first")
+        # PIT lag: weekly release on Wednesday → usable Thursday (1-day lag)
+        df = df.assign(date=df["date"] + pd.Timedelta(days=1))
+        return df[["date", "naaim_exposure"]]
     except Exception as exc:
         log.warning(f"[naaim] parse error: {exc}")
         return None
@@ -155,7 +149,7 @@ def _parse_naaim_json(data: dict) -> pd.DataFrame | None:
 async def download_naaim_panel(
     session: aiohttp.ClientSession | None = None,
 ) -> pd.DataFrame | None:
-    """Download NAAIM exposure index full-history panel."""
+    """Download NAAIM exposure index full-history panel from naaim.org xlsx."""
     cached = _cache.get("naaim")
     if cached and (time.monotonic() - cached[1] < _CACHE_TTL):
         return cached[0]
@@ -169,15 +163,32 @@ async def download_naaim_panel(
 
     try:
         _sess = session or await shared_session().__aenter__()
-        async with _sess.get(_NAAIM_URL, timeout=30) as resp:
+        # Step 1: scrape landing page for current xlsx href
+        async with _sess.get(_NAAIM_LANDING_URL, timeout=30) as resp:
             if resp.status != 200:
-                log.debug(f"[naaim] HTTP {resp.status}")
+                log.debug(f"[naaim] landing HTTP {resp.status}")
                 return None
-            data = await resp.json()
-            df = _parse_naaim_json(data)
+            html = await resp.text()
+            import re
+            m = re.search(r'href="([^"]+USE_Data-since-Inception[^"]+\.xlsx)"', html)
+            if not m:
+                log.warning("[naaim] could not find xlsx href on landing page")
+                return None
+            xlsx_url = m.group(1)
+            if xlsx_url.startswith("/"):
+                xlsx_url = _NAAIM_XLSX_BASE + xlsx_url
+
+        # Step 2: download xlsx
+        async with _sess.get(xlsx_url, timeout=60) as resp:
+            if resp.status != 200:
+                log.debug(f"[naaim] xlsx HTTP {resp.status}")
+                return None
+            content = await resp.read()
+            df = _parse_naaim_xlsx(content)
             if df is not None and not df.empty:
                 df.to_pickle(_NAAIM_PANEL_PATH)
                 _cache["naaim"] = (df, time.monotonic())
+                log.info(f"[naaim] downloaded {len(df)} rows from {xlsx_url}")
             return df
     except Exception as exc:
         log.warning(f"[naaim] download error: {exc}")

@@ -3080,53 +3080,46 @@ def simulate_ticker(
             if _si_flag is True:
                 _size_mult *= 1.15
         # §104: FINRA short-volume squeeze-fuel tilt
+        # Condition: elevated short interest (>40%) AND falling (>5pp in 5d)
         if _alt_data_panels.get("finra_sv") is not None and is_buy_signal:
-            _sv_row = _alt_data_panels["finra_sv"]
-            if isinstance(_sv_row, pd.DataFrame):
-                _sv_match = _sv_row[(_sv_row["ticker"] == ticker.upper()) & (_sv_row["date"] == _date_key.date())]
-                if not _sv_match.empty:
-                    _sv_delta = float(_sv_match.iloc[0]["sv_ratio_5d_delta"])
-                    # Elevated-and-falling short pressure = fuel
-                    if _sv_delta < -2.0:
-                        _size_mult *= 1.15
+            _sv_dict = _alt_data_panels["finra_sv"].get(ticker.upper(), {})
+            _sv_match = _sv_dict.get(_date_key.date())
+            if _sv_match is not None:
+                _sv_ratio = float(_sv_match.get("short_volume_ratio", 0))
+                _sv_delta = float(_sv_match.get("sv_ratio_5d_delta", 0))
+                # Elevated-and-falling short pressure = fuel
+                if _sv_ratio > 40.0 and _sv_delta < -10.0:
+                    _size_mult *= 1.15
         # §105: SEC FTD dislocation tilt
         if _alt_data_panels.get("sec_ftd") is not None and is_buy_signal:
-            _ftd_row = _alt_data_panels["sec_ftd"]
-            if isinstance(_ftd_row, pd.DataFrame):
-                _ftd_match = _ftd_row[
-                    (_ftd_row["ticker"] == ticker.upper()) & (_ftd_row["effective_date"] == _date_key.date())
-                ]
-                if not _ftd_match.empty:
-                    _ftd_pctile = float(_ftd_match.iloc[0]["ftd_63d_pctile"])
-                    if _ftd_pctile > 75.0:
-                        _size_mult *= 1.15
+            _ftd_dict = _alt_data_panels["sec_ftd"].get(ticker.upper(), {})
+            _ftd_match = _ftd_dict.get(_date_key.date())
+            if _ftd_match is not None:
+                _ftd_pctile = float(_ftd_match.get("ftd_63d_pctile", 0))
+                if _ftd_pctile > 75.0:
+                    _size_mult *= 1.15
         # §106: Sentiment capitulation tilt (UMCSENT primary, NAAIM fallback)
         if _alt_data_panels.get("umcsent") is not None and is_buy_signal:
-            _umcsent = _alt_data_panels["umcsent"]
-            if isinstance(_umcsent, pd.DataFrame):
-                _umcsent_match = _umcsent[_umcsent["date"] == _date_key.date()]
-                if not _umcsent_match.empty:
-                    _umcsent_val = float(_umcsent_match.iloc[0]["umcsent"])
-                    if _umcsent_val < 60.0:  # low sentiment = fear/capitulation
-                        _size_mult *= 1.10
+            _umcsent_match = _alt_data_panels["umcsent"].get(_date_key.date())
+            if _umcsent_match is not None:
+                _umcsent_val = float(_umcsent_match.get("umcsent", 0))
+                if _umcsent_val < 60.0:  # low sentiment = fear/capitulation
+                    _size_mult *= 1.10
         elif _alt_data_panels.get("naaim") is not None and is_buy_signal:
-            _naaim = _alt_data_panels["naaim"]
-            if isinstance(_naaim, pd.DataFrame):
-                _naaim_match = _naaim[_naaim["date"] == _date_key.date()]
-                if not _naaim_match.empty:
-                    _naaim_exp = float(_naaim_match.iloc[0]["naaim_exposure"])
-                    if _naaim_exp < 30.0:  # bottom-quintile = capitulation
-                        _size_mult *= 1.15
+            _naaim_match = _alt_data_panels["naaim"].get(_date_key.date())
+            if _naaim_match is not None:
+                _naaim_exp = float(_naaim_match.get("naaim_exposure", 0))
+                if _naaim_exp < 30.0:  # bottom-quintile = capitulation
+                    _size_mult *= 1.15
         # §107: GDELT news-tone capitulation/repricing context
         if _alt_data_panels.get("gdelt") is not None and is_buy_signal:
-            _gdelt = _alt_data_panels["gdelt"]
-            if isinstance(_gdelt, pd.DataFrame):
-                _gdelt_match = _gdelt[(_gdelt["ticker"] == ticker.upper()) & (_gdelt["date"] == _date_key.date())]
-                if not _gdelt_match.empty:
-                    _tone_z = float(_gdelt_match.iloc[0]["tone_z"])
-                    # Negative tone at oversold = potential capitulation (size up)
-                    if _tone_z < -1.5:
-                        _size_mult *= 1.10
+            _gdelt_dict = _alt_data_panels["gdelt"].get(ticker.upper(), {})
+            _gdelt_match = _gdelt_dict.get(_date_key.date())
+            if _gdelt_match is not None:
+                _tone_z = float(_gdelt_match.get("tone_z", 0))
+                # Negative tone at oversold = potential capitulation (size up)
+                if _tone_z < -1.5:
+                    _size_mult *= 1.10
         # §88: calm-regime sleeve — 0.5× risk budget on relaxed low-VIX entries
         if calm_sleeve and is_buy_signal:
             _size_mult *= 0.5
@@ -3247,67 +3240,28 @@ def simulate_ticker(
                 "si_rising": (si_rising_map.get(ticker, {}).get(_date_key) if si_rising_map else None),
                 # ── §104–§110: Alt-data features at entry ────────────────────────
                 "sv_ratio": (
-                    round(
-                        float(
-                            _alt_data_panels["finra_sv"][
-                                (_alt_data_panels["finra_sv"]["ticker"] == ticker.upper())
-                                & (_alt_data_panels["finra_sv"]["date"] == _date_key.date())
-                            ].iloc[0]["short_volume_ratio"]
-                        ),
-                        4,
-                    )
+                    round(float(_alt_data_panels["finra_sv"].get(ticker.upper(), {}).get(_date_key.date(), {}).get("short_volume_ratio", 0)), 4)
                     if _alt_data_panels.get("finra_sv") is not None
-                    and not _alt_data_panels["finra_sv"][
-                        (_alt_data_panels["finra_sv"]["ticker"] == ticker.upper())
-                        & (_alt_data_panels["finra_sv"]["date"] == _date_key.date())
-                    ].empty
+                    else None
+                ),
+                "sv_ratio_5d_delta": (
+                    round(float(_alt_data_panels["finra_sv"].get(ticker.upper(), {}).get(_date_key.date(), {}).get("sv_ratio_5d_delta", 0)), 4)
+                    if _alt_data_panels.get("finra_sv") is not None
                     else None
                 ),
                 "ftd_63d_pctile": (
-                    round(
-                        float(
-                            _alt_data_panels["sec_ftd"][
-                                (_alt_data_panels["sec_ftd"]["ticker"] == ticker.upper())
-                                & (_alt_data_panels["sec_ftd"]["effective_date"] == _date_key.date())
-                            ].iloc[0]["ftd_63d_pctile"]
-                        ),
-                        4,
-                    )
+                    round(float(_alt_data_panels["sec_ftd"].get(ticker.upper(), {}).get(_date_key.date(), {}).get("ftd_63d_pctile", 0)), 4)
                     if _alt_data_panels.get("sec_ftd") is not None
-                    and not _alt_data_panels["sec_ftd"][
-                        (_alt_data_panels["sec_ftd"]["ticker"] == ticker.upper())
-                        & (_alt_data_panels["sec_ftd"]["effective_date"] == _date_key.date())
-                    ].empty
                     else None
                 ),
                 "umcsent": (
-                    round(
-                        float(
-                            _alt_data_panels["umcsent"][_alt_data_panels["umcsent"]["date"] == _date_key.date()].iloc[
-                                0
-                            ]["umcsent"]
-                        ),
-                        4,
-                    )
+                    round(float(_alt_data_panels["umcsent"].get(_date_key.date(), {}).get("umcsent", 0)), 4)
                     if _alt_data_panels.get("umcsent") is not None
-                    and not _alt_data_panels["umcsent"][_alt_data_panels["umcsent"]["date"] == _date_key.date()].empty
                     else None
                 ),
                 "tone_z": (
-                    round(
-                        float(
-                            _alt_data_panels["gdelt"][
-                                (_alt_data_panels["gdelt"]["ticker"] == ticker.upper())
-                                & (_alt_data_panels["gdelt"]["date"] == _date_key.date())
-                            ].iloc[0]["tone_z"]
-                        ),
-                        4,
-                    )
+                    round(float(_alt_data_panels["gdelt"].get(ticker.upper(), {}).get(_date_key.date(), {}).get("tone_z", 0)), 4)
                     if _alt_data_panels.get("gdelt") is not None
-                    and not _alt_data_panels["gdelt"][
-                        (_alt_data_panels["gdelt"]["ticker"] == ticker.upper())
-                        & (_alt_data_panels["gdelt"]["date"] == _date_key.date())
-                    ].empty
                     else None
                 ),
             }
@@ -5202,6 +5156,37 @@ def main():
         if df is not None:
             all_dfs[ticker] = df
             all_earnings_dates[ticker] = earnings_dates
+
+    # ── §104–§110: Pre-filter alt-data panels to active tickers + convert to dict for O(1) lookups ─
+    _active_tickers = set(all_dfs.keys())
+    # Build full trading-date range from all_dfs for global-panel daily ffill
+    _all_dates = set()
+    for _t_df in all_dfs.values():
+        _all_dates.update(pd.to_datetime(_t_df.index).date)
+    _sorted_dates = sorted(_all_dates)
+    for _panel_key in list(_alt_data_panels.keys()):
+        _panel = _alt_data_panels[_panel_key]
+        if not isinstance(_panel, pd.DataFrame):
+            continue
+        if "ticker" in _panel.columns:
+            _panel = _panel[_panel["ticker"].isin(_active_tickers)].copy()
+        # Convert date cols to datetime.date for consistent key hashing
+        for _dcol in ("date", "effective_date"):
+            if _dcol in _panel.columns:
+                _panel[_dcol] = pd.to_datetime(_panel[_dcol]).dt.date
+        if "ticker" in _panel.columns:
+            # Per-ticker panel → nested dict: {ticker: {date: row_dict}}
+            _alt_data_panels[_panel_key] = {
+                _t: _grp.set_index("date" if "date" in _grp.columns else "effective_date").to_dict("index")
+                for _t, _grp in _panel.groupby("ticker")
+            }
+        else:
+            # Global panel (e.g., NAAIM, UMCSENT) → forward-fill to daily then flat dict
+            _dcol = "date" if "date" in _panel.columns else _panel.columns[0]
+            _panel = _panel.set_index(_dcol).sort_index()
+            # Reindex to all trading dates and forward-fill
+            _daily = _panel.reindex(_sorted_dates, method="ffill")
+            _alt_data_panels[_panel_key] = _daily.to_dict("index")
 
     # ── §63 Sector cointegration Z-score (post-pool, pure numpy) ─────────────
     # For each ticker, compute rolling 252-day cointegration Z-score vs its

@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from pathlib import Path
 
 from sqlalchemy import event, text
@@ -21,6 +22,16 @@ logger = logging.getLogger(__name__)
 _DB_URL = os.getenv("DATABASE_URL", "")
 if _DB_URL.startswith("postgresql://"):
     _DB_URL = _DB_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+# DISC-5: Guard against pytest accidentally connecting to PostgreSQL.
+# If pytest is running and DATABASE_URL points to Postgres, force SQLite.
+_PYTEST_RUNNING = "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST", "")
+if _PYTEST_RUNNING and _DB_URL.startswith("postgresql"):
+    logger.warning(
+        "[db] pytest detected with DATABASE_URL pointing to PostgreSQL — forcing SQLite test DB. "
+        "Set DATABASE_URL=sqlite+aiosqlite:///./test_db.sqlite explicitly to suppress this warning."
+    )
+    _DB_URL = "sqlite+aiosqlite:///./test_db.sqlite"
 
 # SQLite fallback is intentionally kept for the test suite (conftest.py sets
 # DATABASE_URL=sqlite+aiosqlite:///./test_db.sqlite). Production always uses

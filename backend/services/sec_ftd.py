@@ -49,18 +49,33 @@ _SEC_USER_AGENT = os.getenv(
 def _parse_ftd_csv(content: bytes) -> pd.DataFrame | None:
     """Parse an SEC FTD file (pipe-delimited, with header)."""
     try:
-        df = pd.read_csv(
-            io.BytesIO(content),
-            sep="|",
-            dtype={
-                "SETTLEMENT DATE": str,
-                "CUSIP": str,
-                "SYMBOL": str,
-                "QUANTITY (FAILS)": str,
-                "DESCRIPTION": str,
-                "PRICE": str,
-            },
-        )
+        # SEC files use various encodings; try common ones.
+        # Use python engine for robustness against malformed rows
+        # (the C engine hangs on files with many bad lines).
+        for encoding in ("utf-8", "latin-1", "cp1252"):
+            try:
+                df = pd.read_csv(
+                    io.BytesIO(content),
+                    sep="|",
+                    encoding=encoding,
+                    on_bad_lines="skip",
+                    engine="python",
+                    dtype={
+                        "SETTLEMENT DATE": str,
+                        "CUSIP": str,
+                        "SYMBOL": str,
+                        "QUANTITY (FAILS)": str,
+                        "DESCRIPTION": str,
+                        "PRICE": str,
+                    },
+                )
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            log.warning("[sec_ftd] could not decode file with any encoding")
+            return None
+
         df = df.rename(
             columns={
                 "SETTLEMENT DATE": "settlement_date",
@@ -73,7 +88,7 @@ def _parse_ftd_csv(content: bytes) -> pd.DataFrame | None:
         )
         df = df.assign(
             settlement_date=pd.to_datetime(df["settlement_date"], format="%Y%m%d", errors="coerce").dt.date,
-            ftd_shares=df["ftd_shares"].astype(str).str.replace(",", "").astype(int, errors="ignore"),
+            ftd_shares=pd.to_numeric(df["ftd_shares"].astype(str).str.replace(",", ""), errors="coerce"),
         )
         df = df.dropna(subset=["settlement_date"])
         df = df[df["symbol"].notna() & (df["symbol"] != "")]
@@ -164,16 +179,22 @@ import zipfile
 
 
 def _compute_ftd_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute FTD ratio and 63d percentile per ticker."""
+    """Compute FTD 63d high-flag per ticker.
+
+    Uses rolling 75th-percentile threshold (C-engine) instead of
+    per-window rank() apply() which is O(n*w) in Python and hangs
+    on millions of rows (~10k symbols × ~1.5k days).
+    """
     df = df.copy()
     df = df.sort_values(["symbol", "settlement_date"]).copy()
-    # 63-day rolling percentile within ticker
-    df = df.assign(
-        ftd_63d_pctile=df.groupby("symbol")["ftd_shares"]
+    # Fast C-engine rolling quantile → binary flag (0 or 100)
+    _q75 = (
+        df.groupby("symbol")["ftd_shares"]
         .rolling(63, min_periods=10)
-        .apply(lambda x: x.rank(pct=True).iloc[-1] * 100, raw=False)
+        .quantile(0.75)
         .reset_index(level=0, drop=True)
     )
+    df = df.assign(ftd_63d_pctile=(df["ftd_shares"] >= _q75).astype(float) * 100)
     return df
 
 
@@ -215,11 +236,12 @@ async def build_ftd_panel(
         return pd.DataFrame()
 
     panel = pd.concat(frames, ignore_index=True)
-    panel = _compute_ftd_features(panel)
 
     if tickers:
         tickers_upper = [t.upper() for t in tickers]
         panel = panel[panel["symbol"].isin(tickers_upper)].copy()
+
+    panel = _compute_ftd_features(panel)
 
     panel = panel.rename(columns={"symbol": "ticker"})
     # Apply conservative 30-day publication lag for PIT

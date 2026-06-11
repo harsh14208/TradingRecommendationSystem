@@ -18,7 +18,22 @@ _price_cache: dict[str, float] = {}
 _subscribed: set[str] = set()
 
 _WS_URL = "wss://stream.data.alpaca.markets/v2/iex"
-_HEARTBEAT_SEC = 15  # watchdog fires if no frame in this window
+_HEARTBEAT_SEC = 45  # watchdog fires if no frame in this window
+# IEX can be quiet for 30–40s between trades; 15s was far too aggressive.
+_MAX_RECONNECT_LOGS_PER_HOUR = 3  # rate-limit reconnect noise in logs
+_reconnect_log_count: int = 0
+_reconnect_log_window: float = 0.0
+
+
+def _should_log_reconnect() -> bool:
+    """Rate-limit reconnect logs to _MAX_RECONNECT_LOGS_PER_HOUR per hour."""
+    global _reconnect_log_count, _reconnect_log_window
+    now = time.monotonic()
+    if now - _reconnect_log_window > 3600:
+        _reconnect_log_window = now
+        _reconnect_log_count = 0
+    _reconnect_log_count += 1
+    return _reconnect_log_count <= _MAX_RECONNECT_LOGS_PER_HOUR
 
 
 async def _run(api_key: str, api_secret: str, tickers: list[str], broadcast_fn: Callable):
@@ -44,7 +59,8 @@ async def _run(api_key: str, api_secret: str, tickers: list[str], broadcast_fn: 
             while True:
                 await asyncio.sleep(5)
                 if time.monotonic() - _last_frame > _HEARTBEAT_SEC:  # noqa: B023
-                    log.warning("Alpaca WS: no frame in %ds — forcing reconnect", _HEARTBEAT_SEC)
+                    if _should_log_reconnect():
+                        log.warning("Alpaca WS: no frame in %ds — forcing reconnect", _HEARTBEAT_SEC)
                     await ws.close()
                     return
 
@@ -100,7 +116,8 @@ async def _run(api_key: str, api_secret: str, tickers: list[str], broadcast_fn: 
             log.info("Alpaca WS task cancelled")
             return
         except Exception as e:
-            log.warning("Alpaca WS error: %s — reconnecting in %ds", e, backoff)
+            if _should_log_reconnect():
+                log.warning("Alpaca WS error: %s — reconnecting in %ds", e, backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 

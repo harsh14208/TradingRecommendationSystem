@@ -595,3 +595,80 @@ A DB-level audit of the delivered book overturned the working theory that the li
 4. **Sizing > filtering, again (§87).** The consec-score signal worth +0.14 Sharpe as a filter (−73% N) captures +0.06 Sharpe as a 1.3× sizing tier at ΔN=0 — now live as L10. Same pattern as L7/L8.
 5. **Claims need instrumentation.** §87's original "+0.03, deployed" was unverifiable (no report section consumed the multiplier) and undeployed. If an A/B can't show the effect, the effect is a claim, not a result.
 6. **The IS statistical budget is spent.** v10.9 canon DSR fails at the honest 744-trial count (E[max]=0.25 > IS 0.24). Every additional IS sweep raises the bar retroactively. Edge proof now lives in the post-fix forward window (first uncontaminated live sample), OOS accrual, and orthogonal data.
+
+---
+
+## §104–§110 Free Alt-Data Integration — Retraction & Post-Mortem (2026-06-11)
+
+**Question:** Can free alt-data panels (FINRA short volume, SEC fails-to-deliver, NAAIM positioning, Wikipedia pageviews) improve the Signal.Trade edge?
+
+**Honest answer as of this writing:** Not yet demonstrated above the harness noise floor. The first-pass cross-sectional results looked promising but contained **two implementation defects** that invalidate the headline numbers. The per-trade tilt verdicts remain valid.
+
+### Per-trade tilt verdicts (legacy 23-year book) — STILL VALID
+| Tilt | Pre-registered threshold | N | Result | Deployed? |
+|:---|:---|---:|:---|:---|
+| FINRA SV ratio ↓ | `sv_ratio_5d_delta < −2.0` | ~49 | FAILED (underperformed baseline) | No |
+| FINRA SV extreme | `ratio>40 AND delta<−10` | 8 | Data snooping (P≥80% luck on ≥6 looks) | No — SPRT ID 10 exploratory only |
+| SEC FTD >75 pctile | `ftd_63d_pctile > 75` | ~5 | INCONCLUSIVE | No — SPRT ID 9 only |
+| NAAIM exposure <30 | `naaim_exposure < 30` | ~18 | FAILED (−0.054% avg) | No |
+
+**Lesson:** A per-trade condition that fires on <20% of a 217-trade book yields N≈8–35 cohorts. At baseline WR ~69%, P(≥7/8 wins) ≈ 23% on one cut; with multiple threshold/grid searches, most "discovered" cohorts are noise. **Rare-extreme features belong where breadth gives N: the cross-sectional model or a forward SPRT.**
+
+### Cross-sectional integration — FIRST-PASS RESULTS RETRACTED
+All five sources were wired into `backend/scripts/cross_sectional_alpha_model.py`, but the initial backtest table was wrong for two reasons:
+
+**Defect 1: market-wide features z-scored to death.** UMCSENT, NAAIM, and AAII are identical for every ticker on a given date. `cross_sectional_zscore()` standardized per-date, giving std=0 → NaN → `fillna(0)` dead columns. Because `train_model()` only sees `*_z` columns, these features contributed zero information. The apparent +0.095 from `--naaim` was XGBoost `colsample_bytree=0.8` sampling noise: adding dead columns changed which price features were sampled in each tree, producing a different (but informationally equivalent) model. **Fix:** market-wide features are now passed through RAW so trees can use them as regime/context splits interacting with z-scored per-ticker features.
+
+**Defect 2: same-day lookahead for FINRA SV and Wikipedia.** `build_panel()` called `load_short_volume_panel()` / `load_wikipedia_panel()` raw and merged same-day with `merge_asof(..., direction='backward')`. But FINRA SV for day T publishes ~6pm ET after the close; Wikipedia views for day T are final only after the day ends. Both are tradable from T+1 onward. The per-trade PIT merge functions (`merge_sv_pit`, `merge_wikipedia_pit`) correctly lagged +1 day, but the cross-sectional harness did not. **Fix:** both panels are shifted +1 calendar day before `merge_asof` in `build_panel()`.
+
+**Coverage caveats:** Wikipedia is a 20-mega-cap pilot (AAPL, MSFT, NVDA, TSLA, META, GOOGL, AMZN, JPM, V, JNJ, UNH, XOM, PG, HD, MA, ABBV, PFE, CVX, PEP, LLY), 2015-07 → 2024-12, so the majority of names get zero and the last 1.5 years of the walk-forward have no wiki data. FINRA SV is consolidated NMS 2019-01 → 2024-12, not the §104-promised 2009+ per-venue history. SEC FTD uses `effective_date = settlement_date + 30d` and was correctly lagged.
+
+### Corrected single-split previews (h=21, 10bps one-way)
+These are quick previews after the code fixes; full walk-forward results are pending.
+
+| Config | Net Sharpe | Note |
+|--------|------------|------|
+| baseline | 0.369 | price features only |
+| `--finra-sv` | 0.414 | +1d lag applied; 40% coverage |
+| `--wiki` | 0.451 | +1d lag applied; 2% coverage (20 mega-caps) |
+| `--naaim` | −0.182 | market-wide now usable and actively harmful |
+| `--naaim --wiki` | 0.111 | |
+| placebo (3 seeds) | 0.151–0.159 | 3 pure-noise features |
+
+### Corrected walk-forward (h=21, 10bps one-way)
+| Config | Net Sharpe | Positive folds | 90% CI |
+|--------|------------|----------------|--------|
+| baseline (price only) | 0.195 | 9/15 | [−0.22, +0.62] |
+| `--finra-sv` | 0.287 | 9/15 | [−0.13, +0.69] |
+| `--wiki` | 0.215 | 8/15 | [−0.22, +0.63] |
+| `--naaim` | 0.163 | 8/15 | [−0.32, +0.60] |
+| `--naaim --wiki` | −0.028 | 8/15 | [−0.52, +0.42] |
+| placebo seed 1 | 0.310 | 10/15 | [−0.10, +0.71] |
+
+### Corrected walk-forward (h=63, 10bps one-way)
+| Config | Net Sharpe | Positive folds | 90% CI |
+|--------|------------|----------------|--------|
+| baseline (price only) | 0.616 | 10/14 | [+0.29, +0.94] |
+| `--wiki` | 0.694 | 11/14 | [+0.31, +1.15] |
+| placebo seeds 1–3 | 0.705 / 0.716 / 0.707 | 11/14 | [+0.29, +1.15] |
+
+The h=63 baseline (price only) already clears 0 with net Sharpe 0.616. Wikipedia adds only ~+0.08, but placebo runs with 3 random-noise features yield 0.705, 0.716, and 0.707 — all higher than Wikipedia. The Wikipedia "edge" at h=63 is therefore indistinguishable from sampling noise. The original "h=63 net 0.769" claim was mostly a horizon/cost-structure effect, not an alt-data breakthrough.
+
+### What the defects teach
+1. **Cross-sectional standardization is not feature-agnostic.** A feature that is constant across the cross-section must be handled differently (raw, or as an interaction with per-ticker features). Blind z-scoring silently kills it.
+2. **PIT discipline must be enforced in every merge path.** Having correct lag logic in one code path (per-trade backtest) does not protect another code path (cross-sectional panel) from lookahead.
+3. **Coverage epoch matters.** A feature that exists only for 20 names and only until 2024-12 cannot support claims about the full 2012→2026 walk-forward. Per-fold attribution by coverage epoch is mandatory.
+4. **The DSR/selection lesson applies to horizon sweeps too.** Picking the maximum of 6 horizons and quoting its unadjusted CI is the same selection mistake the project already identified in IS backtests. The non-monotonic table (h=25 0.288 → h=30 0.128 → h=40 0.488) is a warning sign.
+5. **Placebo features are a necessary control.** If adding real features produces the same magnitude of ΔSharpe as adding noise features, the effect is not distinguishable from sampling noise.
+
+### Required before claiming an alt-data effect
+- [ ] Corrected walk-forward for `--finra-sv`, `--wiki`, `--naaim`, and combos.
+- [ ] Placebo distribution: run 10+ placebo seeds and compare real-feature ΔSharpe to the noise distribution.
+- [ ] Paired per-fold daily-return bootstrap for real features vs baseline.
+- [ ] Per-fold attribution split by coverage epoch (pre-2019, 2019-2024, post-2024 for wiki; pre-2019, 2019-2024 for SV).
+- [ ] Reproducibility guard: pin numpy/pandas versions or write panels to a format immune to pickle version skew (the current pickles were written under numpy 2.4.6 and fail to load under numpy 1.26.4).
+
+### Honest verdict
+No alt-data config has yet demonstrated a reproducible, properly-lagged, selection-adjusted effect above the harness noise floor. The h=63 net 0.769 claim is **withdrawn** until the above checklist is complete. The per-trade tilt verdicts stand: these panels are retained for cross-sectional reuse and forward SPRT, not as IS-validated sizing boosts.
+
+**Code:** Backfill loaders in `backend/services/{finra_short_volume,sec_ftd,sentiment_naaim_aaii,wikipedia_pageviews}.py`; corrected integration in `backend/scripts/cross_sectional_alpha_model.py`; per-trade tilt harness in `backend/scripts/backtest_technicals.py`.

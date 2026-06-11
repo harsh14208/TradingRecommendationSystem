@@ -57,6 +57,48 @@
 
 **Tests:** 596+ passed (including 55 delivery + 12 SPRT + 21 edgar + 4 options gates + gate unit tests). 2 warnings.
 
+### Alt-Data Cross-Sectional Integration (§104–§110, 2026-06-11) — UNDER REVIEW
+
+**Backfill:** FINRA daily short-sale volume (14M rows, 2019–2024), SEC fails-to-deliver (91k rows, 2017–2024), NAAIM exposure index (1,039 weekly rows, 2006–2026), Wikipedia pageviews (66k rows, 20 tickers, 2015–2024), plus FRED UMCSENT. All panels cached under `backend/data/cache_*`.
+
+**Per-trade tilt verdict:** §104b FINRA SV tilt and §105b SEC FTD tilt **FAILED/INCONCLUSIVE** as sizing boosts on the 217-trade legacy book — rare-extreme conditions produce N≈5–8 cohorts that are unfalsifiable in-sample. §106b NAAIM <30 tilt also failed. These panels are **retained for cross-sectional reuse**, not per-trade tilts.
+
+**Cross-sectional integration — first-pass results retracted due to two implementation defects:**
+* **Defect 1 (market-wide z-score death):** UMCSENT, NAAIM, and AAII are identical for every ticker on a date. `cross_sectional_zscore()` standardized per-date, giving std=0 → NaN → `fillna(0)` dead columns. The apparent contribution of `--naaim` was XGBoost `colsample_bytree=0.8` sampling noise. Fixed: market-wide features now pass through RAW.
+* **Defect 2 (same-day lookahead):** FINRA SV and Wikipedia were merged same-day in `build_panel()` while the per-trade PIT merge functions correctly lag +1 day. Fixed: both panels are shifted +1 day before `merge_asof`.
+* **Coverage caveats:** Wikipedia covers only 20 mega-caps (AAPL, MSFT, NVDA, TSLA, META, GOOGL, AMZN, JPM, …), 2015-07 → 2024-12, so ~480 names get zero and the last 1.5 years of the walk-forward lack data. FINRA SV is consolidated NMS 2019-01 → 2024-12, not the §104-promised 2009+ per-venue history.
+
+**Corrected single-split previews (h=21, 10bps one-way):**
+| Config | Net Sharpe | Note |
+|--------|------------|------|
+| baseline | 0.369 | price features only |
+| `--finra-sv` | 0.414 | +1d lag applied |
+| `--wiki` | 0.451 | +1d lag applied, 2% coverage |
+| `--naaim` | −0.182 | market-wide now usable and harmful |
+| `--naaim --wiki` | 0.111 | |
+| placebo (3 seeds) | 0.151–0.159 | pure-noise features |
+
+**Corrected walk-forward (h=21, 10bps one-way):**
+| Config | Net Sharpe | Positive folds | 90% CI |
+|--------|------------|----------------|--------|
+| baseline (price only) | 0.195 | 9/15 | [−0.22, +0.62] |
+| `--finra-sv` | 0.287 | 9/15 | [−0.13, +0.69] |
+| `--wiki` | 0.215 | 8/15 | [−0.22, +0.63] |
+| `--naaim` | 0.163 | 8/15 | [−0.32, +0.60] |
+| `--naaim --wiki` | −0.028 | 8/15 | [−0.52, +0.42] |
+| placebo seed 1 | 0.310 | 10/15 | [−0.10, +0.71] |
+
+**Corrected walk-forward (h=63, 10bps one-way):**
+| Config | Net Sharpe | Positive folds | 90% CI |
+|--------|------------|----------------|--------|
+| baseline (price only) | 0.616 | 10/14 | [+0.29, +0.94] |
+| `--wiki` | 0.694 | 11/14 | [+0.31, +1.15] |
+| placebo seeds 1–3 | 0.705 / 0.716 / 0.707 | 11/14 | [+0.29, +1.15] |
+
+**Key corrected finding:** The strong h=63 result is driven primarily by the **longer horizon / lower turnover cost structure**, not by Wikipedia. Baseline price features alone at h=63 achieve net 0.616. Adding Wikipedia gives 0.694 (+0.08), but a **placebo run with 3 random-noise features gives 0.705** — higher than Wikipedia. The Wikipedia "edge" at h=63 is therefore indistinguishable from sampling noise.
+
+**Honest status:** No alt-data config has demonstrated a reproducible, properly-lagged, selection-adjusted effect clearly above the harness noise floor. The h=63 net 0.769 claim is **withdrawn**. Additional placebo seeds and per-fold attribution by coverage epoch are still pending. See `docs/LEARNINGS.md §104–§110`.
+
 ## 📊 Live database stats (2026-06-10)
 
 | Metric | Value |

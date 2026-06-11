@@ -87,6 +87,7 @@ class SendLog(Base):
     time = Column(String(8))
     status = Column(String(10))
     message = Column(Text)
+    chat_id = Column(String(50), nullable=True)  # DISC-3: actual recipient chat_id
     created_at = Column(DateTime, server_default=func.now(), index=True)
     cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
 
@@ -216,7 +217,8 @@ class SignalDelivery(Base):
     dedupe_key = Column(String(150), nullable=True, unique=True, index=True)
     telegram_msg_id = Column(String(50), nullable=True)
     provider_message_id = Column(String(100), nullable=True)
-    sent_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now())  # DISC-7: when the row was created
+    sent_at = Column(DateTime, nullable=True)  # when delivery was confirmed (may differ from created_at)
     cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
 
 

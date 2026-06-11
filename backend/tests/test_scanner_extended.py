@@ -108,7 +108,7 @@ class TestMaybeSend:
 
         with patch.object(scanner, "_market_hours_ok", return_value=True):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
-                with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=False)):
+                with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=(False, None))):
                     await scanner._maybe_send(_sig(action="HOLD"), row, settings, db, "test")
                 mock_send.assert_not_called()
 
@@ -189,7 +189,7 @@ class TestMaybeSend:
 
         with patch.object(scanner, "_market_hours_ok", return_value=True):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
-                with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=False)):
+                with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=(False, None))):
                     with patch("services.market_calendar.get_upcoming_holidays", new=AsyncMock(return_value=[])):
                         with patch("services.market_calendar.is_pre_long_weekend", return_value=(False, "")):
                             await scanner._maybe_send(_sig(confidence=70.0), row, settings, db, "test")
@@ -236,7 +236,7 @@ class TestMaybeSend:
         settings = _settings()
 
         with patch.object(scanner, "_market_hours_ok", return_value=True):
-            with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=True)):
+            with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=(True, "12345"))):
                 with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "99"))):
                     with patch("services.market_calendar.get_upcoming_holidays", new=AsyncMock(return_value=[])):
                         with patch("services.market_calendar.is_pre_long_weekend", return_value=(False, "")):
@@ -279,7 +279,7 @@ class TestMaybeSend:
         from models import SendLog
 
         with patch.object(scanner, "_market_hours_ok", return_value=True):
-            with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=True)):
+            with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=(True, "12345"))):
                 with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))):
                     with patch("services.market_calendar.get_upcoming_holidays", new=AsyncMock(return_value=[])):
                         with patch("services.market_calendar.is_pre_long_weekend", return_value=(False, "")):
@@ -307,7 +307,7 @@ class TestFanoutToSubscribers:
         with patch("services.scanner.get_settings", return_value=settings_no_token):
             result = await scanner._fanout_to_subscribers(_sig(), row, db)
 
-        assert result is False
+        assert result == (False, None)
         db.execute.assert_not_called()
 
     @pytest.mark.asyncio
@@ -331,7 +331,7 @@ class TestFanoutToSubscribers:
         with patch("services.scanner.get_settings", return_value=settings_ok):
             result = await scanner._fanout_to_subscribers(_sig(), row, db)
 
-        assert result is False
+        assert result == (False, None)
 
     @pytest.mark.asyncio
     async def test_owner_bypasses_subscription_tier_check(self):
@@ -387,7 +387,7 @@ class TestFanoutToSubscribers:
                     with patch("services.scanner.asyncio.create_task"):
                         result = await scanner._fanout_to_subscribers(_sig(), row, db)
 
-        assert result is True
+        assert result == (True, "OWNER_CHAT")
 
     @pytest.mark.asyncio
     async def test_dedup_skips_already_delivered_user(self):
@@ -441,7 +441,7 @@ class TestFanoutToSubscribers:
 
         # No post should have been called because user was already delivered
         mock_session.post.assert_not_called()
-        assert result is False
+        assert result == (False, None)
 
     @pytest.mark.asyncio
     async def test_per_user_confidence_threshold_blocks_low_conf_signal(self):
@@ -494,7 +494,7 @@ class TestFanoutToSubscribers:
                         result = await scanner._fanout_to_subscribers(_sig(confidence=70.0), row, db)
 
         mock_session.post.assert_not_called()
-        assert result is False
+        assert result == (False, None)
 
     @pytest.mark.asyncio
     async def test_duplicate_chat_id_sent_only_once(self):
@@ -557,7 +557,7 @@ class TestFanoutToSubscribers:
 
         # Delivery should be queued exactly once despite two eligible users sharing a chat
         assert mock_queue.call_count == 1
-        assert result is True
+        assert result == (True, "SHARED_CHAT")
 
     @pytest.mark.asyncio
     async def test_notification_prefs_enforced(self):
@@ -607,4 +607,4 @@ class TestFanoutToSubscribers:
                         result = await scanner._fanout_to_subscribers(_sig(), _db_row(id=10), db)
 
         assert mock_session.post.call_count == 0
-        assert result is False
+        assert result == (False, None)

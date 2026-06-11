@@ -21,7 +21,7 @@ from services.finra_short_volume import _parse_finra_sv_txt, merge_sv_pit
 from services.sec_ftd import _parse_ftd_csv, merge_ftd_pit
 
 # §106: Sentiment (UMCSENT primary + optional NAAIM/AAII)
-from services.sentiment_naaim_aaii import _parse_naaim_json, merge_sentiment_pit
+from services.sentiment_naaim_aaii import _parse_naaim_xlsx, merge_sentiment_pit
 
 # §107: GDELT
 from services.gdelt_news_tone import _parse_gkg_csv, _extract_org_tone, merge_gdelt_tone_pit
@@ -102,12 +102,24 @@ class TestSecFtd:
 class TestSentimentNaaimAaii:
     """§106 — NAAIM / AAII sentiment."""
 
-    def test_parse_naaim_json(self) -> None:
-        data = {"success": 1, "data": {"series": [{"data": [[1704067200000, 45.2], [1704153600000, 42.1]]}]}}
-        df = _parse_naaim_json(data)
+    def test_parse_naaim_xlsx(self) -> None:
+        from openpyxl import Workbook
+        from io import BytesIO
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws.append(["Date", "Mean/Average"])
+        ws.append(["2024-01-02", 45.2])
+        ws.append(["2024-01-03", 42.1])
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        df = _parse_naaim_xlsx(buf.read())
         assert df is not None
         assert len(df) == 2
         assert "naaim_exposure" in df.columns
+        assert df["naaim_exposure"].iloc[0] == 45.2
 
     def test_merge_sentiment_pit(self) -> None:
         idx = pd.date_range("2024-01-02", periods=3)

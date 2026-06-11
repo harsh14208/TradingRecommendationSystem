@@ -175,7 +175,14 @@ async def update_notification_prefs(
     current.update(updates)
 
     row.data = {**(row.data or {}), pref_key: current}
-    await db.commit()
+
+    # DISC-8: sync min_confidence_override DB column with JSON prefs so the
+    # column stays the source of truth for ad-hoc queries and doesn't drift stale.
+    if "min_conf" in updates:
+        user.min_confidence_override = updates["min_conf"]
+        await db.commit()
+    else:
+        await db.commit()
     return current
 
 
