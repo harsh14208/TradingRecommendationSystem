@@ -10,7 +10,7 @@ from config import TIER_PRICES_CENTS, get_settings
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
-from models import AppSettings, PerformanceSnapshot, Signal, SignalDelivery, User
+from models import AppSettings, PerformanceSnapshot, ResearchExperiment, Signal, SignalDelivery, User
 from services.auth_svc import get_current_user
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -322,6 +322,29 @@ async def system_readiness(
         "error": None if stripe_ok else "Stripe Webhook Secret not configured or invalid format",
     }
 
+    # §99d: SPRT state for registered forward-validation experiments
+    sprt_experiments = []
+    try:
+        sprt_rows = (
+            (await db.execute(select(ResearchExperiment).where(ResearchExperiment.sprt_params.isnot(None))))
+            .scalars()
+            .all()
+        )
+        for exp in sprt_rows:
+            sprt_experiments.append(
+                {
+                    "id": exp.id,
+                    "hypothesis": exp.hypothesis,
+                    "n": (exp.sprt_state or {}).get("n", 0),
+                    "llr": (exp.sprt_state or {}).get("llr"),
+                    "decision": (exp.sprt_state or {}).get("decision", "pending"),
+                    "pct_of_upper": (exp.sprt_state or {}).get("pct_of_upper"),
+                    "computed_at": (exp.sprt_state or {}).get("computed_at"),
+                }
+            )
+    except Exception as e:
+        log.warning("[admin] SPRT state query failed: %s", e)
+
     # Overall launch readiness score / status
     ready = env_ok and db_ok and not execution_paused and telegram_ok and stripe_ok and alpaca_ok and redis_ok
 
@@ -333,6 +356,7 @@ async def system_readiness(
         "providers": providers,
         "webhooks": webhooks,
         "queues": queues,
+        "sprt": sprt_experiments,
     }
 
 

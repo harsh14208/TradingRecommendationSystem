@@ -2238,6 +2238,10 @@ def simulate_ticker(
     si_rising_map: dict | None = None,
     calm_sleeve: bool = False,
     ff_str_regime_map: dict | None = None,
+    # §96b: entry-at-close variant — fill at signal-day Close instead of T+1 Open
+    entry_at_close: bool = False,
+    # §97a: limit-order entry — fill at Close − k×ATR if next-day Low ≤ limit
+    entry_limit_k: float | None = None,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -2280,6 +2284,7 @@ def simulate_ticker(
       26.  §68 Rising rates — T10Y 30d change >0.5pp + XLK: require score+5
     """
     trades = []
+    _limit_signals_attempted = 0
     in_trade_until = pd.Timestamp("2000-01-01")
     _hold_days = hold_days_override if hold_days_override is not None else HOLD_DAYS
     # §94: per-sector hold-days parity with live engine
@@ -2778,10 +2783,36 @@ def simulate_ticker(
 
         # Signal is generated at bar-i close; fill at T+1 open (default) or T+2 open
         # when entry_delay_override=True (§17d: skip the continuation morning).
+        # §96b: entry-at-close fills at signal-bar Close (caveat: ~10-min look-ahead
+        # since signal is computed on completed bar; flag as approximate).
         _fill_bar = i + 2 if _entry_delay else i + 1
         if _fill_bar >= len(df):
             break
-        entry_price = float(df.iloc[_fill_bar]["Open"])
+
+        _signal_close = float(row["Close"])
+        _fill_open = float(df.iloc[_fill_bar]["Open"])
+
+        if entry_at_close:
+            entry_price = _signal_close
+            _entry_style = "close"
+        elif entry_limit_k is not None and entry_limit_k > 0:
+            _limit_signals_attempted += 1
+            # §97a: limit at signal Close − k×ATR; fill iff next-day Low ≤ limit
+            _limit_price = _signal_close - entry_limit_k * atr
+            if _fill_open <= _limit_price:
+                # Gap-down through limit: fill at the worse of limit or open
+                entry_price = max(_limit_price, _fill_open)
+                _entry_style = f"limit_k{entry_limit_k}"
+            elif float(df.iloc[_fill_bar]["Low"]) <= _limit_price:
+                # Intraday touch: fill at limit
+                entry_price = _limit_price
+                _entry_style = f"limit_k{entry_limit_k}"
+            else:
+                # Unfilled — signal expires
+                continue
+        else:
+            entry_price = _fill_open
+            _entry_style = "open"
 
         # ── Beta-hedge: record SPY open at fill bar for return offset ─────────
         _spy_entry_price: float | None = None
@@ -2820,6 +2851,9 @@ def simulate_ticker(
         exit_day = _hold_days
         _mfe_pct = 0.0  # max favorable excursion across hold bars
         _mae_pct = 0.0  # max adverse excursion across hold bars
+        # §96a: overnight vs intraday decomposition
+        _overnight_sum = 0.0
+        _intraday_sum = 0.0
 
         for j in range(0, _hold_days):
             if _fill_bar + j >= len(df):
@@ -2838,6 +2872,16 @@ def simulate_ticker(
             else:
                 _mfe_pct = max(_mfe_pct, (entry_price - day_low) / entry_price * 100)
                 _mae_pct = min(_mae_pct, (entry_price - day_high) / entry_price * 100)
+
+            # §96a: overnight vs intraday decomposition
+            _prev_close = (
+                _signal_close
+                if (_fill_bar + j == _fill_bar and entry_at_close)
+                else float(df.iloc[_fill_bar + j - 1]["Close"])
+            )
+            _overnight_sum += (day_open - _prev_close) / entry_price * 100
+            _intraday_sum += (day_close - day_open) / entry_price * 100
+
             if action == "BUY":
                 if day_low <= stop_price:
                     # Gap-through: if the bar opened below the stop, fill at the open.
@@ -2945,6 +2989,14 @@ def simulate_ticker(
             exit_price = float(df.iloc[idx]["Close"])
             _exit_bar_idx = idx
 
+        # §96a: adjust exit-day intraday from Close to actual exit_price
+        if _exit_bar_idx >= _fill_bar:
+            _exit_bar = df.iloc[_exit_bar_idx]
+            _exit_open = float(_exit_bar["Open"])
+            _exit_close = float(_exit_bar["Close"])
+            _intraday_sum -= (_exit_close - _exit_open) / entry_price * 100
+            _intraday_sum += (exit_price - _exit_open) / entry_price * 100
+
         # ── Return calculation ────────────────────────────────────────────────
         if action == "BUY":
             gross_pct = (exit_price - entry_price) / entry_price * 100
@@ -3033,6 +3085,9 @@ def simulate_ticker(
                 "net_pct_nostop": _net_nostop,  # R4: no hard stop (target/time only)
                 "spy_leg_pct": round(_spy_leg_pct, 3) if beta_hedge else None,
                 "size_mult": round(_size_mult, 3),
+                "overnight_pct": round(_overnight_sum, 3),
+                "intraday_pct": round(_intraday_sum, 3),
+                "entry_style": _entry_style,
                 "mr_trigger": _mr_trigger_label,
                 # ── Quality score (Option B — continuous trade ranking) ──────────
                 # Composite 0-100: rewards high signal score, fast OU mean-reversion,
@@ -3125,7 +3180,10 @@ def simulate_ticker(
         # still preventing same-day re-entry (exit_day=0 → 3 day cooldown).
         in_trade_until = date + pd.Timedelta(days=max(exit_day + 3, 5))
 
-    return pd.DataFrame(trades)
+    _df_result = pd.DataFrame(trades)
+    if entry_limit_k is not None and entry_limit_k > 0:
+        _df_result.attrs["_limit_signals_attempted"] = _limit_signals_attempted
+    return _df_result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4531,9 +4589,10 @@ def run_oos_validation(vix, spy_trend, stlfsi4):
         print()
 
     # ── In-Sample vs OOS verdict ───────────────────────────────────────────────
-    # §59–§82 canonical IS (74-ticker, sector-filtered live-equivalent)
-    is_wr = 64.9
-    is_avg = 0.90
+    # §59–§82 canonical IS (sector-filtered live-equivalent, v10.9)
+    # Updated 2026-06-10: matches current delivery_gates.py BLOCKED_SECTORS.
+    is_wr = 69.3
+    is_avg = 0.83
     is_sh = 0.24
     # Use CLEAN OOS for curation-bias verdict (apples-to-apples vs sector-filtered IS)
     oos_wr = sc["wr"]
@@ -4768,6 +4827,15 @@ def main():
     _entry_delay_flag = "--entry-delay" in sys.argv
     _consec_score_flag = "--consec-score" in sys.argv
     _consec_score_sizing_flag = "--consec-score-sizing" in sys.argv
+    _entry_at_close_flag = "--entry-at-close" in sys.argv
+    _entry_limit_flag = "--entry-limit" in sys.argv
+    _entry_limit_k = None
+    for _i, _arg in enumerate(sys.argv):
+        if _arg == "--entry-limit" and _i + 1 < len(sys.argv):
+            try:
+                _entry_limit_k = float(sys.argv[_i + 1])
+            except ValueError:
+                pass
 
     # Parse --target-mult X.Y
     _target_mult_override = None
@@ -5222,6 +5290,8 @@ def main():
             ff_str=_ff_str,
             si_rising_map=_si_rising_map,
             ff_str_regime_map=_ff_str_regime_map,
+            entry_at_close=_entry_at_close_flag,
+            entry_limit_k=_entry_limit_k if _entry_limit_flag else None,
         )
         if t is not None and not t.empty:
             all_trades.append(t)
@@ -5270,6 +5340,7 @@ def main():
 
     trades = pd.concat(all_trades, ignore_index=True)
     trades = trades.sort_values("date").reset_index(drop=True)
+    _total_limit_attempted = sum(t.attrs.get("_limit_signals_attempted", 0) for t in all_trades)
     trades["year"] = trades["date"].dt.year
     print(f"\nTotal simulated trades: {len(trades)}\n")
 
@@ -6926,6 +6997,144 @@ def main():
         else:
             print("> §17 verdict: baseline adaptive stops are optimal — do NOT widen.")
     print()
+
+    # ── §96a. Overnight vs Intraday Decomposition ────────────────────────────
+    if "overnight_pct" in trades.columns and "intraday_pct" in trades.columns:
+        print("\n## §96a. Overnight vs Intraday Decomposition\n")
+        print(
+            "> Split each held day's move into overnight (prev Close → Open) and intraday (Open → Close).\n"
+            "> Motivation: literature says short-term reversal accrues disproportionately close→open.\n"
+        )
+        _ov = trades["overnight_pct"].sum()
+        _iv = trades["intraday_pct"].sum()
+        _total = _ov + _iv
+        if abs(_total) > 0.01:
+            _ov_share = _ov / _total * 100
+            _iv_share = _iv / _total * 100
+        else:
+            _ov_share = 0.0
+            _iv_share = 0.0
+        print_table(
+            ["Component", "Cumulative %", "Share"],
+            [
+                ["Overnight (prev Close → Open)", f"{_ov:+.2f}%", f"{_ov_share:.1f}%"],
+                ["Intraday (Open → Close)", f"{_iv:+.2f}%", f"{_iv_share:.1f}%"],
+                ["Total", f"{_total:+.2f}%", "100.0%"],
+            ],
+        )
+        # By exit reason
+        print("\n### By Exit Reason\n")
+        _er_rows = []
+        for _reason in ["target", "stop", "time", "time_loss", "adaptive"]:
+            _sub = trades[trades["exit_reason"] == _reason]
+            if _sub.empty:
+                continue
+            _er_rows.append(
+                [
+                    _reason,
+                    str(len(_sub)),
+                    f"{_sub['overnight_pct'].sum():+.2f}%",
+                    f"{_sub['intraday_pct'].sum():+.2f}%",
+                ]
+            )
+        print_table(["Exit", "N", "Overnight", "Intraday"], _er_rows)
+        # By day-in-hold
+        print("\n### By Day-in-Hold\n")
+        _dih_rows = []
+        for _d in sorted(trades["exit_day"].unique()):
+            _sub = trades[trades["exit_day"] == _d]
+            _dih_rows.append(
+                [
+                    str(_d),
+                    str(len(_sub)),
+                    f"{_sub['overnight_pct'].mean():+.2f}%",
+                    f"{_sub['intraday_pct'].mean():+.2f}%",
+                ]
+            )
+        print_table(["Day", "N", "Avg Overnight", "Avg Intraday"], _dih_rows)
+        if abs(_ov) > abs(_iv):
+            print(
+                "> §96a verdict: overnight contribution dominates — close-entry variant (§96b) may capture more edge."
+            )
+        else:
+            print("> §96a verdict: intraday contribution dominates — close-entry unlikely to help.")
+        print()
+
+    # ── §96b. Entry-at-Close A/B ─────────────────────────────────────────────
+    if _entry_at_close_flag and "entry_style" in trades.columns:
+        print("\n## §96b. Entry-at-Close A/B\n")
+        print(
+            "> ⚠ CAVEAT: signal is computed on the completed daily bar; close-fill assumes\n"
+            "> the signal is computable at ~15:50 (approximate with completed bar).\n"
+        )
+        _close_trades = trades[trades["entry_style"] == "close"]
+        _open_trades = trades[trades["entry_style"] == "open"] if "open" in trades["entry_style"].values else trades
+        if not _close_trades.empty:
+            _cs = stats(_close_trades["net_pct"].tolist())
+            _os = stats(_open_trades["net_pct"].tolist()) if not _open_trades.empty else dict(_EMPTY_STATS)
+            print_table(
+                ["Variant", "N", "WR", "Avg Ret", "Sharpe", "Max DD"],
+                [
+                    [
+                        "Close-entry",
+                        str(_cs["n"]),
+                        f"{_cs['wr']:.1f}%",
+                        f"{_cs['avg']:+.2f}%",
+                        fmt_sharpe(_cs.get("sharpe")),
+                        f"-{_cs['max_dd']:.2f}%",
+                    ],
+                    [
+                        "Open-entry (canon)",
+                        str(_os["n"]),
+                        f"{_os['wr']:.1f}%",
+                        f"{_os['avg']:+.2f}%",
+                        fmt_sharpe(_os.get("sharpe")),
+                        f"-{_os['max_dd']:.2f}%",
+                    ],
+                ],
+            )
+            _dsh = (_cs.get("sharpe") or 0.0) - (_os.get("sharpe") or 0.0)
+            if _dsh >= 0.03:
+                print(f"> §96b verdict: ΔSharpe = +{_dsh:.2f} ≥ +0.03 — DEPLOY close-entry with 15:45 scan slot.")
+            elif _dsh >= 0.01:
+                print(f"> §96b verdict: ΔSharpe = +{_dsh:.2f} — marginal; monitor forward before deploying.")
+            else:
+                print(f"> §96b verdict: ΔSharpe = {_dsh:+.2f} — close-entry does NOT improve edge.")
+        print()
+
+    # ── §97a. Limit-Order Entry Grid ─────────────────────────────────────────
+    if _entry_limit_flag and "entry_style" in trades.columns:
+        print("\n## §97a. Limit-Order Entry Grid\n")
+        print(
+            "> Fill at signal Close − k×ATR if next-day Low ≤ limit.\n"
+            "> Unfilled signals expire — the N cost is on the table (guardrail #1).\n"
+        )
+        _limit_rows = []
+        for _style in sorted(trades["entry_style"].unique()):
+            _sub = trades[trades["entry_style"] == _style]
+            if _sub.empty:
+                continue
+            _ss = stats(_sub["net_pct"].tolist())
+            _fill_rate = len(_sub) / _total_limit_attempted * 100 if _total_limit_attempted > 0 else 0.0
+            _limit_rows.append(
+                [
+                    _style,
+                    str(_ss["n"]),
+                    f"{_fill_rate:.1f}%",
+                    f"{_ss['wr']:.1f}%",
+                    f"{_ss['avg']:+.2f}%",
+                    fmt_sharpe(_ss.get("sharpe")),
+                    f"-{_ss['max_dd']:.2f}%",
+                ]
+            )
+        print_table(
+            ["Entry Style", "N", "Fill Rate", "WR", "Avg Ret", "Sharpe", "Max DD"],
+            _limit_rows,
+        )
+        print(
+            "> Read: a limit variant wins only if it beats canon on per-trade Sharpe AND CAGR\n"
+            "> at acceptable fill rate — per-trade gains from dropping trades are the ATR≤70 trap.\n"
+        )
 
     # ── §QuantEngine: portfolio equity curve simulation ──────────────────────
     if "--portfolio" in sys.argv:

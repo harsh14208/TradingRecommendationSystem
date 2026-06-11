@@ -8,6 +8,19 @@ from pathlib import Path
 import certifi
 import pytz
 
+# ── Sentry ──────────────────────────────────────────────────────────────────
+# Initialise as early as possible so import-time crashes are captured.
+_sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
+if _sentry_dsn:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        traces_sample_rate=0.1,  # 10% of requests profiled — adjust up/down by cost
+        profiles_sample_rate=0.05,
+        environment="production" if not os.environ.get("DEBUG") else "development",
+    )
+
 # Raise the per-process open-file limit early so long-running scan cycles
 # (which accumulate sockets + SQLite WAL handles) don't hit the OS default
 # (256 on macOS, 1024 on Linux).  We request 65536; cap at the hard limit.

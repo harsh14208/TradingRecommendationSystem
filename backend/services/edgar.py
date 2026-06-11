@@ -323,34 +323,16 @@ async def _fetch_filing_text(cik: str, form_type: str = "10-Q") -> list[str]:
         forms = filings.get("form", [])
         accs = filings.get("accessionNumber", [])
         dates = filings.get("filingDate", [])
+        docs = filings.get("primaryDocument", [])
 
-        targets = [(acc, dt) for form, acc, dt in zip(forms, accs, dates) if form == form_type][:2]
+        targets = [(acc, dt, doc) for form, acc, dt, doc in zip(forms, accs, dates, docs) if form == form_type][:2]
 
-        for acc, _dt in targets:
+        for acc, _dt, primary_doc in targets:
             acc_clean = acc.replace("-", "")
-            # Fetch the filing index to find the primary document
-            idx_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{acc}-index.json"
+            if not primary_doc:
+                continue
+            doc_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{primary_doc}"
             try:
-                async with shared_session() as sess:
-                    async with sess.get(
-                        idx_url, headers=HEADERS, ssl=_ssl_ctx, timeout=aiohttp.ClientTimeout(total=6)
-                    ) as r:
-                        if r.status != 200:
-                            continue
-                        idx = await r.json(content_type=None)
-
-                # Find the primary HTML/HTM document
-                primary_doc = None
-                for item in idx.get("directory", {}).get("item", []) or []:
-                    name = item.get("name", "")
-                    if name.endswith((".htm", ".html")) and not name.startswith("R"):
-                        primary_doc = name
-                        break
-
-                if not primary_doc:
-                    continue
-
-                doc_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{primary_doc}"
                 async with shared_session() as sess:
                     async with sess.get(
                         doc_url, headers=HEADERS, ssl=_ssl_ctx, timeout=aiohttp.ClientTimeout(total=10)

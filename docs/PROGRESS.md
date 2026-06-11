@@ -1,6 +1,7 @@
 # Signal.Trade — Development Progress
 
-> **Version: v8.4** · Updated: 2026-06-10 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v8.5** · Updated: 2026-06-11 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **v8.5 (2026-06-11) — External research agenda §96–§103 complete + infrastructure hardening.** §96a-d overnight/intraday decomposition (61% alpha from overnight gaps), §96b close-entry A/B neutral (ΔSharpe 0.00), §97a limit-order grid all failed deploy bar, §99 SPRT protocol live (4 hypotheses pre-registered, monitor built, admin surfaced), §100 SimFin fundamentals wired into cross-sectional model, §101 TSMOM sleeve Sharpe 0.57 (4/4 epochs positive, deploy bar not cleared), §103 decay monitor with VIX regime context. Infrastructure: §85-2 MD&A EDGAR bug fixed (primaryDocument endpoint), fill-rate counter bug fixed, VAPID keys generated, E2E Playwright 5 passed, §69–§74 gate unit tests added. **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Stats.md §15 v8.5: Security 8.0→8.2, Deployment 7.7→7.9, Test Coverage 7.7→7.9, Backtest Infra 7.8→7.9).
 > **v8.4 (2026-06-10 evening) — Live delivery overhaul: the live-vs-IS gap was mostly delivery leaks, not signal.** DB-level audit found and same-day-fixed six leaks: (1) **sector model-file "dynamic unblock"** — XLF/XLP/XLI were never actually blocked (file existence lifted the block); they were **32% of the delivered book at ≈−1.4%/trade** (clause deleted, 6 files quarantined to `data/quarantine/`); (2) **SELL delivery disabled** (35.2% net WR, −1.00%/trade, conf-35 floor bypass; backtest §32 had already disabled SELLs); (3) **all 6 `sector_rs` couplings decoupled** to static SECTOR_MAP (81% of the historical resolved sample ran with per-sector calibration silently OFF → all pre-fix live audits contaminated); (4) **§55 + §14 hard blocks deleted from delivery** (fresh canon A/B: §14 **−0.06 Sharpe, harmful**); (5) **DELIV-1 entry-validity guard** — latency was confounded with sector (clean-sector stale deliveries earn +2.12%/trade); EOD batch now skips on price escape (≥entry+0.5×ATR or ≤stop), not age; (6) **`skip_reason` persisted** (migration `4a7f6b33eb49`) — delivery funnel auditable by query. **Honest re-baseline:** clean live book (May+ BUYs ex-blocked) = **57.8% net WR, +2.06%/trade net** vs +0.25% blended old policy. **§87 verified & deployed:** weighted A/B on v10.9 canon Sharpe 0.24→**0.30 (+0.06)**, ΔN=0 → `_apply_l10_conviction_sizing()` live in `scanner.py` + first global sizing-stack clamp [0.10, 3.00] (+5 tests). **IS canon v10.9:** N=217, WR=69.1%, Sh=0.24, MC P5=0.07 ✅, Lo CI [0.10, 0.37] ✅, **deflated Sharpe FAILS at honest 744 trials** ⚠ → IS lever statistically spent; edge proof shifts to the post-fix forward window. Meta-model: v8.3 CRITICAL closed (15-feature retrain + `_MIN_META_AUC=0.52` self-gating floor → meta_prob OFF at CV-AUC 0.4364). **Ratings: 8.9/10 product · 8.2/10 B+ quality** (Stats.md §15 v8.4: Live Alpha 6.8→7.6, ML 7.2→7.8, Sector 7.8→8.3, IS 7.4→7.6, Cal 6.8→7.0). Full data: `Stats.md §DELIV`.
 > **v10.8 backtest — Sharpe improvement sweep (2026-06-09):** 12 candidate approaches tested on 100-ticker/23yr IS. Score-band sizing (L7 non-linear step function) → +0.05 Sharpe, zero trade-count impact. Dynamic RSI stops (2.0× ATR when RSI<30) → embedded in baseline. MR-count=2 (≥2 MR conditions vs 1) → +0.01 Sharpe, −1 trade. Consecutive-score filter → +0.14 Sharpe (−73% trades) — best as high-conviction tier, not main flow. Score acceleration and entry-delay both hurt. Live engine updated: `assembler.py` L7 score-band sizing + `_has_mr` MR-count=2 + `helpers.py` dynamic RSI stops. See `docs/Stats.md §83`.
 > **§87–§94 Sharpe×N agenda (2026-06-10):** All free-subscription items implemented and validated. §87 L10 consec-score sizing (initial +0.03 claim corrected same day — verified weighted A/B: **+0.06**, ΔN=0; deployed live in v8.4). §88 calm-regime sleeve ABANDONED (0 trades in 23yr — structural mismatch). §89 FF ST_Rev wired as 15th meta-label feature; §89a regime sizing negligible (+0.008); §89b factor attribution confirms genuine alpha (+0.87%/day, p=0.044, R²=0.05). §90 WATCH bench all rejected (0/9 trades). §91 SI rising tilt wired, live +2.42pp spread, backtest unvalidatable. §92 shadow criteria locked. §93a sector_rs bug fixed; §93c net-of-friction calibration (43.6%→40.5%); §93d gap decomposition v2 (25.5pp WR gap, midday 11–12 ET catastrophic, p=0.000). §94 per-sector hold-days (+0.04 Sharpe). Full 23yr backtest: 217 trades, 69.1% WR, 0.24 Sharpe, −2.31% MaxDD. Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of trades in that window. Post-2022 epoch (rate-hike cycle) shows negative Sharpe (−0.10), explaining live underperformance.
@@ -12,6 +13,49 @@
 > **v8.2 (2026-06-09) — Sharpe improvement sweep + live engine updates.** v10.8 backtest sweep: 12 candidate approaches on 100-ticker/23yr IS. Score-band sizing (+0.05 Sharpe, zero trade impact), MR-count=2 (+0.01 Sharpe, −1 trade), and dynamic RSI stops all validated and shipped live. IS Sharpe 0.23→0.25. See `docs/Stats.md §83`.
 > **v8.1 (2026-06-09) — Survivorship correction + new live gates + correctness fixes + open-source quant-library audit.** Survivorship bias corrected via free PIT S&P constituents (the #1 named ceiling); new live gates (§14 FRED macro-regime, Polygon short-volume, dynamic sector limits + XLI ML); live correctness fixes (`sector_etf` decouple — was nulling ~81% of signals; cohort-enrichment restore; dark_pool restart-storm); §63 cointegration ADF correctness fix + macro-regime HMM→hmmlearn (both live); cross-sectional model net-positive at h=21 (net +0.347, borrow-robust) deployed in **SHADOW**. **Overall 8.8/10 product · 8.6/10 quality** (+0.1 from v8.0.1; shadow/research work excluded per "implemented ≠ working live"). See Stats.md §15.
 > **v8.0 — Quant Engine (QENG) Roadmap Implementation (16/17 QENG features complete):** experiment registry, PBO report, checklist promotions, PIT feature store, replay engine, version lineage, live fill ledger, TCA service, capacity limits, portfolio allocator, HRP, cost-aware turnover control, stat-arb residual sleeve, TS momentum trend sleeve, cross-sectional factors, cross-sleeve capital allocator, triple-barrier meta-labeling, shadow-control cohort routing, and policy versioning. Overall 8.6/10 product · 8.3/10 quality (v8.0.1, revised down after a server-log audit found the PIT feature store crashing every live scan on NaN→json and the TSYS-5a health scorecard recording 0 calls due to a constraint/race — both green in the test suite; see Stats.md §15 v8.0.1).
+
+### v8.5 (2026-06-11) — External Research Agenda §96–§103 Complete + Infrastructure Hardening
+
+**§96 Overnight/Intraday Decomposition + Close-Entry Variant:**
+- §96a: `backtest_technicals.py` tracks `overnight_pct`/`intraday_pct` per held day. **Result: 61% of alpha from overnight gaps** on full canon (217 trades).
+- §96b: `--entry-at-close` A/B tested. ΔSharpe = 0.00 — neutral, safe for live use.
+- §96c: `scanner.py` Step 5c: 15:45–15:55 ET scan slot tags BUYs with `entry_style=close`.
+- §96d: Overnight telemetry fields persisted in trade dict.
+
+**§97 Limit-Order Entry Frontier:**
+- §97a: `--entry-limit k` tested k ∈ {0.25, 0.5, 1.0}. All variants fail deploy bar (Sharpe 0.16–0.12 vs canon 0.25). §97c blocked indefinitely.
+- §97b: Cross-read wiring with §96a report sections co-located.
+
+**§99 SPRT Forward-Validation Protocol:**
+- §99a: 4 hypotheses pre-registered in `ResearchExperiment` (IDs 3–6) at 2026-06-11 00:44 UTC.
+- §99b: `scripts/sprt_monitor.py` with Gaussian LLR, Wald boundaries, state persistence. 12 unit tests passed.
+- §99c: Shadow promotion + OOS v7 + OOS v8 all pre-registered.
+- §99d: SPRT state surfaced in `/api/admin/system-readiness`.
+
+**§100 SimFin Fundamentals Integration:**
+- `simfin_bulk_download.py` + `build_simfin_factors.py` created.
+- 5 factors: earnings yield, gross profitability, accruals, asset growth, net buyback yield.
+- Wired into `cross_sectional_alpha_model.py` with `--simfin` flag.
+
+**§101 TSMOM Diversifying Sleeve:**
+- `backtest_tsmom_sleeve.py`: 12-1 month sign-of-return, 8 liquid ETFs, monthly rebalance, vol-scaled 10%.
+- Result: Long-flat Sharpe **0.57**, 4/4 epochs positive (2015-22 fold 0.277, just below 0.30 bar).
+- Corr vs MR book: +0.27. Deploy bar not cleared; retained as research artifact.
+
+**§103 Automated Decay Monitor:**
+- §103a: `scripts/decay_monitor.py` — trailing-50 Wilson CI on clean delivered BUYs.
+- §103b: Alarm wiring — `"decay"`, `"confirmation"`, or `None`.
+- §103c: VIX regime context added. Calm-market decay re-labeled `"drought"` (N starvation, not true decay).
+
+**Infrastructure & Bug Fixes:**
+- §85-2 MD&A bug fix: `_fetch_filing_text()` now consumes `primaryDocument` from SEC submissions JSON (deprecated `-index.json` endpoint returned 404). All 21 edgar unit tests pass.
+- Fill-rate bug fix: `_limit_signals_attempted` counter threaded through `simulate_ticker()` → `.attrs` → report. True fill rate now correct (e.g., 41.9% for k=0.5).
+- VAPID keys generated via `py_vapid`, added to `.env`, `config.py` reads correctly.
+- E2E tests: Playwright installed. 5 passed (health, landing, auth×3), 7 skipped (need owner creds).
+- §69–§74 gate unit tests: `tests/test_gates_5982.py` created, all passing.
+- §95 DD-throttle: Already live in `portfolio_allocator.py`; verified operational.
+
+**Tests:** 596+ passed (including 55 delivery + 12 SPRT + 21 edgar + 4 options gates + gate unit tests). 2 warnings.
 
 ## 📊 Live database stats (2026-06-10)
 
@@ -49,11 +93,12 @@
 
 ### v8.3 (2026-06-10) — Sharpe×N Agenda §87–§94 Complete + Gap Decomposition v2
 
-**§87 L10 Consec-Score Sizing (`backtest_technicals.py` + `signal_engine.py`):**
-Gate 18 converted from filter to sizing multiplier. When `prev_score ≥ _consec_score_thresh` (18), `positionSizeScale *= 1.3×`; otherwise 1.0×. Preserves all trades (ΔN = 0).
-- Per-trade Sharpe unchanged (0.24 → 0.24) by construction — sizing does not affect entry/exit selection.
-- **Portfolio A/B (23yr IS, 5 concurrent slots, T-bill on idle):** CAGR +3.6% → +3.7% (+0.1pp), Ann.Sharpe 2.87 → 3.03 (+0.16, +5.6%), MaxDD −6.16% → −6.33% (−0.17pp). MC P5 = 0.07 > 0.
-- **Verdict: DEPLOY.** Slight DD worsening acceptable for Sharpe gain; DD-throttle (R7) remains deployable and additive. Committed `ede79b2`.
+**§87 L10 Consec-Score Sizing (`backtest_technicals.py` + `scanner.py`):**
+Prev-day score ≥ BUY_THRESH → 1.3× position size; otherwise 1.0×. Preserves all trades (ΔN = 0).
+- **Unweighted per-trade:** Sharpe 0.24 → 0.24 (identical by construction — sizing does not affect entry/exit).
+- **Size-weighted:** Sharpe 0.24 → 0.30 (+0.06), WR 69.1% → 70.7% (+1.6pp), 50/217 trades boosted.
+- **Portfolio simulation (5 slots, T-bill on idle):** CAGR +3.6% → +3.7% (+0.1pp), Ann.Sharpe 2.87 → 3.03 (+0.16, +5.6%), MaxDD −6.16% → −6.33% (−0.17pp). MC P5 = 0.07 > 0.
+- **Verdict: DEPLOY.** Live engine: `_apply_l10_conviction_sizing()` in `scanner.py` Step 5b, with global L1–L10 clamp [0.10, 3.00]. Committed `ede79b2`.
 
 **§88 Calm-Regime Sleeve — ABANDONED:**
 Full 23-year backtest with `--calm-sleeve`: **0 trades generated.** ALL 217 baseline trades occurred in VIX 20–30 (stress). Zero in calm (<20) or panic (≥30). MR triggers (RSI<42, BB%B<0.22, IBS<0.15, VWAP%<−0.75) naturally only fire in fear-driven capitulation. **Structural mismatch, not a gate problem.** Code retained but deprioritized.

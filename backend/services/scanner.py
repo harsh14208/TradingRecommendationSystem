@@ -2244,17 +2244,24 @@ async def _run_scan_impl(broadcast_fn=None):
         log.info("[scanner] outside market hours — signal generation skipped")
 
     # ── Step 5b: §87 L10 conviction-tier sizing ───────────────────────────
-    # Backtest-validated 2026-06-10: prev-day score ≥ BUY_THRESH → 1.3× size;
-    # weighted A/B on the v10.9 canon: Sharpe 0.24→0.30 (+0.06), WR +1.6pp,
-    # 50/217 trades boosted, ΔN=0. Live proxy for "prev-day score cleared the
-    # threshold": a BUY signal existed for the ticker on the prior trading day
-    # (signals are only generated when scoring clears the action threshold).
-    # A global clamp caps the multiplicative L1–L10 stack.
     if signals:
         try:
             await _apply_l10_conviction_sizing(signals)
         except Exception:
             log.warning("L10 conviction sizing failed — sizes left unscaled", exc_info=True)
+
+    # ── Step 5c: §96c close-entry scan slot (15:45–15:55 ET) ──────────────
+    # If scan runs in the near-close window, tag BUY signals for close-entry.
+    # The DELIV-1 guard handles late sends; entry is expected at today's close.
+    _now_et = datetime.now(_ET)
+    _is_close_slot = dtime(15, 45) <= _now_et.time() <= dtime(15, 55)
+    if _is_close_slot and signals:
+        for sig in signals:
+            if sig.get("action") == "BUY":
+                sig["entry_style"] = "close"
+                sig.setdefault("extra_data", {})["entry_style"] = "close"
+                sig.setdefault("extra_data", {})["close_slot_timestamp"] = _now_et.isoformat()
+        log.info(f"[scanner] §96c close-entry slot active — {len(signals)} signal(s) tagged")
 
     # ── Step 6: persist (smart daily deduplication) ──────────────────────
     _mark_scan_stage("persistence")

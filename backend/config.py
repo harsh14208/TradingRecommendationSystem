@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     # Leave blank for single-process asyncio.Queue mode (default, zero dependencies).
     redis_url: str = ""
 
+    # ── Observability ─────────────────────────────────────────────────────────
+    sentry_dsn: SecretStr = Field(default=SecretStr(""))
+
     # ── Web Push (VAPID) ──────────────────────────────────────────────────────
     # Generate: `python -c "from py_vapid import Vapid; v=Vapid(); v.generate_keys(); print(v.private_pem().decode())"`
     vapid_private_key: SecretStr = Field(default=SecretStr(""))

@@ -862,6 +862,8 @@ class ResearchExperiment(Base):
     is_metrics = Column(JSON, nullable=True)
     oos_metrics = Column(JSON, nullable=True)
     dsr_pbo = Column(JSON, nullable=True)  # e.g., {"dsr": 0.25, "pbo": 0.05}
+    sprt_params = Column(JSON, nullable=True)  # §99: {"h0": 0, "h1": 1.0, "alpha": 0.05, "beta": 0.05}
+    sprt_state = Column(JSON, nullable=True)  # §99: {"llr": 0.0, "n": 0, "decision": "continue"}
     decision = Column(
         String(20), default="pending", nullable=False, index=True
     )  # "promoted" | "rejected" | "shadow" | "pending"

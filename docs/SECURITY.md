@@ -17,6 +17,9 @@ Signal.Trade backend after the security/architecture refactor.
   `ALPACA_API_SECRET`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
   `GOOGLE_CLIENT_SECRET`, `DISCORD_CLIENT_SECRET`, `SMTP_PASSWORD`,
   `VAPID_PRIVATE_KEY`, `TELEGRAM_BOT_TOKEN`, and `OWNER_PASSWORD`.
+- `OWNER_PASSWORD` startup check enforces ≥16 characters; production fails
+  on `ChangeMe123!` (fixed 2026-06-09 — `.env` now has 32-char secure password).
+- VAPID keys documented in `.env.example`; generate with `py_vapid`.
 - Secrets are exposed only via `.get_secret_value()` at the point of use and are
   never logged, serialised, or returned to clients.
 

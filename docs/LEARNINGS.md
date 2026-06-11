@@ -1,7 +1,7 @@
 # Signal.Trade — Research Learnings & Alpha Inventory
 
 > Living document. Updated as each research section completes.
-> Last updated: 2026-06-10 evening after the §DELIV delivery audit. Key new findings: (1) **The live-vs-IS gap was mostly DELIVERY LEAKS, not signal** — clean book = 57.8% net WR, +2.06%/trade net (see §DELIV Lessons at bottom; supersedes the earlier "regime mismatch" attribution, which was measured on the contaminated sample). (2) Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of 23yr backtest trades in that window; calm sleeve abandoned (0 trades). (3) Factor attribution confirms **genuine idiosyncratic alpha** (+0.87%/day, p=0.044) — not factor beta. (4) WATCH bench all rejected — 111-name curated list is already well-filtered. (5) §87 L10 conviction sizing verified +0.06 Sharpe at ΔN=0, deployed live. (6) v10.9 canon **fails deflated Sharpe at honest 744 trials** — IS iteration is statistically spent.
+> Last updated: 2026-06-11 after §96–§103 external research agenda. Key new findings: (1) **The live-vs-IS gap was mostly DELIVERY LEAKS, not signal** — clean book = 57.8% net WR, +2.06%/trade net. (2) Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of 23yr backtest trades in that window; calm sleeve abandoned (0 trades). (3) Factor attribution confirms **genuine idiosyncratic alpha** (+0.87%/day, p=0.044). (4) WATCH bench all rejected — 111-name curated list is already well-filtered. (5) §87 L10 conviction sizing verified +0.06 Sharpe at ΔN=0, deployed live. (6) v10.9 canon **fails deflated Sharpe at honest 744 trials** — IS iteration is statistically spent. (7) **§96: 61% of alpha from overnight gaps** — validates close-slot timing. (8) **§97: limit-order entries fail deploy bar** across all k values — adverse selection dominates. (9) **§101: TSMOM sleeve Sharpe 0.57** on vanilla config — genuine diversifying premia, but 2015-22 fold 0.277 just misses 0.30 bar; correlation +0.27 vs MR book.
 > Primary research script: `backend/scripts/signal_alpha_decomposition.py`
 > Primary backtest: `backend/scripts/backtest_technicals.py`
 > Live engine: `backend/services/signal_engine.py`
@@ -542,34 +542,46 @@ All bugs were present in both `screen_russell1000_mr_candidates.py` and `screen_
 
 ## §87 Consecutive-Score Sizing A/B Validation (2026-06-10)
 
-**Question:** Does applying a 1.3× position-size multiplier to persistent-oversold signals (prev_score ≥ threshold) improve portfolio Sharpe vs. treating consecutive-score as a hard filter?
+**Question:** Does applying a 1.3× position-size multiplier to persistent-oversold signals (prev_score ≥ threshold) improve risk-adjusted returns vs. flat sizing?
 
-**Method:** Full 23-year IS backtest (111 tickers, 2003–2026) with `--portfolio` concurrent-slot simulation (5 slots, T-bill on idle, compound DD).
+**Method:** Full 23-year IS backtest (111 tickers, 2003–2026) run twice: baseline (flat sizing) and variant (`--consec-score-sizing`). Three perspectives reported:
 
-| Metric | Baseline (filter mode) | §87 (sizing mode) | Δ |
+### §1 Unweighted per-trade metrics (entry/exit selection unchanged)
+| Metric | Baseline (flat) | §87 (sizing) | Δ |
 |:---|---:|---:|---:|
 | Total Trades | 217 | 217 | +0 |
 | Win Rate | 69.1% | 69.1% | +0.0pp |
 | Avg Return | +0.80% | +0.80% | +0.00pp |
-| Per-Trade Sharpe | 0.24 | 0.24 | +0.00 |
+| Sharpe | 0.24 | 0.24 | +0.00 |
 | Profit Factor | 1.73× | 1.73× | +0.00 |
 | MC P5 / P95 | 0.07 / 0.43 | 0.07 / 0.43 | — |
-| **Portfolio CAGR** | **+3.6%** | **+3.7%** | **+0.1pp** |
-| **Portfolio Ann.Sharpe** | **2.87** | **3.03** | **+0.16 (+5.6%)** |
-| **Portfolio Max DD** | **-6.16%** | **-6.33%** | **-0.17pp** |
+
+> Per-trade metrics identical by construction — sizing does not affect entry/exit selection.
+
+### §87 Size-weighted metrics (score-proportional portfolio)
+| Metric | Baseline (flat) | §87 (sizing) | Δ |
+|:---|---:|---:|---:|
+| Boosted trades | — | 50/217 | — |
+| Weighted Win Rate | 69.1% | 70.7% | **+1.6pp** |
+| Weighted Avg Return | +0.80% | +0.99% | **+0.19pp** |
+| Weighted Sharpe | 0.24 | 0.30 | **+0.06** |
+
+### Portfolio simulation (5 concurrent slots, T-bill on idle, compound DD)
+| Metric | Baseline (flat) | §87 (sizing) | Δ |
+|:---|---:|---:|---:|
+| Portfolio CAGR | +3.6% | +3.7% | **+0.1pp** |
+| Portfolio Ann.Sharpe | 2.87 | 3.03 | **+0.16 (+5.6%)** |
+| Portfolio Max DD | -6.16% | -6.33% | -0.17pp |
 | Skipped (slots full) | 21 (9.7%) | 21 (9.7%) | +0 |
 
 **Verdict: DEPLOY with monitoring.**
 
 - Sizing-only layer yields +0.16 portfolio ann.Sharpe (+5.6% relative) with zero trade-count cost.
-- Per-trade metrics identical by construction (sizing does not change entry/exit selection).
 - MC P5 = 0.07 > 0 confirms edge survives block-bootstrap autocorrelation correction.
 - Slight DD worsening (-0.17pp) is acceptable given Sharpe gain; DD-throttle (R7) still deployable and additive.
-- The previous filter mode (skip single-day spikes) and sizing mode are not mutually exclusive — sizing mode is strictly superior because it retains marginal trades at reduced size rather than discarding them entirely.
+- Sizing mode is strictly superior to the previous filter mode (skip single-day spikes) because it retains marginal trades at reduced size rather than discarding them entirely.
 
-**Code change:** `simulate_ticker()` in `backtest_technicals.py` already supports `consec_score_sizing: bool`. The live engine equivalent is in `assembler.py` Gate 18a logic.
-
----
+**Code:** Backtest in `simulate_ticker()` (`backtest_technicals.py`); live engine in `_apply_l10_conviction_sizing()` (`scanner.py` lines 1530–1580), wired at Step 5b of the scan pipeline.
 
 ---
 

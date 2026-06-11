@@ -1659,6 +1659,13 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+/* ─── Accessibility audit (dev only) ──────────────────────────────────────── */
+if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  import('@axe-core/react').then(axe => {
+    axe.default(React, ReactDOM, 1000);
+  }).catch(() => {});
+}
+
 ReactDOM.createRoot(document.getElementById("root")).render(
   <ErrorBoundary>
     <App/>

@@ -215,7 +215,7 @@ function Flow() {
         {steps.map((s, i) => (
           <div key={i} className="flow-step">
             <div className="flow-num">{s.n}</div>
-            <h4>{s.t}</h4>
+            <h3>{s.t}</h3>
             <p>{s.d}</p>
             {i < steps.length - 1 && (
               <svg aria-hidden="true" className="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
@@ -377,20 +377,20 @@ function Footer({ go }) {
           <p style={{ marginTop:14 }}>A personal quant desk for retail traders. Built solo, run lean, priced fairly. Educational tool — not a registered investment advisor.</p>
         </div>
         <div className="foot-col">
-          <h5>Product</h5>
+          <p className="foot-hd">Product</p>
           <a onClick={() => go("home")} role="button" tabIndex={0}>Features</a>
           <a onClick={() => go("home")} role="button" tabIndex={0}>Pricing</a>
           <a onClick={() => go("track")} role="button" tabIndex={0}>Track record</a>
           <a onClick={() => go("changelog")} role="button" tabIndex={0}>Changelog</a>
         </div>
         <div className="foot-col">
-          <h5>Resources</h5>
+          <p className="foot-hd">Resources</p>
           <a onClick={() => go("docs")} role="button" tabIndex={0}>Documentation</a>
           <a onClick={() => go("telegram")} role="button" tabIndex={0}>Telegram setup</a>
           <a onClick={() => go("status")} role="button" tabIndex={0}>Status page</a>
         </div>
         <div className="foot-col">
-          <h5>Legal</h5>
+          <p className="foot-hd">Legal</p>
           <a onClick={() => go("terms")} role="button" tabIndex={0}>Terms of service</a>
           <a onClick={() => go("privacy")} role="button" tabIndex={0}>Privacy policy</a>
           <a onClick={() => go("risk")} role="button" tabIndex={0}>Risk disclosure</a>
@@ -553,7 +553,7 @@ function DocsPage() {
       <div className="docs-grid">
         {sections.map((s, i) => (
           <div key={i} className="docs-card">
-            <h4>{s.t}</h4>
+            <h3>{s.t}</h3>
             <ul>{s.items.map((it, j) => <li key={j}>{it}</li>)}</ul>
           </div>
         ))}
@@ -600,7 +600,7 @@ function TelegramPage() {
             <div key={i} className="tg-step">
               <span className="n">{s.n}</span>
               <div>
-                <h4>{s.t}</h4>
+                <h3>{s.t}</h3>
                 <p>{s.d}</p>
               </div>
             </div>
@@ -787,7 +787,7 @@ function Site() {
   }, []);
 
   return (
-    <div className="site-shell">
+    <main className="site-shell">
       <Nav page={page} go={go}/>
       {page === "home"      && <Home go={go} stats={stats}/>}
       {page === "track"     && <TrackPage stats={stats}/>}
@@ -802,7 +802,7 @@ function Site() {
       {page === "changelog" && <ChangelogPage/>}
       {!["home","track","docs","telegram","login","signup","terms","privacy","risk","status","changelog"].includes(page) && <NotFoundPage go={go}/>}
       <Footer go={go}/>
-    </div>
+    </main>
   );
 }
 

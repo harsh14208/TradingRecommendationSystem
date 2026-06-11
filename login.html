@@ -13,7 +13,7 @@
 :root{
   --bg:#0d1117;--bg1:#161b22;--bg2:#1c2128;
   --line:#21262d;--line2:#30363d;
-  --text:#e6edf3;--dim:#8b949e;--faint:#484f58;
+  --text:#e6edf3;--dim:#8b949e;--faint:#7585a0;
   --up:#10b981;--down:#ef4444;--warn:#f59e0b;
   --mono:'JetBrains Mono',monospace;
   --sans:'Inter',-apple-system,sans-serif;
@@ -64,7 +64,7 @@ input::placeholder{color:var(--faint)}
 .form-field{margin-bottom:4px}
 .forgot{display:block;text-align:right;font-size:12px;color:var(--dim);margin-bottom:20px;text-decoration:none}
 .forgot:hover{color:var(--up)}
-.submit-btn{width:100%;padding:13px;background:var(--up);color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans);transition:background .15s}
+.submit-btn{width:100%;padding:13px;background:var(--up);color:#042116;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans);transition:background .15s}
 .submit-btn:hover{background:#059669}
 .submit-btn:disabled{opacity:.6;cursor:not-allowed}
 .error-box{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:7px;padding:10px 14px;font-size:13px;color:#fca5a5;margin-bottom:16px;display:none}
@@ -87,6 +87,8 @@ input::placeholder{color:var(--faint)}
 </style>
 </head>
 <body>
+
+<main>
 
 <!-- ── Left panel ── -->
 <div class="left">
@@ -166,6 +168,7 @@ input::placeholder{color:var(--faint)}
   </div>
 </div>
 
+</main>
 <script src="/login.js"></script>
 </body>
 </html>

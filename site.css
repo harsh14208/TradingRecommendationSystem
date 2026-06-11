@@ -8,7 +8,7 @@
   --line-2: #2a334d;
   --text: #e6edf7;
   --text-dim: #8a97ad;
-  --text-faint: #56617a;
+  --text-faint: #7585a3;
   --accent: #10b981;
   --accent-soft: rgba(16, 185, 129, 0.12);
   --up: #10b981;
@@ -162,7 +162,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 /* footer */
 .footer { display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:40px; padding:60px 40px 40px; font-size:13px; }
 .footer p { color:var(--text-dim); line-height:1.6; max-width:360px; }
-.foot-col h5 { font-family:var(--font-mono); font-size:11px; letter-spacing:0.12em; color:var(--text-faint); margin-bottom:14px; text-transform:uppercase; }
+.foot-col .foot-hd { font-family:var(--font-mono); font-size:11px; letter-spacing:0.12em; color:var(--text-faint); margin-bottom:14px; text-transform:uppercase; }
 .foot-col a { display:block; color:var(--text-dim); padding:5px 0; cursor:pointer; }
 .foot-col a:hover { color:var(--text); }
 .disclaimer-bar { padding:18px 40px; background:var(--bg-1); border-top:1px solid var(--line); font-family:var(--font-mono); font-size:10px; color:var(--text-faint); letter-spacing:0.04em; line-height:1.6; text-align:center; }

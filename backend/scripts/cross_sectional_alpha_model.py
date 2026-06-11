@@ -474,6 +474,17 @@ def _wq_alpha_panel(tickers: list[str]) -> pd.DataFrame:
 # honest test (full universe leaves ~87% NaN→neutralized). Enabled by --fundamentals.
 FUND_FACTOR_COLS = ["fz_piotroski_chg", "fz_gross_prof", "fz_asset_growth", "fz_buyback"]
 
+# SimFin fundamental factors (§100).  These are computed from
+# data/simfin_factors.pkl (scripts/build_simfin_factors.py) and are
+# orthogonal to the price-based RAW_FEATURE_COLS.
+SIMFIN_FACTOR_COLS = [
+    "sf_earnings_yield",
+    "sf_gross_profitability",
+    "sf_accruals",
+    "sf_asset_growth",
+    "sf_net_buyback_yield",
+]
+
 
 def _fundamental_factor_panel(tickers: list[str]) -> pd.DataFrame:
     """Long [date, ticker, fz_*] panel of the orthogonal EDGAR fundamental factors.
@@ -524,8 +535,69 @@ def _fundamental_factor_panel(tickers: list[str]) -> pd.DataFrame:
     return long.replace([np.inf, -np.inf], np.nan)
 
 
+def _simfin_factor_panel(tickers: list[str]) -> pd.DataFrame:
+    """Long [date, ticker, sf_*] panel of SimFin fundamental factors.
+
+    Flow items use a trailing-4-filing TTM sum (same convention as the EDGAR
+    panel) to smooth quarterly/annual scale mixing.  ``sf_earnings_yield``
+    divides EPS TTM by the daily close price from the local OHLCV cache so
+    it is point-in-time correct.
+    """
+    import pickle
+
+    path = os.path.join(_DATA, "simfin_factors.pkl")
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=["date", "ticker", *SIMFIN_FACTOR_COLS])
+    sf = pickle.load(open(path, "rb"))
+    tickers = [t for t in tickers if t in sf]
+    if not tickers:
+        return pd.DataFrame(columns=["date", "ticker", *SIMFIN_FACTOR_COLS])
+
+    idx = pd.bdate_range("2009-01-01", pd.Timestamp.today())
+
+    def _ttm(s):
+        return s.rolling(4, min_periods=2).sum() if s is not None and len(s) else s
+
+    def _daily(series_by_t):
+        cols = {}
+        for t, s in series_by_t.items():
+            if s is None or not len(s):
+                continue
+            s = s[~s.index.duplicated(keep="last")].sort_index()
+            cols[t] = s.reindex(idx.union(s.index)).ffill().reindex(idx)
+        return pd.DataFrame(cols)
+
+    assets = _daily({t: sf[t].get("assets") for t in tickers})
+    shares = _daily({t: sf[t].get("shares_basic") for t in tickers})
+    ni = _daily({t: _ttm(sf[t].get("net_income")) for t in tickers})
+    gp = _daily({t: _ttm(sf[t].get("gross_profit")) for t in tickers})
+    cf = _daily({t: _ttm(sf[t].get("op_cash_flow")) for t in tickers})
+
+    # Load daily close prices for the earnings-yield denominator.
+    price_dict = {}
+    for t in tickers:
+        ohlcv = load_ohlcv(t)
+        if ohlcv is not None and len(ohlcv):
+            price_dict[t] = ohlcv["Close"]
+    prices = pd.DataFrame(price_dict).reindex(idx)
+
+    eps = ni / shares.replace(0, np.nan)
+
+    fcols = {
+        "sf_earnings_yield": eps / prices.replace(0, np.nan),
+        "sf_gross_profitability": gp / assets,
+        "sf_accruals": (ni - cf) / assets,
+        "sf_asset_growth": assets / assets.shift(252) - 1.0,
+        "sf_net_buyback_yield": -(shares / shares.shift(252) - 1.0),
+    }
+    long = pd.concat({k: v.stack() for k, v in fcols.items()}, axis=1).reset_index()
+    long.columns = ["date", "ticker", *SIMFIN_FACTOR_COLS]
+    return long.replace([np.inf, -np.inf], np.nan)
+
+
 def build_panel(
     use_short_interest: bool = False,
+    use_simfin: bool = False,
     min_price: float = 5.0,
     min_dollar_vol: float = 1e7,
     universe_source: str = "full",
@@ -578,6 +650,13 @@ def build_panel(
     if use_short_interest:
         si = load_short_interest(sorted(universe.keys()))
         panel = add_short_interest_features(panel, si)
+
+    if use_simfin:
+        sf = _simfin_factor_panel(sorted(panel["ticker"].unique()))
+        panel = panel.merge(sf, on=["date", "ticker"], how="left")
+        for c in SIMFIN_FACTOR_COLS:
+            if c in panel.columns and c not in RAW_FEATURE_COLS:
+                RAW_FEATURE_COLS.append(c)
 
     panel = panel.sort_values(["date", "ticker"]).reset_index(drop=True)
     print(f"Panel: {len(panel):,} rows, {panel['date'].nunique():,} trading days")
@@ -1097,6 +1176,13 @@ def main() -> None:
         "buyback). Best with --universe curated (EDGAR coverage ~106 names).",
     )
     ap.add_argument(
+        "--simfin",
+        action="store_true",
+        help="add SimFin fundamental factors (earnings_yield, gross_profitability, accruals, "
+        "asset_growth, net_buyback_yield). Requires running simfin_bulk_download.py + "
+        "build_simfin_factors.py first.",
+    )
+    ap.add_argument(
         "--save-model",
         action="store_true",
         help="train on ALL data and persist the model + feature list to data/ "
@@ -1121,6 +1207,7 @@ def main() -> None:
 
     panel = build_panel(
         use_short_interest=args.short_interest,
+        use_simfin=args.simfin,
         min_price=args.min_price,
         min_dollar_vol=args.min_dollar_vol,
         universe_source=args.universe,

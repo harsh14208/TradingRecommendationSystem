@@ -432,8 +432,8 @@ async def _run_live_dsr(after_date: datetime | None) -> None:
     dsr = sr_per_trade - 1.96 * sr_se  # per-trade deflated SR
     dsr_ann = dsr * math.sqrt(25)  # annualised
 
-    # Haircut vs IS baseline (IS SR 0.20 with §63 coint)
-    IS_BASELINE_SR = 0.20
+    # Haircut vs IS baseline (IS SR 0.24, v10.9, §94 sector-hold parity + §87 sizing)
+    IS_BASELINE_SR = 0.24
     OOS_HAIRCUT = 0.55  # historical IS→OOS haircut
     forward_estimate = IS_BASELINE_SR * OOS_HAIRCUT
 
@@ -445,7 +445,7 @@ async def _run_live_dsr(after_date: datetime | None) -> None:
     print(f"  Raw Sharpe (ann) : {sr_hat:.3f}")
     print(f"  SR std error     : {sr_se:.4f}  (95% deflation: -{1.96 * sr_se:.4f})")
     print(f"  Deflated Sharpe  : {dsr_ann:.3f}  {verdict}")
-    print(f"  IS baseline SR   : {IS_BASELINE_SR:.2f}  (v10.5, N=230)")
+    print(f"  IS baseline SR   : {IS_BASELINE_SR:.2f}  (v10.9, N=217, §87+§94)")
     print(f"  Forward estimate : {forward_estimate:.2f}  ({OOS_HAIRCUT * 100:.0f}% OOS haircut)")
     print()
     if dsr < 0.10:

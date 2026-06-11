@@ -15,7 +15,7 @@ Set all of the following before the first `railway up` or `fly deploy`:
 | Variable | Required | Description |
 |---|---|---|
 | `OWNER_EMAIL` | ✅ | Admin account email |
-| `OWNER_PASSWORD` | ✅ | 16+ chars, mixed case + symbols. **Change from `ChangeMe123!`** |
+| `OWNER_PASSWORD` | ✅ | 16+ chars, mixed case + symbols. **Fixed 2026-06-09** — `.env` has 32-char secure password; startup fails on `ChangeMe123!` in production. |
 | `JWT_SECRET` | ✅ | 64 random chars: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `DATABASE_URL` | ✅ (prod) | `postgresql://user:pass@host:5432/dbname` — leave empty for SQLite (dev only) |
 | `STRIPE_SECRET_KEY` | ✅ | From Stripe Dashboard → API Keys |
