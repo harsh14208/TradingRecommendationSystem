@@ -29,7 +29,8 @@ log = logging.getLogger("signal.trade.occ_volume_oi")
 _CACHE_DIR = Path(__file__).parent.parent / "data" / "cache_occ"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-_PANEL_PATH = _CACHE_DIR / "occ_volume_oi_panel.pkl"
+_PANEL_PATH = _CACHE_DIR / "occ_volume_oi_panel.parquet"
+_PICKLE_PATH = _CACHE_DIR / "occ_volume_oi_panel.pkl"  # legacy
 
 _cache: dict[str, tuple[pd.DataFrame, float]] = {}
 _CACHE_TTL = 3600.0
@@ -155,14 +156,27 @@ async def build_occ_panel(
         tickers_upper = [t.upper() for t in tickers]
         panel = panel[panel["ticker"].isin(tickers_upper)].copy()
 
-    panel.to_pickle(_PANEL_PATH)
+    panel.to_parquet(_PANEL_PATH, index=False)
+    if _PICKLE_PATH.exists():
+        try:
+            _PICKLE_PATH.unlink()
+        except Exception:
+            pass
     log.info(f"[occ] panel saved: {len(panel)} rows → {_PANEL_PATH}")
     return panel
 
 
 def load_occ_panel() -> pd.DataFrame | None:
     if _PANEL_PATH.exists():
-        return pd.read_pickle(_PANEL_PATH)
+        return pd.read_parquet(_PANEL_PATH)
+    if _PICKLE_PATH.exists():
+        try:
+            df = pd.read_pickle(_PICKLE_PATH)
+            df.to_parquet(_PANEL_PATH, index=False)
+            _PICKLE_PATH.unlink()
+            return df
+        except Exception as exc:
+            log.warning(f"[occ] legacy pickle unloadable ({exc}); rebuild panel")
     return None
 
 

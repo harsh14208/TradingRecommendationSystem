@@ -1,7 +1,7 @@
 # Signal.Trade — Research Learnings & Alpha Inventory
 
 > Living document. Updated as each research section completes.
-> Last updated: 2026-06-11 after §96–§103 external research agenda. Key new findings: (1) **The live-vs-IS gap was mostly DELIVERY LEAKS, not signal** — clean book = 57.8% net WR, +2.06%/trade net. (2) Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of 23yr backtest trades in that window; calm sleeve abandoned (0 trades). (3) Factor attribution confirms **genuine idiosyncratic alpha** (+0.87%/day, p=0.044). (4) WATCH bench all rejected — 111-name curated list is already well-filtered. (5) §87 L10 conviction sizing verified +0.06 Sharpe at ΔN=0, deployed live. (6) v10.9 canon **fails deflated Sharpe at honest 744 trials** — IS iteration is statistically spent. (7) **§96: 61% of alpha from overnight gaps** — validates close-slot timing. (8) **§97: limit-order entries fail deploy bar** across all k values — adverse selection dominates. (9) **§101: TSMOM sleeve Sharpe 0.57** on vanilla config — genuine diversifying premia, but 2015-22 fold 0.277 just misses 0.30 bar; correlation +0.27 vs MR book.
+> Last updated: 2026-06-12 after §107 GDELT bounded pilot validation. Key new findings: (1) **§107 GDELT news tone adds no deployable edge** — per-trade tilt fired on 0/217 trades; cross-sectional ΔSharpe -0.003 inside placebo noise. (2) **The live-vs-IS gap was mostly DELIVERY LEAKS, not signal** — clean book = 57.8% net WR, +2.06%/trade net. (3) Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of 23yr backtest trades in that window; calm sleeve abandoned (0 trades). (4) Factor attribution confirms **genuine idiosyncratic alpha** (+0.87%/day, p=0.044). (5) WATCH bench all rejected — 111-name curated list is already well-filtered. (6) §87 L10 conviction sizing verified +0.06 Sharpe at ΔN=0, deployed live. (7) v10.9 canon **fails deflated Sharpe at honest 744 trials** — IS iteration is statistically spent. (8) **§96: 61% of alpha from overnight gaps** — validates close-slot timing. (9) **§97: limit-order entries fail deploy bar** across all k values — adverse selection dominates. (10) **§101: TSMOM sleeve Sharpe 0.57** on vanilla config — genuine diversifying premia, but 2015-22 fold 0.277 just misses 0.30 bar; correlation +0.27 vs MR book.
 > Primary research script: `backend/scripts/signal_alpha_decomposition.py`
 > Primary backtest: `backend/scripts/backtest_technicals.py`
 > Live engine: `backend/services/signal_engine.py`
@@ -636,23 +636,87 @@ These are quick previews after the code fixes; full walk-forward results are pen
 | placebo (3 seeds) | 0.151–0.159 | 3 pure-noise features |
 
 ### Corrected walk-forward (h=21, 10bps one-way)
-| Config | Net Sharpe | Positive folds | 90% CI |
-|--------|------------|----------------|--------|
-| baseline (price only) | 0.195 | 9/15 | [−0.22, +0.62] |
-| `--finra-sv` | 0.287 | 9/15 | [−0.13, +0.69] |
-| `--wiki` | 0.215 | 8/15 | [−0.22, +0.63] |
-| `--naaim` | 0.163 | 8/15 | [−0.32, +0.60] |
-| `--naaim --wiki` | −0.028 | 8/15 | [−0.52, +0.42] |
-| placebo seed 1 | 0.310 | 10/15 | [−0.10, +0.71] |
+| Config | Net Sharpe | Gross Sharpe | Positive folds | Mean IC |
+|--------|------------|--------------|----------------|---------|
+| baseline (price only) | 0.195 | 0.300 | 9/15 | +0.0016 |
+| `--finra-sv` | 0.287 | 0.396 | 9/15 | +0.0032 |
+| `--wiki` | 0.215 | 0.316 | 8/15 | +0.0033 |
+| `--naaim` | 0.163 | 0.292 | 8/15 | +0.0085 |
 
 ### Corrected walk-forward (h=63, 10bps one-way)
-| Config | Net Sharpe | Positive folds | 90% CI |
-|--------|------------|----------------|--------|
-| baseline (price only) | 0.616 | 10/14 | [+0.29, +0.94] |
-| `--wiki` | 0.694 | 11/14 | [+0.31, +1.15] |
-| placebo seeds 1–3 | 0.705 / 0.716 / 0.707 | 11/14 | [+0.29, +1.15] |
+| Config | Net Sharpe | Gross Sharpe | Positive folds | Mean IC |
+|--------|------------|--------------|----------------|---------|
+| baseline (price only) | 0.616 | 0.662 | 10/14 | +0.0207 |
+| `--wiki` | 0.694 | 0.742 | 11/14 | +0.0199 |
+| `--finra-sv` | 0.454 | 0.490 | 10/14 | +0.0205 |
+| `--naaim` | 0.328 | 0.380 | 10/14 | +0.0176 |
 
-The h=63 baseline (price only) already clears 0 with net Sharpe 0.616. Wikipedia adds only ~+0.08, but placebo runs with 3 random-noise features yield 0.705, 0.716, and 0.707 — all higher than Wikipedia. The Wikipedia "edge" at h=63 is therefore indistinguishable from sampling noise. The original "h=63 net 0.769" claim was mostly a horizon/cost-structure effect, not an alt-data breakthrough.
+### Placebo distribution (10 pure-noise seeds, 3 noise features each)
+| Horizon | Mean net Sharpe | 5%-95% band | Min / Max |
+|---------|-----------------|-------------|-----------|
+| h=21 | 0.309 | [0.286, 0.332] | 0.284 / 0.335 |
+| h=63 | 0.708 | [0.688, 0.724] | 0.687 / 0.728 |
+
+At h=21, `--finra-sv` lands inside the placebo band; `--wiki` and `--naaim` land *below* it (and below baseline). At h=63, `--wiki` lands inside the placebo band, while `--finra-sv` and `--naaim` land well below it. Adding alt-data does not produce a net-Sharpe uplift that is distinguishable from adding random noise.
+
+### Paired per-fold/rebalance bootstrap: real vs baseline
+| Comparison | ΔSharpe | 90% CI | two-sided p |
+|------------|---------|--------|-------------|
+| wiki vs baseline, h=21 | +0.011 | [−0.052, +0.072] | 0.771 |
+| finra_sv vs baseline, h=21 | +0.053 | [−0.034, +0.134] | 0.513 |
+| naaim vs baseline, h=21 | −0.019 | [−0.257, +0.206] | 0.900 |
+| wiki vs baseline, h=63 | +0.077 | [−0.115, +0.310] | 0.610 |
+| finra_sv vs baseline, h=63 | −0.163 | [−0.372, +0.038] | 0.461 |
+| naaim vs baseline, h=63 | −0.288 | [−0.691, +0.214] | 0.521 |
+
+No alt-data configuration shows a ΔSharpe whose 90% confidence interval excludes zero.
+
+### Coverage-epoch attribution (full S&P universe, walk-forward 2012→2026)
+Epoch split by calendar years: `pre_2019`, `2019_2024`, `post_2024`.
+
+**h=21 net Sharpe by epoch**
+| Config | pre-2019 | 2019-2024 | post-2024 |
+|--------|----------|-----------|-----------|
+| `--wiki` | +0.063 | +0.702 | −0.839 |
+| `--finra-sv` | +0.231 | +0.702 | −1.020 |
+| `--naaim` | +0.254 | +0.546 | −1.545 |
+
+**h=63 net Sharpe by epoch**
+| Config | pre-2019 | 2019-2024 | post-2024 |
+|--------|----------|-----------|-----------|
+| `--wiki` | +0.559 | +0.929 | +0.558 (2025 only) |
+| `--finra-sv` | +0.315 | +0.819 | +0.172 (2025 only) |
+| `--naaim` | −0.068 | +0.965 | +0.113 (2025 only) |
+
+The h=21 "edge" is entirely confined to the 2019-2024 coverage window and reverses sharply post-2024, when Wikipedia/FINRA-SV coverage ends. The h=63 pre-2019 numbers are also positive, but the paired bootstrap still does not separate them from baseline sampling noise.
+
+### Horizon-as-hyperparameter
+Treating horizon as a tunable hyperparameter selected on the first half of folds (2012-2019) and evaluated on the second half (2020-2026) selects **h=63**. Its out-of-sample net Sharpe on the held-out folds is **+0.494**, not the full-sample +0.616. This is the honest, selection-adjusted estimate for a default HORIZON=63.
+
+Selection-fold scores by candidate horizon:
+| Horizon | 21 | 42 | 63 | 84 | 126 |
+|---------|----|----|----|----|-----|
+| Selection-fold net Sharpe | +0.008 | +0.259 | +0.381 | +0.303 | −∞ |
+
+### EDGAR fundamental factors (SimFin proxy) — 2026-06-11
+SimFin bulk data was not yet on disk (requires a free `SIMFIN_API_KEY`), so the same canonical monthly-horizon fundamental alpha was tested with the existing EDGAR panel (`--fundamentals`, `--universe curated`): Piotroski change, gross profit / assets, asset growth, and net buyback yield.
+
+| Horizon | Baseline (curated) | +EDGAR fundamentals | Placebo band (10 seeds) | ΔSharpe vs baseline |
+|---------|--------------------|---------------------|-------------------------|---------------------|
+| h=21 | 0.259 | 0.138 | [0.440, 0.520] | −0.070 [−0.242, +0.095] |
+| h=63 | 0.364 | 0.358 | [0.398, 0.460] | −0.006 [−0.344, +0.295] |
+
+At both horizons the fundamental overlay is **inside or below the placebo band** and the paired bootstrap ΔSharpe confidence interval includes zero. The fundamental factors do not currently add net-of-cost Sharpe above the harness noise floor.
+
+### Pre-registered entry-timing ablation: close vs next-open (§96b)
+Ran `backtest_technicals.py` with the default next-open fill and with `--entry-at-close` (sequential mode to avoid macOS fork deadlocks). Same 217-trade IS universe, 0.5% round-trip friction.
+
+| Variant | N | Win Rate | Avg Return / Trade | Sharpe | Max DD |
+|---|---|---:|---:|---:|---:|
+| Next-open entry (canon) | 217 | 69.1% | +0.80% | **0.24** | −2.31% |
+| Close entry (signal-day fill) | 217 | 66.4% | +0.92% | **0.25** | −1.79% |
+
+ΔSharpe = **+0.01**, ΔAvgRet = **+0.12%**, but win rate falls by 2.7pp. The overnight/intraday decomposition on the canon book shows intraday contribution (50.5%) slightly exceeds overnight (49.5%), and the script’s own §96b verdict flags close-entry as **ΔSharpe = 0.00** once execution realism is considered. Close-entry is therefore **not a meaningful edge improvement**; it is an execution convenience at best, with the caveat that the signal must be computable ~10 minutes before the close.
 
 ### What the defects teach
 1. **Cross-sectional standardization is not feature-agnostic.** A feature that is constant across the cross-section must be handled differently (raw, or as an interaction with per-ticker features). Blind z-scoring silently kills it.
@@ -662,13 +726,75 @@ The h=63 baseline (price only) already clears 0 with net Sharpe 0.616. Wikipedia
 5. **Placebo features are a necessary control.** If adding real features produces the same magnitude of ΔSharpe as adding noise features, the effect is not distinguishable from sampling noise.
 
 ### Required before claiming an alt-data effect
-- [ ] Corrected walk-forward for `--finra-sv`, `--wiki`, `--naaim`, and combos.
-- [ ] Placebo distribution: run 10+ placebo seeds and compare real-feature ΔSharpe to the noise distribution.
-- [ ] Paired per-fold daily-return bootstrap for real features vs baseline.
-- [ ] Per-fold attribution split by coverage epoch (pre-2019, 2019-2024, post-2024 for wiki; pre-2019, 2019-2024 for SV).
-- [ ] Reproducibility guard: pin numpy/pandas versions or write panels to a format immune to pickle version skew (the current pickles were written under numpy 2.4.6 and fail to load under numpy 1.26.4).
+- [x] Corrected walk-forward for `--finra-sv`, `--wiki`, `--naaim`, and combos.
+- [x] Silent-failure guard: `build_panel()` now raises if an explicitly requested alt-data flag's merge fails or its panel is missing.
+- [x] Placebo distribution: 10 placebo seeds per horizon; real-feature net Sharpe is inside or below the noise band.
+- [x] Paired per-fold daily-return bootstrap for real features vs baseline; no ΔSharpe CI excludes zero.
+- [x] Per-fold attribution split by coverage epoch (pre-2019, 2019-2024, post-2024); h=21 effect is confined to the 2019-2024 coverage window and reverses post-2024.
+- [x] Horizon-as-hyperparameter treatment: h=63 selected on 2012-2019 folds; OOS net Sharpe on 2020-2026 folds is +0.494.
+- [x] Reproducibility guard: migrated panel persistence from pickle to Parquet in `finra_short_volume`, `sec_ftd`, `sentiment_naaim_aaii`, and `wikipedia_pageviews`. Loaders read `.parquet` and fall back to the legacy `.pkl` once, then rewrite to Parquet.
 
 ### Honest verdict
-No alt-data config has yet demonstrated a reproducible, properly-lagged, selection-adjusted effect above the harness noise floor. The h=63 net 0.769 claim is **withdrawn** until the above checklist is complete. The per-trade tilt verdicts stand: these panels are retained for cross-sectional reuse and forward SPRT, not as IS-validated sizing boosts.
+No alt-data config has demonstrated a reproducible, properly-lagged, selection-adjusted effect above the harness noise floor. The h=63 net 0.769 claim is **withdrawn**. The strongest honest estimate for a default h=63 is the horizon-selection OOS net Sharpe of **+0.494**, not the full-sample +0.616. Wikipedia's h=63 net Sharpe of +0.694 is inside the placebo band [+0.688, +0.724], its h=21 edge disappears outside the 2019-2024 coverage epoch, EDGAR/SimFin-style fundamental factors also fail to add Sharpe, and the pre-registered close-entry A/B shows **ΔSharpe ≈ 0.00** (0.24 → 0.25). The per-trade tilt verdicts stand: these panels are retained for cross-sectional reuse and forward SPRT, not as IS-validated sizing boosts.
 
-**Code:** Backfill loaders in `backend/services/{finra_short_volume,sec_ftd,sentiment_naaim_aaii,wikipedia_pageviews}.py`; corrected integration in `backend/scripts/cross_sectional_alpha_model.py`; per-trade tilt harness in `backend/scripts/backtest_technicals.py`.
+**Code:** `backend/scripts/analyze_cross_sectional_alt_data.py` runs the full attribution pipeline; `backend/scripts/cross_sectional_alpha_model.py` now exports per-fold returns and has strict merge-failure guards; backfill loaders in `backend/services/{finra_short_volume,sec_ftd,sentiment_naaim_aaii,wikipedia_pageviews}.py` persist Parquet; per-trade tilt harness in `backend/scripts/backtest_technicals.py`.
+
+### Addendum: per-fold nested-horizon validation (2026-06-11, `--nested-horizon`)
+The single-split horizon test above (select on 2012-2019 → OOS 2020-2026 = +0.494) is now complemented by a per-fold expanding-window version: `cross_sectional_alpha_model.py --nested-horizon` re-selects the horizon for EVERY walk-forward fold using only folds strictly before it (grid {21,40,63}, burn-in 2, full universe, price features only, 10bps). Result: **h=63 won the ex-ante selection in all 12 eval folds (2014–2025)** — the prior-evidence ranking never flipped — giving nested net Sharpe **+0.576 [90% CI +0.22, +0.91]**, ann ret +6.9%, **selection haircut 0.000** vs fixed h=63 on the same folds (h=21: +0.419, h=40: +0.438). Mixed-horizon annualization via `_mixed_horizon_stats()` (reduces exactly to `_stats()` at constant horizon).
+
+**Read:** the quarterly-rebalance cost-structure effect is real and was ex-ante capturable from as early as 2014 with two folds of evidence — this is a genuine, selection-clean improvement over the h=21 default, NOT a false dawn. Remaining caveats before any deploy decision: (1) the grid itself {21,40,63} descends from the contaminated sweep — this validates 63-beats-21/40, not 63-is-optimal; (2) per-fold dispersion is wide (2018: −1.80, 2021: +2.26; 8/12 folds positive); (3) ~~borrow/cost sweeps~~ **CLOSED 2026-06-11** — h=63 full-WF track (net 0.616, CI [+0.29, +0.94], 10/14 folds positive, MaxDD −11.8%, mean IC +0.021): cost sweep +0.481 at 40bps one-way (h=21 went NEGATIVE there — the cost-robustness gap is the whole thesis confirmed); borrow sweep +0.572/+0.528 at realistic 50/100bps GC, breakeven ≈700bps/yr; conservative 20bps-exec + 150bps-borrow combo ≈ +0.44; (4) ~~shadow scorer horizon~~ **CLOSED 2026-06-11 — parallel h=63 shadow deployed.** Rather than replacing the h=21 model (which would break its forward-accrual continuity), both horizons now run side by side: `--save-model --horizon 63` persists to `cross_sectional_{model,features}_h63.json`, `cross_sectional_shadow.score_batch_h63()` ranks each scan batch with it, and `scan_all()` attaches `crossSectionalShadowPctH63` (+ `xs_shadow_pct_h63` in the rationale meta) alongside the existing h=21 field. The two forward series will arbitrate which horizon's ranking transfers to the live ~10d book. **§92 promotion criteria remain tied to the h=21 field ONLY** — the h=63 shadow never feeds promotion or sizing. Default `HORIZON` stays 21 in the research script.
+
+
+### Addendum: §110 CBOE options snapshot shipped (2026-06-11)
+The free CBOE delayed-quotes options endpoint (`cdn.cboe.com/api/global/delayed_quotes/options/{SYMBOL}.json`) was wired into production as a live-only data source:
+
+- `services/options_cboe.py` parses the full chain (bid/ask, IV, OI, volume, greeks) and returns an aggregate dict matching the existing `services/options.py` contract.
+- `services/options.py` fallback order is now **Polygon → CBOE → yfinance**.
+- `models.py` adds `OptionsChainDaily`; Alembic migration `20260611_1945_404971b9f841_add_options_chain_daily` is applied.
+- `scripts/snapshot_cboe_options.py` upserts one row per ticker per day.
+- `main.py` supervises `nightly_cboe_options_snapshot` at 6:30pm ET.
+
+There is no backtest history; the table accrues forward from 2026-06-11 onward. This starts the self-grown IV-rank / skew / PCR series that reduces the scope of any future paid options-data purchase to deep *historical* IV only.
+
+
+### Addendum: §104a FINRA per-venue backfill results (2026-06-11)
+`services/finra_short_volume.py` was extended to download the pre-consolidation venue files (FNRA, FNSQ, FNYX) for 2009-08-03 → 2018-07-31 and the consolidated `CNMS` file from 2018-08-01 onward. Per-venue rows are aggregated by `(date, symbol)` so the panel now covers the full 2009+ history promised in §104. The parser was hardened for early files that lack `ShortExemptVolume` and for recent files that report fractional share volumes. Final panel: **34,505,889 rows**, 2009-08-03 → 2026-06-11.
+
+Cross-sectional attribution re-run (`--configs baseline finra_sv --horizons 21 63`, 5 placebo seeds, output `data/alt_data_attribution_finra_sv_2009.json`):
+
+| Horizon | Baseline net Sharpe | FINRA SV net Sharpe | Placebo band | Coverage | Verdict |
+|---------|--------------------:|--------------------:|-------------:|----------|---------|
+| h=21 | +0.195 | +0.295 | [+0.285, +0.332] | 79% | inside placebo |
+| h=63 | +0.616 | +0.586 | [+0.687, +0.726] | 79% | below placebo |
+
+Paired bootstrap ΔSharpe vs baseline: h=21 **+0.058** [−0.036, +0.142], p=0.287; h=63 **−0.031** [−0.192, +0.153], p=0.768.
+
+**Conclusion:** extending FINRA SV from 6/15 folds to 15/15 folds and from 2019-2024 to 2009+ does **not** produce a Sharpe uplift distinguishable from the harness noise floor. The h=21 effect is inside the placebo band; h=63 is below it. The 6/15 fold coverage problem was real, but resolving it falsifies the alt-data claim rather than confirming it.
+
+### Addendum: §104b FRICTION=0.5% validation (2026-06-11)
+The QENG-3a fill ledger (`broker_orders` + `fills`) exists and is migrated, but contains **zero fills** — auto-execution has not yet produced a broker fill sample. A new script, `scripts/analyze_realized_friction.py`, is ready to measure realized round-trip cost per ticker and per ADV bucket once fills accrue. Until then the canonical 0.5% round-trip assumption remains the deliberate ~2× conservative buffer documented in R10-8; no backtest constant was changed.
+
+### Addendum: §107 GDELT bounded pilot results (2026-06-12)
+The GDELT fetcher was corrected to use GKG 1.0 daily zip files (`http://data.gdeltproject.org/gkg/YYYYMMDD.gkg.csv.zip`) rather than the non-existent daily GKG 2.0 path. Downloads are now concurrent. The missing `--gdelt` merge block was added to `scripts/cross_sectional_alpha_model.py` with the same +1-day PIT lag used for Wikipedia and FINRA SV. A full 2015+ panel for the 20-ticker pilot was built: **74,189 ticker-day rows** over 4,180 calendar days (2015-01-01 → 2026-06-11).
+
+Per-trade tilt validation (`backtest_technicals.py --gdelt`, MR-only canon, 23-year IS window):
+
+| Variant | N | Win Rate | Avg Return | Sharpe | Max DD |
+|---|---|---:|---:|---:|---:|
+| Baseline (no GDELT) | 217 | 69.1% | +0.80% | 0.24 | -2.31% |
+| +GDELT tone capitulation sizing tilt | 217 | 69.1% | +0.80% | 0.24 | -2.31% |
+| Δ | 0 | 0.0 pp | 0.00 pp | **0.00** | — |
+
+The GDELT tilt (`tone_z < -1.5` at entry → 1.10× size) **fired on zero trades** in the 217-trade canon book; the panel is present but the condition never coincided with a mean-reversion entry. The per-trade verdict is therefore **no effect, not negative** — the hypothesis that negative-news tone at oversold entry marks capitulation found no triggering instances in the IS window.
+
+Cross-sectional validation (`cross_sectional_alpha_model.py --gdelt --placebo --walk-forward`, h=21, full S&P 500 survivorship-corrected universe, 15 expanding folds 2012→2026):
+
+| Variant | Net Sharpe | Gross Sharpe | Ann. Return (net) | Max DD |
+|---|---|---:|---:|---:|
+| Baseline + placebo noise | 0.307 | 0.419 | +4.44% | -30.97% |
+| +GDELT tone_z + placebo noise | 0.304 | 0.415 | +4.38% | -31.71% |
+| Δ | **-0.003** | -0.004 | -0.06 pp | — |
+
+The +GDELT ΔSharpe is well inside the harness noise floor and the 90% bootstrap CI on the net Sharpe ([-0.113, +0.709]) includes zero. Mean rank IC is +0.0012 with GDELT vs +0.0041 baseline — actually lower.
+
+**Conclusion:** the GDELT bounded pilot **does not add deployable edge** in either the per-trade MR book or the cross-sectional L/S book. The infrastructure (fetcher, panel, PIT merge, tests, nightly-snapshot readiness) is retained because GDELT is free and the news-sentiment family is already wired live; if a future variant (e.g., a more aggressive entity→ticker mapping, headline-only filtering, or event-day spike detection) wants another look, it must be pre-registered and validated on untouched forward data. The §107 per-trade guardrail stands: a tilt that fires on 0% of the IS book is unfalsifiable and must not be deployed.

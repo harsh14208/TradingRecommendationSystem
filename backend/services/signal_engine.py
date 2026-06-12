@@ -5792,11 +5792,17 @@ async def scan_all(
         from services import cross_sectional_shadow as _css
 
         _xs = _css.score_batch(histories)
-        if _xs:
+        # Parallel h=63 (quarterly) shadow — nested-horizon validated 2026-06-11.
+        # Logged as a separate field; NEVER feeds §92 promotion or sizing.
+        _xs63 = _css.score_batch_h63(histories)
+        if _xs or _xs63:
             _scored = 0
             for _sig in signals:
                 if _sig.get("action") not in ("BUY", "SELL"):
                     continue
+                _pct63 = _xs63.get(_sig["ticker"])
+                if _pct63 is not None:
+                    _sig["crossSectionalShadowPctH63"] = _pct63  # raw metadata for logging/analysis
                 _pct = _xs.get(_sig["ticker"])
                 if _pct is None:
                     continue
@@ -5823,7 +5829,8 @@ async def scan_all(
                             "recommendation (thin, horizon-mismatched edge; see CLAUDE.md §86)."
                         ),
                         "sentiment": "neu",
-                        "meta": f"xs_shadow_pct={_pct} band={_band}",
+                        "meta": f"xs_shadow_pct={_pct} band={_band}"
+                        + (f" xs_shadow_pct_h63={_pct63}" if _pct63 is not None else ""),
                     }
                 ]
                 _scored += 1

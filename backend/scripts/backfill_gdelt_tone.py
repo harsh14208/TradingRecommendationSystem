@@ -33,11 +33,14 @@ async def main() -> None:
     ap.add_argument("--start", type=_parse_date, default=date(2015, 1, 1))
     ap.add_argument("--end", type=_parse_date, default=date.today())
     ap.add_argument("--tickers", type=str, default="", help="Comma-separated tickers (default: pilot 20)")
+    ap.add_argument("--concurrency", type=int, default=16, help="Concurrent downloads (default: 16)")
     args = ap.parse_args()
 
     tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()] or None
-    log.info(f"Starting backfill: {args.start} to {args.end}, tickers={tickers}")
-    panel = await build_gdelt_tone_panel(tickers=tickers, start=args.start, end=args.end)
+    log.info(f"Starting backfill: {args.start} to {args.end}, tickers={tickers}, concurrency={args.concurrency}")
+    panel = await build_gdelt_tone_panel(
+        tickers=tickers, start=args.start, end=args.end, max_concurrency=args.concurrency
+    )
     log.info(f"Done: {len(panel)} rows")
 
 

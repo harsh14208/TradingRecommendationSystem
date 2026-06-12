@@ -45,6 +45,7 @@ async def main() -> None:
     else:
         # Default to IS universe for fast feature computation
         from scripts.backtest_technicals import TICKERS
+
         tickers = list(TICKERS)
 
     log.info(f"Starting backfill: {args.start} to {args.end}, tickers={len(tickers) if tickers else 'ALL'}")

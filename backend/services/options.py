@@ -1,5 +1,10 @@
 """
-Options flow signals via yfinance (free, no API key).
+Options flow signals.
+
+Data priority:
+  1. Polygon Starter plan (market-implied greeks, real-time volume).
+  2. CBOE delayed-quotes options chain (free, no key) — §110.
+  3. yfinance fallback.
 
 Enhanced detection across multiple expiries:
   - Cross-expiry put/call ratio
@@ -20,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
 
 from services.market_data import _retry, _session
+from services.options_cboe import fetch_cboe_options_chain
 
 log = logging.getLogger("signal.options")
 
@@ -595,6 +601,12 @@ def _fetch_options(ticker: str) -> dict:
 
     # Try Polygon Starter plan first (real market-implied greeks + real-time volume)
     result = _fetch_options_polygon(ticker)
+    if result:
+        _opt_cache_set(ticker, result)
+        return result
+
+    # §110 fallback to free CBOE delayed-quotes chain before yfinance.
+    result = fetch_cboe_options_chain(ticker)
     if result:
         _opt_cache_set(ticker, result)
         return result

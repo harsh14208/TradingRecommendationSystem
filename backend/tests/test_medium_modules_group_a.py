@@ -377,6 +377,31 @@ class TestCrossSectionalShadowScoreBatch:
         for v in result.values():
             assert 0 <= v <= 100
 
+    @patch("services.cross_sectional_shadow._load_h63")
+    @patch("services.cross_sectional_shadow._price_features")
+    def test_score_batch_h63_load_fails(self, mock_pf: MagicMock, mock_load: MagicMock):
+        from services import cross_sectional_shadow as css
+
+        mock_load.return_value = False
+        assert css.score_batch_h63({"AAPL": pd.DataFrame()}) == {}
+
+    @patch("services.cross_sectional_shadow._load_h63")
+    @patch("services.cross_sectional_shadow._price_features")
+    def test_score_batch_h63_happy_path(self, mock_pf: MagicMock, mock_load: MagicMock):
+        from services import cross_sectional_shadow as css
+
+        mock_load.return_value = True
+        css._cache_h63["feature_cols"] = ["feat_a", "feat_b"]
+        mock_model = MagicMock()
+        mock_model.predict.return_value = np.array([0.1 * i for i in range(15)])
+        css._cache_h63["model"] = mock_model
+        mock_pf.return_value = {"feat_a": 1.0, "feat_b": 2.0}
+        histories = {f"T{i}": pd.DataFrame({"Close": [1]}) for i in range(15)}
+        result = css.score_batch_h63(histories)
+        assert len(result) == 15
+        for v in result.values():
+            assert 0 <= v <= 100
+
     @patch("services.cross_sectional_shadow._load")
     @patch("services.cross_sectional_shadow._price_features")
     def test_score_batch_skips_none_df(self, mock_pf: MagicMock, mock_load: MagicMock):

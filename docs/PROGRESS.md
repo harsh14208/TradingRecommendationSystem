@@ -1,6 +1,7 @@
 # Signal.Trade — Development Progress
 
-> **Version: v8.5** · Updated: 2026-06-11 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v8.6** · Updated: 2026-06-11 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **v8.6 (2026-06-11, later same day) — Alt-data retraction + nested-horizon validation + parallel h=63 shadow.** (1) §104–§110 cross-sectional alt-data claims **retracted** after a code review found two harness defects (market-wide NAAIM/UMCSENT/AAII z-scored to dead all-zero columns; FINRA SV/Wikipedia merged with ~1-day lookahead) — both fixed; new `--placebo` control shows every alt-data Δ inside the ~±0.1 noise band at both horizons (no alt-data claim stands); panels migrated pickle→Parquet (numpy version-skew irreproducibility); strict merge-failure guards; pyarrow into backend/venv. (2) **First selection-clean Sharpe validation since the IS budget was declared spent:** `--nested-horizon` (per-fold ex-ante horizon choice from prior folds only, grid {21,40,63}) picked **h=63 in all 12 eval folds (2014–2025)** → nested net Sharpe **+0.576 [90% CI +0.22, +0.91]**, selection haircut 0.000; full h=63 track net 0.616 [CI +0.29, +0.94], cost-robust to 40bps (+0.481, where h=21 goes negative), borrow breakeven ≈700bps/yr. (3) **Parallel h=63 live shadow deployed** (server restarted): `*_h63.json` artifacts, `score_batch_h63()`, `crossSectionalShadowPctH63` per directional signal; §92 promotion criteria stay h=21-only. §96b close-entry A/B re-confirmed neutral (ΔSharpe +0.01, lower MaxDD; closes the fill-timing confound in live-vs-IS reconciliation). **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Stats.md §15 v8.6: Backtest Infra 7.9→8.1; the h=63 result is shadow-only and moves nothing per v8.0.1 discipline).
 > **v8.5 (2026-06-11) — External research agenda §96–§103 complete + infrastructure hardening.** §96a-d overnight/intraday decomposition (61% alpha from overnight gaps), §96b close-entry A/B neutral (ΔSharpe 0.00), §97a limit-order grid all failed deploy bar, §99 SPRT protocol live (4 hypotheses pre-registered, monitor built, admin surfaced), §100 SimFin fundamentals wired into cross-sectional model, §101 TSMOM sleeve Sharpe 0.57 (4/4 epochs positive, deploy bar not cleared), §103 decay monitor with VIX regime context. Infrastructure: §85-2 MD&A EDGAR bug fixed (primaryDocument endpoint), fill-rate counter bug fixed, VAPID keys generated, E2E Playwright 5 passed, §69–§74 gate unit tests added. **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Stats.md §15 v8.5: Security 8.0→8.2, Deployment 7.7→7.9, Test Coverage 7.7→7.9, Backtest Infra 7.8→7.9).
 > **v8.4 (2026-06-10 evening) — Live delivery overhaul: the live-vs-IS gap was mostly delivery leaks, not signal.** DB-level audit found and same-day-fixed six leaks: (1) **sector model-file "dynamic unblock"** — XLF/XLP/XLI were never actually blocked (file existence lifted the block); they were **32% of the delivered book at ≈−1.4%/trade** (clause deleted, 6 files quarantined to `data/quarantine/`); (2) **SELL delivery disabled** (35.2% net WR, −1.00%/trade, conf-35 floor bypass; backtest §32 had already disabled SELLs); (3) **all 6 `sector_rs` couplings decoupled** to static SECTOR_MAP (81% of the historical resolved sample ran with per-sector calibration silently OFF → all pre-fix live audits contaminated); (4) **§55 + §14 hard blocks deleted from delivery** (fresh canon A/B: §14 **−0.06 Sharpe, harmful**); (5) **DELIV-1 entry-validity guard** — latency was confounded with sector (clean-sector stale deliveries earn +2.12%/trade); EOD batch now skips on price escape (≥entry+0.5×ATR or ≤stop), not age; (6) **`skip_reason` persisted** (migration `4a7f6b33eb49`) — delivery funnel auditable by query. **Honest re-baseline:** clean live book (May+ BUYs ex-blocked) = **57.8% net WR, +2.06%/trade net** vs +0.25% blended old policy. **§87 verified & deployed:** weighted A/B on v10.9 canon Sharpe 0.24→**0.30 (+0.06)**, ΔN=0 → `_apply_l10_conviction_sizing()` live in `scanner.py` + first global sizing-stack clamp [0.10, 3.00] (+5 tests). **IS canon v10.9:** N=217, WR=69.1%, Sh=0.24, MC P5=0.07 ✅, Lo CI [0.10, 0.37] ✅, **deflated Sharpe FAILS at honest 744 trials** ⚠ → IS lever statistically spent; edge proof shifts to the post-fix forward window. Meta-model: v8.3 CRITICAL closed (15-feature retrain + `_MIN_META_AUC=0.52` self-gating floor → meta_prob OFF at CV-AUC 0.4364). **Ratings: 8.9/10 product · 8.2/10 B+ quality** (Stats.md §15 v8.4: Live Alpha 6.8→7.6, ML 7.2→7.8, Sector 7.8→8.3, IS 7.4→7.6, Cal 6.8→7.0). Full data: `Stats.md §DELIV`.
 > **v10.8 backtest — Sharpe improvement sweep (2026-06-09):** 12 candidate approaches tested on 100-ticker/23yr IS. Score-band sizing (L7 non-linear step function) → +0.05 Sharpe, zero trade-count impact. Dynamic RSI stops (2.0× ATR when RSI<30) → embedded in baseline. MR-count=2 (≥2 MR conditions vs 1) → +0.01 Sharpe, −1 trade. Consecutive-score filter → +0.14 Sharpe (−73% trades) — best as high-conviction tier, not main flow. Score acceleration and entry-delay both hurt. Live engine updated: `assembler.py` L7 score-band sizing + `_has_mr` MR-count=2 + `helpers.py` dynamic RSI stops. See `docs/Stats.md §83`.
@@ -57,47 +58,53 @@
 
 **Tests:** 596+ passed (including 55 delivery + 12 SPRT + 21 edgar + 4 options gates + gate unit tests). 2 warnings.
 
-### Alt-Data Cross-Sectional Integration (§104–§110, 2026-06-11) — UNDER REVIEW
+### Alt-Data Cross-Sectional Integration (§104–§110, 2026-06-11) — REVIEW COMPLETE
 
-**Backfill:** FINRA daily short-sale volume (14M rows, 2019–2024), SEC fails-to-deliver (91k rows, 2017–2024), NAAIM exposure index (1,039 weekly rows, 2006–2026), Wikipedia pageviews (66k rows, 20 tickers, 2015–2024), plus FRED UMCSENT. All panels cached under `backend/data/cache_*`.
+**Backfill:** FINRA daily short-sale volume (14M rows, 2019–2024), SEC fails-to-deliver (91k rows, 2017–2024), NAAIM exposure index (1,039 weekly rows, 2006–2026), Wikipedia pageviews (66k rows, 20 tickers, 2015–2024), plus FRED UMCSENT. All panels migrated from pickle to **Parquet** and cached under `backend/data/cache_*`.
 
 **Per-trade tilt verdict:** §104b FINRA SV tilt and §105b SEC FTD tilt **FAILED/INCONCLUSIVE** as sizing boosts on the 217-trade legacy book — rare-extreme conditions produce N≈5–8 cohorts that are unfalsifiable in-sample. §106b NAAIM <30 tilt also failed. These panels are **retained for cross-sectional reuse**, not per-trade tilts.
 
-**Cross-sectional integration — first-pass results retracted due to two implementation defects:**
-* **Defect 1 (market-wide z-score death):** UMCSENT, NAAIM, and AAII are identical for every ticker on a date. `cross_sectional_zscore()` standardized per-date, giving std=0 → NaN → `fillna(0)` dead columns. The apparent contribution of `--naaim` was XGBoost `colsample_bytree=0.8` sampling noise. Fixed: market-wide features now pass through RAW.
-* **Defect 2 (same-day lookahead):** FINRA SV and Wikipedia were merged same-day in `build_panel()` while the per-trade PIT merge functions correctly lag +1 day. Fixed: both panels are shifted +1 day before `merge_asof`.
-* **Coverage caveats:** Wikipedia covers only 20 mega-caps (AAPL, MSFT, NVDA, TSLA, META, GOOGL, AMZN, JPM, …), 2015-07 → 2024-12, so ~480 names get zero and the last 1.5 years of the walk-forward lack data. FINRA SV is consolidated NMS 2019-01 → 2024-12, not the §104-promised 2009+ per-venue history.
-
-**Corrected single-split previews (h=21, 10bps one-way):**
-| Config | Net Sharpe | Note |
-|--------|------------|------|
-| baseline | 0.369 | price features only |
-| `--finra-sv` | 0.414 | +1d lag applied |
-| `--wiki` | 0.451 | +1d lag applied, 2% coverage |
-| `--naaim` | −0.182 | market-wide now usable and harmful |
-| `--naaim --wiki` | 0.111 | |
-| placebo (3 seeds) | 0.151–0.159 | pure-noise features |
+**Cross-sectional integration — defects fixed and re-tested:**
+* **Defect 1 (market-wide z-score death):** UMCSENT, NAAIM, and AAII now pass through RAW instead of being z-scored to zero.
+* **Defect 2 (same-day lookahead):** FINRA SV and Wikipedia panels are shifted +1 day before `merge_asof`.
+* **Strict merge-failure guard:** `build_panel()` raises `RuntimeError` if `--finra-sv`, `--sec-ftd`, `--naaim`, or `--wiki` is requested but the merge fails.
+* **Reproducibility:** Panel loaders read `.parquet` and fall back to legacy `.pkl` once, then rewrite to Parquet (eliminates the numpy 1.26 vs 2.4.6 silent-unpickle failure).
 
 **Corrected walk-forward (h=21, 10bps one-way):**
-| Config | Net Sharpe | Positive folds | 90% CI |
-|--------|------------|----------------|--------|
-| baseline (price only) | 0.195 | 9/15 | [−0.22, +0.62] |
-| `--finra-sv` | 0.287 | 9/15 | [−0.13, +0.69] |
-| `--wiki` | 0.215 | 8/15 | [−0.22, +0.63] |
-| `--naaim` | 0.163 | 8/15 | [−0.32, +0.60] |
-| `--naaim --wiki` | −0.028 | 8/15 | [−0.52, +0.42] |
-| placebo seed 1 | 0.310 | 10/15 | [−0.10, +0.71] |
+| Config | Net Sharpe | Positive folds | Mean IC |
+|--------|------------|----------------|---------|
+| baseline (price only) | 0.195 | 9/15 | +0.0016 |
+| `--finra-sv` | 0.287 | 9/15 | +0.0032 |
+| `--wiki` | 0.215 | 8/15 | +0.0033 |
+| `--naaim` | 0.163 | 8/15 | +0.0085 |
 
 **Corrected walk-forward (h=63, 10bps one-way):**
-| Config | Net Sharpe | Positive folds | 90% CI |
-|--------|------------|----------------|--------|
-| baseline (price only) | 0.616 | 10/14 | [+0.29, +0.94] |
-| `--wiki` | 0.694 | 11/14 | [+0.31, +1.15] |
-| placebo seeds 1–3 | 0.705 / 0.716 / 0.707 | 11/14 | [+0.29, +1.15] |
+| Config | Net Sharpe | Positive folds | Mean IC |
+|--------|------------|----------------|---------|
+| baseline (price only) | 0.616 | 10/14 | +0.0207 |
+| `--wiki` | 0.694 | 11/14 | +0.0199 |
+| `--finra-sv` | 0.454 | 10/14 | +0.0205 |
+| `--naaim` | 0.328 | 10/14 | +0.0176 |
 
-**Key corrected finding:** The strong h=63 result is driven primarily by the **longer horizon / lower turnover cost structure**, not by Wikipedia. Baseline price features alone at h=63 achieve net 0.616. Adding Wikipedia gives 0.694 (+0.08), but a **placebo run with 3 random-noise features gives 0.705** — higher than Wikipedia. The Wikipedia "edge" at h=63 is therefore indistinguishable from sampling noise.
+**Placebo distribution (10 pure-noise seeds):**
+| Horizon | Mean net Sharpe | 5%-95% band |
+|---------|-----------------|-------------|
+| h=21 | 0.309 | [0.286, 0.332] |
+| h=63 | 0.708 | [0.688, 0.724] |
 
-**Honest status:** No alt-data config has demonstrated a reproducible, properly-lagged, selection-adjusted effect clearly above the harness noise floor. The h=63 net 0.769 claim is **withdrawn**. Additional placebo seeds and per-fold attribution by coverage epoch are still pending. See `docs/LEARNINGS.md §104–§110`.
+At h=21, `--finra-sv` lands inside the placebo band; `--wiki` and `--naaim` land below it. At h=63, `--wiki` lands inside the placebo band; `--finra-sv` and `--naaim` land below it.
+
+**Paired per-fold/rebalance bootstrap (real vs baseline):** no ΔSharpe 90% CI excludes zero.
+
+**Coverage-epoch attribution:** The h=21 alt-data Sharpe is concentrated in the 2019-2024 epoch and reverses sharply post-2024 (when coverage ends). The h=63 pre-2019 epoch is also positive, but the bootstrap still does not separate it from sampling noise.
+
+**Horizon-as-hyperparameter:** Selecting horizon on 2012-2019 folds picks **h=63**; its out-of-sample net Sharpe on 2020-2026 folds is **+0.494** (not the full-sample +0.616).
+
+**EDGAR fundamental factors (SimFin proxy):** SimFin bulk data requires a free `SIMFIN_API_KEY` (not on disk yet), so the same canonical monthly-horizon alpha family was tested with the existing EDGAR panel (`--fundamentals`, `--universe curated`). Result: net Sharpe **0.138 at h=21** and **0.358 at h=63**, both inside/below the placebo band and not significantly different from the curated baseline (ΔSharpe CI includes 0). Raw results: `backend/data/alt_data_fundamentals.json`.
+
+**§96b close vs next-open entry A/B:** Pre-registered binary test on the 217-trade IS book. Close-entry: WR 66.4%, avg ret +0.92%, Sharpe 0.25, MaxDD −1.79%. Next-open canon: WR 69.1%, avg ret +0.80%, Sharpe 0.24, MaxDD −2.31%. **ΔSharpe ≈ +0.01** — close-entry is not a material edge improvement; it is at best an execution convenience. Logs: `backend/data/backtest_default.log`, `backend/data/backtest_close.log`.
+
+**Honest status:** No alt-data config has demonstrated a reproducible, properly-lagged, selection-adjusted effect above the harness noise floor. The h=63 net 0.769 claim is **withdrawn**. Details and full tables: `docs/LEARNINGS.md §104–§110`. Analysis script: `backend/scripts/analyze_cross_sectional_alt_data.py`; raw results: `backend/data/alt_data_attribution.json` and `backend/data/alt_data_fundamentals.json`.
 
 ## 📊 Live database stats (2026-06-10)
 

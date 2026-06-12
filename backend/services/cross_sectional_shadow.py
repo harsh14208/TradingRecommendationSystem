@@ -1,10 +1,12 @@
 """Cross-sectional alpha model — LIVE SHADOW scorer.
 
-Loads the persisted h=21 cross-sectional model (data/cross_sectional_model.json,
-trained by `scripts/cross_sectional_alpha_model.py --save-model`) and scores the
-current scan batch: the same price features the model trains on, z-scored ACROSS
-the batch (same recipe as cross_sectional_zscore), then model.predict → percentile
-rank within the batch.
+Loads the persisted cross-sectional models (h=21: data/cross_sectional_model.json;
+h=63 quarterly variant: data/cross_sectional_model_h63.json, both trained by
+`scripts/cross_sectional_alpha_model.py --save-model [--horizon 63]`) and scores
+the current scan batch: the same price features the models train on, z-scored
+ACROSS the batch (same recipe as cross_sectional_zscore), then model.predict →
+percentile rank within the batch. The two horizons run in PARALLEL so their
+forward series can arbitrate which ranking transfers to the live ~10d book.
 
 SHADOW ONLY. The caller attaches the percentile to signals for observability and
 logging; it MUST NOT change action / confidence / positionSizeScale until the thin
@@ -28,6 +30,13 @@ log = logging.getLogger("signal.trade.cross_sectional_shadow")
 _DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 _MODEL_FILE = os.path.join(_DATA, "cross_sectional_model.json")
 _FEAT_FILE = os.path.join(_DATA, "cross_sectional_features.json")
+# Parallel h=63 shadow (quarterly-rebalance variant validated 2026-06-11 via
+# --nested-horizon: net 0.616, CI [+0.29,+0.94], selection haircut 0.000, cost-
+# robust to 40bps, borrow breakeven ~700bps/yr). Scored alongside h=21 so the
+# two forward series can arbitrate which horizon's ranking transfers to the
+# live ~10d book. The §92 promotion criteria below apply to the h=21 field ONLY.
+_MODEL_FILE_H63 = os.path.join(_DATA, "cross_sectional_model_h63.json")
+_FEAT_FILE_H63 = os.path.join(_DATA, "cross_sectional_features_h63.json")
 
 _MIN_NAMES = 10  # don't rank a thin cross-section (matches the backtest's MIN_NAMES_PER_DAY intent)
 _Z_CLIP = 3.0
@@ -47,35 +56,47 @@ SHADOW_PROMOTION_CRITERIA = {
 _SHADOW_SIZING_ACTIVE: bool = False
 
 _cache: dict = {"model": None, "feature_cols": None, "loaded": False, "ok": False}
+_cache_h63: dict = {"model": None, "feature_cols": None, "loaded": False, "ok": False}
 
 
-def _load() -> bool:
-    """Lazy-load the persisted model + feature spec once. Returns False if absent."""
-    if _cache["loaded"]:
-        return _cache["ok"]
-    _cache["loaded"] = True
+def _load_into(cache: dict, model_file: str, feat_file: str, label: str) -> bool:
+    """Lazy-load a persisted model + feature spec once. Returns False if absent."""
+    if cache["loaded"]:
+        return cache["ok"]
+    cache["loaded"] = True
     try:
-        if not (os.path.exists(_MODEL_FILE) and os.path.exists(_FEAT_FILE)):
+        if not (os.path.exists(model_file) and os.path.exists(feat_file)):
             return False
         import xgboost as xgb
 
-        with open(_FEAT_FILE) as f:
+        with open(feat_file) as f:
             meta = json.load(f)
         model = xgb.XGBRegressor()
-        model.load_model(_MODEL_FILE)
-        _cache["model"] = model
-        _cache["feature_cols"] = list(meta["feature_cols"])
-        _cache["horizon"] = int(meta.get("horizon", 21))
-        _cache["ok"] = True
+        model.load_model(model_file)
+        cache["model"] = model
+        cache["feature_cols"] = list(meta["feature_cols"])
+        cache["horizon"] = int(meta.get("horizon", 21))
+        cache["ok"] = True
         log.info(
-            "[cross_sectional_shadow] loaded model (%d features, horizon=%dd)",
-            len(_cache["feature_cols"]),
-            _cache["horizon"],
+            "[cross_sectional_shadow] loaded %s model (%d features, horizon=%dd)",
+            label,
+            len(cache["feature_cols"]),
+            cache["horizon"],
         )
         return True
     except Exception as exc:  # missing xgboost, corrupt artifact, etc.
-        log.warning("[cross_sectional_shadow] model unavailable (%s) — shadow scoring disabled", exc)
+        log.warning("[cross_sectional_shadow] %s model unavailable (%s) — shadow scoring disabled", label, exc)
         return False
+
+
+def _load() -> bool:
+    """Lazy-load the persisted h=21 model + feature spec once."""
+    return _load_into(_cache, _MODEL_FILE, _FEAT_FILE, "h=21")
+
+
+def _load_h63() -> bool:
+    """Lazy-load the persisted h=63 model + feature spec once."""
+    return _load_into(_cache_h63, _MODEL_FILE_H63, _FEAT_FILE_H63, "h=63")
 
 
 def _price_features(df: pd.DataFrame) -> dict[str, float] | None:
@@ -103,16 +124,8 @@ def _price_features(df: pd.DataFrame) -> dict[str, float] | None:
     return {k: (float(v) if pd.notna(v) else np.nan) for k, v in feats.items()}
 
 
-def score_batch(histories: dict[str, pd.DataFrame]) -> dict[str, float]:
-    """Return {ticker: cross-sectional percentile 0-100} for the scan batch.
-
-    Percentile is the model's predicted relative-return rank WITHIN this batch
-    (100 = strongest predicted relative performer, 0 = weakest). {} if the model
-    is unavailable or the batch is too thin to rank.
-    """
-    if not _load():
-        return {}
-    feature_cols = _cache["feature_cols"]
+def _score_with(model, feature_cols: list[str], histories: dict[str, pd.DataFrame], label: str) -> dict[str, float]:
+    """Shared scoring core: features → batch z-score → predict → percentile rank."""
     rows: dict[str, dict[str, float]] = {}
     for ticker, df in histories.items():
         if df is None or getattr(df, "empty", True):
@@ -130,13 +143,37 @@ def score_batch(histories: dict[str, pd.DataFrame]) -> dict[str, float]:
     z = z.clip(-_Z_CLIP, _Z_CLIP).fillna(0.0)
 
     try:
-        preds = _cache["model"].predict(z.values.astype(float))
+        preds = model.predict(z.values.astype(float))
     except Exception as exc:
-        log.warning("[cross_sectional_shadow] predict failed (%s)", exc)
+        log.warning("[cross_sectional_shadow] %s predict failed (%s)", label, exc)
         return {}
 
     pct = pd.Series(preds, index=z.index).rank(pct=True) * 100.0
     return {t: round(float(p), 1) for t, p in pct.items()}
+
+
+def score_batch(histories: dict[str, pd.DataFrame]) -> dict[str, float]:
+    """Return {ticker: h=21 cross-sectional percentile 0-100} for the scan batch.
+
+    Percentile is the model's predicted relative-return rank WITHIN this batch
+    (100 = strongest predicted relative performer, 0 = weakest). {} if the model
+    is unavailable or the batch is too thin to rank.
+    """
+    if not _load():
+        return {}
+    return _score_with(_cache["model"], _cache["feature_cols"], histories, "h=21")
+
+
+def score_batch_h63(histories: dict[str, pd.DataFrame]) -> dict[str, float]:
+    """Return {ticker: h=63 cross-sectional percentile 0-100} for the scan batch.
+
+    Same contract as score_batch() but uses the quarterly-rebalance model
+    (nested-horizon validated 2026-06-11). SHADOW ONLY — forward data collection
+    in parallel with h=21; never feeds §92 promotion or sizing.
+    """
+    if not _load_h63():
+        return {}
+    return _score_with(_cache_h63["model"], _cache_h63["feature_cols"], histories, "h=63")
 
 
 def check_promotion_criteria(

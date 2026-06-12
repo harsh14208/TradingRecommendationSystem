@@ -31,6 +31,10 @@ trading.db-shm
 
 # Generated outputs (recreated by weekly factor mining job)
 backend/data/factor_weights.json
+backend/data/alt_data_*.json
+backend/data/cross_sectional_*.json
+backend/data/*_log.txt
+backend/data/cache_gdelt/
 
 # Logs
 backend/logs/*.log

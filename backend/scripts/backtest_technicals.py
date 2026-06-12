@@ -3240,17 +3240,41 @@ def simulate_ticker(
                 "si_rising": (si_rising_map.get(ticker, {}).get(_date_key) if si_rising_map else None),
                 # ── §104–§110: Alt-data features at entry ────────────────────────
                 "sv_ratio": (
-                    round(float(_alt_data_panels["finra_sv"].get(ticker.upper(), {}).get(_date_key.date(), {}).get("short_volume_ratio", 0)), 4)
+                    round(
+                        float(
+                            _alt_data_panels["finra_sv"]
+                            .get(ticker.upper(), {})
+                            .get(_date_key.date(), {})
+                            .get("short_volume_ratio", 0)
+                        ),
+                        4,
+                    )
                     if _alt_data_panels.get("finra_sv") is not None
                     else None
                 ),
                 "sv_ratio_5d_delta": (
-                    round(float(_alt_data_panels["finra_sv"].get(ticker.upper(), {}).get(_date_key.date(), {}).get("sv_ratio_5d_delta", 0)), 4)
+                    round(
+                        float(
+                            _alt_data_panels["finra_sv"]
+                            .get(ticker.upper(), {})
+                            .get(_date_key.date(), {})
+                            .get("sv_ratio_5d_delta", 0)
+                        ),
+                        4,
+                    )
                     if _alt_data_panels.get("finra_sv") is not None
                     else None
                 ),
                 "ftd_63d_pctile": (
-                    round(float(_alt_data_panels["sec_ftd"].get(ticker.upper(), {}).get(_date_key.date(), {}).get("ftd_63d_pctile", 0)), 4)
+                    round(
+                        float(
+                            _alt_data_panels["sec_ftd"]
+                            .get(ticker.upper(), {})
+                            .get(_date_key.date(), {})
+                            .get("ftd_63d_pctile", 0)
+                        ),
+                        4,
+                    )
                     if _alt_data_panels.get("sec_ftd") is not None
                     else None
                 ),
@@ -3260,7 +3284,12 @@ def simulate_ticker(
                     else None
                 ),
                 "tone_z": (
-                    round(float(_alt_data_panels["gdelt"].get(ticker.upper(), {}).get(_date_key.date(), {}).get("tone_z", 0)), 4)
+                    round(
+                        float(
+                            _alt_data_panels["gdelt"].get(ticker.upper(), {}).get(_date_key.date(), {}).get("tone_z", 0)
+                        ),
+                        4,
+                    )
                     if _alt_data_panels.get("gdelt") is not None
                     else None
                 ),

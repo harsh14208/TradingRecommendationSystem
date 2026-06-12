@@ -318,3 +318,59 @@ def test_opt_cache_set_and_get():
     assert result is not None
     assert result["pc_ratio"] == 1.2
     opts._opt_cache.pop("AAPL", None)
+
+
+# ── §110 fallback order ───────────────────────────────────────────────────────
+
+
+def test_fetch_options_fallback_order_polygon_cboe_yfinance(monkeypatch):
+    """_fetch_options tries Polygon, then CBOE, then yfinance."""
+    from services import options
+
+    calls = []
+
+    def fake_polygon(ticker: str):
+        calls.append("polygon")
+        return None
+
+    def fake_cboe(ticker: str, payload=None):
+        calls.append("cboe")
+        return None
+
+    def fake_yfinance(ticker: str):
+        calls.append("yfinance")
+        return {}
+
+    monkeypatch.setattr(options, "_fetch_options_polygon", fake_polygon)
+    monkeypatch.setattr(options, "fetch_cboe_options_chain", fake_cboe)
+    monkeypatch.setattr(options, "yf", MagicMock())
+    monkeypatch.setattr(options, "_session", None)
+
+    # yfinance path is complex; patch the inner Ticker call to avoid network.
+    def fake_yf_ticker(ticker, session=None):
+        calls.append("yfinance")
+        return MagicMock(options=[])
+
+    options.yf.Ticker = fake_yf_ticker
+    monkeypatch.setattr(options, "_opt_cache_get", lambda ticker: None)
+    options._fetch_options("AAPL")
+    assert calls == ["polygon", "cboe", "yfinance"]
+
+
+def test_fetch_options_uses_cboe_when_polygon_fails(monkeypatch):
+    """If Polygon returns None, CBOE result is returned and cached."""
+    from services import options
+
+    cboe_result = {"source": "cboe", "pc_ratio": 1.0}
+
+    def fake_polygon(ticker: str):
+        return None
+
+    def fake_cboe(ticker: str, payload=None):
+        return cboe_result
+
+    monkeypatch.setattr(options, "_fetch_options_polygon", fake_polygon)
+    monkeypatch.setattr(options, "fetch_cboe_options_chain", fake_cboe)
+    monkeypatch.setattr(options, "_opt_cache_get", lambda ticker: None)
+    result = options._fetch_options("AAPL")
+    assert result is cboe_result

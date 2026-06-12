@@ -227,6 +227,7 @@ python3 backend/scripts/check_postgres.py
 | ML retrain | Sunday 11:00 ET | Auto — `_weekly_ml_retrain` |
 | Outcome resolution | Daily 02:00 ET | Auto — `_nightly_outcome_resolution` |
 | Signal cleanup | Daily 04:15 ET | Auto — `_nightly_signal_cleanup` |
+| CBOE options snapshot | Daily 18:30 ET | Auto — `_nightly_cboe_options_snapshot` |
 
 ### 6.2 Manual monthly tasks
 

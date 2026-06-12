@@ -42,7 +42,7 @@ USAGE
     cd backend && python scripts/cross_sectional_alpha_model.py
     cd backend && python scripts/cross_sectional_alpha_model.py --short-interest
     cd backend && python scripts/cross_sectional_alpha_model.py --split 2019-01-01 --decile 0.1 --cost-bps 10
-    cd backend && python scripts/cross_sectional_alpha_model.py --naaim --wiki --horizon 63  # research only — results pending corrected re-run
+    cd backend && python scripts/cross_sectional_alpha_model.py --nested-horizon  # honest horizon-as-hyperparameter validation
 
 The feature engineering is intentionally split into small add_*_features() helpers
 so you can iterate on signals without touching the pipeline or the backtester.
@@ -92,7 +92,18 @@ _MEMBERSHIP_CSV = os.path.join(_DATA, "sp500_ticker_start_end.csv")  # full PIT 
 #   2. FINRA SV and Wikipedia were merged same-day in build_panel(), creating a
 #      ~1-day lookahead. They are now shifted +1 day before merge_asof (T data
 #      usable from T+1, matching the per-trade PIT merge functions).
-# Corrected results are pending re-run. Do not trust the pre-fix numbers.
+# Corrected re-run (2026-06-11): all alt-data deltas sit inside the --placebo
+# noise floor at both h=21 and h=63 — no alt-data claim stands. The HORIZON
+# effect itself, however, SURVIVED honest validation: --nested-horizon (per-fold
+# ex-ante selection from prior folds only, grid {21,40,63}, burn-in 2, full
+# universe, 2012+) chose h=63 in ALL 12 eval folds (2014–2025) → nested net
+# Sharpe +0.576 [90% CI +0.22, +0.91], selection haircut 0.000 vs fixed h=63
+# (h=21 on the same folds: +0.419). Price features only. The quarterly-rebalance
+# cost structure is real and was ex-ante capturable; caveat: the grid itself
+# came from the earlier sweep, so this validates 63-beats-21/40, not 63-optimal.
+# Sweeps (2026-06-11, full WF 2012+): cost +0.481 @40bps one-way (h=21 is
+# negative there); borrow +0.572/+0.528 @50/100bps GC, breakeven ~700bps/yr.
+# Default stays 21 pending the deploy decision (shadow scorer is h=21-trained).
 HORIZON = 21  # forward-return horizon in trading days; also the rebalance period
 MIN_NAMES_PER_DAY = 20  # don't z-score / trade a thin cross-section
 TRADING_DAYS = 252
@@ -697,9 +708,9 @@ def build_panel(
                 # is only tradable from T+1 onward. The +1d shift enforces this.
                 panel = pd.merge_asof(
                     panel.sort_values("date"),
-                    _sv[["date", "ticker", "short_volume_ratio", "sv_ratio_5d_delta"]].rename(
-                        columns={"short_volume_ratio": "sv_ratio", "sv_ratio_5d_delta": "sv_ratio_5d_delta"}
-                    ).sort_values("date"),
+                    _sv[["date", "ticker", "short_volume_ratio", "sv_ratio_5d_delta"]]
+                    .rename(columns={"short_volume_ratio": "sv_ratio", "sv_ratio_5d_delta": "sv_ratio_5d_delta"})
+                    .sort_values("date"),
                     on="date",
                     by="ticker",
                     direction="backward",
@@ -710,6 +721,9 @@ def build_panel(
                 print(f"  FINRA SV merged: {panel['sv_ratio'].notna().mean():.0%} coverage")
         except Exception as e:
             print(f"  FINRA SV merge failed: {e}")
+            raise RuntimeError(f"--finra-sv requested but merge failed: {e}") from e
+        if "sv_ratio" not in panel.columns:
+            raise RuntimeError("--finra-sv requested but no short_volume panel found/loaded")
 
     if use_sec_ftd:
         try:
@@ -732,6 +746,9 @@ def build_panel(
                 print(f"  SEC FTD merged: {panel['ftd_63d_pctile'].notna().mean():.0%} coverage")
         except Exception as e:
             print(f"  SEC FTD merge failed: {e}")
+            raise RuntimeError(f"--sec-ftd requested but merge failed: {e}") from e
+        if "ftd_63d_pctile" not in panel.columns:
+            raise RuntimeError("--sec-ftd requested but no FTD panel found/loaded")
 
     if use_naaim:
         try:
@@ -777,6 +794,9 @@ def build_panel(
             print(f"  Sentiment merged: {', '.join(_cov)}")
         except Exception as e:
             print(f"  Sentiment merge failed: {e}")
+            raise RuntimeError(f"--naaim requested but merge failed: {e}") from e
+        if not any(c in panel.columns for c in ["umcsent", "naaim_exposure", "aaii_bull_bear_spread"]):
+            raise RuntimeError("--naaim requested but no sentiment panel found/loaded")
 
     if use_wiki:
         try:
@@ -799,6 +819,35 @@ def build_panel(
                 print(f"  Wikipedia merged: {panel['views_z'].notna().mean():.0%} coverage")
         except Exception as e:
             print(f"  Wikipedia merge failed: {e}")
+            raise RuntimeError(f"--wiki requested but merge failed: {e}") from e
+        if "views_z" not in panel.columns:
+            raise RuntimeError("--wiki requested but no Wikipedia panel found/loaded")
+
+    if use_gdelt:
+        try:
+            from services.gdelt_news_tone import load_gdelt_tone_panel
+
+            _gdelt = load_gdelt_tone_panel()
+            if _gdelt is None or _gdelt.empty:
+                raise RuntimeError("--gdelt requested but GDELT tone panel is missing/empty")
+            _gdelt["date"] = pd.to_datetime(_gdelt["date"]) + pd.Timedelta(days=1)
+            # PIT discipline: GDELT GKG files for day T are published early on T+1,
+            # so tone is tradable from T+1 open onward.
+            panel = pd.merge_asof(
+                panel.sort_values("date"),
+                _gdelt[["date", "ticker", "tone_z", "tone_mean"]].sort_values("date"),
+                on="date",
+                by="ticker",
+                direction="backward",
+            )
+            if "tone_z" not in RAW_FEATURE_COLS:
+                RAW_FEATURE_COLS.append("tone_z")
+            print(f"  GDELT merged: {panel['tone_z'].notna().mean():.0%} coverage")
+        except Exception as e:
+            print(f"  GDELT merge failed: {e}")
+            raise RuntimeError(f"--gdelt requested but merge failed: {e}") from e
+        if "tone_z" not in panel.columns:
+            raise RuntimeError("--gdelt requested but no GDELT panel found/loaded")
 
     if use_placebo:
         # Pure-noise features to measure the harness's own run-to-run noise floor.
@@ -1148,6 +1197,7 @@ def walk_forward(
 
     all_gross, all_turn, all_dates = [], [], []
     fold_summ: list[tuple] = []
+    folds: list[dict] = []
     print(
         f"\nWalk-forward CV: {len(fold_starts)} expanding folds ({start_year}→{last_year}, {test_years}y test windows)"
     )
@@ -1168,6 +1218,23 @@ def walk_forward(
         all_gross.append(sim["gross"])
         all_turn.append(sim["turnover"])
         all_dates.append(sim["dates"])
+        folds.append(
+            {
+                "fold_year": y,
+                "test_end": test_end.date(),
+                "n_periods": fs["n_periods"],
+                "gross": sim["gross"],
+                "turnover": sim["turnover"],
+                "dates": sim["dates"],
+                "mean_ic": sim["mean_ic"],
+                "ic_ir": sim["ic_ir"],
+                "sharpe_net": fs["sharpe_net"],
+                "sharpe_gross": fs["sharpe_gross"],
+                "ann_ret_net": fs["ann_ret_net"],
+                "ann_vol": fs["ann_vol"],
+                "avg_turnover": fs["avg_turnover"],
+            }
+        )
 
     if not all_gross:
         raise SystemExit("Walk-forward produced no usable folds — lower --wf-start.")
@@ -1181,6 +1248,7 @@ def walk_forward(
     res.update(
         {
             "fold_summary": fold_summ,
+            "folds": folds,
             "sharpe_ci": (lo, hi),
             "test_start": pd.Timestamp(dates.min()).date(),
             "test_end": pd.Timestamp(dates.max()).date(),
@@ -1190,6 +1258,174 @@ def walk_forward(
         }
     )
     return res
+
+
+def _mixed_horizon_stats(net: np.ndarray, ppy: np.ndarray) -> dict:
+    """Annualized net stats for a track whose periods may span DIFFERENT horizons.
+
+    Each period i covers 1/ppy[i] years, so E[r_i] = mu_ann/ppy[i] and
+    Var[r_i] = sigma_ann^2/ppy[i]. The pooled estimators below reduce exactly to
+    _stats() when every period shares one horizon — needed because the nested-
+    horizon track splices folds traded at different rebalance periods.
+    """
+    net = np.asarray(net, dtype=float)
+    ppy = np.asarray(ppy, dtype=float)
+    if len(net) < 3:
+        return {"n_periods": len(net), "ann_ret_net": float("nan"), "sharpe_net": float("nan"), "years": 0.0}
+    years = float(np.sum(1.0 / ppy))
+    ann_ret = float(np.sum(net) / years)
+    resid = net - ann_ret / ppy
+    var_ann = float(np.sum(resid**2 * ppy) / (len(net) - 1))
+    sharpe = float(ann_ret / np.sqrt(var_ann)) if var_ann > 0 else float("nan")
+    return {"n_periods": len(net), "ann_ret_net": ann_ret, "sharpe_net": sharpe, "years": years}
+
+
+def _mixed_bootstrap_ci(net: np.ndarray, ppy: np.ndarray, block: int = 4, n_boot: int = 2000) -> tuple[float, float]:
+    """5/95 circular block-bootstrap CI on the mixed-horizon net Sharpe."""
+    n = len(net)
+    if n < block * 3:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(7)
+    n_blocks = int(np.ceil(n / block))
+    sharpes = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, n, size=n_blocks)
+        take = ((starts[:, None] + np.arange(block)[None, :]).ravel() % n)[:n]
+        s = _mixed_horizon_stats(net[take], ppy[take])["sharpe_net"]
+        if np.isfinite(s):
+            sharpes.append(s)
+    if not sharpes:
+        return float("nan"), float("nan")
+    return float(np.percentile(sharpes, 5)), float(np.percentile(sharpes, 95))
+
+
+def _prepare_panel(args) -> tuple[pd.DataFrame, list[str]]:
+    """Build + feature-merge + z-score the panel from parsed CLI args.
+
+    Reads the HORIZON global (forward return, embargo, rebalance step), so the
+    nested-horizon mode can call it once per candidate horizon.
+    """
+    panel = build_panel(
+        use_short_interest=args.short_interest,
+        use_simfin=args.simfin,
+        use_finra_sv=args.finra_sv,
+        use_sec_ftd=args.sec_ftd,
+        use_naaim=args.naaim,
+        use_gdelt=args.gdelt,
+        use_finra_ats=args.finra_ats,
+        use_wiki=args.wiki,
+        use_occ=args.occ,
+        use_placebo=args.placebo,
+        placebo_seed=args.placebo_seed,
+        min_price=args.min_price,
+        min_dollar_vol=args.min_dollar_vol,
+        universe_source=args.universe,
+    )
+    feature_cols = [c for c in RAW_FEATURE_COLS if c in panel.columns]
+    if args.wq_alphas:
+        print("Adding WorldQuant-101 orthogonal alphas (wq002, wq026)…")
+        wq = _wq_alpha_panel(sorted(panel["ticker"].unique()))
+        panel = panel.merge(wq, on=["date", "ticker"], how="left")
+        feature_cols += [c for c in WQ_ALPHA_COLS if c in panel.columns]
+        print(f"  feature set now {len(feature_cols)}: {feature_cols}")
+    if args.fundamentals:
+        print("Adding orthogonal EDGAR fundamental factors (piotroski_chg, gross_prof, asset_growth, buyback)…")
+        fz = _fundamental_factor_panel(sorted(panel["ticker"].unique()))
+        panel = panel.merge(fz, on=["date", "ticker"], how="left")
+        feature_cols += [c for c in FUND_FACTOR_COLS if c in panel.columns]
+        _cov = panel[FUND_FACTOR_COLS[0]].notna().mean() if FUND_FACTOR_COLS[0] in panel.columns else 0.0
+        print(f"  feature set now {len(feature_cols)}: {feature_cols} | fundamental coverage {_cov:.0%} of rows")
+    panel = cross_sectional_zscore(panel, feature_cols)
+    return panel, feature_cols
+
+
+def nested_horizon_walk_forward(args, horizon_grid: list[int], burnin: int) -> None:
+    """Honest horizon-as-hyperparameter validation.
+
+    The fixed-horizon sweep picked h=63 AFTER seeing all folds — post-selection.
+    Here, for each walk-forward fold-year, the horizon is chosen using ONLY folds
+    strictly before it (pooled net Sharpe over the expanding selection window),
+    then the fold is scored at the chosen horizon. The first `burnin` common
+    folds provide selection data only and are excluded from the nested aggregate.
+    The nested-vs-best-fixed gap on the SAME eval folds is the selection haircut.
+    """
+    global HORIZON, PERIODS_PER_YEAR
+
+    res_by_h: dict[int, dict] = {}
+    for h in horizon_grid:
+        HORIZON = h
+        PERIODS_PER_YEAR = TRADING_DAYS / h
+        print(f"\n{'=' * 64}\nNested-horizon pass: h={h} (PPY={PERIODS_PER_YEAR:.1f})\n{'=' * 64}")
+        panel, feature_cols = _prepare_panel(args)
+        res_by_h[h] = walk_forward(
+            panel,
+            feature_cols,
+            args.decile,
+            args.cost_bps,
+            start_year=args.wf_start,
+            test_years=args.wf_test_years,
+            exit_decile=args.exit_decile,
+        )
+        del panel
+
+    cost = args.cost_bps
+    folds_by_h = {h: {f["fold_year"]: f for f in res_by_h[h]["folds"]} for h in horizon_grid}
+    common_years = sorted(set.intersection(*[set(d) for d in folds_by_h.values()]))
+    if len(common_years) <= burnin:
+        raise SystemExit(f"Only {len(common_years)} common fold-years across the grid — need > burnin={burnin}.")
+
+    def _fold_net(h: int, year: int) -> np.ndarray:
+        f = folds_by_h[h][year]
+        return f["gross"] - f["turnover"] * (cost / 1e4)
+
+    print(f"\n{'=' * 64}\nNESTED-HORIZON WALK-FORWARD  grid={horizon_grid}  burn-in={burnin} folds  cost={cost:.0f}bps")
+    print(f"{'=' * 64}")
+    header = "  ".join(f"prior@h={h:<3}" for h in horizon_grid)
+    print(f"  {'fold':<6} {'chosen':<7} {header}  fold-net-Sharpe(chosen)")
+
+    nested_net: list[np.ndarray] = []
+    nested_ppy: list[np.ndarray] = []
+    eval_years: list[int] = []
+    for i, y in enumerate(common_years):
+        if i < burnin:
+            print(f"  {y:<6} {'(burn-in)':<7}")
+            continue
+        prior = common_years[:i]
+        prior_sh: dict[int, float] = {}
+        for h in horizon_grid:
+            pooled = np.concatenate([_fold_net(h, py) for py in prior])
+            prior_sh[h] = _mixed_horizon_stats(pooled, np.full(len(pooled), TRADING_DAYS / h))["sharpe_net"]
+        finite = {h: s for h, s in prior_sh.items() if np.isfinite(s)}
+        chosen = min(horizon_grid) if not finite else max(finite, key=lambda h: finite[h])
+        fnet = _fold_net(chosen, y)
+        nested_net.append(fnet)
+        nested_ppy.append(np.full(len(fnet), TRADING_DAYS / chosen))
+        eval_years.append(y)
+        fold_sh = _mixed_horizon_stats(fnet, nested_ppy[-1])["sharpe_net"]
+        prior_str = "  ".join(f"{prior_sh[h]:+10.2f}" for h in horizon_grid)
+        print(f"  {y:<6} h={chosen:<5} {prior_str}  {fold_sh:+.2f}")
+
+    net = np.concatenate(nested_net)
+    ppy = np.concatenate(nested_ppy)
+    agg = _mixed_horizon_stats(net, ppy)
+    lo, hi = _mixed_bootstrap_ci(net, ppy)
+    print("-" * 64)
+    print(
+        f"  NESTED aggregate ({eval_years[0]}–{eval_years[-1]}, {agg['n_periods']} periods): "
+        f"net Sharpe {agg['sharpe_net']:+.3f}  [90% CI {lo:+.2f}, {hi:+.2f}]  ann ret {agg['ann_ret_net']:+.1%}"
+    )
+    print("  Fixed-horizon comparison on the SAME eval folds:")
+    best_fixed = float("-inf")
+    for h in horizon_grid:
+        pooled = np.concatenate([_fold_net(h, y) for y in eval_years])
+        s = _mixed_horizon_stats(pooled, np.full(len(pooled), TRADING_DAYS / h))["sharpe_net"]
+        best_fixed = max(best_fixed, s) if np.isfinite(s) else best_fixed
+        print(f"    h={h:<3}: net Sharpe {s:+.3f}")
+    if np.isfinite(best_fixed):
+        print(
+            f"  Selection haircut (best-fixed − nested): {best_fixed - agg['sharpe_net']:+.3f}  "
+            "(the part of the fixed-h number you could NOT have had ex ante)"
+        )
 
 
 def cost_sensitivity(gross: np.ndarray, turnover: np.ndarray, levels=(0, 5, 10, 20, 40)) -> None:
@@ -1375,7 +1611,31 @@ def main() -> None:
         "Longer horizons cut annual turnover cost (the binding constraint on net Sharpe); "
         "use 25 for the lower-drawdown variant.",
     )
+    ap.add_argument(
+        "--nested-horizon",
+        action="store_true",
+        help="honest horizon-as-hyperparameter validation: per fold, choose h from PRIOR folds only "
+        "(the fixed-h sweep's max is post-selection); runs the full walk-forward once per grid value",
+    )
+    ap.add_argument(
+        "--horizon-grid",
+        default="21,40,63",
+        help="comma-separated candidate horizons for --nested-horizon (default 21,40,63)",
+    )
+    ap.add_argument(
+        "--nested-burnin",
+        type=int,
+        default=2,
+        help="common fold-years used for selection only, excluded from the nested aggregate (default 2)",
+    )
     args = ap.parse_args()
+
+    if args.nested_horizon:
+        grid = sorted({int(x) for x in args.horizon_grid.split(",")})
+        if len(grid) < 2:
+            raise SystemExit("--horizon-grid needs at least 2 horizons")
+        nested_horizon_walk_forward(args, grid, args.nested_burnin)
+        return
 
     # Override the horizon globals before any data is built (forward return,
     # rebalance step, embargo, and the annualization factor all read these).
@@ -1384,37 +1644,7 @@ def main() -> None:
     if args.horizon != 21:
         print(f"Horizon override: {HORIZON}d rebalance (PERIODS_PER_YEAR={PERIODS_PER_YEAR:.1f})")
 
-    panel = build_panel(
-        use_short_interest=args.short_interest,
-        use_simfin=args.simfin,
-        use_finra_sv=args.finra_sv,
-        use_sec_ftd=args.sec_ftd,
-        use_naaim=args.naaim,
-        use_gdelt=args.gdelt,
-        use_finra_ats=args.finra_ats,
-        use_wiki=args.wiki,
-        use_occ=args.occ,
-        use_placebo=args.placebo,
-        placebo_seed=args.placebo_seed,
-        min_price=args.min_price,
-        min_dollar_vol=args.min_dollar_vol,
-        universe_source=args.universe,
-    )
-    feature_cols = [c for c in RAW_FEATURE_COLS if c in panel.columns]
-    if args.wq_alphas:
-        print("Adding WorldQuant-101 orthogonal alphas (wq002, wq026)…")
-        wq = _wq_alpha_panel(sorted(panel["ticker"].unique()))
-        panel = panel.merge(wq, on=["date", "ticker"], how="left")
-        feature_cols += [c for c in WQ_ALPHA_COLS if c in panel.columns]
-        print(f"  feature set now {len(feature_cols)}: {feature_cols}")
-    if args.fundamentals:
-        print("Adding orthogonal EDGAR fundamental factors (piotroski_chg, gross_prof, asset_growth, buyback)…")
-        fz = _fundamental_factor_panel(sorted(panel["ticker"].unique()))
-        panel = panel.merge(fz, on=["date", "ticker"], how="left")
-        feature_cols += [c for c in FUND_FACTOR_COLS if c in panel.columns]
-        _cov = panel[FUND_FACTOR_COLS[0]].notna().mean() if FUND_FACTOR_COLS[0] in panel.columns else 0.0
-        print(f"  feature set now {len(feature_cols)}: {feature_cols} | fundamental coverage {_cov:.0%} of rows")
-    panel = cross_sectional_zscore(panel, feature_cols)
+    panel, feature_cols = _prepare_panel(args)
 
     if args.save_model:
         # Train on ALL available data (split past the last date → embargo leaves
@@ -1422,7 +1652,10 @@ def main() -> None:
         # live SHADOW scorer. Array-based predict on z_cols → no feature-name deps.
         last = pd.Timestamp(panel["date"].max())
         tm = train_model(panel, feature_cols, (last + pd.Timedelta(days=2)).strftime("%Y-%m-%d"))
-        model_path = os.path.join(_DATA, "cross_sectional_model.json")
+        # h=21 keeps the legacy filenames (live h=21 shadow loader contract);
+        # other horizons get a _h{H} suffix (e.g. the parallel h=63 shadow).
+        suffix = "" if HORIZON == 21 else f"_h{HORIZON}"
+        model_path = os.path.join(_DATA, f"cross_sectional_model{suffix}.json")
         tm.model.save_model(model_path)
         meta = {
             "feature_cols": feature_cols,
@@ -1433,10 +1666,11 @@ def main() -> None:
             "n_rows": int(len(panel)),
             "note": "SHADOW-only live scorer; do not use to alter actions until forward-validated",
         }
-        with open(os.path.join(_DATA, "cross_sectional_features.json"), "w") as f:
+        feat_path = os.path.join(_DATA, f"cross_sectional_features{suffix}.json")
+        with open(feat_path, "w") as f:
             json.dump(meta, f, indent=2)
         print(f"Saved cross-sectional model → {model_path}")
-        print(f"Saved feature spec     → {os.path.join(_DATA, 'cross_sectional_features.json')}")
+        print(f"Saved feature spec     → {feat_path}")
         print(f"  features={feature_cols}  horizon={HORIZON}")
         return
 

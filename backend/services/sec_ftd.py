@@ -34,7 +34,8 @@ _SEC_FTD_URL = "https://www.sec.gov/files/data/fails-deliver-data/cnsfails{yyyym
 _CACHE_DIR = Path(__file__).parent.parent / "data" / "cache_sec_ftd"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-_PANEL_PATH = _CACHE_DIR / "sec_ftd_panel.pkl"
+_PANEL_PATH = _CACHE_DIR / "sec_ftd_panel.parquet"
+_PICKLE_PATH = _CACHE_DIR / "sec_ftd_panel.pkl"  # legacy
 
 _cache: dict[str, tuple[pd.DataFrame, float]] = {}
 _CACHE_TTL = 3600.0
@@ -188,12 +189,7 @@ def _compute_ftd_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df = df.sort_values(["symbol", "settlement_date"]).copy()
     # Fast C-engine rolling quantile → binary flag (0 or 100)
-    _q75 = (
-        df.groupby("symbol")["ftd_shares"]
-        .rolling(63, min_periods=10)
-        .quantile(0.75)
-        .reset_index(level=0, drop=True)
-    )
+    _q75 = df.groupby("symbol")["ftd_shares"].rolling(63, min_periods=10).quantile(0.75).reset_index(level=0, drop=True)
     df = df.assign(ftd_63d_pctile=(df["ftd_shares"] >= _q75).astype(float) * 100)
     return df
 
@@ -247,7 +243,12 @@ async def build_ftd_panel(
     # Apply conservative 30-day publication lag for PIT
     panel = panel.assign(effective_date=panel["settlement_date"] + timedelta(days=30))
 
-    panel.to_pickle(_PANEL_PATH)
+    panel.to_parquet(_PANEL_PATH, index=False)
+    if _PICKLE_PATH.exists():
+        try:
+            _PICKLE_PATH.unlink()
+        except Exception:
+            pass
     log.info(f"[sec_ftd] panel saved: {len(panel)} rows → {_PANEL_PATH}")
     return panel
 
@@ -255,7 +256,15 @@ async def build_ftd_panel(
 def load_ftd_panel() -> pd.DataFrame | None:
     """Load cached panel if it exists."""
     if _PANEL_PATH.exists():
-        return pd.read_pickle(_PANEL_PATH)
+        return pd.read_parquet(_PANEL_PATH)
+    if _PICKLE_PATH.exists():
+        try:
+            df = pd.read_pickle(_PICKLE_PATH)
+            df.to_parquet(_PANEL_PATH, index=False)
+            _PICKLE_PATH.unlink()
+            return df
+        except Exception as exc:
+            log.warning(f"[sec_ftd] legacy pickle unloadable ({exc}); rebuild panel")
     return None
 
 

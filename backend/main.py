@@ -500,6 +500,55 @@ async def _nightly_outcome_resolution():
             log.warning(f"[nightly] outcome resolution failed: {e}")
 
 
+async def _nightly_cboe_options_snapshot():
+    """§110 — Snapshot CBOE delayed options chain into options_chain_daily at 6:30pm ET.
+
+    Runs after market close once CBOE's delayed quotes have accumulated the full
+    session's volume and open interest. The table accrues the self-grown IV-rank
+    series that later forward tests will need.
+    """
+    ET = pytz.timezone("America/New_York")
+    while True:
+        now_et = datetime.now(ET)
+        target = now_et.replace(hour=18, minute=30, second=0, microsecond=0)
+        if now_et >= target:
+            target += timedelta(days=1)
+        await asyncio.sleep((target - now_et).total_seconds())
+        try:
+            from sqlalchemy import select as _sel
+
+            from database import AsyncSessionLocal as _ASL
+            from models import WatchlistItem
+            from scripts.snapshot_cboe_options import snapshot_ticker
+
+            async with _ASL() as _odb:
+                _wl = (
+                    (await _odb.execute(_sel(WatchlistItem.ticker).where(WatchlistItem.is_active.is_(True))))
+                    .scalars()
+                    .all()
+                )
+                _ok = 0
+                _empty = 0
+                for _t in _wl:
+                    try:
+                        _success = await snapshot_ticker(_odb, _t, __import__("datetime").date.today())
+                    except Exception:
+                        await _odb.rollback()
+                        _empty += 1
+                        continue
+                    if _success:
+                        _ok += 1
+                    else:
+                        _empty += 1
+                log.info(
+                    f"[nightly] CBOE options snapshot complete: {_ok} populated, {_empty} empty for {len(_wl)} tickers"
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("[nightly] CBOE options snapshot failed: %s: %s", type(e).__name__, e)
+
+
 async def _intraday_stop_monitor():
     """
     Check active sent signals for stop/target hits every 30 minutes during market hours.
@@ -1529,6 +1578,7 @@ async def lifespan(app: FastAPI):
     _supervise("nightly_signal_cleanup", _nightly_signal_cleanup, restart=True)
     _supervise("nightly_stripe_reconciliation", _nightly_stripe_reconciliation, restart=True)
     _supervise("nightly_outcome_resolution", _nightly_outcome_resolution, restart=True)
+    _supervise("nightly_cboe_options_snapshot", _nightly_cboe_options_snapshot, restart=True)
     _supervise("intraday_stop_monitor", _intraday_stop_monitor, restart=True)
     _supervise("nightly_reflection", _nightly_reflection_learning, restart=True)
     _supervise("weekly_screener", _weekly_ticker_screener, restart=True)

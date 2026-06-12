@@ -9,13 +9,12 @@ Each test mocks the external HTTP response and verifies:
 
 from __future__ import annotations
 
-import gzip
 from datetime import date
 
 import pandas as pd
 
 # §104: FINRA short volume
-from services.finra_short_volume import _parse_finra_sv_txt, merge_sv_pit
+from services.finra_short_volume import _aggregate_venues, _parse_finra_sv_txt, merge_sv_pit
 
 # §105: SEC FTD
 from services.sec_ftd import _parse_ftd_csv, merge_ftd_pit
@@ -34,6 +33,14 @@ from services.wikipedia_pageviews import _parse_wiki_json, merge_wikipedia_pit
 
 # §110: OCC
 from services.occ_volume_oi import _parse_occ_csv, merge_occ_pit
+
+# §110: CBOE delayed-quotes options chain
+from services.options_cboe import (
+    _normalize_contracts,
+    _parse_option_symbol,
+    build_options_chain_daily_row,
+    fetch_cboe_options_chain,
+)
 
 
 class TestFinraShortVolume:
@@ -69,6 +76,33 @@ class TestFinraShortVolume:
         df = pd.DataFrame({"Close": [100, 101, 102]}, index=idx)
         result = merge_sv_pit(df, pd.DataFrame(), "AAPL")
         assert result["sv_ratio"].iloc[0] == 0.0
+
+    def test_parse_finra_sv_txt_missing_short_exempt(self) -> None:
+        """Early per-venue files lack ShortExemptVolume."""
+        content = b"Date|Symbol|ShortVolume|TotalVolume|Market\n20090803|A|100|500|Q\n"
+        df = _parse_finra_sv_txt(content)
+        assert df is not None
+        assert len(df) == 1
+        assert df.iloc[0]["short_volume"] == 100
+        assert df.iloc[0]["total_volume"] == 500
+        assert df.iloc[0]["short_exempt_volume"] is pd.NA
+
+    def test_aggregate_venues(self) -> None:
+        df = pd.DataFrame(
+            {
+                "date": [date(2009, 8, 3), date(2009, 8, 3), date(2009, 8, 3)],
+                "symbol": ["AAPL", "AAPL", "AAPL"],
+                "short_volume": [100, 200, 300],
+                "short_exempt_volume": [1, 2, 3],
+                "total_volume": [1000, 2000, 3000],
+                "market": ["Q", "N", "D"],
+            }
+        )
+        agg = _aggregate_venues(df)
+        assert len(agg) == 1
+        assert agg.iloc[0]["short_volume"] == 600
+        assert agg.iloc[0]["total_volume"] == 6000
+        assert set(agg.iloc[0]["market"].split(",")) == {"D", "N", "Q"}
 
 
 class TestSecFtd:
@@ -155,32 +189,22 @@ class TestGdeltNewsTone:
     """§107 — GDELT news tone (bounded pilot)."""
 
     def test_parse_gkg_csv(self) -> None:
-        # GKG has 16+ tab-separated columns; we need columns 1 (DATE), 13 (Organizations), 15 (V2Tone)
-        cols = [
-            "gkgid",
-            "20240102000000",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "Apple Inc|Microsoft",
-            "",
-            "-1.23,2.34,3.45,4.56,5.67,6.78",
-        ]
-        line = "\t".join(cols) + "\n"
-        content = gzip.compress(line.encode())
+        # GKG 1.0 daily zip: columns 0=DATE, 6=ORGANIZATIONS, 7=TONE
+        import io as _io
+        import zipfile
+
+        header = "DATE\tNUMARTS\tCOUNTS\tTHEMES\tLOCATIONS\tPERSONS\tORGANIZATIONS\tTONE\n"
+        row = "20240102\t1\t\t\t\t\tApple Inc|Microsoft\t-1.23,2.34,3.45,4.56,5.67,6.78\n"
+        buf = _io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("20240102.gkg.csv", (header + row).encode())
+        content = buf.getvalue()
         df = _parse_gkg_csv(content)
         assert df is not None
         assert len(df) == 1
         assert "organizations" in df.columns
         assert "tone" in df.columns
+        assert df.iloc[0]["date"] == date(2024, 1, 2)
 
     def test_extract_org_tone(self) -> None:
         df = pd.DataFrame(
@@ -292,3 +316,132 @@ class TestOccVolumeOi:
         assert "pcr_volume" in result.columns
         assert "pcr_oi" in result.columns
         assert result["pcr_volume"].iloc[0] == 80.0
+
+
+class TestCboeOptions:
+    """§110 — CBOE delayed-quotes options chain."""
+
+    @staticmethod
+    def _sample_cboe_payload() -> dict:
+        return {
+            "timestamp": "2026-06-11 16:00:00",
+            "symbol": "AAPL",
+            "data": {
+                "symbol": "AAPL",
+                "current_price": 220.0,
+                "options": [
+                    {
+                        "option": "AAPL260711C00220000",
+                        "bid": 5.0,
+                        "ask": 5.2,
+                        "iv": 0.28,
+                        "open_interest": 5000.0,
+                        "volume": 1200.0,
+                        "delta": 0.25,
+                        "gamma": 0.05,
+                        "theta": -0.1,
+                        "vega": 0.2,
+                        "rho": 0.01,
+                    },
+                    {
+                        "option": "AAPL260711P00220000",
+                        "bid": 4.8,
+                        "ask": 5.0,
+                        "iv": 0.30,
+                        "open_interest": 4000.0,
+                        "volume": 900.0,
+                        "delta": -0.25,
+                        "gamma": 0.04,
+                        "theta": -0.09,
+                        "vega": 0.18,
+                        "rho": -0.01,
+                    },
+                    {
+                        "option": "AAPL260718C00230000",
+                        "bid": 3.0,
+                        "ask": 3.2,
+                        "iv": 0.26,
+                        "open_interest": 3000.0,
+                        "volume": 600.0,
+                        "delta": 0.25,
+                        "gamma": 0.04,
+                        "theta": -0.08,
+                        "vega": 0.22,
+                        "rho": 0.01,
+                    },
+                    {
+                        "option": "AAPL260718P00230000",
+                        "bid": 3.5,
+                        "ask": 3.7,
+                        "iv": 0.27,
+                        "open_interest": 2500.0,
+                        "volume": 500.0,
+                        "delta": -0.25,
+                        "gamma": 0.04,
+                        "theta": -0.07,
+                        "vega": 0.21,
+                        "rho": -0.01,
+                    },
+                ],
+            },
+        }
+
+    def test_parse_option_symbol(self) -> None:
+        parsed = _parse_option_symbol("AAPL260711C00220000", "AAPL")
+        assert parsed is not None
+        assert parsed["option_type"] == "call"
+        assert parsed["strike"] == 220.0
+        assert parsed["expiration_date"] == date(2026, 7, 11)
+
+    def test_parse_option_symbol_put(self) -> None:
+        parsed = _parse_option_symbol("AAPL260711P00210000", "AAPL")
+        assert parsed is not None
+        assert parsed["option_type"] == "put"
+        assert parsed["strike"] == 210.0
+
+    def test_normalize_contracts(self) -> None:
+        payload = self._sample_cboe_payload()
+        contracts = _normalize_contracts("AAPL", payload["data"]["options"], 220.0)
+        assert len(contracts) == 4
+        call = next(c for c in contracts if c["option_type"] == "call" and c["strike"] == 220.0)
+        assert call["iv"] == 0.28
+        assert call["volume"] == 1200
+        assert call["open_interest"] == 5000
+        assert call["mid"] == 5.1
+
+    def test_fetch_cboe_options_chain(self) -> None:
+        payload = self._sample_cboe_payload()
+        result = fetch_cboe_options_chain("AAPL", payload=payload)
+        assert result is not None
+        assert result["source"] == "cboe"
+        assert result["spot"] == 220.0
+        assert result["total_vol"] == 3200
+        assert result["pc_ratio"] is not None
+        assert result["avg_iv"] is not None
+        assert result["near_iv"] is not None
+        assert result["far_iv"] is not None
+        assert result["skew_25d"] is not None
+        assert "contracts" in result
+
+    def test_build_options_chain_daily_row(self) -> None:
+        payload = self._sample_cboe_payload()
+        row = build_options_chain_daily_row("AAPL", date(2026, 6, 11), payload=payload)
+        assert row is not None
+        assert row["ticker"] == "AAPL"
+        assert row["date"] == date(2026, 6, 11)
+        assert row["contract_count"] == 4
+        assert row["total_volume"] == 3200
+        assert row["source"] == "cboe"
+        assert row["contracts_snapshot"] is not None
+        assert len(row["contracts_snapshot"]) == 4
+
+    def test_fetch_cboe_options_chain_low_volume(self) -> None:
+        payload = self._sample_cboe_payload()
+        for opt in payload["data"]["options"]:
+            opt["volume"] = 1.0
+        result = fetch_cboe_options_chain("AAPL", payload=payload)
+        assert result is None
+
+    def test_fetch_cboe_options_chain_malformed(self) -> None:
+        result = fetch_cboe_options_chain("AAPL", payload={"data": {"options": []}})
+        assert result is None

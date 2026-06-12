@@ -40,9 +40,12 @@ log = logging.getLogger("signal.trade.sentiment_naaim_aaii")
 _CACHE_DIR = Path(__file__).parent.parent / "data" / "cache_sentiment"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-_UMCSENT_PANEL_PATH = _CACHE_DIR / "umcsent_panel.pkl"
-_NAAIM_PANEL_PATH = _CACHE_DIR / "naaim_panel.pkl"
-_AAII_PANEL_PATH = _CACHE_DIR / "aaii_panel.pkl"
+_UMCSENT_PANEL_PATH = _CACHE_DIR / "umcsent_panel.parquet"
+_NAAIM_PANEL_PATH = _CACHE_DIR / "naaim_panel.parquet"
+_AAII_PANEL_PATH = _CACHE_DIR / "aaii_panel.parquet"
+_UMCSENT_PICKLE_PATH = _CACHE_DIR / "umcsent_panel.pkl"  # legacy
+_NAAIM_PICKLE_PATH = _CACHE_DIR / "naaim_panel.pkl"  # legacy
+_AAII_PICKLE_PATH = _CACHE_DIR / "aaii_panel.pkl"  # legacy
 
 _cache: dict[str, tuple[pd.DataFrame, float]] = {}
 _CACHE_TTL = 86400.0
@@ -68,7 +71,7 @@ async def download_umcsent_panel(
         return cached[0]
     if _UMCSENT_PANEL_PATH.exists():
         try:
-            df = pd.read_pickle(_UMCSENT_PANEL_PATH)
+            df = pd.read_parquet(_UMCSENT_PANEL_PATH)
             _cache["umcsent"] = (df, time.monotonic())
             return df
         except Exception:
@@ -110,7 +113,7 @@ async def download_umcsent_panel(
             df = df.sort_values("date").reset_index(drop=True)
             # 2-week publication lag: monthly survey released mid-next-month
             df = df.assign(date=df["date"] + pd.Timedelta(days=14))
-            df.to_pickle(_UMCSENT_PANEL_PATH)
+            df.to_parquet(_UMCSENT_PANEL_PATH, index=False)
             _cache["umcsent"] = (df, time.monotonic())
             return df
     except Exception as exc:
@@ -155,7 +158,7 @@ async def download_naaim_panel(
         return cached[0]
     if _NAAIM_PANEL_PATH.exists():
         try:
-            df = pd.read_pickle(_NAAIM_PANEL_PATH)
+            df = pd.read_parquet(_NAAIM_PANEL_PATH)
             _cache["naaim"] = (df, time.monotonic())
             return df
         except Exception:
@@ -170,6 +173,7 @@ async def download_naaim_panel(
                 return None
             html = await resp.text()
             import re
+
             m = re.search(r'href="([^"]+USE_Data-since-Inception[^"]+\.xlsx)"', html)
             if not m:
                 log.warning("[naaim] could not find xlsx href on landing page")
@@ -186,7 +190,7 @@ async def download_naaim_panel(
             content = await resp.read()
             df = _parse_naaim_xlsx(content)
             if df is not None and not df.empty:
-                df.to_pickle(_NAAIM_PANEL_PATH)
+                df.to_parquet(_NAAIM_PANEL_PATH, index=False)
                 _cache["naaim"] = (df, time.monotonic())
                 log.info(f"[naaim] downloaded {len(df)} rows from {xlsx_url}")
             return df
@@ -233,7 +237,7 @@ async def download_aaii_panel(
         return cached[0]
     if _AAII_PANEL_PATH.exists():
         try:
-            df = pd.read_pickle(_AAII_PANEL_PATH)
+            df = pd.read_parquet(_AAII_PANEL_PATH)
             _cache["aaii"] = (df, time.monotonic())
             return df
         except Exception:
@@ -252,7 +256,7 @@ async def download_aaii_panel(
                 return None
             df = _parse_aaii_xls(content)
             if df is not None and not df.empty:
-                df.to_pickle(_AAII_PANEL_PATH)
+                df.to_parquet(_AAII_PANEL_PATH, index=False)
                 _cache["aaii"] = (df, time.monotonic())
             return df
     except Exception as exc:
@@ -268,19 +272,43 @@ async def download_aaii_panel(
 
 def load_umcsent_panel() -> pd.DataFrame | None:
     if _UMCSENT_PANEL_PATH.exists():
-        return pd.read_pickle(_UMCSENT_PANEL_PATH)
+        return pd.read_parquet(_UMCSENT_PANEL_PATH)
+    if _UMCSENT_PICKLE_PATH.exists():
+        try:
+            df = pd.read_pickle(_UMCSENT_PICKLE_PATH)
+            df.to_parquet(_UMCSENT_PANEL_PATH, index=False)
+            _UMCSENT_PICKLE_PATH.unlink()
+            return df
+        except Exception as exc:
+            log.warning(f"[umcsent] legacy pickle unloadable ({exc})")
     return None
 
 
 def load_naaim_panel() -> pd.DataFrame | None:
     if _NAAIM_PANEL_PATH.exists():
-        return pd.read_pickle(_NAAIM_PANEL_PATH)
+        return pd.read_parquet(_NAAIM_PANEL_PATH)
+    if _NAAIM_PICKLE_PATH.exists():
+        try:
+            df = pd.read_pickle(_NAAIM_PICKLE_PATH)
+            df.to_parquet(_NAAIM_PANEL_PATH, index=False)
+            _NAAIM_PICKLE_PATH.unlink()
+            return df
+        except Exception as exc:
+            log.warning(f"[naaim] legacy pickle unloadable ({exc})")
     return None
 
 
 def load_aaii_panel() -> pd.DataFrame | None:
     if _AAII_PANEL_PATH.exists():
-        return pd.read_pickle(_AAII_PANEL_PATH)
+        return pd.read_parquet(_AAII_PANEL_PATH)
+    if _AAII_PICKLE_PATH.exists():
+        try:
+            df = pd.read_pickle(_AAII_PICKLE_PATH)
+            df.to_parquet(_AAII_PANEL_PATH, index=False)
+            _AAII_PICKLE_PATH.unlink()
+            return df
+        except Exception as exc:
+            log.warning(f"[aaii] legacy pickle unloadable ({exc})")
     return None
 
 

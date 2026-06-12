@@ -676,6 +676,41 @@ class ShortInterestBiweekly(Base):
     fetched_at = Column(DateTime, server_default=func.now())
 
 
+class OptionsChainDaily(Base):
+    """§110 — nightly CBOE delayed-quotes options chain snapshot per ticker.
+
+    Accumulates live-only option metrics so the engine can build a self-grown
+    IV-rank / skew / PCR history for tickers without paying for historical
+    options data. Contract-level detail is kept in ``contracts_snapshot`` but
+    the primary signals are pre-aggregated for fast reads.
+    """
+
+    __tablename__ = "options_chain_daily"
+    __table_args__ = (
+        UniqueConstraint("ticker", "date", name="uq_options_chain_ticker_date"),
+        Index("ix_options_chain_ticker_date", "ticker", "date"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(12), nullable=False)
+    date = Column(Date, nullable=False)
+    contract_count = Column(Integer, nullable=True)
+    put_call_ratio = Column(Float, nullable=True)
+    total_volume = Column(Integer, nullable=True)
+    total_open_interest = Column(Integer, nullable=True)
+    avg_iv = Column(Float, nullable=True)
+    near_iv = Column(Float, nullable=True)
+    far_iv = Column(Float, nullable=True)
+    iv_term_spike = Column(Float, nullable=True)
+    iv_rank = Column(Float, nullable=True)
+    skew_25d = Column(Float, nullable=True)
+    max_pain = Column(Float, nullable=True)
+    net_gex = Column(Float, nullable=True)  # $-denominated net gamma exposure
+    spot = Column(Float, nullable=True)
+    source = Column(String(20), nullable=True, server_default="cboe")
+    contracts_snapshot = Column(JSON, nullable=True)  # list of normalized contracts
+    fetched_at = Column(DateTime, server_default=func.now())
+
+
 class CorporateActionValidation(Base):
     """Validation comparing corporate-action adjustments across providers (TSYS-5c)."""
 
