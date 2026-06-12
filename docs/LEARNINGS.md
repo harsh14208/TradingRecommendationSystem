@@ -814,3 +814,28 @@ The +GDELT ΔSharpe is well inside the harness noise floor and the 90% bootstrap
 **Lessons:** (1) An API's field name is not its semantics — verify what a "fix" returns before trusting it (one `print(len(...))` would have caught this on 06-09). (2) A gate that silently receives None fails open — gate inputs need liveness asserts (n keys ≥ expected coverage), the same class of guard the cross-sectional harness got after the alt-data retraction. (3) Decisions inherit the bugs of their measurements: the §14 deletion was made off a measurement taken while the input was dead.
 
 **Audit clean bill:** exit engine (stop-before-target, gap-through slippage, fill-bar-anchored stops), entry timing, PIT constituents hard-fail, date-sorted MaxDD, registry-driven DSR trial count, no indicator look-ahead. Minor residuals noted: unmapped constituents return True (silent survivorship bypass), `in_trade_until` calendar-day undershoot, FF ST_Rev unlagged (moot while meta-model is gated off).
+
+## Disposition of the Root "Sharpe Improvement Analysis" (2026-06-09 doc, retired 2026-06-12)
+
+A 415-line external-lens analysis (`SHARPE_IMPROVEMENT_ANALYSIS.md`, repo root) recommended ~12 changes to lift Sharpe while holding N. The doc was deleted in the 2026-06-12 docs consolidation; this entry records what survived contact with measurement, so its ideas don't get re-proposed:
+
+- **Adopted:** non-linear score-band sizing (§4.2 → shipped as L7 score-band, +0.05 Sharpe, v10.8); dynamic stops (§4.1's spirit → dynamic RSI stops, 2.0× ATR when RSI<30, embedded in the v10.8 baseline); conviction-tier sizing direction generally vindicated by §87 L10 (+0.06).
+- **Tested and rejected:** condition-based adaptive exits (§4.3, "RSI>45 exit shows 100% WR") — the 2026-06-08 `--exit-sweep` grid found the exit lever exhausted: top configs were turnover artifacts, max_loss=OFF dominated every robust axis. The "100% WR" cited was a small-N in-sample read.
+- **Superseded diagnosis:** the doc attributed the live-vs-IS gap (−28pp WR) to exits and flat sizing. The v8.4 delivery audit (2026-06-10) showed the gap was **mostly delivery leaks** — sector model-file unblock (32% of book at ≈−1.4%/trade), SELL delivery bypass, stale EOD entries — not exit management. Honest clean-book re-baseline: 57.8% net WR, +2.06%/trade.
+- **Not pursued:** inverting the VIX sizing dampener (§4.4) — the strategy is structurally a VIX 20–30 stress-regime play (100% of IS trades); §56 VIX-conditional Kelly sizing already covers the regime axis, and §88's calm-sleeve failure showed the calm side has no trades to size.
+
+**Lesson:** plausible mechanism-level recommendations from code reading alone (without per-fold measurement) had roughly a 1-in-4 hit rate here — every adopted item was the one that had already been independently validated by a sweep.
+
+## §85-2 MD&A Sentiment Audit — Modifier Never Fired Historically (2026-06-09; doc folded in 2026-06-12)
+
+*(Condensed from the retired `docs/MDA_AUDIT_85_2.md`.)*
+
+**Finding:** the MD&A sentiment modifier had **never fired** on any of the 566 resolved signals — 0 had `mda_delta` in rationale, 0 had any EDGAR source (buyback gate worked: 77).
+
+**Root cause:** `_fetch_filing_text()` in `services/edgar.py` used the deprecated EDGAR `-index.json` URL pattern, which 404s. The code failed silently → `get_mda_delta()` always returned `{}` → the `abs(_mda_score) >= 2.0` trigger never fired.
+
+**Fix (v8.2, 2026-06-09):** consume `primaryDocument` directly from the SEC submissions JSON (also one fewer HTTP round-trip per filing). Verified on AAPL: 2 filing texts returned, delta 0.0 as expected for a stable large-cap. Also removed the dead `^BDI` fetch from `supply_chain.py`.
+
+**Open items (tracked as §85-2b in TODO):** monitor signals with `mda_delta != 0` going forward; evaluate ΔWR at N≥50 and disable the modifier if no improvement. `_KNOWN_CIKS` covers only ~60 tickers — unknown tickers silently return `{}`.
+
+**Lesson (same family as the FRED `realtime_start` trap):** a modifier whose data dependency fails silently is indistinguishable from a modifier with no edge — instrument the *input* (fetch success rate), not just the output.

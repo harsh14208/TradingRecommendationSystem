@@ -10,6 +10,7 @@ to allocate weights. Filters allocations through sector, cash, and turnover boun
 """
 
 import logging
+import os
 import numpy as np
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,11 @@ from sqlalchemy import select, func
 from models import Instrument, Position, Fill, BrokerOrder, PnlDaily
 
 from services.market_data import get_histories_batch
+from services.tca_service import calculate_expected_slippage_bps
+
+# Maximum allowed expected implementation shortfall (bps) before sizing down.
+# Set to 20 bps by default per §118; override via environment if needed.
+_ALLOCATOR_SLIPPAGE_THRESHOLD_BPS = float(os.getenv("TCA_SLIPPAGE_THRESHOLD_BPS", "20.0"))
 
 log = logging.getLogger("signal.trade.allocator")
 
@@ -319,8 +325,7 @@ async def allocate_portfolio(
         weight = w
         if t in realized_slippage:
             slippage_bps = realized_slippage[t]
-            slippage_threshold = 42.0  # 35% of 120 bps edge
-            penalty_multiplier = max(0.0, 1.0 - (slippage_bps / slippage_threshold))
+            penalty_multiplier = max(0.0, 1.0 - (slippage_bps / _ALLOCATOR_SLIPPAGE_THRESHOLD_BPS))
             weight *= penalty_multiplier
             log.info(
                 f"TCA feedback: {t} weight scaled by {penalty_multiplier:.2f} due to {slippage_bps:.1f} bps average realized slippage."
@@ -457,7 +462,18 @@ async def allocate_portfolio(
         diff_notional = target_notional - current_notional
 
         if abs(diff_notional) > 5.0:  # minimum trade size $5
-            ticker_slippage = realized_slippage.get(t, 15.0)
+            # Expected slippage for the target order using Almgren-Chriss + realized floor.
+            entry_price = s.get("entry") or 100.0
+            qty = abs(diff_notional) / entry_price if entry_price > 0 else 0.0
+            ticker_slippage = calculate_expected_slippage_bps(
+                t,
+                qty=qty,
+                price=entry_price,
+                adv=10_000_000 if t in ["AAPL", "MSFT", "NVDA", "GOOG", "AMZN", "META", "TSLA"] else 500_000,
+                daily_vol=0.018 if t in ["AAPL", "MSFT", "NVDA", "GOOG", "AMZN", "META", "TSLA"] else 0.035,
+                spread_pct=0.0003 if t in ["AAPL", "MSFT", "NVDA", "GOOG", "AMZN", "META", "TSLA"] else 0.0018,
+                realized_slippage_bps=realized_slippage.get(t),
+            )
             orders_to_place.append(
                 {
                     "ticker": t,

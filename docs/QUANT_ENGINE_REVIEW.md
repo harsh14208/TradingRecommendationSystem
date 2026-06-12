@@ -2,6 +2,14 @@
 
 *Reviewer lens: senior quant researcher / execution engineer. Review date: 2026-06-09. Code as of commit 0e5b0f1 + working tree.*
 
+> **REMEDIATION STATUS (2026-06-12): all three top findings and the top-3 fixes are closed.**
+> 1. **CRITICAL meta-label train/serve skew — FIXED (2026-06-10).** Meta-model retrained on the full 15-feature trades CSV (all features real values at train time); `_MIN_META_AUC = 0.52` self-gating floor added in `signal_ml.py` (model stays disabled at CV-AUC 0.4364); the `meta_prob = None` guard removed from `assembler.py` once skew was resolved.
+> 2. **HIGH survivorship placebo — FIXED (v10.6, 2026-06-09).** The constituents loader now **fails loudly** (`RuntimeError`) on a missing/malformed file instead of regenerating a full-history default map, and the universe is trimmed to PIT membership from the fja05680/sp500 source. True delisted-name coverage still needs paid data (§84/§119 — open).
+> 3. **HIGH deflated-Sharpe trial count — ADOPTED (v10.9, 2026-06-10).** DSR is now reported against an honest configurable trial count (`SIGNAL_TRADE_N_TRIALS`; canon reported at 744 trials) — and the canon **fails** it. Documented in CLAUDE.md/Stats.md as "the IS lever is statistically spent"; edge proof shifted to forward/OOS data.
+> 4. **FRED publication lag — FIXED (2026-06-12).** Weekly FRED series are keyed to `realtime_start` (publication date); an initial bug where every observation echoed `realtime_start = TODAY` (emptying the §14 panel) was found and fixed — the §14 A/B verdict taken during the bug window was retracted (see LEARNINGS 2026-06-12).
+>
+> The body below is preserved as the original point-in-time review.
+
 ## Executive Summary
 
 **Overall assessment:** This is a far more honest backtest than most retail-grade systems — signal-at-close/fill-at-next-open discipline, stop-before-target intrabar priority, per-trade (non-annualized) Sharpe, block-bootstrap CIs, pre-specified held-out ticker sets, and a documented "honest forward Sharpe 0.13–0.18" that already haircuts the IS number. The core price/indicator pipeline is point-in-time clean: I found **no `.shift(-1)`-style look-ahead in any signal-time feature**.

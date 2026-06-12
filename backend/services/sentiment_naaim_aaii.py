@@ -111,6 +111,13 @@ async def download_umcsent_panel(
                 return None
             df = pd.DataFrame(rows)
             df = df.sort_values("date").reset_index(drop=True)
+            # 2-year rolling percentile as a regime feature
+            df = df.assign(
+                umcsent_pctile=df["umcsent"]
+                .rolling(24, min_periods=12)
+                .apply(lambda x: x.rank(pct=True).iloc[-1] * 100, raw=False)
+                .fillna(50.0)
+            )
             # 2-week publication lag: monthly survey released mid-next-month
             df = df.assign(date=df["date"] + pd.Timedelta(days=14))
             df.to_parquet(_UMCSENT_PANEL_PATH, index=False)
@@ -141,9 +148,17 @@ def _parse_naaim_xlsx(content: bytes) -> pd.DataFrame | None:
         df = df.sort_values("date").reset_index(drop=True)
         # Deduplicate: some xlsx files have duplicate rows
         df = df.drop_duplicates(subset=["date"], keep="first")
+        # 52-week rolling percentile (regime context): higher = more bullish
+        # than the last year of manager positioning.
+        df = df.assign(
+            naaim_exposure_pctile=df["naaim_exposure"]
+            .rolling(52, min_periods=26)
+            .apply(lambda x: x.rank(pct=True).iloc[-1] * 100, raw=False)
+            .fillna(50.0)
+        )
         # PIT lag: weekly release on Wednesday → usable Thursday (1-day lag)
         df = df.assign(date=df["date"] + pd.Timedelta(days=1))
-        return df[["date", "naaim_exposure"]]
+        return df[["date", "naaim_exposure", "naaim_exposure_pctile"]]
     except Exception as exc:
         log.warning(f"[naaim] parse error: {exc}")
         return None

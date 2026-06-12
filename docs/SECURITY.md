@@ -101,3 +101,28 @@ Signal.Trade backend after the security/architecture refactor.
   removed in the production bundle.
 - All async `fetch` paths use `AbortController` to cancel in-flight requests on
   unmount or navigation.
+
+## 9. Compliance Language (TSYS-13a)
+
+*(Folded in from the retired `docs/COMPLIANCE_LANGUAGE_AUDIT.md`; last audit run 2026-06-07.)*
+
+**Method:** grep across `frontend/`, `backend/`, `docs/` for prohibited-claim patterns
+(`guarantee[d]`, `risk-free`, `will profit`, `can't lose`, `sure thing`, `riskless`) and for
+required disclaimers (`not financial advice`, `past performance`, `informational/educational`).
+
+**Last result: no prohibited performance or suitability claims found.** All `risk-free` hits are
+the risk-free *rate* in scoring code; all `guarantee` hits are disclaimers or code comments.
+Required disclaimers are present on every surface: README/public site, email footer
+(`email_svc.py`), Telegram/Discord signal messages ("NOT FINANCIAL ADVICE"), and live broker
+auto-execution is gated by an explicit, immutably-recorded risk acknowledgement
+(`POST /api/me/risk-acknowledge`, TSYS-13b/13c).
+
+**Standing rules:**
+1. Re-run the grep audit before each marketing push; extend the pattern list as copy expands.
+2. The risk-ack UI must render the suitability/risk disclosure *before* the user acknowledges
+   (consent must be informed, not just recorded).
+3. Prefer "algorithmic signal" over "recommendation" in auto-execution copy to reduce
+   RIA-advice ambiguity.
+
+> This is engineering due diligence, not legal advice — a securities/fintech attorney should
+> review before paid marketing or live-trading GA.

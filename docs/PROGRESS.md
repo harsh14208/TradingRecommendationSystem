@@ -318,7 +318,24 @@ RSI removed from MR gate (non-binding). MR weight 0.50→0.70 (optimal, 105-tick
 
 ---
 
-> **v5.x history (v5.0–v5.12, 2026-05-09–18) archived** — see git log for full change details.
+### v5.6 (2026-05-17) — Signal Lifecycle, Live UI, Send Quality & Test Suite Green
+*(condensed from the retired root `updates.md`)*
+
+- **Signal lifecycle:** `stop_monitor.py` checks live prices every 30 min, fires Telegram notifications, updates `hit_stop`/`hit_target`/`exit_type`, deactivates signals (previously stayed "active" 7 days regardless).
+- **Automated nightly resolution:** `_nightly_outcome_resolution()` runs 2am ET via lifespan task (was a manual script).
+- **Send quality:** 3 new `_maybe_send()` gates — pre-earnings blackout (2d), sector concentration (max 2 BUY/sector/24h), ticker-adaptive confidence floor.
+- **Calibration:** isotonic regression added alongside Platt.
+- **Bug:** `_is_lev_etf` made an explicit `_assemble_signal()` parameter (closure-scope failure when tests called it directly). 597 tests passing. Commits `904bc22`, `6e8b25d`, `341414b`.
+
+### v5.5 (2026-05-16) — Validation-Driven Fixes, Quant Features & Leveraged ETF Tracker
+*(condensed from the retired root `updates.md`; driven by a `validate_predictions.py` run on 529 resolved signals 2026-04-28→05-14: 7d WR 57.7%, 14d WR 63.2%, Brier 0.2899, +16pp overconfident, intraday WR 30.4% vs position WR 61.4%)*
+
+- **Calibration/confidence:** hard ceiling 84%→72% at all 6 cap sites (75–84% bands won only 48–50%); `_MAX_BLEND` 0.80→0.90; `_N_FULL` 30→20; calibration reads `outcome_14d` first.
+- **Defensive-ticker BUY gate:** 16 tickers with validated 0% BUY WR (BAC, KO, PEP, T, NEE, PG, USB, PNC, C, TGT, AIG, WM, MCO, TT, DE, TJX) gate BUY → HOLD.
+- **Quant features (free-data):** FRED HY/IG OAS credit spreads in `macro.py`; analyst revision momentum (`revision_pts`, capped ±8) + scoring block; cross-sectional universe ranking at `scan_all()` tail (±3pp decile adjustments); `beta` exposed in signal dict; `GET /api/signals/alpha-decay` per-source/per-horizon endpoint.
+- **Leveraged ETF tracker:** `_LEVERAGED_ETFS` frozenset (52 tickers, 3×/2× bull+bear), fundamentals bypass, position-style forced to swing (volatility decay), risk-disclosure rationale card, watchlist seed → ~210 tickers, sector mappings to underlying ETFs. Commit `114ecc4`.
+
+> **Earlier v5.x history (v5.0–v5.4, v5.7–v5.12, 2026-05-09–18) archived** — see git log for full change details.
 
 ---
 

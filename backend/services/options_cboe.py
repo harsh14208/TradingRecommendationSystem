@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -18,6 +19,12 @@ import requests
 log = logging.getLogger("signal.options_cboe")
 
 _CBOE_OPTIONS_URL = "https://cdn.cboe.com/api/global/delayed_quotes/options/{ticker}.json"
+
+# Self-accumulated IV history from nightly snapshots.  Used to compute IV rank
+# without paying for historical options data (free-data path for §112).
+_OPTIONS_CACHE_DIR = Path(__file__).parent.parent / "data" / "cache_options"
+_OPTIONS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_IV_HISTORY_PATH = _OPTIONS_CACHE_DIR / "options_iv_history.parquet"
 
 
 def _parse_option_symbol(symbol: str, ticker: str) -> dict[str, Any] | None:
@@ -67,6 +74,78 @@ def _bs_gamma(S: float, K: float, T: float, sigma: float, r: float = 0.05) -> fl
         return math.exp(-(d1**2) / 2) / (math.sqrt(2 * math.pi) * S * sigma * math.sqrt(T))
     except Exception:
         return 0.0
+
+
+def _load_iv_history(ticker: str) -> list[tuple[date, float]]:
+    """Load past (snapshot_date, avg_iv) rows for ``ticker`` from the self-grown parquet."""
+    try:
+        import pandas as pd
+
+        if not _IV_HISTORY_PATH.exists():
+            return []
+        df = pd.read_parquet(_IV_HISTORY_PATH)
+        if df.empty or "ticker" not in df.columns or "avg_iv" not in df.columns:
+            return []
+        sub = df[df["ticker"] == ticker.upper()].copy()
+        if "date" in sub.columns:
+            sub["date"] = pd.to_datetime(sub["date"]).dt.date
+        else:
+            return []
+        sub = sub.sort_values("date")
+        return [(row["date"], float(row["avg_iv"])) for _, row in sub.iterrows() if pd.notna(row["avg_iv"])]
+    except Exception as exc:
+        log.debug("[cboe] IV history load failed: %s", exc)
+        return []
+
+
+def compute_iv_rank(
+    ticker: str,
+    as_of_date: date,
+    current_avg_iv: float | None,
+    lookback: int = 252,
+) -> float | None:
+    """Compute IV rank (0-100) from self-accumulated CBOE snapshot history.
+
+    Requires at least ``lookback`` prior observations before ``as_of_date``.
+    Returns None when history is insufficient or ``current_avg_iv`` is missing.
+    """
+    if current_avg_iv is None or current_avg_iv <= 0:
+        return None
+    history = _load_iv_history(ticker)
+    prior = [iv for d, iv in history if d < as_of_date]
+    if len(prior) < max(lookback, 30):
+        return None
+    window = prior[-lookback:]
+    if not window:
+        return None
+    low, high = min(window), max(window)
+    if high <= low:
+        return 50.0
+    return round((current_avg_iv - low) / (high - low) * 100.0, 2)
+
+
+def append_iv_history(ticker: str, snapshot_date: date, avg_iv: float | None) -> None:
+    """Append a new observation to the self-grown IV history parquet."""
+    if avg_iv is None or avg_iv <= 0:
+        return
+    try:
+        import pandas as pd
+
+        new_row = pd.DataFrame(
+            [{"ticker": ticker.upper(), "date": pd.Timestamp(snapshot_date), "avg_iv": float(avg_iv)}]
+        )
+        if _IV_HISTORY_PATH.exists():
+            existing = pd.read_parquet(_IV_HISTORY_PATH)
+            existing["date"] = pd.to_datetime(existing["date"])
+            combined = pd.concat([existing, new_row], ignore_index=True)
+            combined = combined.drop_duplicates(subset=["ticker", "date"], keep="last")
+        else:
+            combined = new_row
+        combined = combined.sort_values(["ticker", "date"]).reset_index(drop=True)
+        _IV_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        combined.to_parquet(_IV_HISTORY_PATH, index=False)
+    except Exception as exc:
+        log.warning("[cboe] failed to append IV history for %s: %s", ticker, exc)
 
 
 def _fetch_cboe_options_raw(ticker: str) -> dict[str, Any] | None:
@@ -310,7 +389,7 @@ def fetch_cboe_options_chain(
         "sweep_puts": sweep_puts[:3],
         "expiry": sorted_exps[0] if sorted_exps else None,
         "expiries_checked": len(sorted_exps),
-        "iv_rank": None,  # historical IV rank requires accumulated history
+        "iv_rank": compute_iv_rank(ticker, as_of_date, avg_iv),
         "skew_25d": skew_25d,
         "put_iv_25d": put_iv_25d,
         "call_iv_25d": call_iv_25d,
@@ -408,7 +487,7 @@ def build_options_chain_daily_row(
         "near_iv": near_iv,
         "far_iv": far_iv,
         "iv_term_spike": iv_term_spike,
-        "iv_rank": None,
+        "iv_rank": compute_iv_rank(ticker, snapshot_date, avg_iv),
         "skew_25d": skew_25d,
         "max_pain": max_pain,
         "net_gex": net_gex,

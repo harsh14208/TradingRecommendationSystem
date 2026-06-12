@@ -180,17 +180,24 @@ import zipfile
 
 
 def _compute_ftd_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute FTD 63d high-flag per ticker.
+    """Compute FTD 63d high-flag per ticker and 1-month velocity.
 
     Uses rolling 75th-percentile threshold (C-engine) instead of
     per-window rank() apply() which is O(n*w) in Python and hangs
     on millions of rows (~10k symbols × ~1.5k days).
+
+    ``ftd_pctile_chg_1m`` measures whether FTD pressure is accelerating
+    over the last ~21 trading days — a velocity feature for the cross-
+    sectional model that is less sparse than the binary high flag.
     """
     df = df.copy()
     df = df.sort_values(["symbol", "settlement_date"]).copy()
     # Fast C-engine rolling quantile → binary flag (0 or 100)
     _q75 = df.groupby("symbol")["ftd_shares"].rolling(63, min_periods=10).quantile(0.75).reset_index(level=0, drop=True)
     df = df.assign(ftd_63d_pctile=(df["ftd_shares"] >= _q75).astype(float) * 100)
+    # 1-month change in the percentile flag (bounded -100 to +100)
+    df = df.assign(ftd_pctile_chg_1m=df["ftd_63d_pctile"] - df.groupby("symbol")["ftd_63d_pctile"].shift(21))
+    df = df.assign(ftd_pctile_chg_1m=df["ftd_pctile_chg_1m"].fillna(0.0).clip(-100, 100))
     return df
 
 

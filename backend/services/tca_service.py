@@ -9,8 +9,11 @@ and checks trading capacity limits before executing orders.
 
 import logging
 import math
+import os
+from datetime import datetime, timedelta
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from models import BrokerOrder, Fill, Instrument
 
 log = logging.getLogger("signal.trade.tca")
@@ -19,6 +22,12 @@ log = logging.getLogger("signal.trade.tca")
 DEFAULT_SPREAD_PCT = 0.0010  # 10 bps
 DEFAULT_DAILY_VOL = 0.020  # 2.0%
 DEFAULT_ADV = 1_000_000  # 1M shares
+
+# Configurable edge / slippage threshold (bps).  The 120 bps edge is the strategy's
+# estimated mean-reversion gain; the threshold is the implementation-shortfall level
+# at which we start sizing down / blocking.
+TCA_EDGE_BPS = float(os.getenv("TCA_EDGE_BPS", "120.0"))
+TCA_SLIPPAGE_THRESHOLD_BPS = float(os.getenv("TCA_SLIPPAGE_THRESHOLD_BPS", "20.0"))
 
 
 async def record_fill_tca(db: AsyncSession, order: BrokerOrder, broker_order_data: dict) -> BrokerOrder:
@@ -117,10 +126,15 @@ def calculate_expected_slippage_bps(
     adv: float = DEFAULT_ADV,
     daily_vol: float = DEFAULT_DAILY_VOL,
     spread_pct: float = DEFAULT_SPREAD_PCT,
+    realized_slippage_bps: float | None = None,
 ) -> float:
     """
     QENG-3c: Almgren-Chriss Market Impact Model.
     Expected Slippage (bps) = 0.5 * Spread (bps) + Volatility * (Quantity / ADV)^0.5
+
+    If ``realized_slippage_bps`` is provided, the model returns the larger of the
+    Almgren-Chriss estimate and the realized average — empirical slippage becomes
+    a floor, not a replacement, for the theoretical estimate.
     """
     if adv <= 0:
         adv = DEFAULT_ADV
@@ -135,7 +149,32 @@ def calculate_expected_slippage_bps(
     half_spread_bps = 0.5 * spread_pct * 10000.0
     impact_bps = impact_coef * daily_vol * math.sqrt(participation) * 10000.0
 
-    return half_spread_bps + impact_bps
+    model_bps = half_spread_bps + impact_bps
+    if realized_slippage_bps is not None and realized_slippage_bps > model_bps:
+        return round(realized_slippage_bps, 2)
+    return round(model_bps, 2)
+
+
+async def fetch_avg_realized_slippage(
+    db: AsyncSession,
+    ticker: str,
+    lookback_days: int = 30,
+) -> float | None:
+    """Return the average realized slippage (bps) for ``ticker`` over the lookback."""
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+        stmt = (
+            select(func.avg(Fill.slippage_bps))
+            .join(BrokerOrder, Fill.broker_order_id == BrokerOrder.id)
+            .where(BrokerOrder.symbol == ticker.upper())
+            .where(Fill.filled_at >= cutoff)
+        )
+        res = await db.execute(stmt)
+        avg = res.scalar()
+        return float(avg) if avg is not None else None
+    except Exception as e:
+        log.debug("[tca] failed to fetch realized slippage for %s: %s", ticker, e)
+        return None
 
 
 async def check_capacity_limits(
@@ -159,12 +198,17 @@ async def check_capacity_limits(
         daily_vol = 0.018 if is_high_liquid else 0.035
         spread_pct = 0.0003 if is_high_liquid else 0.0018
 
-        # Calculate expected slippage
-        expected_slip = calculate_expected_slippage_bps(ticker, qty, arrival_price, adv, daily_vol, spread_pct)
+        # Blend in realized slippage history for this ticker, if any.
+        realized_slip = await fetch_avg_realized_slippage(db, ticker)
 
-        # Signal edge is roughly 120 bps
-        edge_bps = 120.0
-        slippage_threshold = 0.35 * edge_bps  # Maximum allowed slippage is 35% of the edge (42 bps)
+        # Calculate expected slippage
+        expected_slip = calculate_expected_slippage_bps(
+            ticker, qty, arrival_price, adv, daily_vol, spread_pct, realized_slippage_bps=realized_slip
+        )
+
+        # Signal edge and slippage threshold are configurable via environment.
+        edge_bps = TCA_EDGE_BPS
+        slippage_threshold = TCA_SLIPPAGE_THRESHOLD_BPS
 
         # Check participation rate limit: max 2% of ADV for any single order
         max_qty = adv * 0.02
@@ -177,7 +221,9 @@ async def check_capacity_limits(
             log.warning(
                 f"Capacity check: {ticker} order qty {qty:.0f} exceeds 2% ADV limit. Sizing down to {max_qty:.0f} shares."
             )
-            expected_slip = calculate_expected_slippage_bps(ticker, qty, arrival_price, adv, daily_vol, spread_pct)
+            expected_slip = calculate_expected_slippage_bps(
+                ticker, qty, arrival_price, adv, daily_vol, spread_pct, realized_slippage_bps=realized_slip
+            )
 
         if expected_slip > slippage_threshold:
             # Expected slippage consumes too much edge. Shrink further or block.

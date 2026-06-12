@@ -19,7 +19,7 @@ sys.path.insert(0, ".")
 
 from database import AsyncSessionLocal, _IS_POSTGRES  # noqa: E402
 from models import OptionsChainDaily  # noqa: E402
-from services.options_cboe import build_options_chain_daily_row  # noqa: E402
+from services.options_cboe import append_iv_history, build_options_chain_daily_row  # noqa: E402
 
 if _IS_POSTGRES:
     from sqlalchemy.dialects.postgresql import insert as dialect_insert
@@ -82,6 +82,8 @@ async def snapshot_ticker(db, ticker: str, snapshot_date: date) -> bool:
         )
         await db.execute(stmt)
         await db.commit()
+        # Keep the self-grown IV history parquet in sync with the DB snapshot.
+        append_iv_history(ticker, snapshot_date, row.get("avg_iv"))
         return True
     except Exception as exc:
         log.warning("[cboe snapshot] %s: failed — %s", ticker, exc)

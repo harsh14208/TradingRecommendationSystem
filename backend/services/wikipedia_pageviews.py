@@ -174,6 +174,13 @@ async def build_wikipedia_panel(
         return pd.DataFrame()
 
     panel = pd.concat(all_frames, ignore_index=True)
+    # Cross-sectional z-score within each date: how spiky is attention for a
+    # ticker relative to the whole pilot universe on that day?
+    panel = panel.assign(
+        views_z_xs=panel.groupby("date")["views_z"].transform(
+            lambda x: ((x - x.mean()) / x.std().replace(0, 1)).fillna(0.0)
+        )
+    )
     panel.to_parquet(_PANEL_PATH, index=False)
     if _PICKLE_PATH.exists():
         try:

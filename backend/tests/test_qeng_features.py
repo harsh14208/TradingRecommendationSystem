@@ -229,71 +229,120 @@ async def test_portfolio_hrp_allocations():
 
 
 @pytest.mark.asyncio
-async def test_portfolio_allocator_optimizations():
+async def test_portfolio_allocator_optimizations(monkeypatch):
     """Verify L7 nudge, Volatility sizing penalty, and Drawdown throttle logic."""
     from services.portfolio_allocator import allocate_portfolio
     from models import PnlDaily, User
     import datetime
+    import numpy as np
+    import pandas as pd
     from sqlalchemy import select
 
-    async with AsyncSessionLocal() as db:
-        # Create a test user with a high unique ID
-        user_id = 9999
-        res_u = await db.execute(select(User).where(User.id == user_id))
-        user = res_u.scalar_one_or_none()
-        if not user:
-            user = User(id=user_id, email="test_opt@signal.trade", password_hash="hash")
-            db.add(user)
+    import services.portfolio_allocator as pa
+
+    # Patch market-data and slippage lookups so the test is deterministic and not
+    # influenced by live-provider data or stale fills from other tests.
+    rng = np.random.default_rng(42)
+
+    async def _fake_histories_batch(tickers, period=None, interval=None):
+        frames = {}
+        for t in tickers:
+            n = 100
+            base = 150.0 if t == "AAPL" else 300.0
+            rets = rng.normal(0.0005, 0.015, n)
+            close = base * np.exp(np.cumsum(rets))
+            # Keep ATR% well below the 67th-percentile volatility threshold so the
+            # volatility sizing penalty is identical for both tickers.
+            high = close * 1.008
+            low = close * 0.992
+            open_ = close * (1.0 + rng.normal(0.0, 0.002, n))
+            frames[t] = pd.DataFrame(
+                {
+                    "Open": open_,
+                    "High": high,
+                    "Low": low,
+                    "Close": close,
+                    "Volume": np.full(n, 1_000_000.0),
+                }
+            )
+        return frames
+
+    async def _fake_slippage_avg(db, lookback_days=30):
+        return {}
+
+    monkeypatch.setattr(pa, "get_histories_batch", _fake_histories_batch)
+    monkeypatch.setattr(pa, "fetch_realized_slippage_avg", _fake_slippage_avg)
+
+    # Raise the per-stock cap so the L7 nudge is not clamped by MAX_SINGLE_STOCK
+    # when only two tickers are in the test book.
+    original_max_single = pa.MAX_SINGLE_STOCK
+    pa.MAX_SINGLE_STOCK = 1.0
+
+    try:
+        async with AsyncSessionLocal() as db:
+            # Create a test user with a high unique ID
+            user_id = 9999
+            res_u = await db.execute(select(User).where(User.id == user_id))
+            user = res_u.scalar_one_or_none()
+            if not user:
+                user = User(id=user_id, email="test_opt@signal.trade", password_hash="hash")
+                db.add(user)
+                await db.flush()
+
+            # 1. Setup Drawdown Throttle (Peak equity = 20,000, current cash = 10,000 -> 50% DD)
+            today = datetime.date.today()
+            peak_pnl = PnlDaily(
+                user_id=user_id,
+                date=today - datetime.timedelta(days=1),
+                equity=20000.0,
+                cash=20000.0,
+                realized_pnl=0.0,
+                unrealized_pnl=0.0,
+                n_positions=0,
+            )
+            db.add(peak_pnl)
             await db.flush()
 
-        # 1. Setup Drawdown Throttle (Peak equity = 20,000, current cash = 10,000 -> 50% DD)
-        today = datetime.date.today()
-        peak_pnl = PnlDaily(
-            user_id=user_id,
-            date=today - datetime.timedelta(days=1),
-            equity=20000.0,
-            cash=20000.0,
-            realized_pnl=0.0,
-            unrealized_pnl=0.0,
-            n_positions=0,
-        )
-        db.add(peak_pnl)
-        await db.flush()
+            # AAPL and MSFT signals (AAPL has higher raw_score -> should get higher L7 nudge weight)
+            active_signals = [
+                {"ticker": "AAPL", "sectorEtf": "XLK", "id": 1, "entry": 150.0, "raw_score": 100.0},
+                {"ticker": "MSFT", "sectorEtf": "XLK", "id": 2, "entry": 300.0, "raw_score": 10.0},
+            ]
 
-        # AAPL and MSFT signals (AAPL has higher raw_score -> should get higher L7 nudge weight)
-        active_signals = [
-            {"ticker": "AAPL", "sectorEtf": "XLK", "id": 1, "entry": 150.0, "raw_score": 80.0},
-            {"ticker": "MSFT", "sectorEtf": "XLK", "id": 2, "entry": 300.0, "raw_score": 50.0},
-        ]
+            orders_diff = await allocate_portfolio(
+                db, user_id=user_id, active_signals=active_signals, total_cash=10000.0
+            )
+            assert len(orders_diff) > 0
+            aapl_diff = next(o["target_weight"] for o in orders_diff if o["ticker"] == "AAPL")
+            msft_diff = next(o["target_weight"] for o in orders_diff if o["ticker"] == "MSFT")
+            ratio_diff = aapl_diff / msft_diff
 
-        # Test Case A: AAPL raw_score = 80, MSFT raw_score = 50
-        orders_diff = await allocate_portfolio(db, user_id=user_id, active_signals=active_signals, total_cash=10000.0)
-        assert len(orders_diff) > 0
-        aapl_diff = next(o["target_weight"] for o in orders_diff if o["ticker"] == "AAPL")
-        msft_diff = next(o["target_weight"] for o in orders_diff if o["ticker"] == "MSFT")
-        ratio_diff = aapl_diff / msft_diff
+            # Test Case B: Both have raw_score = 50
+            active_signals_eq = [
+                {"ticker": "AAPL", "sectorEtf": "XLK", "id": 1, "entry": 150.0, "raw_score": 50.0},
+                {"ticker": "MSFT", "sectorEtf": "XLK", "id": 2, "entry": 300.0, "raw_score": 50.0},
+            ]
+            orders_eq = await allocate_portfolio(
+                db, user_id=user_id, active_signals=active_signals_eq, total_cash=10000.0
+            )
+            aapl_eq = next(o["target_weight"] for o in orders_eq if o["ticker"] == "AAPL")
+            msft_eq = next(o["target_weight"] for o in orders_eq if o["ticker"] == "MSFT")
+            ratio_eq = aapl_eq / msft_eq
 
-        # Test Case B: Both have raw_score = 50
-        active_signals_eq = [
-            {"ticker": "AAPL", "sectorEtf": "XLK", "id": 1, "entry": 150.0, "raw_score": 50.0},
-            {"ticker": "MSFT", "sectorEtf": "XLK", "id": 2, "entry": 300.0, "raw_score": 50.0},
-        ]
-        orders_eq = await allocate_portfolio(db, user_id=user_id, active_signals=active_signals_eq, total_cash=10000.0)
-        aapl_eq = next(o["target_weight"] for o in orders_eq if o["ticker"] == "AAPL")
-        msft_eq = next(o["target_weight"] for o in orders_eq if o["ticker"] == "MSFT")
-        ratio_eq = aapl_eq / msft_eq
+            # 2. Verify L7 nudge: AAPL ratio should be higher when it has a higher score
+            assert ratio_diff > ratio_eq
 
-        # 2. Verify L7 nudge: AAPL ratio should be higher when it has a higher score
-        assert ratio_diff > ratio_eq
+            # 3. Verify Drawdown throttle: total target weights should be scaled down by 0.5
+            total_target_w = aapl_diff + msft_diff
+            assert total_target_w < 0.6  # HRP baseline sums to ~1.0, scaled down to ~0.5 under drawdown
 
-        # 3. Verify Drawdown throttle: total target weights should be scaled down by 0.5
-        total_target_w = aapl_diff + msft_diff
-        assert total_target_w < 0.6  # HRP baseline sums to ~1.0, scaled down to ~0.5 under drawdown
+            # Clean up
+            await db.delete(peak_pnl)
+            await db.delete(user)
+            await db.commit()
 
-        # Clean up
-        await db.delete(peak_pnl)
-        await db.delete(user)
-        await db.commit()
+    finally:
+        pa.MAX_SINGLE_STOCK = original_max_single
 
 
 @pytest.mark.asyncio

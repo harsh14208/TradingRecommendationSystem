@@ -631,6 +631,7 @@ def build_panel(
     use_short_interest: bool = False,
     use_simfin: bool = False,
     use_finra_sv: bool = False,
+    use_finra_ats: bool = False,
     use_sec_ftd: bool = False,
     use_naaim: bool = False,
     use_gdelt: bool = False,
@@ -726,6 +727,32 @@ def build_panel(
         if "sv_ratio" not in panel.columns:
             raise RuntimeError("--finra-sv requested but no short_volume panel found/loaded")
 
+    if use_finra_ats:
+        try:
+            from services.finra_ats_dark_pool import load_ats_panel
+
+            _ats = load_ats_panel()
+            if _ats is not None and not _ats.empty:
+                _ats["week_start_date"] = pd.to_datetime(_ats["week_start_date"]) + pd.Timedelta(days=14)
+                # PIT discipline: FINRA ATS has a ~2-week publication lag.
+                panel = pd.merge_asof(
+                    panel.sort_values("date"),
+                    _ats[["week_start_date", "ticker", "ats_ratio"]]
+                    .rename(columns={"week_start_date": "date"})
+                    .sort_values("date"),
+                    on="date",
+                    by="ticker",
+                    direction="backward",
+                )
+                if "ats_ratio" not in RAW_FEATURE_COLS:
+                    RAW_FEATURE_COLS.append("ats_ratio")
+                print(f"  FINRA ATS merged: {panel['ats_ratio'].notna().mean():.0%} coverage")
+        except Exception as e:
+            print(f"  FINRA ATS merge failed: {e}")
+            raise RuntimeError(f"--finra-ats requested but merge failed: {e}") from e
+        if "ats_ratio" not in panel.columns:
+            raise RuntimeError("--finra-ats requested but no ATS panel found/loaded")
+
     if use_sec_ftd:
         try:
             from services.sec_ftd import load_ftd_panel
@@ -735,15 +762,16 @@ def build_panel(
                 _ftd["effective_date"] = pd.to_datetime(_ftd["effective_date"])
                 panel = pd.merge_asof(
                     panel.sort_values("date"),
-                    _ftd[["effective_date", "ticker", "ftd_63d_pctile"]]
+                    _ftd[["effective_date", "ticker", "ftd_63d_pctile", "ftd_pctile_chg_1m"]]
                     .rename(columns={"effective_date": "date"})
                     .sort_values("date"),
                     on="date",
                     by="ticker",
                     direction="backward",
                 )
-                if "ftd_63d_pctile" not in RAW_FEATURE_COLS:
-                    RAW_FEATURE_COLS.append("ftd_63d_pctile")
+                for c in ("ftd_63d_pctile", "ftd_pctile_chg_1m"):
+                    if c not in RAW_FEATURE_COLS:
+                        RAW_FEATURE_COLS.append(c)
                 print(f"  SEC FTD merged: {panel['ftd_63d_pctile'].notna().mean():.0%} coverage")
         except Exception as e:
             print(f"  SEC FTD merge failed: {e}")
@@ -761,21 +789,29 @@ def build_panel(
             if _umcsent is not None and not _umcsent.empty:
                 _umcsent["date"] = pd.to_datetime(_umcsent["date"])
                 panel = pd.merge_asof(
-                    panel.sort_values("date"), _umcsent[["date", "umcsent"]], on="date", direction="backward"
+                    panel.sort_values("date"),
+                    _umcsent[["date", "umcsent", "umcsent_pctile"]],
+                    on="date",
+                    direction="backward",
                 )
-                if "umcsent" not in RAW_FEATURE_COLS:
-                    RAW_FEATURE_COLS.append("umcsent")
-                if "umcsent" not in MARKET_WIDE_FEATURE_COLS:
-                    MARKET_WIDE_FEATURE_COLS.append("umcsent")
+                for c in ("umcsent", "umcsent_pctile"):
+                    if c not in RAW_FEATURE_COLS:
+                        RAW_FEATURE_COLS.append(c)
+                    if c not in MARKET_WIDE_FEATURE_COLS:
+                        MARKET_WIDE_FEATURE_COLS.append(c)
             if _naaim is not None and not _naaim.empty:
                 _naaim["date"] = pd.to_datetime(_naaim["date"])
                 panel = pd.merge_asof(
-                    panel.sort_values("date"), _naaim[["date", "naaim_exposure"]], on="date", direction="backward"
+                    panel.sort_values("date"),
+                    _naaim[["date", "naaim_exposure", "naaim_exposure_pctile"]],
+                    on="date",
+                    direction="backward",
                 )
-                if "naaim_exposure" not in RAW_FEATURE_COLS:
-                    RAW_FEATURE_COLS.append("naaim_exposure")
-                if "naaim_exposure" not in MARKET_WIDE_FEATURE_COLS:
-                    MARKET_WIDE_FEATURE_COLS.append("naaim_exposure")
+                for c in ("naaim_exposure", "naaim_exposure_pctile"):
+                    if c not in RAW_FEATURE_COLS:
+                        RAW_FEATURE_COLS.append(c)
+                    if c not in MARKET_WIDE_FEATURE_COLS:
+                        MARKET_WIDE_FEATURE_COLS.append(c)
             if _aaii is not None and not _aaii.empty:
                 _aaii["date"] = pd.to_datetime(_aaii["date"])
                 panel = pd.merge_asof(
@@ -810,13 +846,14 @@ def build_panel(
                 # the day ends, so they are tradable from T+1 onward.
                 panel = pd.merge_asof(
                     panel.sort_values("date"),
-                    _wiki[["date", "ticker", "views_z"]].sort_values("date"),
+                    _wiki[["date", "ticker", "views_z", "views_z_xs"]].sort_values("date"),
                     on="date",
                     by="ticker",
                     direction="backward",
                 )
-                if "views_z" not in RAW_FEATURE_COLS:
-                    RAW_FEATURE_COLS.append("views_z")
+                for c in ("views_z", "views_z_xs"):
+                    if c not in RAW_FEATURE_COLS:
+                        RAW_FEATURE_COLS.append(c)
                 print(f"  Wikipedia merged: {panel['views_z'].notna().mean():.0%} coverage")
         except Exception as e:
             print(f"  Wikipedia merge failed: {e}")
@@ -1310,6 +1347,7 @@ def _prepare_panel(args) -> tuple[pd.DataFrame, list[str]]:
         use_short_interest=args.short_interest,
         use_simfin=args.simfin,
         use_finra_sv=args.finra_sv,
+        use_finra_ats=args.finra_ats,
         use_sec_ftd=args.sec_ftd,
         use_naaim=args.naaim,
         use_gdelt=args.gdelt,
@@ -1594,7 +1632,8 @@ def main() -> None:
     ap.add_argument(
         "--finra-sv", action="store_true", help="add FINRA short-volume features (sv_ratio, sv_ratio_5d_delta)"
     )
-    ap.add_argument("--sec-ftd", action="store_true", help="add SEC FTD features (ftd_63d_pctile)")
+    ap.add_argument("--finra-ats", action="store_true", help="add FINRA ATS dark-pool weekly features (ats_ratio)")
+    ap.add_argument("--sec-ftd", action="store_true", help="add SEC FTD features (ftd_63d_pctile, ftd_pctile_chg_1m)")
     ap.add_argument("--naaim", action="store_true", help="add NAAIM/AAII sentiment features")
     ap.add_argument("--gdelt", action="store_true", help="add GDELT news-tone features (bounded pilot)")
     ap.add_argument("--wiki", action="store_true", help="add Wikipedia pageview features")
