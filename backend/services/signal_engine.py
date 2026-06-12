@@ -1297,7 +1297,8 @@ async def generate_signal(
                 if not liquidity_ceiling:
                     score += 4  # mild outperformance still a positive signal
             elif rel_strength < -8:
-                score -= 12
+                if not liquidity_ceiling:
+                    score -= 12
                 sources.add("Relative Strength")
                 rationale.append(
                     {
@@ -1312,7 +1313,8 @@ async def generate_signal(
                     }
                 )
             elif rel_strength < -2:
-                score -= 5  # mild underperformance is a negative signal
+                if not liquidity_ceiling:
+                    score -= 5  # mild underperformance is a negative signal
             # Confidence penalty only for persistent underperformers (> -5% vs SPY).
             # The -2% to -5% band is already captured by the score -= 5 above; the
             # confidence penalty here is reserved for meaningful sustained lagging.
@@ -3009,7 +3011,7 @@ async def generate_signal(
         ichi_cloud_bot = tech.get("ichi_cloud_bot")
         ichi_cloud_bull = tech.get("ichi_cloud_bull")
         ichi_chikou = tech.get("ichi_chikou_above")
-        if ichi_tenkan and ichi_kijun:
+        if ichi_tenkan is not None and ichi_kijun is not None:
             sources.add("Technical")
             # Tenkan/Kijun cross
             if ichi_tenkan_p and ichi_kijun_p and ichi_tenkan_p <= ichi_kijun_p and ichi_tenkan > ichi_kijun:
@@ -3226,7 +3228,7 @@ async def generate_signal(
         if vwap_slope_pos is not None and vwap_20 is not None and vwap_pct is not None:
             sources.add("Technical")
             if vwap_slope_pos and vwap_pct > 0:
-                ma_score += 6
+                score += 6
                 rationale.append(
                     {
                         "src": "Technical",
@@ -3241,7 +3243,7 @@ async def generate_signal(
                     }
                 )
             elif not vwap_slope_pos and vwap_pct < 0:
-                ma_score -= 5
+                score -= 5
                 rationale.append(
                     {
                         "src": "Technical",
@@ -3338,7 +3340,7 @@ async def generate_signal(
         if vwap_pct is not None and _vwap_pct_prev is not None and _rvol_now >= 2.0 and vwap_20 is not None:
             sources.add("Technical")
             if _vwap_pct_prev < 0 <= vwap_pct:
-                ma_score += 16
+                score += 16
                 rationale.append(
                     {
                         "src": "Technical",
@@ -3353,7 +3355,7 @@ async def generate_signal(
                     }
                 )
             elif _vwap_pct_prev > 0 >= vwap_pct:
-                ma_score -= 14
+                score -= 14
                 rationale.append(
                     {
                         "src": "Technical",
@@ -3786,74 +3788,10 @@ async def generate_signal(
                     }
                 )
 
-        # ── VIX Term Structure (from macro context) ──────────────────────────
-        vix_ratio = (market_ctx or {}).get("macro", {}).get("vix_term_ratio") if market_ctx else None
-        if vix_ratio is None and market_ctx:
-            vix_ratio = (market_ctx.get("macro") or {}).get("vix_term_ratio")
-
-        # ── VIX9D — Near-Term Event Risk ─────────────────────────────────────
-        action, confidence = _score_to_action(score)  # re-evaluate after all mid-scoring overrides
+        # ── VIX9D / MOVE / STLFSI4 macro confidence adjustments ──────────────
+        # These are applied inside _assemble_signal after the base confidence is
+        # computed, so they are not overwritten by the assembler's _score_to_action.
         _macro_now = (market_ctx or {}).get("macro") or {}
-        _vix9d_ratio = _macro_now.get("vix9d_ratio")
-        if _vix9d_ratio is not None and _vix9d_ratio > 1.10 and action in ("BUY", "SELL"):
-            _vix9d = _macro_now.get("vix9d", 0)
-            confidence = round(max(35.0, confidence - 4), 1)
-            sources.add("Macro")
-            rationale.append(
-                {
-                    "src": "Macro",
-                    "head": f"Near-Term Event Risk (VIX9D/VIX {_vix9d_ratio:.2f}×) — Confidence −4pp",
-                    "body": (
-                        f"9-day VIX ({_vix9d:.1f}) is {_vix9d_ratio:.2f}× the spot VIX. "
-                        "Near-term options demand is concentrated — a known upcoming event (earnings, "
-                        "FOMC, CPI) is distorting short-horizon signals. Wait for post-event clarity "
-                        "before acting on this signal."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"VIX9D/VIX = {_vix9d_ratio:.2f}×",
-                }
-            )
-
-        # ── MOVE Index — Bond Market Stress ──────────────────────────────────
-        _move = _macro_now.get("move")
-        if _move is not None and _move > 140 and action == "BUY":
-            confidence = round(max(35.0, confidence - 5), 1)
-            sources.add("Macro")
-            rationale.append(
-                {
-                    "src": "Macro",
-                    "head": f"Treasury Vol Stress (MOVE {_move:.0f}) — Confidence −5pp",
-                    "body": (
-                        f"CBOE MOVE Index at {_move:.0f} — bond market implied vol is highly elevated. "
-                        "Elevated MOVE historically leads equity drawdowns by 2–3 weeks. "
-                        "Reduce position sizing until MOVE normalises below 120."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"^MOVE = {_move:.0f}",
-                }
-            )
-
-        # ── STLFSI4 — Financial Stress (macro signal into single-stock) ───────
-        # Already scored globally in macro.py; here we apply a confidence cap
-        # when stress is extreme to prevent overconfident single-stock BUYs.
-        _stlfsi = _macro_now.get("stlfsi")
-        if _stlfsi is not None and _stlfsi > 1.0 and action == "BUY":
-            confidence = round(min(confidence, 58.0), 1)
-            sources.add("Macro")
-            rationale.append(
-                {
-                    "src": "Macro",
-                    "head": f"Financial Stress Override (STLFSI4 {_stlfsi:+.2f}) — BUY Cap 58%",
-                    "body": (
-                        f"St. Louis Financial Stress Index at {_stlfsi:+.2f} (>1.0 = crisis). "
-                        "In high-stress regimes, even strong individual-stock setups frequently fail "
-                        "because correlated forced selling overrides fundamentals. BUY confidence "
-                        "capped at 58% until FSI returns below 0.5."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"STLFSI4 = {_stlfsi:+.3f}",
-                }
-            )
 
         # ── Consumer Sentiment Sector Penalty (UMCSENT) ───────────────────────
         _umcsent = _macro_now.get("umcsent")
@@ -5430,11 +5368,18 @@ async def generate_signal(
                 _ofi_bb = tech.get("bb_pct_b")
                 _ofi_ibs = tech.get("ibs")
                 _ofi_vwap = tech.get("vwap_pct")
+                _ofi_rsi = tech.get("rsi")
+                _ofi_rsi_trig = float(_ofi_rsi if _ofi_rsi is not None else 50) < 42
                 _ofi_has_mr = (
-                    float(tech.get("rsi") or 50) < 42
-                    or (_ofi_bb is not None and float(_ofi_bb) < 0.22)
-                    or (_ofi_ibs is not None and float(_ofi_ibs) < 0.15)
-                    or (_ofi_vwap is not None and float(_ofi_vwap) < -0.75)
+                    sum(
+                        [
+                            _ofi_rsi_trig,
+                            _ofi_bb is not None and float(_ofi_bb) < 0.22,
+                            _ofi_ibs is not None and float(_ofi_ibs) < 0.15,
+                            _ofi_vwap is not None and float(_ofi_vwap) < -0.75,
+                        ]
+                    )
+                    >= 2
                 )
                 if _ofi_has_mr and action == "BUY":
                     if _ofi_div > 0.10:

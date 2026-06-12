@@ -403,6 +403,9 @@ def add_short_interest_features(panel: pd.DataFrame, si: pd.DataFrame) -> pd.Dat
     if si.empty:
         return panel
     si = si.sort_values(["ticker", "date"]).copy()
+    # FINRA short-interest settlement data is published with a ~2-day lag;
+    # shift the usable date forward so we never trade on unpublished reports.
+    si["date"] = si["date"] + pd.Timedelta(days=2)
     g = si.groupby("ticker")
     si["si_chg_1"] = g["short_interest"].pct_change(1)
     si["si_chg_3"] = g["short_interest"].pct_change(3)
@@ -631,9 +634,7 @@ def build_panel(
     use_sec_ftd: bool = False,
     use_naaim: bool = False,
     use_gdelt: bool = False,
-    use_finra_ats: bool = False,
     use_wiki: bool = False,
-    use_occ: bool = False,
     use_placebo: bool = False,
     placebo_seed: int = 42,
     min_price: float = 5.0,
@@ -1312,9 +1313,7 @@ def _prepare_panel(args) -> tuple[pd.DataFrame, list[str]]:
         use_sec_ftd=args.sec_ftd,
         use_naaim=args.naaim,
         use_gdelt=args.gdelt,
-        use_finra_ats=args.finra_ats,
         use_wiki=args.wiki,
-        use_occ=args.occ,
         use_placebo=args.placebo,
         placebo_seed=args.placebo_seed,
         min_price=args.min_price,
@@ -1598,9 +1597,7 @@ def main() -> None:
     ap.add_argument("--sec-ftd", action="store_true", help="add SEC FTD features (ftd_63d_pctile)")
     ap.add_argument("--naaim", action="store_true", help="add NAAIM/AAII sentiment features")
     ap.add_argument("--gdelt", action="store_true", help="add GDELT news-tone features (bounded pilot)")
-    ap.add_argument("--finra-ats", action="store_true", help="add FINRA ATS dark-pool features")
     ap.add_argument("--wiki", action="store_true", help="add Wikipedia pageview features")
-    ap.add_argument("--occ", action="store_true", help="add OCC volume/OI features")
     ap.add_argument("--placebo", action="store_true", help="add 3 pure-noise features to measure harness noise floor")
     ap.add_argument("--placebo-seed", type=int, default=42, help="seed for placebo noise (default 42)")
     ap.add_argument(

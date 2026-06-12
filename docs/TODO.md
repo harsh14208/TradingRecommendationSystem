@@ -92,6 +92,20 @@ All sources verified free as of 2026-06. Selection criteria: orthogonal to price
 
 **Explicitly rejected after research** (so they don't get re-proposed): CBOE put/call CSVs (403'd, DataShop-only — known since 2026-06-08), Google Trends (rescaling/quota artifacts make panels non-reproducible; Wikipedia pageviews dominate it), 13F-based ownership (quarterly + 45d lag — horizon mismatch, already deferred), IEX HIST pcap files (free but parsing cost ≫ value for daily signals), iBorrowDesk borrow fees (unofficial scrape, spotty history — revisit only if §104/§105 confirm the squeeze-fuel channel).
 
+### Next-best alpha-improvement candidates — §112–§119 (added 2026-06-12, post-audit)
+These items surfaced from the remaining audit gaps and an external deep-dive. They are ranked by expected deployability and independence from the spent OHLCV parameter space. The same research discipline applies: pre-registered hypothesis, walk-forward per-fold, live shadow accrual before promotion, and PIT lags enforced.
+
+- [ ] **§112. Options implied-volatility surface history via CBOE snapshot accumulation.** Once 3–6 months of nightly `options_chain_daily` rows exist, test IV-rank/IVRP as a sizing tilt for MR entries. This is the free-data path that reduces the question the paid §98 ORATS month must answer to *deep IV history only*.
+- [ ] **§113. FINRA ATS dark-pool weekly institutional participation.** Use the unauthenticated FINRA Query API (`POST https://api.finra.org/data/group/otcMarket/name/weeklySummary`). The ~2-week publication lag makes this a slow regime/quality feature for L8-style sizing, not an entry trigger.
+- [ ] **§114. SEC fails-to-deliver (FTD) panel 2004–now.** Free, full-history; lag by publication date; reuse in the cross-sectional model where breadth gives N, or as a per-trade risk-off context once N≥30 forward signals accumulate.
+- [ ] **§115. NAAIM weekly exposure + UMCSENT regime sizing.** Free since-inception NAAIM xlsx; test bottom-quintile exposure as capitulation-confirmation sizing tilt. UMCSENT already backfilled; both must be lagged to release day.
+- [ ] **§116. Wikipedia pageviews attention spike.** Wikimedia REST API, 2015+; test oversold + pageview spike as retail-panic sizing context. Already integrated in the cross-sectional harness; needs per-trade ablation with corrected PIT lag.
+- [ ] **§117. Sector-specific XGBoost models for blocked sectors (XLF/XLP/XLU/XLI).** Unblock only when a sector model clears the same promotion gates as the global model. Reuses existing ML-2 infrastructure.
+- [ ] **§118. Live realized-spread TCA feedback loop.** Feed `tca_service` slippage back into `portfolio_allocator` to size down names with expected implementation shortfall > 20bps.
+- [ ] **§119. Point-in-time survivorship-bias correction.** Paid EODHD/Norgate path; required before claiming IS/OOS above 8/10 rating.
+
+**Critical invariant:** the IS Sharpe ceiling appears spent (Deflated Sharpe fails at 744 trials). Future edge must come from orthogonal data (options flow, short-interest velocity, cross-sectional ranking) or execution cost reduction, not more OHLCV parameter sweeps.
+
 ### Next Sharpe×N agenda — §87–§94 (added 2026-06-10)
 Goal: raise Sharpe while holding or growing trade count. Ordering reflects expected value ÷ effort.
 **Guardrails (hard-won, from §83 / exit-sweep / §86 per-fold lessons):** (1) prefer **sizing over filtering** — sizing is the only lever that has repeatedly added Sharpe at zero N cost (L7 +0.05, L8 +0.06, score-band +0.05); filters that lift per-trade Sharpe almost always lose it back through √N (ATR≤70 trap). (2) Judge changes on **per-trade Sharpe + CAGR + MaxDD**, never portfolio ANN Sharpe (event-time annualization rewards turnover; the exit-sweep "winner" was an artifact). (3) **Per-fold walk-forward** before believing any aggregate number (the §86 SI feature sold a false dawn one fold wide). (4) Per-sector application over global gates (LEARNINGS insight #5).

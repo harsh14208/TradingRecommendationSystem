@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.market_data import get_info
+from services.telegram_svc import send_telegram_message
 
 log = logging.getLogger("signal.trade.alerts")
 
@@ -47,7 +48,7 @@ async def evaluate_price_alerts(db: AsyncSession):
                     user = await db.get(User, alert.user_id)
                     if user and user.telegram_chat_id:
                         msg = f"🔔 *PRICE ALERT* 🔔\n\n{ticker} has crossed your target of ${alert.target_price:.2f}. Current price: ${current_price:.2f}."
-                        # Logic to trigger Telegram or push notification here
+                        await send_telegram_message(str(user.telegram_chat_id), msg)
                     alert.is_active = False  # Deactivate after triggering
         except Exception as e:
             log.error(f"Failed to evaluate alert for {ticker}: {e}")

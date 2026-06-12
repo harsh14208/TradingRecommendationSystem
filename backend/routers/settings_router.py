@@ -1,6 +1,7 @@
 from database import get_db
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from models import AppSettings, User
+from pydantic import BaseModel, field_validator
 from services.auth_svc import get_current_user
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +13,7 @@ import json
 import ssl
 import certifi
 import aiohttp
-from config import get_settings as get_app_settings
+from urllib.parse import urlparse
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -37,8 +38,26 @@ async def get_settings(db: AsyncSession = Depends(get_db), _user: User = Depends
     return {**_DEFAULTS, **(row.data or {})} if row else _DEFAULTS
 
 
+class AppSettingsUpdate(BaseModel):
+    data: dict
+
+    @field_validator("data")
+    @classmethod
+    def _reasonable_size(cls, v: dict) -> dict:
+        if len(str(v)) > 50_000:
+            raise ValueError("Settings payload too large")
+        return v
+
+
 @router.put("")
-async def save_settings(data: dict, db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
+async def save_settings(
+    body: AppSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not user.is_owner:
+        raise HTTPException(status_code=403, detail="Owner access required.")
+    data = body.data
     row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
     if row is None:
         db.add(AppSettings(id=1, data=data))
@@ -74,8 +93,14 @@ async def test_webhook(db: AsyncSession = Depends(get_db), user: User = Depends(
     if not db_user.webhook_url:
         return {"ok": False, "error": "No webhook URL configured."}
 
-    # Retrieve secret (or default to app settings secret if none configured yet)
-    secret = (db_user.webhook_secret or get_app_settings().jwt_secret or "").encode()
+    # Validate webhook URL before posting (SSRF guard)
+    parsed = urlparse(db_user.webhook_url)
+    if parsed.scheme not in ("https",) or not parsed.hostname:
+        return {"ok": False, "error": "Webhook URL must be a valid https URL."}
+
+    secret = (db_user.webhook_secret or "").encode()
+    if not secret:
+        return {"ok": False, "error": "No webhook secret configured."}
 
     test_payload = {
         "event": "test",
@@ -96,6 +121,7 @@ async def test_webhook(db: AsyncSession = Depends(get_db), user: User = Depends(
                 headers={"Content-Type": "application/json", "X-Signal-Trade-Signature": sig_hdr},
                 ssl=ssl_ctx,
                 timeout=aiohttp.ClientTimeout(total=5),
+                allow_redirects=False,
             ) as resp:
                 resp_text = await resp.text()
                 return {

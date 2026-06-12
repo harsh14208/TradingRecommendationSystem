@@ -50,9 +50,10 @@ def _parse_option_symbol(symbol: str, ticker: str) -> dict[str, Any] | None:
         return None
 
 
-def _days_to_expiry(exp: date) -> float:
+def _days_to_expiry(exp: date, as_of: date | None = None) -> float:
     """Return T in years; minimum one day."""
-    return max((exp - date.today()).days, 1) / 365.0
+    as_of = as_of or date.today()
+    return max((exp - as_of).days, 1) / 365.0
 
 
 def _bs_gamma(S: float, K: float, T: float, sigma: float, r: float = 0.05) -> float:
@@ -85,7 +86,12 @@ def _fetch_cboe_options_raw(ticker: str) -> dict[str, Any] | None:
         return None
 
 
-def _normalize_contracts(ticker: str, raw_options: list[dict[str, Any]], spot: float) -> list[dict[str, Any]]:
+def _normalize_contracts(
+    ticker: str,
+    raw_options: list[dict[str, Any]],
+    spot: float,
+    as_of_date: date | None = None,
+) -> list[dict[str, Any]]:
     """Normalize CBOE option rows into a uniform contract dict."""
     contracts: list[dict[str, Any]] = []
     for opt in raw_options:
@@ -121,7 +127,7 @@ def _normalize_contracts(ticker: str, raw_options: list[dict[str, Any]], spot: f
                 "option_type": parsed["option_type"],
                 "strike": parsed["strike"],
                 "expiration_date": parsed["expiration_date"].isoformat(),
-                "days_to_expiry": round(_days_to_expiry(parsed["expiration_date"]), 4),
+                "days_to_expiry": round(_days_to_expiry(parsed["expiration_date"], as_of_date), 4),
                 "bid": float(bid) if bid is not None else None,
                 "ask": float(ask) if ask is not None else None,
                 "mid": mid,
@@ -165,6 +171,7 @@ def _compute_max_pain(contracts: list[dict[str, Any]], spot: float) -> float | N
 def fetch_cboe_options_chain(
     ticker: str,
     payload: dict[str, Any] | None = None,
+    as_of_date: date | None = None,
 ) -> dict[str, Any] | None:
     """Fetch and aggregate CBOE options chain for use as a live fallback.
 
@@ -172,7 +179,9 @@ def fetch_cboe_options_chain(
     so it can be dropped into ``_fetch_options`` without downstream changes.
 
     ``payload`` is exposed for unit tests; when None the CBOE endpoint is hit.
+    ``as_of_date`` is used for DTE and zero-DTE calculations (defaults to today).
     """
+    as_of_date = as_of_date or date.today()
     if payload is None:
         payload = _fetch_cboe_options_raw(ticker)
     if not payload:
@@ -189,7 +198,7 @@ def fetch_cboe_options_chain(
     except Exception:
         spot = None
 
-    contracts = _normalize_contracts(ticker, raw_options, spot or 0.0)
+    contracts = _normalize_contracts(ticker, raw_options, spot or 0.0, as_of_date)
     if not contracts:
         return None
 
@@ -274,7 +283,7 @@ def fetch_cboe_options_chain(
     delta_flow_ratio = round(net_delta_flow / (total_vol * 100), 3) if total_vol > 0 else None
 
     # Zero-DTE put ratio
-    today_str = date.today().isoformat()
+    today_str = as_of_date.isoformat()
     zero_dte_puts = [p for p in puts if p["expiration_date"] == today_str]
     zero_dte_calls = [c for c in calls if c["expiration_date"] == today_str]
     zero_dte_ratio = (
@@ -324,6 +333,7 @@ def build_options_chain_daily_row(
     """Build a dict suitable for upserting into ``OptionsChainDaily``.
 
     If ``payload`` is None, the CBOE endpoint is fetched fresh.
+    ``snapshot_date`` is used for all date-relative calculations.
     """
     if payload is None:
         payload = _fetch_cboe_options_raw(ticker)
@@ -341,7 +351,7 @@ def build_options_chain_daily_row(
     except Exception:
         spot = None
 
-    contracts = _normalize_contracts(ticker, raw_options, spot or 0.0)
+    contracts = _normalize_contracts(ticker, raw_options, spot or 0.0, snapshot_date)
     if not contracts:
         return None
 

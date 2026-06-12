@@ -379,4 +379,11 @@ async def get_institutional_signals(watchlist: list[str]) -> list[dict]:
             }
         )
 
+    if aggregated:
+        covered = len({r["ticker"] for r in aggregated})
+        log.info(
+            "[13F] produced signals for %s/%s watchlist tickers; CUSIP map coverage is limited",
+            covered,
+            len(watchlist_set),
+        )
     return aggregated

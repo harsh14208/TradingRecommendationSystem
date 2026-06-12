@@ -99,7 +99,12 @@ async def _get_cik(ticker: str) -> Optional[str]:
 
 
 def _parse_form4(xml_text: str) -> tuple[int, int, float, float]:
-    """Return (buy_shares, sell_shares, buy_value, sell_value)."""
+    """Return (buy_shares, sell_shares, buy_value, sell_value).
+
+    Counts only open-market transactions (transactionCode ``P`` for purchase,
+    ``S`` for sale). Grants, vesting, derivatives, and other non-open-market
+    codes are ignored.
+    """
     buys = sells = 0
     buy_val = sell_val = 0.0
     try:
@@ -107,13 +112,17 @@ def _parse_form4(xml_text: str) -> tuple[int, int, float, float]:
         for trans in root.iter():
             if "nonDerivativeTransaction" not in trans.tag:
                 continue
-            code = shares = price = None
+            trans_code = ad_code = shares = price = None
             for child in trans.iter():
                 tag = child.tag.split("}")[-1]  # strip namespace
-                if tag == "transactionAcquiredDisposedCode":
+                if tag == "transactionCode":
                     for v in child:
                         if v.tag.split("}")[-1] == "value":
-                            code = (v.text or "").strip().upper()
+                            trans_code = (v.text or "").strip().upper()
+                elif tag == "transactionAcquiredDisposedCode":
+                    for v in child:
+                        if v.tag.split("}")[-1] == "value":
+                            ad_code = (v.text or "").strip().upper()
                 elif tag == "transactionShares":
                     for v in child:
                         if v.tag.split("}")[-1] == "value":
@@ -128,12 +137,16 @@ def _parse_form4(xml_text: str) -> tuple[int, int, float, float]:
                                 price = float(v.text)
                             except (TypeError, ValueError):
                                 pass
-            if code == "A" and shares:
-                buys += int(shares)
-                buy_val += shares * (price or 0)
-            elif code == "D" and shares:
-                sells += int(shares)
-                sell_val += shares * (price or 0)
+            # Open-market purchase (P) / sale (S). Fall back to A/D only when
+            # the explicit transaction code is missing.
+            if trans_code == "P" or (trans_code is None and ad_code == "A"):
+                if shares:
+                    buys += int(shares)
+                    buy_val += shares * (price or 0)
+            elif trans_code == "S" or (trans_code is None and ad_code == "D"):
+                if shares:
+                    sells += int(shares)
+                    sell_val += shares * (price or 0)
     except ET.ParseError:
         pass
     return buys, sells, buy_val, sell_val
@@ -325,12 +338,37 @@ async def _fetch_filing_text(cik: str, form_type: str = "10-Q") -> list[str]:
         dates = filings.get("filingDate", [])
         docs = filings.get("primaryDocument", [])
 
-        targets = [(acc, dt, doc) for form, acc, dt, doc in zip(forms, accs, dates, docs) if form == form_type][:2]
+        from itertools import zip_longest
+
+        targets = [
+            (acc, dt, doc)
+            for form, acc, dt, doc in zip_longest(forms, accs, dates, docs, fillvalue=None)
+            if form == form_type
+        ][:2]
 
         for acc, _dt, primary_doc in targets:
             acc_clean = acc.replace("-", "")
             if not primary_doc:
-                continue
+                # Fallback to directory index listing if primaryDocument is absent.
+                idx_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/index.json"
+                try:
+                    async with shared_session() as sess:
+                        async with sess.get(
+                            idx_url, headers=HEADERS, ssl=_ssl_ctx, timeout=aiohttp.ClientTimeout(total=8)
+                        ) as r:
+                            if r.status != 200:
+                                continue
+                            idx = await r.json(content_type=None)
+                    items = idx.get("directory", {}).get("item", [])
+                    names = [it.get("name", "") for it in items]
+                    primary_doc = next(
+                        (n for n in names if n.endswith(".htm") or n.endswith(".html")),
+                        names[0] if names else "",
+                    )
+                    if not primary_doc:
+                        continue
+                except Exception:
+                    continue
             doc_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{primary_doc}"
             try:
                 async with shared_session() as sess:

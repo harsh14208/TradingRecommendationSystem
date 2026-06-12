@@ -19,7 +19,10 @@ def _reset_opts_globals():
     opts._iv_history = {}
     old_redis = opts._opt_redis
     opts._opt_redis = None
-    yield
+    # Force the CBOE middle-tier fallback out of the way so these unit tests
+    # exercise the Polygon → yfinance path they were written for.
+    with patch("services.options.fetch_cboe_options_chain", return_value=None):
+        yield
     opts._opt_cache = {}
     opts._iv_history = {}
     opts._opt_redis = old_redis

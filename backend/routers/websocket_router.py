@@ -9,6 +9,24 @@ router = APIRouter()
 _bearer = HTTPBearer(auto_error=False)
 
 
+def _extract_ws_token(websocket: WebSocket) -> tuple[str | None, bool]:
+    """Accept token from subprotocol header (preferred) or query param (legacy).
+
+    Browser WebSocket API cannot set arbitrary headers, so the client sends the
+    access token as a requested subprotocol: Sec-WebSocket-Protocol: token,<jwt>.
+    The server validates the first subprotocol token and returns it.
+
+    Returns (token, used_subprotocol).
+    """
+    # Subprotocol header is exposed as a comma-separated string by FastAPI/Starlette.
+    proto = websocket.headers.get("sec-websocket-protocol") or websocket.headers.get("Sec-WebSocket-Protocol")
+    if proto:
+        parts = [p.strip() for p in proto.split(",")]
+        if parts and parts[0].lower() == "token" and len(parts) >= 2:
+            return parts[1], True
+    return websocket.query_params.get("token"), False
+
+
 def _json_default(obj):
     """Serialize numpy/pandas scalars and other non-standard types."""
     # numpy scalar types (bool_, int64, float64, etc.)
@@ -31,8 +49,8 @@ class ConnectionManager:
     def __init__(self):
         self._connections: list[WebSocket] = []
 
-    async def connect(self, ws: WebSocket):
-        await ws.accept()
+    async def connect(self, ws: WebSocket, subprotocol: str | None = None):
+        await ws.accept(subprotocol=subprotocol)
         self._connections.append(ws)
 
     def disconnect(self, ws: WebSocket):
@@ -57,12 +75,13 @@ manager = ConnectionManager()
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    token = websocket.query_params.get("token")
+    token, used_subprotocol = _extract_ws_token(websocket)
     payload = decode_access_token(token) if token else None
     if not payload:
         await websocket.close(code=1008, reason="Invalid or missing token")
         return
-    await manager.connect(websocket)
+    # Return the subprotocol so the browser handshake succeeds.
+    await manager.connect(websocket, subprotocol="token" if used_subprotocol else None)
     try:
         while True:
             await websocket.receive_text()

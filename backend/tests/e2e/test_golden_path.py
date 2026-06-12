@@ -67,9 +67,10 @@ class TestSignalFeedLoad:
 
     def test_app_page_loads(self, page):
         page.goto(f"{BASE_URL}/app")
-        # Should load without JS error (error boundary should not trigger)
-        page.wait_for_load_state("networkidle", timeout=10_000)
-        # Check for absence of error boundary message
+        # Unauthenticated /app redirects to /login. Wait for that navigation
+        # and confirm the login page rendered (no JS error boundary).
+        page.wait_for_url("**/login**", timeout=10_000)
+        assert page.locator("text=Welcome back").is_visible()
         assert page.query_selector("text=Something went wrong") is None
 
 

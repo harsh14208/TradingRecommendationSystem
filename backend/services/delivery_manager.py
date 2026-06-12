@@ -3,7 +3,9 @@ import time
 import logging
 import ssl
 import certifi
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from database import AsyncSessionLocal
 from models import SignalDelivery, User, AppSettings
 from sqlalchemy import select
@@ -11,6 +13,29 @@ from sqlalchemy import select
 log = logging.getLogger("signal.trade.delivery")
 
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+
+
+@asynccontextmanager
+def _parse_allowed_hosts(setting: str) -> set[str]:
+    return {h.strip().lower() for h in setting.split(",") if h.strip()}
+
+
+def _host_allowed(hostname: str, allowed: set[str]) -> bool:
+    if not allowed:
+        return True
+    host = hostname.lower().lstrip(".")
+    return any(host == a or host.endswith("." + a) for a in allowed)
+
+
+@asynccontextmanager
+async def _session():
+    """Wrap an AsyncSession with automatic rollback on error."""
+    async with AsyncSessionLocal() as db:
+        try:
+            yield db
+        except Exception:
+            await db.rollback()
+            raise
 
 
 def is_in_quiet_hours(now_utc: datetime, tz_str: str, start_str: str, end_str: str) -> bool:
@@ -84,7 +109,7 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
 
     # 1. Check duplicate
     if signal_id:
-        async with AsyncSessionLocal() as db:
+        async with _session() as db:
             existing = (
                 await db.execute(select(SignalDelivery).where(SignalDelivery.dedupe_key == dedupe_key))
             ).scalar_one_or_none()
@@ -93,7 +118,7 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
                 return
 
     # Check quiet hours & timezone (TSYS-3c)
-    async with AsyncSessionLocal() as db:
+    async with _session() as db:
         user = await db.get(User, user_id)
         if not user:
             log.warning(f"[delivery] User {user_id} not found. Skipping delivery.")
@@ -116,7 +141,7 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
 
     # 2. Create initial delivery receipt in DB
     initial_status = "deferred" if in_quiet else "pending"
-    async with AsyncSessionLocal() as db:
+    async with _session() as db:
         from services.provider_telemetry import current_cycle_id
 
         receipt = SignalDelivery(
@@ -142,7 +167,7 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
             await asyncio.sleep(sleep_sec)
 
         # Reset to pending before beginning delivery loop
-        async with AsyncSessionLocal() as db:
+        async with _session() as db:
             db_receipt = await db.get(SignalDelivery, receipt_id)
             if db_receipt:
                 db_receipt.status = "pending"
@@ -157,7 +182,7 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
     for attempt in range(max_retries):
         if attempt > 0:
             # Update receipt to retrying
-            async with AsyncSessionLocal() as db:
+            async with _session() as db:
                 db_receipt = await db.get(SignalDelivery, receipt_id)
                 if db_receipt:
                     db_receipt.status = "retrying"
@@ -192,8 +217,15 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
             elif channel == "discord":
                 webhook_url = payload.get("webhook_url")
                 discord_payload = payload.get("payload")
+                parsed = urlparse(webhook_url or "")
+                s = get_settings()
+                discord_hosts = _parse_allowed_hosts(s.discord_allowed_hosts)
                 if not webhook_url:
                     err = "Missing webhook_url"
+                elif parsed.scheme != "https" or not parsed.hostname:
+                    err = "Invalid webhook URL"
+                elif not _host_allowed(parsed.hostname, discord_hosts):
+                    err = "Discord webhook host not allowed"
                 else:
                     async with shared_session() as session:
                         async with session.post(webhook_url, json=discord_payload, timeout=5.0) as resp:
@@ -218,37 +250,45 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
             elif channel == "webhook":
                 webhook_url = payload.get("webhook_url")
                 sig_data = payload.get("signal_data")
+                parsed = urlparse(webhook_url or "")
+                s = get_settings()
+                user_hosts = _parse_allowed_hosts(s.user_webhook_allowed_hosts)
                 if not webhook_url:
                     err = "Missing webhook_url"
+                elif parsed.scheme != "https" or not parsed.hostname:
+                    err = "Invalid webhook URL"
+                elif not _host_allowed(parsed.hostname, user_hosts):
+                    err = "Webhook host not in allowlist"
                 else:
                     import hashlib
                     import hmac
                     import json
 
-                    # Get user's webhook_secret or default to jwt_secret
-                    async with AsyncSessionLocal() as db:
+                    # Per-user webhook secret is required; never fall back to the global JWT secret.
+                    async with _session() as db:
                         user = await db.get(User, user_id)
-                        _jwt_secret = get_settings().jwt_secret
-                        secret = (
-                            user.webhook_secret or (_jwt_secret.get_secret_value() if _jwt_secret else "") or ""
-                        ).encode()
+                        secret = (user.webhook_secret or "").encode() if user else b""
 
-                    payload_bytes = json.dumps(sig_data, default=str).encode()
-                    sig_hdr = "sha256=" + hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest()
+                    if not secret:
+                        err = "Missing webhook secret"
+                    else:
+                        payload_bytes = json.dumps(sig_data, default=str).encode()
+                        sig_hdr = "sha256=" + hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest()
 
-                    async with shared_session() as session:
-                        async with session.post(
-                            webhook_url,
-                            data=payload_bytes,
-                            headers={"Content-Type": "application/json", "X-Signal-Trade-Signature": sig_hdr},
-                            ssl=_SSL_CTX,
-                            timeout=5.0,
-                        ) as resp:
-                            latency_ms = (time.monotonic() - start_time) * 1000
-                            if resp.status in (200, 201, 202, 204):
-                                success = True
-                            else:
-                                err = f"HTTP {resp.status}"
+                        async with shared_session() as session:
+                            async with session.post(
+                                webhook_url,
+                                data=payload_bytes,
+                                headers={"Content-Type": "application/json", "X-Signal-Trade-Signature": sig_hdr},
+                                ssl=_SSL_CTX,
+                                timeout=5.0,
+                                allow_redirects=False,
+                            ) as resp:
+                                latency_ms = (time.monotonic() - start_time) * 1000
+                                if resp.status in (200, 201, 202, 204):
+                                    success = True
+                                else:
+                                    err = f"HTTP {resp.status}"
 
             if success:
                 status = "sent"
@@ -265,7 +305,7 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
             log.warning(f"[delivery] Attempt {attempt + 1} exception for {channel} to user {user_id}: {e}")
 
     # 3. Record final result (dead-letter logging if status is still 'failed')
-    async with AsyncSessionLocal() as db:
+    async with _session() as db:
         db_receipt = await db.get(SignalDelivery, receipt_id)
         if db_receipt:
             db_receipt.status = status

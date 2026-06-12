@@ -69,7 +69,9 @@ class TestFinraShortVolume:
         result = merge_sv_pit(df, sv, "AAPL")
         assert "sv_ratio" in result.columns
         assert "sv_ratio_5d_delta" in result.columns
-        assert result["sv_ratio"].iloc[0] == 20.0
+        # FINRA T data is usable from T+1 onward.
+        assert result["sv_ratio"].iloc[0] == 0.0  # 2024-01-02
+        assert result["sv_ratio"].iloc[1] == 20.0  # 2024-01-03
 
     def test_merge_sv_pit_empty(self) -> None:
         idx = pd.date_range("2024-01-02", periods=3)

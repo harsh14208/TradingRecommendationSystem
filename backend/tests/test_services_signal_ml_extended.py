@@ -576,7 +576,7 @@ def test_extract_meta_features_full():
         sector_momentum=0.02,
         vix_9d_ratio=0.95,
     )
-    assert len(feats) == 14
+    assert len(feats) == 15
     assert feats[0] == 0.6  # entry_prob
     assert not math.isnan(feats[7])  # transition_risk
 
@@ -588,7 +588,7 @@ def test_extract_meta_features_defaults_from_tech():
     feats = _extract_meta_features(
         tech, entry_prob=None, hmm_regime=None, vix=None, sector_etf=None, dow=None, dte=None
     )
-    assert len(feats) == 14
+    assert len(feats) == 15
     assert math.isnan(feats[0])  # entry_prob
     assert feats[11] == 1.2  # vix_term_ratio from tech
     assert feats[12] == 0.03  # sector_momentum from tech
@@ -599,7 +599,7 @@ def test_extract_meta_features_all_nan():
     from services.signal_ml import _extract_meta_features
 
     feats = _extract_meta_features({}, entry_prob=None, hmm_regime=None, vix=None, sector_etf=None, dow=None, dte=None)
-    assert len(feats) == 14
+    assert len(feats) == 15
     # hmm defaults provide non-NaN values for bull_prob and transition_risk
     assert math.isnan(feats[0])  # entry_prob
     assert not math.isnan(feats[6])  # bull_prob defaults to 0.5

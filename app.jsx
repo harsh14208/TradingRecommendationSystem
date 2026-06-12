@@ -154,8 +154,9 @@ function App() {
     if (!authReady || !currentUser) return;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const token = getToken();
-    const wsUrl = `${protocol}//${window.location.host}/ws?token=${token || ""}`;
-    let ws = new WebSocket(wsUrl);
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    // Send token via subprotocol so it never appears in the URL query string.
+    let ws = token ? new WebSocket(wsUrl, ["token", token]) : new WebSocket(wsUrl);
     ws.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
@@ -509,7 +510,7 @@ function App() {
 
   /* Fetch predictive data whenever the active signal changes */
   useEffect(() => {
-    if (!active) { setPredictive(null); return; }
+    if (!currentUser || !active) { setPredictive(null); return; }
     setPredLoading(true);
     setPredictive(null);
     const ctrl = new AbortController();

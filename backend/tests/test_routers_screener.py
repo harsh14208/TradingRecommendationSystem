@@ -33,9 +33,9 @@ def _app(db=None):
     return app
 
 
-def _settings_row(screeners: dict) -> MagicMock:
+def _settings_row(screeners: dict, user_id: int = 1) -> MagicMock:
     row = MagicMock(spec=AppSettings)
-    row.data = {"screeners": screeners}
+    row.data = {"screeners": {str(user_id): screeners}}
     return row
 
 

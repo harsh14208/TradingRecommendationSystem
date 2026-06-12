@@ -8,6 +8,14 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from models import Signal
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_public_cache():
+    from routers.public import _clear_track_record_cache
+
+    _clear_track_record_cache()
 
 
 def _make_app():

@@ -354,7 +354,9 @@ def merge_sentiment_pit(
         df = df.assign(naaim_exposure=50.0)
 
     if aaii is not None and not aaii.empty:
-        aaii = aaii.assign(date=pd.to_datetime(aaii["date"])).sort_values("date")
+        # AAII survey is published Thursday evening; shift +1 day so it is only
+        # usable from Friday's close onward.
+        aaii = aaii.assign(date=pd.to_datetime(aaii["date"]) + pd.Timedelta(days=1)).sort_values("date")
         df = pd.merge_asof(
             df.sort_values("_merge_date"),
             aaii,

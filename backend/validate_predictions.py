@@ -738,11 +738,56 @@ async def main(fix_phantoms: bool = False, apply_phantoms: bool = False):
     await calibration_report()
 
 
+def _annual_sharpe(returns: list[float]) -> float:
+    if len(returns) < 2:
+        return 0.0
+    mean = sum(returns) / len(returns)
+    var = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    if var <= 0:
+        return 0.0
+    return (mean / (var**0.5)) * (len(returns) ** 0.5)
+
+
+async def gate_stats() -> tuple[int, float, float]:
+    """Return (n_resolved, raw_win_rate, annualized_sharpe) for gating."""
+    engine = create_async_engine(DB_URL, echo=False)
+    Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with Session() as db:
+        rows = (await db.execute(select(Signal).where(Signal.is_sent == True))).scalars().all()
+    await engine.dispose()
+
+    resolved = [s for s in rows if _best_outcome(s) is not None and s.action in ("BUY", "SELL")]
+    n = len(resolved)
+    if n == 0:
+        return 0, 0.0, 0.0
+    wins = sum(1 for s in resolved if _best_outcome(s) > 0)
+    returns = [_best_outcome(s) for s in resolved]
+    return n, wins / n, _annual_sharpe(returns)
+
+
 if __name__ == "__main__":
     import argparse as _ap
 
     _parser = _ap.ArgumentParser()
     _parser.add_argument("--fix-phantoms", action="store_true", help="Dry-run phantom win correction")
     _parser.add_argument("--apply", action="store_true", help="Write phantom win corrections to DB")
+    _parser.add_argument("--gate-win-rate", type=float, default=None, help="Minimum raw win rate (0-1) to exit 0")
+    _parser.add_argument("--gate-sharpe", type=float, default=None, help="Minimum annualized Sharpe to exit 0")
     _args = _parser.parse_args()
+
     asyncio.run(main(fix_phantoms=_args.fix_phantoms, apply_phantoms=_args.apply))
+
+    if _args.gate_win_rate is not None or _args.gate_sharpe is not None:
+        n, wr, sharpe = asyncio.run(gate_stats())
+        print(f"\nAccuracy gate: n={n} win_rate={wr:.2%} sharpe={sharpe:.2f}")
+        ok = True
+        if _args.gate_win_rate is not None and wr < _args.gate_win_rate:
+            print(f"FAIL: win rate {wr:.2%} < {_args.gate_win_rate:.2%}")
+            ok = False
+        if _args.gate_sharpe is not None and sharpe < _args.gate_sharpe:
+            print(f"FAIL: Sharpe {sharpe:.2f} < {_args.gate_sharpe:.2f}")
+            ok = False
+        if ok:
+            print("PASS: accuracy gate")
+        else:
+            sys.exit(1)

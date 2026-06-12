@@ -178,11 +178,13 @@ def test_assemble_signal_earnings_blackout():
 
 def test_assemble_signal_risk_free_rate_dampener():
     # Freeze to Wednesday so the day-of-week gate (blocks Friday BUY entries) doesn't fire.
+    # NB: the gate lives in engines/assembler.py since the BE-1 decomposition — patching
+    # signal_engine.datetime never reached it (test failed every real-world Friday until 2026-06-12).
     from datetime import datetime as _dt
-    import services.signal_engine as _se
+    import services.engines.assembler as _asm
 
     _wednesday = _dt(2026, 5, 27, 12, 0, 0)  # Wednesday
-    with patch.object(_se, "datetime", wraps=_se.datetime) as _mock_dt:
+    with patch.object(_asm, "datetime", wraps=_asm.datetime) as _mock_dt:
         _mock_dt.now.return_value = _wednesday
         res = _assemble_signal(
             ticker="AAPL",

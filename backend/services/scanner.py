@@ -288,7 +288,7 @@ def _build_discord_embed(sig_dict: dict) -> dict:
             {"name": "Entry", "value": f"${sig_dict.get('entry')}", "inline": True},
             {"name": "Stop", "value": f"${sig_dict.get('stop')}", "inline": True},
             {"name": "Target", "value": f"${sig_dict.get('target')}", "inline": True},
-            {"name": "Analysis", "value": sig_dict.get("plain_english", {}).get("summary", ""), "inline": False},
+            {"name": "Analysis", "value": (sig_dict.get("plain_english") or {}).get("summary", ""), "inline": False},
         ],
         "footer": {"text": "NOT FINANCIAL ADVICE. Trade at your own risk."},
     }
@@ -496,8 +496,8 @@ async def _maybe_send(
             if recent_resolved:
                 _act = sig_dict["action"]
                 # BUY win  = outcome_pct > 0;  BUY loss  = outcome_pct <= 0
-                # SELL win = outcome_pct < 0;  SELL loss = outcome_pct >= 0
-                losses = sum(1 for o in recent_resolved if (o <= 0 if _act == "BUY" else o >= 0))
+                # SELL win = outcome_pct > 0 (price fell);  SELL loss = outcome_pct < 0
+                losses = sum(1 for o in recent_resolved if (o <= 0 if _act == "BUY" else o < 0))
                 if losses >= 3:
                     base_hours = 72
                 elif losses >= 1:
@@ -597,9 +597,9 @@ async def _maybe_send(
         )
         # Fire web push to all subscribers for high-confidence signals
         if sig_dict["confidence"] >= 70:
-            asyncio.create_task(_push_web_notifications(sig_dict, db, signal_id=db_row.id))
+            asyncio.create_task(_push_web_notifications(sig_dict, signal_id=db_row.id))
         # Webhook outbound — POST signal JSON to user's webhook_url with HMAC signature
-        asyncio.create_task(_send_webhook_outbound(sig_dict, db, signal_id=db_row.id))
+        asyncio.create_task(_send_webhook_outbound(sig_dict, signal_id=db_row.id))
     else:
         log.info(f" ✗ Telegram failed — {sig_dict['ticker']}: {detail}")
 
@@ -616,21 +616,22 @@ async def _maybe_send(
     )
 
 
-async def _push_web_notifications(sig_dict: dict, db, signal_id: int | None = None) -> None:
+async def _push_web_notifications(sig_dict: dict, signal_id: int | None = None) -> None:
     """Send web push notifications to all subscribed users for a high-confidence signal."""
     try:
         from models import PushSubscription
         from services.delivery_manager import queue_delivery
 
-        subs = (await db.execute(select(PushSubscription))).scalars().all()
-        if not subs:
-            return
-        # PROD-3: honor the per-user push toggle. Only users who explicitly saved
-        # prefs with push=False are skipped (defaults are never applied). Granular
-        # sector/score/action filters are enforced on the Telegram fanout path;
-        # push only gates the on/off toggle here.
-        _app_row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
-        _app_data = _app_row.data if (_app_row is not None and isinstance(_app_row.data, dict)) else {}
+        async with AsyncSessionLocal() as db:
+            subs = (await db.execute(select(PushSubscription))).scalars().all()
+            if not subs:
+                return
+            # PROD-3: honor the per-user push toggle. Only users who explicitly saved
+            # prefs with push=False are skipped (defaults are never applied). Granular
+            # sector/score/action filters are enforced on the Telegram fanout path;
+            # push only gates the on/off toggle here.
+            _app_row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+            _app_data = _app_row.data if (_app_row is not None and isinstance(_app_row.data, dict)) else {}
 
         def _push_disabled(uid: int) -> bool:
             _p = _app_data.get(f"user_{uid}_notification_prefs")
@@ -663,26 +664,27 @@ async def _push_web_notifications(sig_dict: dict, db, signal_id: int | None = No
         log.warning(f"[push] Web push queuing failed: {e}")
 
 
-async def _send_webhook_outbound(sig_dict: dict, db, signal_id: int | None = None) -> None:
+async def _send_webhook_outbound(sig_dict: dict, signal_id: int | None = None) -> None:
     """POST signal JSON to each user's webhook_url (if set) with HMAC-SHA256 signature."""
     try:
         from models import User
         from sqlalchemy import select as _sel
         from services.delivery_manager import queue_delivery
 
-        users_with_webhook = (
-            (await db.execute(_sel(User).where(User.webhook_url.isnot(None)).where(User.is_active == True)))
-            .scalars()
-            .all()
-        )
-
-        for u in users_with_webhook:
-            await queue_delivery(
-                signal_id=signal_id,
-                user_id=u.id,
-                channel="webhook",
-                payload={"signal_data": sig_dict, "webhook_url": u.webhook_url},
+        async with AsyncSessionLocal() as db:
+            users_with_webhook = (
+                (await db.execute(_sel(User).where(User.webhook_url.isnot(None)).where(User.is_active == True)))
+                .scalars()
+                .all()
             )
+
+            for u in users_with_webhook:
+                await queue_delivery(
+                    signal_id=signal_id,
+                    user_id=u.id,
+                    channel="webhook",
+                    payload={"signal_data": sig_dict, "webhook_url": u.webhook_url},
+                )
     except Exception as e:
         log.warning(f"[webhook] queueing outbound error: {e}")
 
@@ -719,10 +721,9 @@ async def _compute_adaptive_weights() -> dict:
 
         for ticker, action, pct, outcome_at in rows:
             action_buckets[action].append(pct)
-            if action == "BUY":
-                ticker_outcomes[ticker].append((pct > 0, outcome_at))
-            elif action == "SELL":
-                ticker_outcomes[ticker].append((pct < 0, outcome_at))
+            # _pct() returns positive for winning trades in both directions.
+            win_bool = pct > 0
+            ticker_outcomes[ticker].append((win_bool, outcome_at))
 
         weights: dict = {}
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -733,7 +734,7 @@ async def _compute_adaptive_weights() -> dict:
                 continue
             if action not in ("BUY", "SELL"):
                 continue
-            wr = sum(1 for o in outcomes_raw if (o > 0 if action == "BUY" else o < 0)) / len(outcomes_raw)
+            wr = sum(1 for o in outcomes_raw if o > 0) / len(outcomes_raw)
             weights[f"{action}_win_rate"] = round(wr, 3)
             log.info(f" {action} historical win rate: {wr * 100:.1f}% ({len(outcomes_raw)} signals)")
 
@@ -834,7 +835,19 @@ async def _maybe_paper_trade(
     ticker = sig_dict["ticker"]
     price = sig_dict.get("price") or sig_dict.get("entry") or 1
     notional = float(db_settings.get("paper_trade_notional", 1000.0))
-    qty = max(1, round(notional / price))
+    raw_qty = notional / price
+    qty = max(1, int(raw_qty))
+    if raw_qty - qty >= 0.5:
+        qty += 1
+    if qty * price > notional * 1.05:
+        log.info(
+            "[paper] %s qty %d at $%.2f exceeds target notional $%.0f; sizing one share",
+            ticker,
+            qty,
+            price,
+            notional,
+        )
+        qty = max(1, int(notional // price))
     pos = positions_map.get(ticker.upper())
 
     # Guard: check buying power before placing BUY orders
@@ -1887,7 +1900,7 @@ async def eod_batch_send() -> None:
     if not settings.auto_send_notifications:
         return
 
-    today_start = datetime.now(_ET).replace(tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
+    today_start = _today_start_utc()
 
     async with AsyncSessionLocal() as db:
         rows = (
@@ -2220,7 +2233,9 @@ async def _run_scan_impl(broadcast_fn=None):
 
                     feats = sig.get("features", {})
                     entry_prob = sig.get("confidence", 50.0) / 100.0
-                    hmm_regime = sig.get("hmmRegime", "")
+                    # The signal dict stores the HMM regime label as a string, but
+                    # predict_meta_prob expects the full market-context dict.
+                    hmm_regime = (market_ctx or {}).get("hmm_regime") or {}
                     vix_val = sig.get("vix")
                     sector_etf = sig.get("sectorEtf")
                     _macro = (market_ctx or {}).get("macro") or {}

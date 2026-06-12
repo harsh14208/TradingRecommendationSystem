@@ -72,7 +72,8 @@ def _assemble_signal(
     # Single-condition MR setups (e.g. IBS-only) are the weakest class and
     # disproportionately hit stops. Requiring 2+ filters these without
     # materially reducing trade count.
-    _mr_rsi_trig = float(tech.get("rsi") or 50) < 42
+    _rsi = tech.get("rsi")
+    _mr_rsi_trig = float(_rsi if _rsi is not None else 50) < 42
     _mr_bb_trig = _mr_bb is not None and float(_mr_bb) < 0.22
     _mr_ibs_trig = _mr_ibs is not None and float(_mr_ibs) < 0.15
     _mr_vwap_trig = _mr_vwap is not None and float(_mr_vwap) < -0.75
@@ -113,6 +114,66 @@ def _assemble_signal(
     agree_sent = "pos" if score > 0 else "neg"
     agreement = sum(1 for r in rationale if r.get("sentiment") == agree_sent and r.get("src") not in _META_SRCS)
     action, confidence = _score_to_action(score, agreement)
+
+    # ── VIX9D — Near-Term Event Risk ─────────────────────────────────────
+    _vix9d_ratio = macro.get("vix9d_ratio")
+    if _vix9d_ratio is not None and _vix9d_ratio > 1.10 and action in ("BUY", "SELL"):
+        _vix9d = macro.get("vix9d", 0)
+        confidence = round(max(35.0, confidence - 4), 1)
+        sources.add("Macro")
+        rationale.append(
+            {
+                "src": "Macro",
+                "head": f"Near-Term Event Risk (VIX9D/VIX {_vix9d_ratio:.2f}×) — Confidence −4pp",
+                "body": (
+                    f"9-day VIX ({_vix9d:.1f}) is {_vix9d_ratio:.2f}× the spot VIX. "
+                    "Near-term options demand is concentrated — a known upcoming event (earnings, "
+                    "FOMC, CPI) is distorting short-horizon signals. Wait for post-event clarity "
+                    "before acting on this signal."
+                ),
+                "sentiment": "neg",
+                "meta": f"VIX9D/VIX = {_vix9d_ratio:.2f}×",
+            }
+        )
+
+    # ── MOVE Index — Bond Market Stress ──────────────────────────────────
+    _move = macro.get("move")
+    if _move is not None and _move > 140 and action == "BUY":
+        confidence = round(max(35.0, confidence - 5), 1)
+        sources.add("Macro")
+        rationale.append(
+            {
+                "src": "Macro",
+                "head": f"Treasury Vol Stress (MOVE {_move:.0f}) — Confidence −5pp",
+                "body": (
+                    f"CBOE MOVE Index at {_move:.0f} — bond market implied vol is highly elevated. "
+                    "Elevated MOVE historically leads equity drawdowns by 2–3 weeks. "
+                    "Reduce position sizing until MOVE normalises below 120."
+                ),
+                "sentiment": "neg",
+                "meta": f"^MOVE = {_move:.0f}",
+            }
+        )
+
+    # ── STLFSI4 — Financial Stress (macro signal into single-stock) ───────
+    _stlfsi = macro.get("stlfsi")
+    if _stlfsi is not None and _stlfsi > 1.0 and action == "BUY":
+        confidence = round(min(confidence, 58.0), 1)
+        sources.add("Macro")
+        rationale.append(
+            {
+                "src": "Macro",
+                "head": f"Financial Stress Override (STLFSI4 {_stlfsi:+.2f}) — BUY Cap 58%",
+                "body": (
+                    f"St. Louis Financial Stress Index at {_stlfsi:+.2f} (>1.0 = crisis). "
+                    "In high-stress regimes, even strong individual-stock setups frequently fail "
+                    "because correlated forced selling overrides fundamentals. BUY confidence "
+                    "capped at 58% until FSI returns below 0.5."
+                ),
+                "sentiment": "neg",
+                "meta": f"STLFSI4 = {_stlfsi:+.3f}",
+            }
+        )
 
     # Enforce blackout action regardless of what _score_to_action computed.
     if _force_hold:
@@ -662,8 +723,9 @@ def _assemble_signal(
     # ── §57 DOW gate + §77 tax-loss window ─────────────────────────────────
     from services.gates.calendar import apply_calendar_gates as _cal_gates
 
-    _today_dow = datetime.now(_ET).weekday()  # 0=Mon … 4=Fri
-    _month_now = datetime.now(timezone.utc).month
+    _now_et = datetime.now(_ET)
+    _today_dow = _now_et.weekday()  # 0=Mon … 4=Fri
+    _month_now = _now_et.month
     action, confidence, _cal_cards, _cal_sources = _cal_gates(
         action=action,
         confidence=confidence,
@@ -807,13 +869,15 @@ def _assemble_signal(
     # the correlation of all risk assets — directional edge deteriorates sharply.
     # Signals below 75% confidence have statistically poor win rates in these
     # conditions: "catching falling knives." Hard-gate to HOLD.
-    if vix is not None and vix > 30 and action in ("BUY", "SELL") and confidence < 75:
+    # Confidence is capped at 72 downstream, so a 75 threshold would make this
+    # an unconditional block. Use 70 to align with the actual output range.
+    if vix is not None and vix > 30 and action in ("BUY", "SELL") and confidence < 70:
         action = "HOLD"
         sources.add("Risk Gate")
         rationale.append(
             {
                 "src": "Risk Gate",
-                "head": f"VIX Regime Floor — {confidence:.0f}% Below 75% Threshold (VIX {vix:.0f})",
+                "head": f"VIX Regime Floor — {confidence:.0f}% Below 70% Threshold (VIX {vix:.0f})",
                 "body": (
                     f"VIX at {vix:.0f} signals an active panic regime (threshold: 30). "
                     "In elevated-VIX environments, {}-confidence signals have historically poor "
@@ -821,7 +885,7 @@ def _assemble_signal(
                     "liquidity thin outs. Signal gated to HOLD until VIX normalises below 30."
                 ).format(f"{confidence:.0f}%"),
                 "sentiment": "neg",
-                "meta": f"VIX = {vix:.0f} | Min confidence gate: 75% | Actual: {confidence:.0f}%",
+                "meta": f"VIX = {vix:.0f} | Min confidence gate: 70% | Actual: {confidence:.0f}%",
             }
         )
 
@@ -1166,6 +1230,48 @@ def _assemble_signal(
     _hmm_bull_prob = float(_hmm_ctx.get("bull_prob", 0.5))
     _hmm_trans_risk = float(_hmm_ctx.get("transition_risk", 0.1))
 
+    # ── L11 §14 FRED macro-regime dampener (re-instated 2026-06-12) ──────────
+    # The 06-10 deletion of §14 delivery hard blocks cited a −0.06 A/B that ran
+    # while a FRED realtime_start bug had emptied the panel (LEARNINGS 2026-06-12).
+    # Two consistent working-panel reads (+0.02 / +0.03 Sh, MaxDD −2.31%→−0.93%)
+    # support the gate. Per house doctrine it returns as a SIZING tilt, never a
+    # block, pending forward SPRT confirmation (scripts/sprt_preregister_fred_regime.py).
+    # Thresholds mirror the backtest §14 gate: marginal = NFCI>0 / Baa−10Y>3% /
+    # inverted 10Y−3M (dampens only marginal-score BUYs); extreme = NFCI>0.5 / Baa−10Y>4%.
+    _nfci_v = macro.get("nfci") if macro else None
+    _baa10y_v = macro.get("baa10y") if macro else None
+    _t10y3m_v = macro.get("t10y3m") if macro else None
+    _fred_regime_mult = 1.0
+    if action == "BUY":
+        _fred_extreme = (_nfci_v is not None and _nfci_v > 0.5) or (_baa10y_v is not None and _baa10y_v > 4.0)
+        _fred_marginal = (
+            (_nfci_v is not None and _nfci_v > 0.0)
+            or (_baa10y_v is not None and _baa10y_v > 3.0)
+            or (_t10y3m_v is not None and _t10y3m_v < 0.0)
+        )
+        if _fred_extreme:
+            _fred_regime_mult = 0.75
+        elif _fred_marginal and score < 55:
+            _fred_regime_mult = 0.85
+    if _fred_regime_mult < 1.0:
+        rationale.append(
+            {
+                "src": "Macro Regime",
+                "head": f"§14 FRED regime dampener: sizing ×{_fred_regime_mult:.2f}",
+                "body": (
+                    "Credit/financial-conditions regime is tight "
+                    f"(NFCI={_nfci_v if _nfci_v is not None else 'n/a'}, "
+                    f"Baa−10Y={_baa10y_v if _baa10y_v is not None else 'n/a'}, "
+                    f"10Y−3M={_t10y3m_v if _t10y3m_v is not None else 'n/a'}). "
+                    "Backtest: blocking these regimes improves Sharpe +0.03 and cuts MaxDD "
+                    "−2.31%→−0.93%; applied live as a position-size reduction, never a block, "
+                    "pending forward SPRT validation."
+                ),
+                "sentiment": "neg",
+                "meta": f"sizing_tilt=fred_regime_dampener mult={_fred_regime_mult}",
+            }
+        )
+
     # ── Calibration as the LAST confidence-mutating step ────────────────────
     # QUANT_ENGINE_REVIEW §1.4 / §5 Snippet 8: calibration was previously applied
     # *before* ML blend, overbought haircuts, and peer haircut — but trained on
@@ -1359,6 +1465,9 @@ def _assemble_signal(
                 # Transition dampener KEPT: MaxDD 0.86% → 0.73% confirmed (regime uncertainty
                 # = incomplete information = appropriate size reduction).
                 * (0.85 if (_hmm_regime_label == "transition" or _hmm_trans_risk > 0.20) else 1.0)
+                # L11: §14 FRED macro-regime dampener — re-instated 2026-06-12 as a
+                # sizing tilt (the 06-10 hard-block deletion cited a dead-panel A/B).
+                * _fred_regime_mult
                 if action == "BUY"
                 else 1.0
             ),
@@ -1376,6 +1485,8 @@ def _assemble_signal(
         "nfci": macro.get("nfci"),
         "baa10y": macro.get("baa10y"),
         "t10y3m": macro.get("t10y3m"),
+        # L11 §14 dampener multiplier — SPRT population selector (1.0 = regime clean)
+        "fredRegimeDampener": _fred_regime_mult,
         # §82: trailing stop as % of entry — 2× ATR provides dynamic stop that adapts
         # to realized vol and avoids being stopped out by normal intraday noise.
         "trailingStopPct": round(atr / price * 200, 2) if (price and atr and price > 0) else None,

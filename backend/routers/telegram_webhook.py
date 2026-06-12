@@ -15,7 +15,7 @@ import aiohttp
 from config import get_settings
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Request
-from models import User
+from models import AppSettings, User
 from services.auth_svc import get_current_user
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,13 +36,22 @@ async def _reply(chat_id: str, text: str):
         log.warning(f"[tg_webhook] reply failed: {e}")
 
 
+_UNSET = object()
+
+
 @router.post("/webhook", include_in_schema=False)
 async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     # Validate Telegram webhook secret token if configured.
     # Set via setWebhook?secret_token=... — Telegram sends it in X-Telegram-Bot-Api-Secret-Token.
     s = get_settings()
     if s.telegram_bot_token:
-        expected_secret = request.app.state.__dict__.get("_tg_webhook_secret")
+        expected_secret = getattr(request.app.state, "_tg_webhook_secret", _UNSET)
+        if expected_secret is _UNSET:
+            app_settings_row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+            data = getattr(app_settings_row, "data", None) if app_settings_row else None
+            if not isinstance(data, dict):
+                data = {}
+            expected_secret = data.get("telegram_webhook_secret")
         incoming_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if expected_secret and not _secrets.compare_digest(incoming_secret, expected_secret):
             # Return 200 to avoid Telegram retrying; silently drop forged requests
@@ -109,16 +118,19 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
     await _reply(
         chat_id,
         f"✅ *Telegram linked to Signal.Trade!*\n\n"
-        f"Account: `{user.email}`\n{tier_msg}\n\n"
+        f"Account: `{user.id}`\n{tier_msg}\n\n"
         "⚠️ _Signals are for informational purposes only. Not financial advice._",
     )
 
-    log.info(f"[tg_webhook] linked chat_id={chat_id} user={user.id} email={user.email}")
+    log.info(f"[tg_webhook] linked chat_id={chat_id} user={user.id}")
     return {"ok": True}
 
 
 @router.post("/set-webhook")
-async def set_webhook(owner: User = Depends(get_current_user)):
+async def set_webhook(
+    owner: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Register the bot webhook URL with Telegram. Call once after deployment. Owner-only."""
     if not owner.is_owner:
         raise HTTPException(403, "Owner access required.")
@@ -126,10 +138,22 @@ async def set_webhook(owner: User = Depends(get_current_user)):
     if not s.telegram_bot_token:
         raise HTTPException(503, "TELEGRAM_BOT_TOKEN not set.")
     webhook_url = f"{s.app_url}/api/telegram/webhook"
+    secret_token = _secrets.token_urlsafe(32)
+    # Persist in AppSettings for multi-process safety.
+    app_settings_row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+    if app_settings_row is None:
+        app_settings_row = AppSettings(id=1, data={"telegram_webhook_secret": secret_token})
+        db.add(app_settings_row)
+    else:
+        data = dict(app_settings_row.data or {})
+        data["telegram_webhook_secret"] = secret_token
+        app_settings_row.data = data
+    await db.commit()
+
     async with aiohttp.ClientSession() as session:
         resp = await session.post(
             f"https://api.telegram.org/bot{s.telegram_bot_token.get_secret_value()}/setWebhook",
-            json={"url": webhook_url, "allowed_updates": ["message"]},
+            json={"url": webhook_url, "allowed_updates": ["message"], "secret_token": secret_token},
         )
         data = await resp.json()
     return {"webhook_url": webhook_url, "telegram_response": data}

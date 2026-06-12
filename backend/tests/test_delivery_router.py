@@ -17,8 +17,10 @@ import pytest
 from database import get_db
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from services.auth_svc import get_current_user
 
 try:
+    from models import User
     from routers.delivery_router import router
 
     _ROUTER_OK = True
@@ -29,6 +31,7 @@ except ImportError:
 def _make_app():
     app = FastAPI()
     app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: User(id=1, email="owner@test.invalid", is_owner=True)
     return app
 
 

@@ -36,6 +36,12 @@ Conventions for coding agents working on the Signal.Trade monorepo.
 
 ## Testing Conventions
 
+- Use the Python 3.11 virtual environment (`.venv311`) for the test suite.
+  Python 3.14's asyncio event-loop handling conflicts with `pytest-asyncio` and
+  causes mass `RuntimeError: Runner.run() cannot be called from a running event
+  loop` failures.
+- E2E tests live under `backend/tests/e2e` and require the Playwright plugin.
+  They are skipped by default; run them with `pytest tests/e2e --run-e2e`.
 - Use `override_deps` from `backend/tests/conftest.py` to mock FastAPI
   dependencies in tests.
 - Never point tests at the production or development PostgreSQL database; the

@@ -36,6 +36,9 @@ def _make_app(db_override):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_db] = db_override
+    # Skip the AppSettings secret-token lookup so the mock execute() side-effects
+    # stay aligned with the test helper.
+    app.state._tg_webhook_secret = None
     return app
 
 
@@ -236,7 +239,7 @@ class TestTelegramWebhook:
         assert user.telegram_link_code is None
         db_mock.commit.assert_awaited_once()
 
-    def test_successful_link_sends_confirmation_reply_with_email(self):
+    def test_successful_link_sends_confirmation_reply_with_account(self):
         user = _make_user(id_=1, email="bob@example.com", link_code="XYZ99", chat_id=None, subscription_tier="pro")
         db_override, _ = _db_with_user_lookup(
             user_for_code=user,
@@ -256,7 +259,8 @@ class TestTelegramWebhook:
                 json=_webhook_body(text="/start XYZ99", chat_id="555444333"),
             )
 
-        assert any("bob@example.com" in t for t in replied_texts)
+        assert any("Telegram linked to Signal.Trade" in t for t in replied_texts)
+        assert any("Pro" in t for t in replied_texts)
 
     def test_edited_message_processed_like_regular_message(self):
         """edited_message key should be handled the same as message."""

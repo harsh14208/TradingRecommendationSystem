@@ -661,6 +661,9 @@ class TestAuthRouter:
         app_inst.dependency_overrides.pop(get_db, None)
 
     def test_change_email_send_exception(self, app, client):
+        from routers.auth import _limiter
+
+        _limiter.reset()  # clear prior rate-limit hits from sibling tests
         app_inst, get_current_user = app
         user = _make_user(email="old@example.com")
         app_inst.dependency_overrides[get_current_user] = lambda: user

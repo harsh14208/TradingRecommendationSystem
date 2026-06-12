@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     vapid_private_key: SecretStr = Field(default=SecretStr(""))
     vapid_subject: str = "mailto:admin@signal.trade"
 
+    # ── Outbound delivery allowlists (SSRF prevention) ─────────────────────────
+    # Comma-separated hostname suffixes. Empty = no host restriction beyond https.
+    # Discord webhooks are restricted to Discord-controlled hosts by default.
+    discord_allowed_hosts: str = "discord.com,discordapp.com"
+    user_webhook_allowed_hosts: str = ""  # production should set explicit hosts
+    push_allowed_hosts: str = ""
+
     @property
     def tickers(self) -> list[str]:
         return [t.strip().upper() for t in self.watchlist.split(",") if t.strip()]

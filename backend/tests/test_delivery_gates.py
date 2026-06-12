@@ -233,12 +233,13 @@ async def test_gate_blocks_pre_earnings():
 
 @pytest.mark.asyncio
 async def test_gate_allows_post_earnings_window():
-    """daysToEarnings > 2 is fine; 0 also fine (post-event)."""
+    """daysToEarnings > 2 is fine; 0 is earnings day and is blocked."""
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
     reason, _ = await check_delivery_gates(_sig(daysToEarnings=0), db, _Settings())
-    assert reason is None
+    assert reason is not None
+    assert "earnings" in reason.lower()
     reason2, _ = await check_delivery_gates(_sig(daysToEarnings=5), db, _Settings())
     assert reason2 is None
 

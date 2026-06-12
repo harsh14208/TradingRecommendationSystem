@@ -175,6 +175,9 @@ warnings.filterwarnings("ignore")
 _CONSTITUENTS_MAP = None
 
 
+_UNMAPPED_CONSTITUENTS_WARNED: set[str] = set()
+
+
 def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
     global _CONSTITUENTS_MAP
     if _CONSTITUENTS_MAP is None:
@@ -218,6 +221,12 @@ def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
 
     intervals = _CONSTITUENTS_MAP.get(lookup_ticker)
     if not intervals:
+        # Unknown ticker = survivorship correction silently bypassed for it.
+        # Warn once per ticker so a stale constituents file can't quietly
+        # readmit names with no membership data.
+        if lookup_ticker not in _UNMAPPED_CONSTITUENTS_WARNED:
+            _UNMAPPED_CONSTITUENTS_WARNED.add(lookup_ticker)
+            print(f"⚠ [PIT Constituents] {lookup_ticker} not in membership map — treating as always-member")
         return True
 
     date_dt = date.date()
@@ -3846,14 +3855,27 @@ def fetch_earnings_dates_polygon(ticker: str, api_key: str, start: str) -> set:
     return dates
 
 
-def fetch_fred_series(series_id: str, start: str, end: str, api_key: str) -> dict[pd.Timestamp, float]:
+def fetch_fred_series(
+    series_id: str, start: str, end: str, api_key: str, pub_lag_days: int = 7
+) -> dict[pd.Timestamp, float]:
     """
     Fetch any FRED series → forward-filled to daily so every trading day has a value.
 
-    Point-in-time safe for backtest date joins: each observation is keyed to its own
-    observation date, and the ffill only ever carries the *last known* value forward
-    (no look-ahead). Weekly/monthly series (NFCI, STLFSI4) are ffilled to daily;
-    genuinely-daily series (HY OAS, T10Y3M) are unaffected except across weekends/holidays.
+    Point-in-time discipline: each observation is keyed to its OBSERVATION date plus
+    `pub_lag_days` (the series' real publication delay), then ffilled forward — the
+    backtest only ever sees a value on/after the day it was actually published.
+    Weekly series (STLFSI4, NFCI) publish ~5-7 days after the week they describe →
+    lag 7; daily Treasury/Moody's series publish same/next evening → lag 1.
+
+    NOTE (2026-06-12 regression fix): a prior version keyed observations to
+    `o["realtime_start"]` intending the publication date. FRED only returns real
+    vintage dates when the request carries an explicit realtime window; by default
+    every observation echoes realtime_start = TODAY, which collapsed the whole
+    series to a single present-day key — STLFSI4 Gate 2 and the §14 panel were
+    silently empty for all historical dates (introduced d55a26e 2026-06-09).
+    True ALFRED vintages are also unusable for STLFSI4: the series was created in
+    2020, so first-release keying would erase all pre-2020 history. Fixed lag on
+    the observation date is the correct, conservative join.
     FRED encodes missing values as ".", which float() rejects and we skip.
     """
     if not api_key:
@@ -3876,11 +3898,7 @@ def fetch_fred_series(series_id: str, start: str, end: str, api_key: str) -> dic
         raw = {}
         for o in obs:
             try:
-                # Point-in-time: use realtime_start (publication date) rather than
-                # observation date.  For weekly series (STLFSI4, NFCI) this lags
-                # the observation by ~5-7 days, eliminating look-ahead on stress
-                # readings that coincide with crisis-week MR entries.
-                key_date = pd.Timestamp(o.get("realtime_start") or o["date"])
+                key_date = pd.Timestamp(o["date"]) + pd.Timedelta(days=pub_lag_days)
                 raw[key_date] = float(o["value"])
             except (ValueError, KeyError):
                 pass  # "." = FRED missing-value marker
@@ -3898,8 +3916,9 @@ def fetch_stlfsi4(start: str, end: str, api_key: str) -> dict[pd.Timestamp, floa
     """
     St. Louis Fed Financial Stress Index (STLFSI4) from FRED — see fetch_fred_series.
     Values: negative = below-average stress; > 1.0 = elevated; > 1.5 = crisis.
+    Weekly (week ends Friday), published the following Thursday → pub_lag_days=7.
     """
-    return fetch_fred_series("STLFSI4", start, end, api_key)
+    return fetch_fred_series("STLFSI4", start, end, api_key, pub_lag_days=7)
 
 
 def fetch_ff_str(start: str, end: str) -> dict[pd.Timestamp, float]:
@@ -3913,7 +3932,7 @@ def fetch_ff_str(start: str, end: str) -> dict[pd.Timestamp, float]:
 
     cache_dir = os.path.abspath(os.path.join(_HERE, "..", "data", "cache_ff"))
     os.makedirs(cache_dir, exist_ok=True)
-    cache_path = os.path.join(cache_dir, f"ff_str_{start}_{end}.json")
+    cache_path = os.path.join(cache_dir, f"ff_str_lag7_{start}_{end}.json")  # _lag7: PIT-lagged keys (2026-06-12)
     if os.path.exists(cache_path):
         with open(cache_path) as f:
             raw = json.load(f)
@@ -3937,7 +3956,12 @@ def fetch_ff_str(start: str, end: str) -> dict[pd.Timestamp, float]:
         df = df[_valid].copy()
         df["date"] = pd.to_datetime(df[_date_col].astype(str), format="%Y%m%d")
         df = df[(df["date"] >= start) & (df["date"] <= end)]
-        result = {row["date"]: float(row["ST_Rev"]) for _, row in df.iterrows()}
+        # PIT lag: Ken French refreshes the daily files roughly monthly, so the
+        # ST_Rev return for date X is not actually downloadable until weeks later.
+        # Key each value to date + 7 days as a floor (audit 2026-06-12); revisit
+        # with the true ~monthly worst-case before the meta-model (the only
+        # consumer) ever crosses its activation gate.
+        result = {row["date"] + pd.Timedelta(days=7): float(row["ST_Rev"]) for _, row in df.iterrows()}
         with open(cache_path, "w") as f:
             json.dump({str(k): v for k, v in result.items()}, f)
     except Exception as e:
@@ -3959,9 +3983,11 @@ def fetch_fred_panel(start: str, end: str, api_key: str) -> dict[str, dict]:
     23yr backtest. BAA10Y is the deep, free, non-ICE substitute (Moody's, daily, 1986+).
     """
     return {
-        "nfci": fetch_fred_series("NFCI", start, end, api_key),
-        "baa10y": fetch_fred_series("BAA10Y", start, end, api_key),
-        "t10y3m": fetch_fred_series("T10Y3M", start, end, api_key),
+        # NFCI: weekly, published Wednesday for the prior week → 7d lag.
+        "nfci": fetch_fred_series("NFCI", start, end, api_key, pub_lag_days=7),
+        # BAA10Y / T10Y3M: daily, published same/next evening → usable T+1.
+        "baa10y": fetch_fred_series("BAA10Y", start, end, api_key, pub_lag_days=1),
+        "t10y3m": fetch_fred_series("T10Y3M", start, end, api_key, pub_lag_days=1),
     }
 
 

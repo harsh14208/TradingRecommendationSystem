@@ -1,10 +1,11 @@
 import re
 
 from database import get_db
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from models import PriceAlert, User
 from pydantic import BaseModel, field_validator
 from services.auth_svc import get_current_user
+from services.price_alert_svc import create_price_alert, delete_price_alert
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,25 +56,12 @@ async def get_alerts(user: User = Depends(get_current_user), db: AsyncSession = 
 
 @router.post("/")
 async def create_alert(body: AlertCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    alert = PriceAlert(
-        user_id=user.id,
-        ticker=body.ticker,
-        target_price=body.target_price,
-        condition=body.condition,
-    )
-    db.add(alert)
-    await db.commit()
+    alert = await create_price_alert(db, user.id, body.ticker, body.target_price, body.condition)
     return {"ok": True, "message": "Alert created successfully", "alert_id": alert.id}
 
 
 @router.delete("/{alert_id}")
 async def delete_alert(alert_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Delete a price alert."""
-    alert = await db.get(PriceAlert, alert_id)
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    if alert.user_id != user.id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    await db.delete(alert)
-    await db.commit()
+    await delete_price_alert(db, alert_id, user.id)
     return {"ok": True}

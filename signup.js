@@ -100,6 +100,7 @@ document.getElementById('signup-form').addEventListener('submit', async (e) => {
     const res  = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ email, password, full_name: name }),
     });
     const data = await res.json();
@@ -127,6 +128,7 @@ document.getElementById('signup-form').addEventListener('submit', async (e) => {
         const checkoutRes = await fetch(`/api/billing/checkout/${selectedPlan}`, {
           method: 'POST',
           headers: { 'Content-Type':'application/json', Authorization:`Bearer ${data.access_token}` },
+          credentials: 'include',
         });
         const checkout = await checkoutRes.json();
         if (checkout.checkout_url) { window.location.href = checkout.checkout_url; return; }

@@ -154,10 +154,11 @@ def _pit_audit(csv_path: Path) -> bool:
         df = pd.read_csv(csv_path, sep=_SEP, nrows=_PIT_SAMPLE_ROWS)
     except Exception as exc:
         log.warning("Could not read %s for PIT audit: %s", csv_path, exc)
-        return True  # conservative: assume safe if we cannot check
+        return False  # cannot verify safety; treat as unsafe
 
     if "Restated Date" not in df.columns or "Publish Date" not in df.columns:
-        return True
+        log.warning("PIT audit columns missing in %s; treating as unsafe", csv_path.name)
+        return False
 
     # Non-empty Restated Date that differs from Publish Date => restatement
     restated = (

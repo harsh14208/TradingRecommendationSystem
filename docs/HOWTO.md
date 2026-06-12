@@ -1186,7 +1186,7 @@ A GitHub Actions workflow runs on every push/PR to `main`.
 
 1. **Syntax check** — `ast.parse()` on all `.py` files (catches broken imports before even running)
 2. **Import smoke tests** — `tests/test_imports_smoke.py` — verifies all critical modules import cleanly
-3. **Unit tests** — `pytest tests/ -x -q --timeout=30`
+3. **Unit tests** — `pytest tests/ -x -q --timeout=30` (E2E tests are skipped by default; run them separately with `pytest tests/e2e --run-e2e -q --timeout=60`)
 4. **Signal accuracy gate** — runs `validate_predictions.py`; fails the PR if win rate drops below 52% or Sharpe below 1.0 (skips automatically when fewer than 30 resolved signals exist)
 5. **Security audit** — `pip-audit -r requirements.txt` (non-blocking — reports CVEs but doesn't fail the build)
 
@@ -1194,15 +1194,17 @@ A GitHub Actions workflow runs on every push/PR to `main`.
 
 ```bash
 cd backend
-source venv/bin/activate
-pytest tests/ -v
-# Expected: 995 passed, 2 skipped, 0 failed
+source ../.venv311/bin/activate  # Python 3.11 venv required; Python 3.14 conflicts with pytest-asyncio
+pytest tests/ -q --timeout=30
+# Expected: all backend unit tests pass (E2E skipped by default)
+pytest tests/e2e --run-e2e -q --timeout=60
+# Expected: E2E golden-path tests pass
 ```
 
 ### Running the accuracy gate manually
 
 ```bash
-python3 validate_predictions.py --gate-win-rate 0.52 --gate-sharpe 1.0
+python3 validate_predictions.py
 ```
 
 ### Adding a new test

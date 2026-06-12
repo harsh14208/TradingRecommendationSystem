@@ -157,6 +157,15 @@ def _check_feature_drift(features: list[float], label: str = "live") -> None:
 # ── Feature extraction ─────────────────────────────────────────────────────────
 
 
+def _sig_get(sig: dict, snake_key: str, camel_key: str | None = None):
+    """Return a value from the signal dict, trying snake_case then camelCase."""
+    if snake_key in sig:
+        return sig[snake_key]
+    if camel_key is not None and camel_key in sig:
+        return sig[camel_key]
+    return None
+
+
 def _extract_features(sig: dict) -> list[float]:
     """
     Extract the 23-feature structural vector from a signal dict.
@@ -249,12 +258,13 @@ def _extract_features(sig: dict) -> list[float]:
         month = float("nan")
 
     # ── Price-action context (100% populated) ────────────────────────────────────
-    change_pct = float(sig.get("change_pct") or 0.0)
+    change_pct = float(_sig_get(sig, "change_pct", "changePct") or 0.0)
 
     # ── Sparse context features (NaN when absent; XGBoost handles natively) ──────
-    sector_ord = _sector_ord(sig.get("sector_etf"))
-    dte_bucket = _dte_bucket(sig.get("days_to_earnings"))
-    rs_vs_sector = float(sig.get("rs_vs_sector") or 0.0) if sig.get("rs_vs_sector") is not None else float("nan")
+    sector_ord = _sector_ord(_sig_get(sig, "sector_etf", "sectorEtf"))
+    dte_bucket = _dte_bucket(_sig_get(sig, "days_to_earnings", "daysToEarnings"))
+    _rs = _sig_get(sig, "rs_vs_sector", "rsVsSector")
+    rs_vs_sector = float(_rs or 0.0) if _rs is not None else float("nan")
     # raw_score intentionally EXCLUDED — see docstring for circular dependency reasoning.
 
     return [
@@ -1219,8 +1229,11 @@ def get_sector_entry_model(sector_etf: str | None):
         return None
     key = sector_etf.upper()
     model_file = _DATA_DIR / f"backtest_ml_model_{key}.json"
-    if not model_file.exists():
-        return None
+    try:
+        if not model_file.exists():
+            return None
+    except OSError:
+        return _sector_models.get(key, (None, 0))[0]
 
     try:
         current_mtime = model_file.stat().st_mtime
@@ -1543,16 +1556,29 @@ def compute_rolling_auc(window_days: int = 90) -> dict:
     """
     import os
     import sqlite3
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     AUC_WARN = 0.58
     AUC_DEGRADE = 0.55
 
-    db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "trading.db")
+    db_url = os.getenv("DATABASE_URL", "")
+    if db_url.startswith("sqlite"):
+        # Extract path from sqlite URL (e.g. sqlite+aiosqlite:///./data/trading.db)
+        db_path = db_url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", "")
+        if db_path.startswith("./"):
+            db_path = db_path[2:]
+        db_path = (
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), db_path) if not os.path.isabs(db_path) else db_path
+        )
+    elif db_url.startswith("postgresql"):
+        return {"auc": None, "n": 0, "window_days": window_days, "status": "no_sync_pg"}
+    else:
+        db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "trading.db")
+
     if not os.path.exists(db_path):
         return {"auc": None, "n": 0, "window_days": window_days, "status": "no_db"}
 
-    cutoff = (datetime.now() - timedelta(days=window_days)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
     try:
         conn = sqlite3.connect(db_path)
         rows = conn.execute(

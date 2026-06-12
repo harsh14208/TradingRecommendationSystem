@@ -155,18 +155,22 @@ def apply_screener(signals: list[dict], rules: list[FilterRule]) -> list[dict]:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-async def _load_screeners(db: AsyncSession) -> dict[str, list]:
-    row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
-    return (row.data or {}).get("screeners", {}) if row else {}
-
-
-async def _save_screeners(db: AsyncSession, screeners: dict[str, list]) -> None:
+async def _load_screeners(db: AsyncSession, user_id: int) -> dict[str, list]:
     row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
     if row is None:
-        db.add(AppSettings(id=1, data={"screeners": screeners}))
+        return {}
+    return (row.data or {}).get("screeners", {}).get(str(user_id), {})
+
+
+async def _save_screeners(db: AsyncSession, user_id: int, screeners: dict[str, list]) -> None:
+    row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+    if row is None:
+        db.add(AppSettings(id=1, data={"screeners": {str(user_id): screeners}}))
     else:
         data = dict(row.data or {})
-        data["screeners"] = screeners
+        all_screeners = dict(data.get("screeners", {}))
+        all_screeners[str(user_id)] = screeners
+        data["screeners"] = all_screeners
         row.data = data
     await db.commit()
 
@@ -177,10 +181,10 @@ async def _save_screeners(db: AsyncSession, screeners: dict[str, list]) -> None:
 @router.get("")
 async def list_screeners(
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """List all saved screener presets."""
-    screeners = await _load_screeners(db)
+    screeners = await _load_screeners(db, user.id)
     return [{"name": name, "rules": rules} for name, rules in screeners.items()]
 
 
@@ -188,14 +192,14 @@ async def list_screeners(
 async def create_screener(
     preset: ScreenerPreset,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """Create or replace a named screener preset."""
-    screeners = await _load_screeners(db)
+    screeners = await _load_screeners(db, user.id)
     if len(screeners) >= 20 and preset.name not in screeners:
         raise HTTPException(400, "Maximum 20 screeners per account")
     screeners[preset.name] = [r.model_dump() for r in preset.rules]
-    await _save_screeners(db, screeners)
+    await _save_screeners(db, user.id, screeners)
     return {"name": preset.name, "rules": screeners[preset.name]}
 
 
@@ -203,14 +207,14 @@ async def create_screener(
 async def delete_screener(
     name: str,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """Delete a screener preset by name."""
-    screeners = await _load_screeners(db)
+    screeners = await _load_screeners(db, user.id)
     if name not in screeners:
         raise HTTPException(404, "Screener not found")
     del screeners[name]
-    await _save_screeners(db, screeners)
+    await _save_screeners(db, user.id, screeners)
     return {"deleted": name}
 
 
@@ -218,10 +222,10 @@ async def delete_screener(
 async def run_screener(
     name: str,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """Run a saved screener against current active signals. Returns matching signals."""
-    screeners = await _load_screeners(db)
+    screeners = await _load_screeners(db, user.id)
     if name not in screeners:
         raise HTTPException(404, "Screener not found")
 
@@ -263,7 +267,7 @@ async def run_screener(
 async def preview_screener(
     preset: ScreenerPreset,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """
     Evaluate an unsaved screener against live signals without persisting it.

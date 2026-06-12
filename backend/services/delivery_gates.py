@@ -88,6 +88,7 @@ BLOCKED_TICKERS: frozenset[str] = frozenset(
         "KLAC",  # semi equipment — continuation not MR (IS: LRCX −7.20%, MRVL −6.65%; OOS N≥30)
         "STT",
         "MTB",  # XLF regional banks — rate-cycle driven (OOS v5: both 0% WR, N≥30)
+        "APH",  # live underperformer (N=4, 0% WR, −8.70%) — kept for parity with CLAUDE.md
     }
 )
 
@@ -153,9 +154,89 @@ async def check_delivery_gates(
             if twr < 0.45:
                 _effective_conf_floor = max(_effective_conf_floor, 68.0)
             elif twr >= 0.75:
-                _effective_conf_floor = min(_effective_conf_floor, 52.0)
+                _effective_conf_floor = max(_effective_conf_floor, 52.0)
     except Exception:
         log.warning("Failed to load adaptive weights in delivery gates", exc_info=True)
+
+    # ── Confidence haircuts (applied BEFORE floors so they can gate delivery) ─
+    # Pre-long-weekend haircut (-5pp, non-blocking)
+    try:
+        from services.market_calendar import get_upcoming_holidays, is_pre_long_weekend
+
+        holidays = await get_upcoming_holidays()
+        is_long_wknd, holiday_name = is_pre_long_weekend(holidays)
+        if is_long_wknd:
+            sig_dict = dict(sig_dict)
+            sig_dict["confidence"] = round(max(35.0, sig_dict["confidence"] - 5.0), 1)
+            sig_dict.setdefault("rationale", [])
+            sig_dict["rationale"] = list(sig_dict["rationale"]) + [
+                {
+                    "src": "Risk Gate",
+                    "head": f"Pre-{holiday_name} Haircut (−5pp)",
+                    "body": (
+                        f"Signal is 2 trading days before {holiday_name} (3-day weekend). "
+                        "Lower liquidity, wider bid-ask spreads, and gap risk at open after "
+                        "the holiday reduce expected return. Confidence reduced by 5pp."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"holiday={holiday_name} haircut=-5pp",
+                }
+            ]
+            conf = sig_dict["confidence"]
+    except Exception:
+        pass
+
+    # §57 Thursday signal confidence haircut (−3pp, non-blocking)
+    try:
+        _now_utc = datetime.now(timezone.utc)
+        if action == "BUY" and _now_utc.weekday() == 3:  # Thursday = 3
+            _conf_before = sig_dict.get("confidence", 0)
+            if _conf_before < 58.0:
+                sig_dict = dict(sig_dict)
+                sig_dict["confidence"] = round(max(35.0, _conf_before - 3.0), 1)
+                sig_dict.setdefault("rationale", [])
+                sig_dict["rationale"] = list(sig_dict["rationale"]) + [
+                    {
+                        "src": "Risk Gate",
+                        "head": "Thursday Fill Haircut (−3pp)",
+                        "body": (
+                            "Thursday signals fill at Friday open — pre-weekend institutional "
+                            "de-risking and wider spreads reduce fill quality. Live data shows "
+                            "14pp WR gap vs Tuesday (56.2% vs 70.1% across 437 signals). "
+                            "Confidence reduced by 3pp."
+                        ),
+                        "sentiment": "neg",
+                        "meta": "dow=thursday haircut=-3pp §57",
+                    }
+                ]
+                conf = sig_dict["confidence"]
+    except Exception:
+        pass
+
+    # §67 FOMC Proximity caution (≤1 day)
+    if action == "BUY":
+        _today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _fomc_dist = _days_to_nearest_fomc(_today_str)
+        if _fomc_dist == 0:
+            return "FOMC decision day — rate announcement gap risk, MR entry blocked", sig_dict
+        elif _fomc_dist == 1:
+            sig_dict = dict(sig_dict)
+            sig_dict["confidence"] = round(max(35.0, sig_dict.get("confidence", 0) - 4.0), 1)
+            sig_dict.setdefault("rationale", [])
+            sig_dict["rationale"] = list(sig_dict["rationale"]) + [
+                {
+                    "src": "Risk Gate",
+                    "head": "FOMC Tomorrow — Rate Decision Uncertainty (−4pp)",
+                    "body": (
+                        "Tomorrow is a scheduled FOMC rate decision. Pre-decision gap risk and "
+                        "intraday volatility reduce fill quality and MR hold reliability. "
+                        "Confidence reduced −4pp."
+                    ),
+                    "sentiment": "neg",
+                    "meta": "fomc_dist=1d haircut=-4pp (§67)",
+                }
+            ]
+            conf = sig_dict["confidence"]
 
     # ── Global confidence floor (with ticker-adaptive override) ──────────────
     if conf < _effective_conf_floor:
@@ -209,9 +290,9 @@ async def check_delivery_gates(
         if _vix_now is not None and _vix_now < 15.0:
             return f"VIX={_vix_now:.1f} < 15 — MR entry suspended in ultra-low vol regime (§54)", sig_dict
 
-    # ── Pre-earnings blackout (≤2 trading days) ───────────────────────────────
+    # ── Pre-earnings blackout (≤2 trading days, including earnings today) ───────
     dte = sig_dict.get("daysToEarnings")
-    if dte is not None and 0 < dte <= 2:
+    if dte is not None and dte <= 2:
         return f"{dte}d to earnings — pre-earnings hard blackout", sig_dict
 
     # ── Ex-dividend blackout (0–2 days to ex-div, BUY only) ───────────────────
@@ -269,7 +350,15 @@ async def check_delivery_gates(
             )
 
     # ── Source independence gate ──────────────────────────────────────────────
-    sources_set = set(sig_dict.get("sources") or [])
+    _raw_sources = sig_dict.get("sources") or []
+    if isinstance(_raw_sources, str):
+        try:
+            import json as _json
+
+            _raw_sources = _json.loads(_raw_sources)
+        except Exception:
+            _raw_sources = []
+    sources_set = set(_raw_sources or [])
     non_ta = sources_set - {
         "Technical",
         "Technicals",
@@ -296,87 +385,6 @@ async def check_delivery_gates(
         profit_pct = abs(target - entry) / entry * 100
         if profit_pct < 2.0:
             return f"profit {profit_pct:.1f}% < 2.0% minimum", sig_dict
-
-    # ── Pre-long-weekend confidence haircut (-5pp, non-blocking) ─────────────
-    try:
-        from services.market_calendar import get_upcoming_holidays, is_pre_long_weekend
-
-        holidays = await get_upcoming_holidays()
-        is_long_wknd, holiday_name = is_pre_long_weekend(holidays)
-        if is_long_wknd:
-            sig_dict = dict(sig_dict)
-            sig_dict["confidence"] = round(max(35.0, sig_dict["confidence"] - 5.0), 1)
-            sig_dict.setdefault("rationale", [])
-            sig_dict["rationale"] = list(sig_dict["rationale"]) + [
-                {
-                    "src": "Risk Gate",
-                    "head": f"Pre-{holiday_name} Haircut (−5pp)",
-                    "body": (
-                        f"Signal is 2 trading days before {holiday_name} (3-day weekend). "
-                        "Lower liquidity, wider bid-ask spreads, and gap risk at open after "
-                        "the holiday reduce expected return. Confidence reduced by 5pp."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"holiday={holiday_name} haircut=-5pp",
-                }
-            ]
-    except Exception:
-        pass
-
-    # ── §57 Thursday signal confidence haircut (−3pp, non-blocking) ──────────
-    # Thursday BUY signals fill at Friday open — pre-weekend de-risking by
-    # institutions, wider bid-ask spreads, and gap risk on Monday opening all
-    # reduce fill quality. Live data §11a (437 signals): Thursday WR 56.2% vs
-    # Tuesday 70.1% (14pp gap). Applied only to BUY signals; waived if confidence
-    # is already high (≥58pp) since those represent exceptional setups.
-    try:
-        _now_utc = datetime.now(timezone.utc)
-        if action == "BUY" and _now_utc.weekday() == 3:  # Thursday = 3
-            _conf_before = sig_dict.get("confidence", 0)
-            if _conf_before < 58.0:
-                sig_dict = dict(sig_dict)
-                sig_dict["confidence"] = round(max(35.0, _conf_before - 3.0), 1)
-                sig_dict.setdefault("rationale", [])
-                sig_dict["rationale"] = list(sig_dict["rationale"]) + [
-                    {
-                        "src": "Risk Gate",
-                        "head": "Thursday Fill Haircut (−3pp)",
-                        "body": (
-                            "Thursday signals fill at Friday open — pre-weekend institutional "
-                            "de-risking and wider spreads reduce fill quality. Live data shows "
-                            "14pp WR gap vs Tuesday (56.2% vs 70.1% across 437 signals). "
-                            "Confidence reduced by 3pp."
-                        ),
-                        "sentiment": "neg",
-                        "meta": "dow=thursday haircut=-3pp §57",
-                    }
-                ]
-    except Exception:
-        pass
-
-    # ── §67 FOMC Proximity caution (≤1 day) ──────────────────────────────────
-    if action == "BUY":
-        _today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        _fomc_dist = _days_to_nearest_fomc(_today_str)
-        if _fomc_dist == 0:
-            return "FOMC decision day — rate announcement gap risk, MR entry blocked", sig_dict
-        elif _fomc_dist == 1:
-            sig_dict = dict(sig_dict)
-            sig_dict["confidence"] = round(max(35.0, sig_dict.get("confidence", 0) - 4.0), 1)
-            sig_dict.setdefault("rationale", [])
-            sig_dict["rationale"] = list(sig_dict["rationale"]) + [
-                {
-                    "src": "Risk Gate",
-                    "head": "FOMC Tomorrow — Rate Decision Uncertainty (−4pp)",
-                    "body": (
-                        "Tomorrow is a scheduled FOMC rate decision. Pre-decision gap risk and "
-                        "intraday volatility reduce fill quality and MR hold reliability. "
-                        "Confidence reduced −4pp."
-                    ),
-                    "sentiment": "neg",
-                    "meta": "fomc_dist=1d haircut=-4pp (§67)",
-                }
-            ]
 
     # ── §78 Sep/Oct seasonality — worst calendar months, raise entry bar ─────
     _month = datetime.now(timezone.utc).month

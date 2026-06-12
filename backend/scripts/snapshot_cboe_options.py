@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 sys.path.insert(0, ".")
 
@@ -42,13 +42,18 @@ def _universe() -> list[str]:
 
 
 def _today() -> date:
-    return date.today()
+    """Return the most recently completed trading date (skip weekends/holidays simplistically)."""
+    d = date.today()
+    # Roll back to Friday if today is Saturday/Sunday.
+    while d.weekday() >= 5:  # 5=Sat, 6=Sun
+        d -= timedelta(days=1)
+    return d
 
 
 async def snapshot_ticker(db, ticker: str, snapshot_date: date) -> bool:
     """Fetch and upsert one ticker's CBOE options snapshot. Returns True on success."""
     try:
-        row = build_options_chain_daily_row(ticker, snapshot_date)
+        row = await asyncio.to_thread(build_options_chain_daily_row, ticker, snapshot_date)
         if not row:
             log.debug("[cboe snapshot] %s: no data (empty or below volume threshold)", ticker)
             return False

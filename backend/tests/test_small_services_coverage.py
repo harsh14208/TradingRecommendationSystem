@@ -226,6 +226,9 @@ def _make_app_telegram():
 
     app = FastAPI()
     app.include_router(router)
+    # Skip AppSettings secret-token lookup in the webhook handler so mocks
+    # align with the two execute() calls the tests expect.
+    app.state._tg_webhook_secret = None
     return app
 
 

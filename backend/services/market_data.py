@@ -6,6 +6,7 @@ doesn't block requests as bot traffic (the root cause of 429 / empty crumb).
 """
 
 import asyncio
+import datetime as _dt
 import random
 import time as _time
 from concurrent.futures import ThreadPoolExecutor
@@ -98,6 +99,45 @@ except Exception as _redis_err:
 
 # In-memory fallback (used when Redis is not reachable)
 _ohlcv_cache: dict[tuple, dict] = {}
+
+# ── Quote cache with market-hours TTL ────────────────────────────────────────
+# Quotes stale quickly while the market is open, but there is no need to refetch
+# outside hours. TTL is chosen conservatively to keep scanner cost low.
+_QUOTE_TTL_OPEN = 30.0  # seconds
+_QUOTE_TTL_CLOSED = 300.0  # seconds
+_quote_cache: dict[str, dict] = {}
+
+
+def _is_market_open() -> bool:
+    """Simple NYSE weekday 09:30–16:00 ET check (conservative, no holiday calendar)."""
+    try:
+        et = pytz.timezone("America/New_York")
+        now = _dt.datetime.now(et)
+        if now.weekday() >= 5:
+            return False
+        t = now.time()
+        return _dt.time(9, 30) <= t <= _dt.time(16, 0)
+    except Exception:
+        return False
+
+
+def _quote_ttl() -> float:
+    return _QUOTE_TTL_OPEN if _is_market_open() else _QUOTE_TTL_CLOSED
+
+
+def _quote_cache_get(ticker: str) -> Optional[dict]:
+    entry = _quote_cache.get(ticker)
+    if entry and _time.time() - entry["ts"] < _quote_ttl():
+        return entry["quote"]
+    return None
+
+
+def _quote_cache_set(ticker: str, quote: dict) -> None:
+    if len(_quote_cache) >= _OHLCV_MAX_ENTRIES:
+        oldest = sorted(_quote_cache, key=lambda k: _quote_cache[k]["ts"])[: len(_quote_cache) // 2]
+        for k in oldest:
+            del _quote_cache[k]
+    _quote_cache[ticker] = {"quote": quote, "ts": _time.time()}
 
 
 def _ohlcv_cache_get(key: tuple) -> "Optional[pd.DataFrame]":
@@ -501,21 +541,41 @@ async def get_histories_batch(tickers: list[str], period: str = "1y", interval: 
 async def get_quotes_batch(tickers: list[str]) -> list[dict]:
     """
     Fetch current quotes via Polygon/Massive first, with yfinance batch fallback.
+    Uses an in-memory quote cache whose TTL shrinks during market hours.
     """
+    from services.provider_telemetry import current_cycle_id, record_api_call
+
     tickers = [t.upper() for t in tickers]
-    quotes: list[dict] = []
+    cycle_id = current_cycle_id.get()
+
+    cached = {t: q for t in tickers if (q := _quote_cache_get(t)) is not None}
+    need_fetch = [t for t in tickers if t not in cached]
+
+    quotes: list[dict] = list(cached.values())
+    if not need_fetch:
+        return quotes
+
+    polygon_quotes: list[dict] = []
     try:
         from services.polygon_client import get_polygon_quotes_batch
 
-        quotes = list(await get_polygon_quotes_batch(tickers))
+        polygon_quotes = list(await get_polygon_quotes_batch(need_fetch))
     except Exception:
-        quotes = []
+        record_api_call(cycle_id, "polygon", fallback=True)
+        polygon_quotes = []
 
-    found = {q.get("t") for q in quotes}
-    missing = [t for t in tickers if t not in found]
+    for q in polygon_quotes:
+        _quote_cache_set(q.get("t"), q)
+    quotes.extend(polygon_quotes)
+
+    found = {q.get("t") for q in polygon_quotes}
+    missing = [t for t in need_fetch if t not in found]
     if missing and not _yf_is_blocked():
         yf_quotes = await asyncio.get_running_loop().run_in_executor(_executor, _fetch_quotes_batch, missing)
+        for q in yf_quotes:
+            _quote_cache_set(q.get("t"), q)
         quotes.extend(yf_quotes)
+        record_api_call(cycle_id, "yfinance", fallback=True)
     return quotes
 
 

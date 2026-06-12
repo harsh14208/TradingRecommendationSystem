@@ -327,7 +327,8 @@ def merge_sv_pit(
     """Merge FINRA short-volume into a ticker DataFrame with PIT discipline.
 
     FINRA publishes evening of trade date T → usable from T+1 open.
-    We merge_asof with a 1-day backward look to enforce this.
+    We therefore shift the SV panel date by +1 day before merging so that
+    the value is only attached to bars on or after T+1.
     """
     if sv_panel.empty or "ticker" not in sv_panel.columns:
         df["sv_ratio"] = 0.0
@@ -340,7 +341,7 @@ def merge_sv_pit(
         df["sv_ratio_5d_delta"] = 0.0
         return df
 
-    sv = sv.assign(date=pd.to_datetime(sv["date"]))
+    sv = sv.assign(date=pd.to_datetime(sv["date"]) + pd.Timedelta(days=1))
     sv = sv.sort_values("date")
 
     df = df.copy()

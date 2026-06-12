@@ -258,6 +258,13 @@ async def update_auto_execute_settings(
     if body.enabled and not user.alpaca_key_enc:
         raise HTTPException(status_code=422, detail="Connect a broker account before enabling auto-execution")
 
+    # TSYS-13b: live auto-execution requires risk acknowledgement.
+    if body.enabled and user.alpaca_account_type == "live" and not getattr(user, "risk_acknowledged", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Risk acknowledgement required before enabling live auto-execution. POST /api/me/risk-acknowledge first.",
+        )
+
     merged = await db.merge(user)
     if body.enabled is not None:
         merged.auto_execute = body.enabled
@@ -295,9 +302,16 @@ async def rotate_alpaca_credentials(
     if body.broker == "alpaca" and not body.api_secret:
         raise HTTPException(status_code=422, detail="api_secret is required for Alpaca")
 
+    # TSYS-13b: live credential rotation requires risk acknowledgement.
+    live = body.account_type == "live"
+    if live and not getattr(user, "risk_acknowledged", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Risk acknowledgement required before rotating live trading credentials. POST /api/me/risk-acknowledge first.",
+        )
+
     from services.broker_svc import encrypt_credential
 
-    live = body.account_type == "live"
     try:
         if body.broker == "ibkr":
             from services.broker_svc import verify_ibkr_connection

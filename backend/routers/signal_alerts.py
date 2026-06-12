@@ -12,10 +12,15 @@ import re
 from typing import Optional
 
 from database import get_db
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from models import SignalAlert, User
 from pydantic import BaseModel, field_validator
 from services.auth_svc import get_current_user
+from services.signal_alert_svc import (
+    create_signal_alert as _create_signal_alert,
+    delete_signal_alert as _delete_signal_alert,
+    update_signal_alert as _update_signal_alert,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,29 +104,7 @@ async def create_signal_alert(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    existing = (
-        await db.execute(
-            select(SignalAlert).where(
-                SignalAlert.user_id == user.id,
-                SignalAlert.ticker == body.ticker,
-                SignalAlert.is_active == True,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing:
-        raise HTTPException(
-            status_code=409, detail=f"Active rule for {body.ticker} already exists — update or delete it first"
-        )
-
-    alert = SignalAlert(
-        user_id=user.id,
-        ticker=body.ticker,
-        min_confidence=body.min_confidence,
-        action_filter=body.action_filter,
-    )
-    db.add(alert)
-    await db.commit()
-    await db.refresh(alert)
+    alert = await _create_signal_alert(db, user.id, body.ticker, body.min_confidence, body.action_filter)
     return {"ok": True, "alert": _fmt(alert)}
 
 
@@ -132,16 +115,14 @@ async def update_signal_alert(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    alert = await db.get(SignalAlert, alert_id)
-    if not alert or alert.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    if body.min_confidence is not None:
-        alert.min_confidence = body.min_confidence
-    if body.action_filter is not None:
-        alert.action_filter = body.action_filter
-    if body.is_active is not None:
-        alert.is_active = body.is_active
-    await db.commit()
+    alert = await _update_signal_alert(
+        db,
+        alert_id,
+        user.id,
+        body.min_confidence,
+        body.action_filter,
+        body.is_active,
+    )
     return {"ok": True, "alert": _fmt(alert)}
 
 
@@ -151,11 +132,5 @@ async def delete_signal_alert(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    alert = await db.get(SignalAlert, alert_id)
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    if alert.user_id != user.id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    await db.delete(alert)
-    await db.commit()
+    await _delete_signal_alert(db, alert_id, user.id)
     return {"ok": True}

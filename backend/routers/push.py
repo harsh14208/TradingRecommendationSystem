@@ -1,30 +1,47 @@
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
-from models import PushSubscription, User
+from models import User
+from pydantic import BaseModel, field_validator
 from services.auth_svc import get_current_user
-from sqlalchemy import select
+from services.push_svc import save_push_subscription
 from sqlalchemy.ext.asyncio import AsyncSession
+from urllib.parse import urlparse
 
 router = APIRouter(prefix="/api/push", tags=["push"])
 
 
+class PushSubscriptionIn(BaseModel):
+    endpoint: str | None = None
+    keys: dict
+
+    @field_validator("endpoint")
+    @classmethod
+    def _https_endpoint(cls, v: str) -> str:
+        parsed = urlparse(v)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError("Push endpoint must be a valid https URL")
+        return v
+
+
 @router.post("/subscribe")
-async def subscribe_web_push(payload: dict, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    endpoint = payload.get("endpoint")
-    keys = payload.get("keys", {})
+async def subscribe_web_push(
+    payload: PushSubscriptionIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    endpoint = payload.endpoint
+    keys = payload.keys
+    if not endpoint:
+        raise HTTPException(400, "Invalid push subscription payload: missing endpoint")
     p256dh = keys.get("p256dh")
     auth = keys.get("auth")
 
-    if not endpoint or not p256dh or not auth:
-        raise HTTPException(400, "Invalid push subscription payload")
+    if not p256dh or not auth:
+        raise HTTPException(400, "Invalid push subscription payload: missing keys")
 
-    # Check if exists
-    existing = (
-        await db.execute(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
-    ).scalar_one_or_none()
-    if not existing:
-        sub = PushSubscription(user_id=user.id, endpoint=endpoint, p256dh=p256dh, auth=auth)
-        db.add(sub)
-        await db.commit()
+    try:
+        inserted = await save_push_subscription(db, user.id, endpoint, p256dh, auth)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
-    return {"ok": True, "message": "Subscribed to push notifications"}
+    return {"ok": True, "message": "Subscribed to push notifications", "new": inserted}

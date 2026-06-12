@@ -13,7 +13,7 @@ app.include_router(router, prefix="")
 
 
 def override_get_current_user():
-    return User(id=1, email="test@example.com")
+    return User(id=1, email="test@example.com", is_owner=True)
 
 
 app.dependency_overrides[get_current_user] = override_get_current_user
@@ -49,5 +49,5 @@ def test_update_settings(client, mock_db_session):
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = MagicMock(data={"theme": "dark"})
     mock_db_session.execute.return_value = mock_result
-    response = client.put("/api/settings", json={"theme": "light"})
+    response = client.put("/api/settings", json={"data": {"theme": "light"}})
     assert response.status_code == 200
