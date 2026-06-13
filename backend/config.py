@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     vapid_private_key: SecretStr = Field(default=SecretStr(""))
     vapid_subject: str = "mailto:admin@signal.trade"
 
+    # ── Private preview mode ───────────────────────────────────────────────────
+    # When set, all HTTP requests (except health checks) require the token in a
+    # ?preview_token=... query param or a preview_token cookie. Useful for
+    # locking a live site to the owner while testing.
+    site_private_token: SecretStr = Field(default=SecretStr(""))
+
     # ── Outbound delivery allowlists (SSRF prevention) ─────────────────────────
     # Comma-separated hostname suffixes. Empty = no host restriction beyond https.
     # Discord webhooks are restricted to Discord-controlled hosts by default.

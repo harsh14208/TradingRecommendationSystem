@@ -421,7 +421,7 @@
     "n_neutral": 30,
     "brier_walkforward": 0.0,
     "brier_naive_50pct": 0.25,
-    "last_run": "2026-06-13T06:33:48",
+    "last_run": "2026-06-13T14:29:34",
     "conf_floor": 35.0,
     "conf_ceil": 78.0
   }

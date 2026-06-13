@@ -61,7 +61,12 @@ def _vol_target_weights(returns_df: pd.DataFrame) -> dict:
     if returns_df.empty or len(returns_df.columns) < 1:
         return {}
 
+    # Drop columns that are all-NaN or have zero variance to keep linear-algebra stable.
+    returns_df = returns_df.dropna(axis=1, how="all").copy()
+    returns_df = returns_df.loc[:, returns_df.std() > 1e-12]
     tickers = list(returns_df.columns)
+    if len(tickers) < 1:
+        return {"error": "No usable return series after removing NaN/zero-variance columns"}
 
     # Annualised volatility per asset
     vols = {t: float(returns_df[t].std() * np.sqrt(TRADING_DAYS)) for t in tickers}
@@ -141,12 +146,14 @@ async def get_volatility_target_weights(tickers: Optional[list[str]] = None) -> 
 
     try:
         returns_df = await _fetch_returns(tickers)
-        if returns_df.empty:
-            return {"error": "Could not fetch return data for the provided tickers"}
+        if returns_df.empty or len(returns_df.columns) < 2 or len(returns_df) < 10:
+            return {"error": "Could not fetch enough return data for the provided tickers"}
         result = await asyncio.to_thread(_vol_target_weights, returns_df)
         result["tickers_requested"] = tickers
         result["tickers_resolved"] = list(returns_df.columns)
         return result
     except Exception as e:
-        log.error(f"[vol_target] Error: {e}", exc_info=True)
+        # Data-provider hiccups are expected; keep them out of Sentry as errors.
+        log.warning(f"[vol_target] Error computing weights: {e}")
+        log.debug("[vol_target] traceback", exc_info=True)
         return {"error": str(e)}

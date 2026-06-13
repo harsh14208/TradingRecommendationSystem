@@ -342,6 +342,9 @@ _FEATURE_NAMES = [
 # A17 challenger: 23 structural features + raw_score as feature 24.
 _CHALLENGER_FEATURE_NAMES = _FEATURE_NAMES + ["raw_score"]
 
+# Features that are intentionally NaN when the underlying data is absent.
+_SPARSE_FEATURE_NAMES = {"sector_ord", "dte_bucket", "rs_vs_sector"}
+
 
 # ── Entry model — technical features ─────────────────────────────────────────
 # 14 features, all derivable from the live `tech` dict + VIX + sector + datetime.
@@ -502,16 +505,21 @@ def train_model() -> Optional[dict]:
         log.info(f"[signal_ml] After filtering, only {len(X)} usable rows — skipping.")
         return None
 
-    # NaN-rate guard: if any feature is >20% missing, the model is training on
-    # a degraded distribution.  Log loudly so telemetry catches it.
+    # NaN-rate guard: warn when a feature that should be dense is mostly missing.
+    # Sparse features (sector_ord, dte_bucket, rs_vs_sector) are expected to be
+    # NaN when absent; only warn if they are missing far more often than normal.
     _X_arr = np.array(X, dtype=float)
     _nan_rate = np.isnan(_X_arr).mean(axis=0)
     for _i, _rate in enumerate(_nan_rate):
-        if _rate > 0.20:
-            log.critical(
-                f"[signal_ml] Feature '{_FEATURE_NAMES[_i]}' is {_rate:.1%} NaN — "
-                "model training on degraded distribution. Check data pipeline."
-            )
+        if _rate <= 0.20:
+            continue
+        _fname = _FEATURE_NAMES[_i]
+        if _fname in _SPARSE_FEATURE_NAMES and _rate < 0.95:
+            continue
+        log.warning(
+            f"[signal_ml] Feature '{_fname}' is {_rate:.1%} NaN — "
+            "model training on degraded distribution. Check data pipeline."
+        )
 
     # ── Temporal train/test split ──────────────────────────────────────────────
     split = max(int(len(X) * _TRAIN_SPLIT), _MIN_SAMPLES)

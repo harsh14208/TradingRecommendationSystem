@@ -59,8 +59,9 @@ _SENTINEL_TICKERS: frozenset[str] = frozenset(
 
 # Delisted/missing tickers make yfinance log errors; we handle those gracefully
 # by falling back or omitting the ticker, so keep its logs out of Sentry.
-logging.getLogger("yfinance").setLevel(logging.WARNING)
-logging.getLogger("yfinance.shared").setLevel(logging.WARNING)
+_yf_logger = logging.getLogger("yfinance")
+_yf_logger.setLevel(logging.CRITICAL)
+_yf_logger.propagate = False
 
 # One long-lived session that looks like Chrome — avoids Yahoo 429s
 _session = curl_requests.Session(impersonate="chrome110")

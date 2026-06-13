@@ -12,15 +12,18 @@ from services.news import get_api_usage
 router = APIRouter(prefix="/api/market", tags=["market"])
 
 # Market context changes at most every few minutes — cache for 5 minutes so
-# page loads don't each fire 6 concurrent external HTTP calls.
+# page loads don't each fire 6 concurrent external HTTP calls. A partial/failed
+# fetch (e.g. transient yfinance treasury/VIX miss) is cached only briefly so the
+# Market dashboard self-heals instead of pinning empty cards for the full window.
 _CTX_TTL = 300  # seconds
-_ctx_cache: dict = {"data": None, "ts": 0.0}
+_CTX_PARTIAL_TTL = 45  # seconds — short retry when macro came back incomplete
+_ctx_cache: dict = {"data": None, "ts": 0.0, "ttl": _CTX_TTL}
 
 
 @router.get("/context")
 async def market_context():
     now = time.monotonic()
-    if _ctx_cache["data"] and (now - _ctx_cache["ts"]) < _CTX_TTL:
+    if _ctx_cache["data"] and (now - _ctx_cache["ts"]) < _ctx_cache.get("ttl", _CTX_TTL):
         return _ctx_cache["data"]
 
     from services.macro_regime import get_macro_regime
@@ -45,8 +48,12 @@ async def market_context():
         "hmm_regime": hmm if not isinstance(hmm, Exception) else None,
         "api_usage": get_api_usage(),
     }
+    # A healthy macro fetch always includes the 10Y treasury yield; if it's
+    # missing the upstream fetch degraded — keep the result but retry soon.
+    macro_ok = isinstance(macro, dict) and macro.get("t10y") is not None
     _ctx_cache["data"] = result
     _ctx_cache["ts"] = now
+    _ctx_cache["ttl"] = _CTX_TTL if macro_ok else _CTX_PARTIAL_TTL
     return result
 
 
