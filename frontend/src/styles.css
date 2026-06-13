@@ -9,11 +9,11 @@
   --line-2: #273348;
   --text: #e6edf7;
   --text-dim: #8a97ad;
-  --text-faint: #56617a;
+  --text-faint: #7f8d9e;
   --accent: #10b981;
   --accent-soft: color-mix(in oklch, var(--accent) 18%, transparent);
   --up: #10b981;
-  --down: #ef4444;
+  --down: #f87171;
   --warn: #f59e0b;
   --info: #60a5fa;
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -54,9 +54,22 @@
   --line-2: #d7d4ca;
   --text: #0f172a;
   --text-dim: #5b6576;
-  --text-faint: #94a3b8;
+  --text-faint: #5d6b7f;
+  --accent: #047857;
   --accent-soft: color-mix(in oklch, var(--accent) 14%, transparent);
+  --up: #047857;
+  --down: #b91c1c;
+  --warn: #b45309;
+  --info: #2563eb;
 }
+
+/* Light-theme WCAG AA fixes: dark text on bright accent fails, so invert primary buttons. */
+[data-theme="light"] .btn.primary,
+[data-theme="light"] .se-btn.primary { color: #ffffff; }
+
+[data-theme="light"] .style-badge.intraday { color: #b45309; border-color: color-mix(in oklch, #b45309 40%, var(--line)); background: color-mix(in oklch, #b45309 8%, var(--bg)); }
+[data-theme="light"] .style-badge.swing    { color: #2563eb; border-color: color-mix(in oklch, #2563eb 40%, var(--line)); background: color-mix(in oklch, #2563eb 8%, var(--bg)); }
+[data-theme="light"] .style-badge.position { color: #7c3aed; border-color: color-mix(in oklch, #7c3aed 40%, var(--line)); background: color-mix(in oklch, #7c3aed 8%, var(--bg)); }
 
 * { box-sizing: border-box; }
 html, body {
