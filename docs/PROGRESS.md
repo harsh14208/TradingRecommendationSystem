@@ -39,6 +39,11 @@
 
 **Tests:** `npm run build` green; backend non-E2E **2550 passed, 18 skipped**.
 
+### v8.8.6 (2026-06-12) — Sentry Bug Fixes: SendLog Filter + yfinance Delisted-Quote Noise
+
+- **SendLog `user_id` missing (PYTHON-FASTAPI-1Y, 25 hits):** `routers/delivery_router.py` filtered `/api/delivery/log` by `SendLog.user_id`, but the column did not exist. Added `user_id` to `models.SendLog`, created Alembic migration `17c3c714fe68`, and populated the column from both the fanout scanner path and the manual send endpoint.
+- **yfinance delisted-ticker errors (PYTHON-FASTAPI-5/6, 176+ hits):** `services/market_data.py` now caps `yfinance` loggers at `WARNING`, preventing "possibly delisted" error logs from being captured by Sentry. Missing-ticker quotes are still returned as empty results.
+
 > **v8.0 — Quant Engine (QENG) Roadmap Implementation (16/17 QENG features complete):** experiment registry, PBO report, checklist promotions, PIT feature store, replay engine, version lineage, live fill ledger, TCA service, capacity limits, portfolio allocator, HRP, cost-aware turnover control, stat-arb residual sleeve, TS momentum trend sleeve, cross-sectional factors, cross-sleeve capital allocator, triple-barrier meta-labeling, shadow-control cohort routing, and policy versioning. Overall 8.6/10 product · 8.3/10 quality (v8.0.1, revised down after a server-log audit found the PIT feature store crashing every live scan on NaN→json and the TSYS-5a health scorecard recording 0 calls due to a constraint/race — both green in the test suite; see Stats.md §15 v8.0.1).
 
 ### v8.8 (2026-06-12) — §117 Sector-Specific XGBoost Promotion Gate

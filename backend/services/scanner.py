@@ -77,15 +77,15 @@ async def _alert_sla_breach(ticker: str, action: str, latency_s: float, settings
         log.warning("_alert_sla_breach failed", exc_info=True)
 
 
-async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> tuple[bool, str | None]:
+async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> tuple[bool, str | None, int | None]:
     """
     Deliver signal to all active subscribers who have Telegram linked.
-    Returns (any_success, first_chat_id) where first_chat_id is the chat ID of
-    the first successful delivery (for audit / SendLog tracking).
+    Returns (any_success, first_chat_id, first_user_id) where first_chat_id is
+    the chat ID of the first successful delivery (for audit / SendLog tracking).
     """
     s = get_settings()
     if not s.telegram_bot_token:
-        return False, None
+        return False, None, None
 
     # Fetch users: active subscription (basic or pro) + telegram chat linked
     # Free users don't get Telegram delivery
@@ -111,7 +111,7 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> tuple[bo
     ]
 
     if not eligible:
-        return False, None
+        return False, None, None
 
     # Check for already-delivered (dedup) — limit to recent receipts to avoid
     # unbounded growth on high-volume tickers.
@@ -169,6 +169,7 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> tuple[bo
     global_min_conf = get_settings().min_confidence
     sent_chat_ids: set[str] = set()  # dedup: never send twice to the same chat
     first_chat_id: str | None = None
+    first_user_id: int | None = None
     from services.delivery_manager import queue_delivery
 
     for user in eligible:
@@ -249,6 +250,7 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> tuple[bo
             sent_chat_ids.add(user.telegram_chat_id)
             if first_chat_id is None:
                 first_chat_id = user.telegram_chat_id
+                first_user_id = user.id
             log.info(f" [fanout] queued Telegram delivery for user={user.id} chat={user.telegram_chat_id}")
         except Exception as e:
             log.warning(f" [fanout] error queuing Telegram for user={user.id}: {e}")
@@ -270,7 +272,7 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> tuple[bo
             except Exception as e:
                 log.warning(f" [fanout] error queuing Discord for user={user.id}: {e}")
 
-    return any_success, first_chat_id
+    return any_success, first_chat_id, first_user_id
 
 
 def _build_discord_embed(sig_dict: dict) -> dict:
@@ -549,16 +551,18 @@ async def _maybe_send(
             any_sent = False
     else:
         # ── Multi-user fan-out ──────────────────────────────────────────────────
-        any_sent, _fanout_chat_id = await _fanout_to_subscribers(sig_dict, db_row, db)
+        any_sent, _fanout_chat_id, _fanout_user_id = await _fanout_to_subscribers(sig_dict, db_row, db)
 
     # ── Legacy single-user fallback (settings.telegram_chat_id) ────────────
     success = any_sent
     detail = ""
     _sent_chat_id: str | None = None
+    _sent_user_id: int | None = None
     if _broadcast_id:
         _sent_chat_id = _broadcast_id
     elif _fanout_chat_id:
         _sent_chat_id = _fanout_chat_id
+        _sent_user_id = _fanout_user_id
     if not any_sent:
         success, detail = await send_telegram(sig_dict)
         if success:
@@ -611,6 +615,7 @@ async def _maybe_send(
             status="sent" if success else "fail",
             message=log_msg,
             chat_id=_sent_chat_id,
+            user_id=_sent_user_id,
             cycle_id=current_cycle_id.get(),
         )
     )

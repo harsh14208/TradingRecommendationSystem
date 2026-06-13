@@ -1728,13 +1728,21 @@ function CalendarView({ open, onClose }) {
 /* ─── DemoTour — BUG FIX: useEffect moved before early return ────────────────── */
 function DemoTour({ open, onClose }) {
   const [step, setStep] = useState(0);
-  const steps = [
-    { title: "Welcome to Signal.Trade",       body: "A personal quant desk that fuses 40+ signals — options flow, 13F institutional data, insider trades and technicals — into one confidence score. Let's take 60 seconds." },
-    { title: "Left: Signal feed",             body: "Every live recommendation ranked by confidence. Click any row to expand inline. Use j/k to navigate, Enter for full detail." },
-    { title: "Style strip",                   body: "Switch between Intraday, Swing, and Position to filter signals by your trading horizon. The feed, counts, and active detail all update instantly." },
+  const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+  const steps = isMobile ? [
+    { title: "Welcome to Signal.Trade",   body: "A personal quant desk that fuses 65+ signal blocks — options flow, 13F institutional data, insider trades and technicals — into one confidence score. Here's the 30-second tour." },
+    { title: "Read a signal card",        body: "Each card shows the action (BUY / SELL / HOLD), the ticker, a plain-English summary, and the confidence on the right. The Entry / Stop / Target chips are your trade plan. Tap any card to expand it." },
+    { title: "Confidence, honestly",      body: "The bar and % show how strongly the engine leans — never certainty. We cap confidence at 84% and show the historical win rate so you can judge the edge yourself. Higher isn't a promise." },
+    { title: "Pick your style",           body: "The Style strip (Intraday · Swing · Position) re-tunes every signal to your holding horizon. Use the filter chips above the feed to show only BUYs, SELLs, or high-conviction setups." },
+    { title: "Swipe between panels",      body: "Swipe left/right — or use the ‹ › arrows at the bottom — to move between the Feed, the full Recommendation detail, and the Telegram Delivery log. The bottom bar jumps to History, Backtest, Watchlist and Market." },
+    { title: "Get it in Telegram",        body: "Link Telegram in Account → Settings and qualifying signals are delivered straight to your phone. Tap the ? in the top bar anytime to reopen this guide. Remember: this is research, not financial advice." },
+  ] : [
+    { title: "Welcome to Signal.Trade",       body: "A personal quant desk that fuses 65+ signal blocks — options flow, 13F institutional data, insider trades and technicals — into one confidence score. Let's take 60 seconds." },
+    { title: "Left: Signal feed",             body: "Every live recommendation ranked by confidence. Click any row to expand inline. Use j/k to navigate, Enter for full detail. The filter chips and Style strip re-tune the whole feed instantly." },
+    { title: "Confidence, honestly",          body: "The bar and % show how strongly the engine leans — never certainty. We cap confidence at 84% and surface the historical win rate so you can judge the edge yourself. Higher isn't a promise." },
     { title: "Center: Recommendation detail", body: "Action, confidence, plain-English summary, Why Now, Predictive Confidence Intervals, similar historical signals, the chart, and every source that voted. No black boxes." },
     { title: "Right: Delivery log",           body: "Live audit trail of every Telegram send. If a signal fires but doesn't reach you, this is where you'll see exactly why." },
-    { title: "Keyboard shortcuts",            body: "j/k moves through the feed. Enter opens detail. Shift+S sends to Telegram. 1/2/3/4 filters the feed. Press ? anytime to reopen this cheat sheet." },
+    { title: "Keyboard shortcuts",            body: "j/k moves through the feed. Enter opens detail. Shift+S sends to Telegram. 1/2/3/4 filters the feed. Press ? anytime to reopen this cheat sheet. Remember: this is research, not financial advice." },
   ];
   // Hook always called before any conditional return
   useEffect(() => { if (open) setStep(0); }, [open]);

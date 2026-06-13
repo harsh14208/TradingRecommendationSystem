@@ -7,6 +7,7 @@ doesn't block requests as bot traffic (the root cause of 429 / empty crumb).
 
 import asyncio
 import datetime as _dt
+import logging
 import random
 import time as _time
 from concurrent.futures import ThreadPoolExecutor
@@ -55,6 +56,11 @@ _SENTINEL_TICKERS: frozenset[str] = frozenset(
         "WEB",
     }
 )
+
+# Delisted/missing tickers make yfinance log errors; we handle those gracefully
+# by falling back or omitting the ticker, so keep its logs out of Sentry.
+logging.getLogger("yfinance").setLevel(logging.WARNING)
+logging.getLogger("yfinance.shared").setLevel(logging.WARNING)
 
 # One long-lived session that looks like Chrome — avoids Yahoo 429s
 _session = curl_requests.Session(impersonate="chrome110")

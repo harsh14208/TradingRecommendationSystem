@@ -569,9 +569,13 @@ input, select, textarea { font: inherit; color: inherit; }
 
 /* ── Mobile responsive layout (≤768px) ─────────────────────────────────── */
 @media (max-width: 768px) {
+  /* Dynamic viewport height keeps the bottom nav reachable as the mobile
+     browser chrome shows/hides; 100vh fallback inherited from html,body. */
   .app {
+    height: 100vh;
+    height: 100dvh;
     grid-template-columns: 1fr !important;
-    grid-template-rows: 48px 1fr auto auto 52px !important;
+    grid-template-rows: auto 1fr auto auto auto !important;
     grid-template-areas:
       "topbar"
       "main"
@@ -580,6 +584,11 @@ input, select, textarea { font: inherit; color: inherit; }
       "mobile-nav" !important;
   }
   .sidebar { display: none !important; }
+
+  /* Persistent disclaimer footer is redundant on phones (shown in the
+     mandatory acknowledgement gate + login) and overflowed below the nav. */
+  .disclaimer-bar { display: none !important; }
+
   .main {
     display: flex !important;
     overflow-x: auto !important;
@@ -587,6 +596,7 @@ input, select, textarea { font: inherit; color: inherit; }
     scroll-snap-type: x mandatory;
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
   }
   .main::-webkit-scrollbar { display: none; }
   .main { scrollbar-width: none; }
@@ -596,43 +606,63 @@ input, select, textarea { font: inherit; color: inherit; }
     max-width: 100% !important;
     height: 100% !important;
     overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
     scroll-snap-align: start;
     scroll-snap-stop: always;
   }
+
+  /* ── Top bar ── */
   .ticker { display: none; }
   .search { display: none; }
-  .topbar { padding: 0 10px; gap: 8px; }
+  .topbar {
+    min-height: 52px;
+    padding: 0 10px;
+    padding-top: env(safe-area-inset-top);
+    gap: 6px;
+  }
   .topbar-actions .chip { display: none !important; }
-  .topbar-actions { flex-shrink: 0; gap: 4px; }
+  .topbar-actions { flex-shrink: 1; gap: 2px; min-width: 0; overflow: hidden; }
   .topbar-actions .btn-text { display: none; }
-  .brand img { max-height: 28px; }
+  .topbar-actions .iconbtn { width: 32px; height: 32px; }
+  .brand { flex-shrink: 0; }
+  .brand img { max-height: 26px; }
+  .brand span { display: none; }            /* hide "v5.2" build pill on phones */
   .overlay { z-index: 100; }
+
+  /* ── Bottom navigation — fluid so all 6 items fit from 320 → 430px ── */
   .mobile-nav {
     display: grid !important;
     grid-template-columns: repeat(6, 1fr);
-    height: 52px;
-    background: var(--bg-1);
+    min-height: 54px;
+    background: color-mix(in oklch, var(--bg-1) 92%, #000);
     border-top: 1px solid var(--line);
     z-index: 100;
-    justify-content: space-around;
     align-items: center;
-    padding: 0 4px;
-    padding-bottom: env(safe-area-inset-bottom);
+    padding: 4px max(4px, env(safe-area-inset-left)) calc(4px + env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-right));
+    backdrop-filter: blur(8px);
   }
   .mobile-nav-item {
-    display: flex; flex-direction: column; align-items: center; gap: 2px;
-    padding: 6px 12px; border-radius: 8px; cursor: pointer;
-    font-family: var(--font-mono); font-size: 9px; color: var(--text-faint);
-    text-transform: uppercase; letter-spacing: 0.06em; min-width: 48px;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 6px 2px; border-radius: 10px; cursor: pointer; min-width: 0;
+    font-family: var(--font-mono); font-size: clamp(7.5px, 2.4vw, 9px);
+    color: var(--text-faint); text-align: center;
+    text-transform: uppercase; letter-spacing: 0.02em; line-height: 1.1;
+    transition: color 120ms, background 120ms;
   }
-  .mobile-nav-item.active { color: var(--accent); }
+  .mobile-nav-item span {
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mobile-nav-item.active { color: var(--accent); background: var(--accent-soft); }
+  .mobile-nav-item:active { background: var(--bg-3); }
+
+  /* ── Panel pager (swipe affordance) ── */
   .mobile-pager {
     grid-area: pager;
     display: flex !important;
     align-items: center;
     justify-content: center;
-    gap: 16px;
-    height: 28px;
+    gap: 14px;
+    min-height: 32px;
     background: var(--bg-1);
     border-top: 1px solid var(--line);
     z-index: 100;
@@ -642,33 +672,74 @@ input, select, textarea { font: inherit; color: inherit; }
     color: var(--text-dim);
     font-size: 22px;
     line-height: 1;
-    padding: 2px 12px;
+    padding: 4px 16px;
+    min-height: 32px;
     cursor: pointer;
   }
-  .pager-arrow:disabled { color: var(--text-faint); opacity: 0.35; cursor: default; }
-  .pager-dots { display: flex; align-items: center; gap: 6px; }
-  .pager-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
-  .pager-dot.active { background: var(--accent); box-shadow: 0 0 6px var(--accent-soft); }
+  .pager-arrow:disabled { color: var(--text-faint); opacity: 0.3; cursor: default; }
+  .pager-dots { display: flex; align-items: center; gap: 7px; }
+  .pager-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); transition: all 180ms; }
+  .pager-dot.active { background: var(--accent); width: 18px; border-radius: 3px; box-shadow: 0 0 6px var(--accent-soft); }
   .statusbar { display: none; }
+
+  /* ── Feed chrome: tighten so the feed itself gets more room ── */
+  .filter-chips { padding: 7px 10px; gap: 5px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .filter-chips::-webkit-scrollbar { display: none; }
+  .filter-chips .fc { flex-shrink: 0; }
+  .saved-views { flex-shrink: 0; }
+  .style-strip { padding: 7px 10px; gap: 8px; flex-wrap: wrap; }
+  .style-strip .ss-meta { font-size: 9px; }
+  .help-strip { padding: 6px 10px; }
+  .pane > .pane-head { padding-left: 12px; padding-right: 12px; }
+
+  /* ── Signal rows: comfortable touch targets, no cramped collisions ── */
+  .signal-row-inner { gap: 9px; column-gap: 9px; }
+  .signal-right { align-items: flex-start; padding-top: 1px; }
+  .signal-top { flex-wrap: wrap; row-gap: 3px; }
+  .signal-top .action-subtitle { flex-basis: 100%; }   /* plain-English wraps to its own line */
+
+  /* ── Detail pane ── */
   .rationale-item { padding: 8px !important; gap: 8px !important; }
   .rr-grid { grid-template-columns: 1fr 1fr !important; }
-  .detail-hero { padding: 12px !important; }
+  .detail-hero { padding: 14px 14px 12px !important; }
+  .detail-ticker { font-size: clamp(22px, 7vw, 30px) !important; }
+  .detail-price  { font-size: clamp(17px, 5.2vw, 22px) !important; }
   .action-row { flex-wrap: wrap !important; gap: 6px !important; }
-  .action-row .btn { flex: 1 1 40%; font-size: 11px !important; }
+  .action-row .btn { flex: 1 1 40%; font-size: 11px !important; min-height: 38px; }
   .detail-grid { grid-template-columns: 1fr !important; }
   .signal-cluster { order: -1; margin-bottom: 16px; max-width: 100%; }
-  .pane-head { height: auto; min-height: 40px; flex-wrap: wrap; gap: 6px; }
+  .pane-head { height: auto; min-height: 44px; flex-wrap: wrap; gap: 6px; }
   .pane-head .right { margin-left: 0; flex-wrap: wrap; gap: 6px; }
   .pane-head .title { flex-shrink: 0; }
   .detail-row { flex-wrap: wrap; gap: 10px; }
-  .detail-tabs { flex-wrap: wrap; }
+  .detail-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .detail-tabs::-webkit-scrollbar { display: none; }
+  .detail-tab { flex-shrink: 0; }
   .chart-wrap { margin-left: 12px; margin-right: 12px; }
   .chart-head { flex-wrap: wrap; }
   .chart-head .tabs { margin-left: 0; }
   .del-tabs { flex-wrap: wrap; }
   .similar-grid { grid-template-columns: 1fr !important; }
   .mc-stats, .mc-controls { grid-template-columns: 1fr !important; }
+
+  /* ── Predictive-interval block: stack the big number above the bars ── */
+  .pi-grid { grid-template-columns: 1fr !important; gap: 16px !important; }
+  .pi-prob-num { font-size: clamp(40px, 13vw, 56px) !important; }
+
   .pane, .pane * { max-width: 100%; }
+
+  /* Larger modals on phones */
+  .hk-modal, .tour-modal { padding: 22px 20px; }
+  .hk-grid { grid-template-columns: 1fr; gap: 16px; }
+}
+
+/* ── Small phones (≤360px): trim the last bit of crowding ─────────────── */
+@media (max-width: 360px) {
+  .topbar { gap: 4px; }
+  .topbar-actions .iconbtn { width: 28px; height: 28px; }
+  .mobile-nav-item { gap: 2px; padding: 6px 1px; }
+  .mobile-nav-item span { letter-spacing: 0; }
+  .filter-chips .fc { font-size: 10px; padding: 4px 8px; }
 }
 
 /* ── Tablet layout (769px – 1024px) ─────────────────────────────────────── */
@@ -965,6 +1036,25 @@ select:focus:not(:focus-visible),
 textarea:focus:not(:focus-visible) {
   outline: none;
 }
+
+/* ── Polish: brand selection + smoother interactions ─────────────────────── */
+::selection { background: color-mix(in oklch, var(--accent) 30%, transparent); color: var(--text); }
+
+.fc, .ss-btn, .nav-item, .iconbtn, .se-btn, .chip, .mobile-nav-item, .pager-arrow {
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease, transform 120ms ease;
+}
+.iconbtn:active, .se-btn:active, .btn:active { transform: translateY(1px); }
+
+/* Refined active/hover signal treatment (desktop pointer only) */
+@media (hover: hover) and (pointer: fine) {
+  .signal { transition: background 140ms ease, box-shadow 140ms ease; }
+  .signal:hover { box-shadow: inset 2px 0 0 color-mix(in oklch, var(--accent) 45%, transparent); }
+  .signal.active { box-shadow: none; }
+}
+
+/* Onboarding modals: gentle scale-in entrance */
+.tour-modal, .hk-modal { animation: tour-pop 200ms cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes tour-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
   *,

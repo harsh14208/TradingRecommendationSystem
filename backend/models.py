@@ -88,6 +88,7 @@ class SendLog(Base):
     status = Column(String(10))
     message = Column(Text)
     chat_id = Column(String(50), nullable=True)  # DISC-3: actual recipient chat_id
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now(), index=True)
     cycle_id = Column(String(100), nullable=True, index=True)  # TSYS-4b
 

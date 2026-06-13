@@ -198,6 +198,13 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 - Backend non-E2E tests: **2550 passed, 18 skipped**.
 </details>
 
+<details open>
+<summary><b>v8.8.6 Sentry Bug Fixes (2026-06-12)</b></summary>
+
+- **SendLog `user_id` missing (PYTHON-FASTAPI-1Y, 25 hits)** — `routers/delivery_router.py` filtered `/api/delivery/log` by `SendLog.user_id`, but the column did not exist. Added `user_id` to `models.SendLog`, created Alembic migration `17c3c714fe68`, and populated it from both the scanner fanout path and the manual send endpoint.
+- **yfinance delisted-ticker noise (PYTHON-FASTAPI-5/6, 176+ hits)** — `services/market_data.py` now caps `yfinance` loggers at `WARNING` so "possibly delisted" messages are not captured as Sentry errors. Missing-ticker quotes continue to be omitted gracefully.
+</details>
+
 <details>
 <summary><b>v8.6 Alt-Data Validation, Discovered-Issue Fixes & TCA Wiring (2026-06-11/12)</b></summary>
 

@@ -51,8 +51,8 @@ function KillSwitch({ currentUser }) {
 }
 
 /* ─── Disclaimer ─────────────────────────────────────────────────────────────── */
-/* ─── Disclaimer ─────────────────────────────────────────────────────────────── */
 const DISCLAIMER_KEY = "signal_trade_disclaimer_v1";
+const TOUR_KEY = "st_tour_seen_v1";
 
 function App() {
   /* Auth */
@@ -187,6 +187,14 @@ function App() {
     fetchMe();
     return () => ctrl.abort();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // First-run product tour — auto-opens once, after the disclaimer is acknowledged.
+  useEffect(() => {
+    if (!currentUser || !disclaimerAck) return;
+    if (localStorage.getItem(TOUR_KEY)) return;
+    const t = setTimeout(() => setTourOpen(true), 650);
+    return () => clearTimeout(t);
+  }, [currentUser, disclaimerAck]);
 
   /* ── WebSocket Connection ── */
   useEffect(() => {
@@ -1059,10 +1067,29 @@ function App() {
           <div className="feed">
             {loading && <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>Connecting to backend…</div>}
             {!loading && filteredSignals.length === 0 && (
-              <div style={{ padding:"40px 20px", textAlign:"center", color:"var(--text-dim)", fontSize:12 }}>
-                <div style={{ fontSize:24, marginBottom:8, opacity:0.4 }}>○</div>
-                <div style={{ marginBottom:4, color:"var(--text)", fontWeight:500 }}>No signals above {threshold}% confidence</div>
-                <div style={{ fontSize:11, color:"var(--text-faint)" }}>Lower the threshold or wait for the next scan.</div>
+              <div style={{ padding:"44px 24px", textAlign:"center", color:"var(--text-dim)", fontSize:12, maxWidth:340, margin:"0 auto" }}>
+                <div style={{ fontSize:30, marginBottom:10, opacity:0.35 }}>◎</div>
+                <div style={{ marginBottom:6, color:"var(--text)", fontWeight:600, fontSize:13 }}>No signals above {threshold}% confidence</div>
+                <div style={{ fontSize:12, color:"var(--text-faint)", lineHeight:1.55, marginBottom:14 }}>
+                  The market is quiet for your current filters. The next scan runs automatically in {countdown}s — or widen your search below.
+                </div>
+                <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap" }}>
+                  {threshold > 40 && (
+                    <button className="btn" style={{ fontSize:11, padding:"6px 14px" }}
+                      onClick={() => setTweak({ customConf: Math.max(40, threshold - 10) })}>
+                      Lower to {Math.max(40, threshold - 10)}%
+                    </button>
+                  )}
+                  {feedFilter !== "all" && (
+                    <button className="btn" style={{ fontSize:11, padding:"6px 14px" }}
+                      onClick={() => setFeedFilter("all")}>
+                      Clear filter
+                    </button>
+                  )}
+                  <button className="btn ghost" style={{ fontSize:11, padding:"6px 14px" }} onClick={manualScan}>
+                    Scan now
+                  </button>
+                </div>
               </div>
             )}
             {visibleSignals.map((s, idx) => (
@@ -1666,7 +1693,7 @@ function App() {
       {/* ── Mobile bottom navigation bar (hidden on desktop via CSS) ── */}
       <div className="mobile-nav">
         {[
-          ["feed","feed","Signal Feed"],
+          ["feed","feed","Feed"],
           ["history","clock","History"],
           ["backtest","bar-chart","Backtest"],
           ["watchlist","eye","Watchlist"],
@@ -1704,7 +1731,7 @@ function App() {
       </div>
 
       {/* ── Disclaimer footer ── */}
-      <div style={{ gridColumn:"1/-1", background:"var(--bg-1)", borderTop:"1px solid var(--line)", padding:"5px 20px", display:"flex", alignItems:"center", gap:10, fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>
+      <div className="disclaimer-bar" style={{ gridColumn:"1/-1", background:"var(--bg-1)", borderTop:"1px solid var(--line)", padding:"5px 20px", display:"flex", alignItems:"center", gap:10, fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>
         <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
           <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
           <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
@@ -1720,7 +1747,7 @@ function App() {
 
       <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} state={tweakState} set={setTweak}/>
       <HotkeyHelp open={hkOpen} onClose={() => setHkOpen(false)} onTour={() => setTourOpen(true)}/>
-      <DemoTour open={tourOpen} onClose={() => setTourOpen(false)}/>
+      <DemoTour open={tourOpen} onClose={() => { try { localStorage.setItem(TOUR_KEY, "1"); } catch {} setTourOpen(false); }}/>
     </div>
   );
 }

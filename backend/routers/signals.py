@@ -226,7 +226,15 @@ async def send_signal(
         sig.sent_at = now
         clear_analytics_cache()
 
-    db.add(SendLog(time=now_et.strftime("%H:%M:%S"), status=status, message=log_msg, chat_id=user.telegram_chat_id))
+    db.add(
+        SendLog(
+            time=now_et.strftime("%H:%M:%S"),
+            status=status,
+            message=log_msg,
+            chat_id=user.telegram_chat_id,
+            user_id=user.id,
+        )
+    )
     await db.commit()
     return {"success": success, "detail": detail}
 
