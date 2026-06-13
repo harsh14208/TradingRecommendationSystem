@@ -173,6 +173,7 @@ def test_weekly_digest_trigger_as_owner(client):
     settings.telegram_chat_id = "12345"
     settings.smtp_host = ""
     settings.smtp_user = ""
+    settings.site_private_token = None
 
     with patch("main.get_settings", return_value=settings):
         resp = client.post("/api/admin/trigger-weekly-digest")
@@ -196,6 +197,7 @@ def test_weekly_digest_status_as_owner(client):
     settings.telegram_chat_id = "123"
     settings.smtp_host = ""
     settings.smtp_user = ""
+    settings.site_private_token = None
 
     with patch("main.get_settings", return_value=settings):
         resp = client.get("/api/admin/weekly-digest/status")
