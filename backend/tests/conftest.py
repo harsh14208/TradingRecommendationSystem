@@ -9,6 +9,9 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 # Set safe test env defaults before any backend module imports (which create Settings).
+os.environ["SIGNAL_TRADE_TESTING"] = "1"
+os.environ["SITE_PRIVATE_TOKEN"] = ""  # disable private-preview middleware in tests
+os.environ["SENTRY_DSN"] = ""  # keep Sentry quiet in tests
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test_db.sqlite")
 os.environ.setdefault("JWT_SECRET", "x" * 32)
 os.environ.setdefault("OWNER_PASSWORD", "y" * 16)

@@ -8,6 +8,13 @@ from pathlib import Path
 
 import certifi
 import pytz
+from dotenv import load_dotenv
+
+# ── Load project .env so Sentry and other secrets are available at import time ─
+# Skip in tests so backend/.env secrets (e.g. SITE_PRIVATE_TOKEN) don't leak into
+# the test environment and break public-route fixtures.
+if not os.environ.get("SIGNAL_TRADE_TESTING"):
+    load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # ── Sentry ──────────────────────────────────────────────────────────────────
 # Initialise as early as possible so import-time crashes are captured.
