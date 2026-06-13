@@ -55,8 +55,7 @@ jobs:
       - name: Unit tests with coverage
         run: |
           pytest tests/ -x -q --timeout=30 \
-            --cov=. --cov-report=term-missing --cov-report=xml \
-            --cov-omit="tests/*,scripts/*,alembic/*,venv/*,.venv*"
+            --cov=. --cov-report=term-missing --cov-report=xml
 
       - name: Coverage floor (25%)
         run: |

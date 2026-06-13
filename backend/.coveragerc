@@ -3,6 +3,7 @@ source = .
 omit =
     tests/*
     venv/*
+    .venv*
     scripts/*
     alembic/*
     */__pycache__/*
