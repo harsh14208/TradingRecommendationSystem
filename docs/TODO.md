@@ -49,7 +49,7 @@ Actionable items derived from today's session. Ordered by payoff ÷ effort.
 
 ### Observability & Pipeline (before next deploy)
 - [x] **SP1-3. Wire Sentry DSN** — DONE (2026-06-12): `sentry-sdk[fastapi]` added to `requirements.txt`; FastAPI, Starlette, and SQLAlchemy integrations initialized in `backend/main.py`; `/api/health/sentry` endpoint added to verify configuration. Remaining step: sign up at sentry.io, paste DSN into `backend/.env` `SENTRY_DSN=...`, restart server, and hit `/api/health/sentry`.
-- [ ] **SP1-4. Push to GitHub & verify CI** — Commit today's changes, push to `main`, verify `.github/workflows/` passes (ruff, pytest coverage floor, gitleaks). Fix any red checks before they rot. *Risk: broken CI masks regressions.*
+- [x] **SP1-4. Push to GitHub & verify CI** — DONE (2026-06-12): pushed v8.8.4 to `main`. CI run https://github.com/harsh14208/TradingRecommendationSystem/actions/runs/27455656678 passed ruff, pytest, 25% coverage floor, gitleaks, pip-audit, and npm audit. Fixed missing `dist/` bundles by adding an `npm install && npm run build` step before tests.
 
 ### Scale & Delivery (before first paying user)
 - [ ] **SP1-5. Enable Telegram broadcast channel** — Create private Telegram channel, add bot as admin, set `TELEGRAM_BROADCAST_CHANNEL_ID=-100...` in `.env`. Test: send one broadcast signal, confirm it posts to the channel. Unblocks: scaling past 50 subscribers without hitting Telegram rate limits.
@@ -126,7 +126,7 @@ Infrastructure, testing, and system-level follow-ups.
 - [x] **OPS-1. Remove dead ^BDI fetch** — `_fetch_bdi()` in `services/supply_chain.py` now returns `None` instead of repeatedly hitting the unavailable yfinance ticker.
 - [x] **OPS-2. Frontend accessibility pass** — axe-core audit run on landing, login, and app pages. Fixed missing button labels (settings/refresh) and one nested-interactive violation (search wrapper). Remaining: 147 color-contrast items require a design pass; 2 nested-interactive and 1 scrollable-region-focusable issue remain in charts/tabs.
 - [x] **OPS-3. Kill-switch endpoint tests** — Added `test_get_kill_switch_status_owner`, `test_post_kill_switch_toggles_state`, `test_post_kill_switch_creates_settings_row_if_missing`, and owner-required 403 tests in `tests/test_routers_admin_unit.py`.
-- [ ] **ACT-9. Push to GitHub to trigger CI/CD validation** — Verify the full CI/CD pipeline, including gitleaks scanning on Fernet ciphertext, coverage floor (25%), and deployment steps.
+- [x] **ACT-9. Push to GitHub to trigger CI/CD validation** — DONE (2026-06-12): pushed and CI passed (see SP1-4). Deployment steps are gated on `RAILWAY_TOKEN`/`FLY_API_TOKEN`, which are not set, so deploy job correctly skips.
 
 ---
 
