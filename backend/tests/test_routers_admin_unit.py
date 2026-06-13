@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from database import get_db
-from models import User
+from models import AppSettings, User
 from services.auth_svc import get_current_user
 
 
@@ -73,7 +73,6 @@ def test_setup_status_owner():
     settings.finnhub_api_key = "fh_key"
     settings.polygon_api_key = "poly_key"
     settings.google_client_id = ""
-    settings.discord_client_id = ""
 
     with patch("routers.admin.get_settings", return_value=settings):
         with TestClient(app) as client:
@@ -288,3 +287,65 @@ def test_prometheus_metrics_endpoint():
     assert "provider_429_total" in resp.text
     assert resp.headers["content-type"].startswith("text/plain")
     metrics.reset()
+
+
+# ── Kill switch tests ─────────────────────────────────────────────────────────
+
+
+def _mock_db_with_settings(paused=False, existing=True):
+    row = AppSettings(id=1, data={"execution_paused": paused}) if existing else None
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = row
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock(return_value=result)
+    mock_db.commit = AsyncMock()
+
+    async def _get_db():
+        yield mock_db
+
+    return _get_db
+
+
+def test_get_kill_switch_status_owner():
+    app = _make_app(is_owner=True)
+    app.dependency_overrides[get_db] = _mock_db_with_settings(paused=True)
+    with TestClient(app) as client:
+        resp = client.get("/api/admin/execution-kill-switch")
+    assert resp.status_code == 200
+    assert resp.json() == {"execution_paused": True}
+
+
+def test_get_kill_switch_status_non_owner():
+    app = _make_app(is_owner=False)
+    app.dependency_overrides[get_db] = _mock_db_with_settings(paused=False)
+    with TestClient(app) as client:
+        resp = client.get("/api/admin/execution-kill-switch")
+    assert resp.status_code in (401, 403)
+
+
+def test_post_kill_switch_toggles_state():
+    app = _make_app(is_owner=True)
+    app.dependency_overrides[get_db] = _mock_db_with_settings(paused=False)
+    with patch("services.audit_svc.record_action", new_callable=AsyncMock):
+        with TestClient(app) as client:
+            resp = client.post("/api/admin/execution-kill-switch")
+    assert resp.status_code == 200
+    assert resp.json() == {"execution_paused": True}
+
+
+def test_post_kill_switch_creates_settings_row_if_missing():
+    app = _make_app(is_owner=True)
+    app.dependency_overrides[get_db] = _mock_db_with_settings(existing=False)
+    with patch("services.audit_svc.record_action", new_callable=AsyncMock):
+        with TestClient(app) as client:
+            resp = client.post("/api/admin/execution-kill-switch")
+    assert resp.status_code == 200
+    assert resp.json() == {"execution_paused": True}
+
+
+def test_post_kill_switch_requires_owner():
+    app = _make_app(is_owner=False)
+    app.dependency_overrides[get_db] = _mock_db_with_settings(paused=False)
+    with TestClient(app) as client:
+        resp = client.post("/api/admin/execution-kill-switch")
+    assert resp.status_code in (401, 403)

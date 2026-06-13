@@ -15,7 +15,7 @@ Signal.Trade backend after the security/architecture refactor.
   `python3 -c "import secrets; print(secrets.token_hex(32))"`).
 - Other `SecretStr` fields include:
   `ALPACA_API_SECRET`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
-  `GOOGLE_CLIENT_SECRET`, `DISCORD_CLIENT_SECRET`, `SMTP_PASSWORD`,
+  `GOOGLE_CLIENT_SECRET`, `SMTP_PASSWORD`,
   `VAPID_PRIVATE_KEY`, `TELEGRAM_BOT_TOKEN`, and `OWNER_PASSWORD`.
 - `OWNER_PASSWORD` startup check enforces ≥16 characters; production fails
   on `ChangeMe123!` (fixed 2026-06-09 — `.env` now has 32-char secure password).
@@ -27,7 +27,7 @@ Signal.Trade backend after the security/architecture refactor.
 
 - Short-lived JWT access tokens (default 60 minutes) plus long-lived HTTP-only
   `st_refresh` cookies (30 days).
-- OAuth 2.0 via Google and Discord uses **PKCE** (`code_challenge_method=S256`)
+- OAuth 2.0 via Google uses **PKCE** (`code_challenge_method=S256`)
   with per-flow state and verifier stored in `OAuthState`.
 - One-time OAuth exchange codes (`OAuthOneTimeCode`) are single-use, short-lived
   (60 seconds), and atomically consumed during exchange.

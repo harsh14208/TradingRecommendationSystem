@@ -45,6 +45,44 @@
 
 **Status:** Infrastructure complete and gated. No sector model trained or promoted yet; ratings unchanged until live proof.
 
+### v8.8.1 (2026-06-12) — Owner Kill-Switch UI + CSP Hardening
+
+- Added an owner-only **KILL SWITCH** button to the React app top bar (`app.jsx`).
+  - Polls `GET /api/admin/execution-kill-switch` and toggles via `POST /api/admin/execution-kill-switch`.
+  - Button switches to **RESUME AUTO-EXEC** when paused.
+- Rebuilt production bundles (`node build.mjs`): `dist/app-bundle.js` (1238 KB), `dist/site-bundle.js`, `dist/mobile-bundle.js`.
+- Exposed localhost via Cloudflare quick tunnel: `https://shaped-survivor-negotiation-highlights.trycloudflare.com`.
+- Verified the kill switch over the public URL: button toggles and API returns `{"execution_paused": true/false}`.
+- Fixed a CSP `script-src` violation on the landing page by moving the bundle-fallback inline script into a new external file, `fallback-check.js`.
+- Added public `GET /api/health/uptime` endpoint for external uptime monitors (e.g. Sentry Uptime). Returns 200 only when the DB is reachable and reports the configured `APP_URL`.
+- Updated `launchd` backend service to use `.venv311/bin/python`; added `com.signal.trade.keepawake` LaunchAgent to prevent idle sleep.
+- Added `scripts/setup_cloudflare_tunnel.sh` to create a named Cloudflare Tunnel with a fixed domain and a user LaunchAgent. Named tunnel `signal-trade` created for `signaltrade.org` and `app.signaltrade.org`; DNS activation pending (newly registered zone).
+
+### v8.8.2 (2026-06-12) — Operational Hardening (Backups, Logs, Watchdog, a11y)
+
+- DB backups: `scripts/backup_db.sh` now uses `sqlite3 .backup` for online-consistent snapshots; `com.signal.trade.backup` LaunchAgent runs daily at 04:00, keeps 7 days.
+- Log rotation: `scripts/rotate_logs.sh` + `com.signal.trade.rotate-logs` LaunchAgent runs daily at 03:30, keeps 14 days of compressed logs.
+- Watchdog: `scripts/watchdog.sh` polls `/api/health/uptime` and critical LaunchAgents every 5 minutes; alerts via macOS notification and `backend/logs/watchdog.log`.
+- Disabled dead `^BDI` fetch in `services/supply_chain.py` (yfinance 404s).
+- Accessibility audit with axe-core on landing, login, and app pages. Fixed missing labels on settings/refresh icon buttons, one nested-interactive search wrapper, and added a visually-hidden `<h1>`.
+- Added kill-switch endpoint tests in `tests/test_routers_admin_unit.py`.
+- Dependency audit with `pip-audit` in `.venv311`: no known vulnerabilities.
+
+### v8.8.3 (2026-06-12) — Redis Local + Test Robustness + DNS Verification
+
+- Started local Redis (`redis:7-alpine`) via Docker on `localhost:6379` and set `REDIS_URL=redis://localhost:6379/0` in `backend/.env`.
+- Added `backend/scripts/start_redis.sh` (creates container with `--restart unless-stopped` if missing, otherwise starts it) and `com.signal.trade.redis` user LaunchAgent that runs it at login.
+- Verified backend connects on startup: `[cache] Redis connected: redis://localhost:6379/0…`
+- Reloaded `com.signal.trade` LaunchAgent; public uptime endpoint reports `url: http://localhost:8000`.
+- Fixed test isolation issues exposed by enabling Redis:
+  - `tests/test_small_services_coverage.py`: added autouse fixture to reset module-level Redis client/init flag and blank `REDIS_URL`.
+  - `tests/test_worker_bus.py`: added autouse fixture forcing the asyncio.Queue backend regardless of env.
+  - `tests/test_config.py`: corrected duplicate `APP_URL` in `backend/.env` (left only `http://localhost:8000`) so the JWT dev-fallback test passes.
+- Full backend non-E2E suite: **2547 passed, 18 skipped**.
+- `shap` already installed in `.venv311` (0.49.1); live audit remains pending ≥50 post-A19 resolved signals.
+- **DNS / public HTTPS** — Cloudflare authoritative NS and `1.1.1.1` now resolve `signaltrade.org` and `app.signaltrade.org`. The tunnel connector is healthy. `APP_URL` updated to `https://signaltrade.org`, backend reloaded, and `curl --resolve` confirms `GET /api/health/uptime` returns 200 from the public URL. Some local resolvers (e.g., Tailscale `100.64.0.2`) still cache NXDOMAIN; full propagation will finish shortly.
+- **QENG-3d execution-policy simulator** — added `services/execution_policy_simulator.py`, `scripts/run_execution_policy_simulation.py`, and `tests/test_execution_policy_simulator.py`. Evaluates market / limit / midpoint / next-open / next-close / delayed-1d on cost-adjusted expected value from a trades CSV and can register a `ResearchExperiment` row.
+
 ### v8.5 (2026-06-11) — External Research Agenda §96–§103 Complete + Infrastructure Hardening
 
 **§96 Overnight/Intraday Decomposition + Close-Entry Variant:**

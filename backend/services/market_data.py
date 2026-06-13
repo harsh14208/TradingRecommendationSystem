@@ -21,6 +21,41 @@ _executor = ThreadPoolExecutor(max_workers=4)
 _yf_lock = asyncio.Lock()  # serialise per-ticker calls that aren't batched
 _YF_DELAY = 0.8  # seconds between serialised calls
 
+# Non-price identifiers that should never be sent to yfinance/Polygon.
+# These are source/macro labels that occasionally leak into ticker endpoints.
+_SENTINEL_TICKERS: frozenset[str] = frozenset(
+    {
+        "^BDI",
+        "BDI",
+        "MACRO",
+        "FH",
+        "YAHOO",
+        "REDD",
+        "EDGAR",
+        "REUT",
+        "GNEWS",
+        "RD",
+        "X",
+        "YF",
+        "TECH",
+        "ED",
+        "FG",
+        "TW",
+        "NEWS",
+        "INSIDER",
+        "DARK",
+        "OPTIONS",
+        "FLOW",
+        "FRED",
+        "FUND",
+        "EARN",
+        "SEC",
+        "RSS",
+        "WWW",
+        "WEB",
+    }
+)
+
 # One long-lived session that looks like Chrome — avoids Yahoo 429s
 _session = curl_requests.Session(impersonate="chrome110")
 
@@ -516,7 +551,7 @@ async def _rate_limited(fn, *args):
 
 
 async def get_histories_batch(tickers: list[str], period: str = "1y", interval: str = "1d") -> dict[str, pd.DataFrame]:
-    tickers = [t.upper() for t in tickers]
+    tickers = [t.upper() for t in tickers if t.upper() not in _SENTINEL_TICKERS]
     polygon_out: dict[str, pd.DataFrame] = {}
     try:
         from services.polygon_client import get_polygon_histories_batch
@@ -545,7 +580,7 @@ async def get_quotes_batch(tickers: list[str]) -> list[dict]:
     """
     from services.provider_telemetry import current_cycle_id, record_api_call
 
-    tickers = [t.upper() for t in tickers]
+    tickers = [t.upper() for t in tickers if t.upper() not in _SENTINEL_TICKERS]
     cycle_id = current_cycle_id.get()
 
     cached = {t: q for t in tickers if (q := _quote_cache_get(t)) is not None}
@@ -601,8 +636,11 @@ async def get_infos_sequential(tickers: list[str]) -> dict[str, dict]:
 
 # Single-ticker wrappers (used by macro.py, routers, etc.)
 async def get_history(ticker: str, period: str = "3mo", interval: str = "1d") -> Optional[pd.DataFrame]:
+    ticker = ticker.upper()
+    if ticker in _SENTINEL_TICKERS:
+        return None
     # Check shared OHLCV cache first — avoids redundant Polygon calls within a scan cycle
-    _cache_key = (ticker.upper(), period, interval)
+    _cache_key = (ticker, period, interval)
     _now = _time.time()
     _cached = _ohlcv_cache_get(_cache_key)
     if _cached is not None:

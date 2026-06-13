@@ -4,14 +4,15 @@
 These are critical tasks that must be completed before public launch or marketing scale.
 
 - [x] **1. Change owner password** — FIXED 2026-06-09 — `.env` has 32-char secure password. Startup fails on `ChangeMe123!` in production.
-- [ ] **2. Deploy to public HTTPS URL** — Run `railway up` or `fly deploy`. Set `APP_URL=https://your-app.up.railway.app`. *Risk: Stripe webhooks 404, OAuth callbacks broken, HTTPS-only cookies not sent.*
+- [x] **2. Deploy to public HTTPS URL** — DONE (2026-06-12): public HTTPS served via Cloudflare Tunnel to `signaltrade.org` and `app.signaltrade.org`. `APP_URL=https://signaltrade.org` set in `backend/.env`; backend reloaded. *Stripe/OAuth/SMTP/Telegram webhooks still need their own credentials.*
+- [x] **2a. Verify signaltrade.org DNS + tunnel** — DONE (2026-06-12): Cloudflare authoritative NS and `1.1.1.1` resolve both domains to Cloudflare edge IPs. The tunnel connector is healthy. `APP_URL=https://signaltrade.org` set and `/api/health/uptime` returns 200 via the public URL. Some local resolvers (e.g., Tailscale `100.64.0.2`) may still cache NXDOMAIN; propagation will finish shortly.
 - [ ] **3. Configure Stripe billing** — `STRIPE_SECRET_KEY` and price IDs set. Still needed: register webhook in Stripe Dashboard, copy `whsec_...` to `STRIPE_WEBHOOK_SECRET`. (Note: startup now logs CRITICAL if `STRIPE_WEBHOOK_SECRET` is empty in prod; webhook handler returns 500 explicitly). *Risk: checkout completes but tier never activates.*
 - [ ] **4. Register Telegram webhook** — After HTTPS deploy: `curl -X POST <https://your-app>/api/telegram/set-webhook`. *Risk: subscribers cannot link Telegram.*
 - [ ] **5. Configure SMTP (email)** — Add `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` to `.env`. *Risk: no email verification, no password reset, no weekly digest.*
 - [ ] **6. Enable Telegram broadcast channel** — Create private channel, make bot admin, add `TELEGRAM_BROADCAST_CHANNEL_ID=-100...`. *Risk: at >50 subscribers, per-user DM loop hits Telegram rate limit.*
 - [ ] **8. Configure Google OAuth** — `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`.
 - [x] **9. Configure VAPID web push** — FIXED 2026-06-10 — keys generated via `py_vapid`, added to `.env`, `config.py` reads correctly. Web push ready for HTTPS deploy.
-- [ ] **10. Set up Cloudflare CDN** — Point DNS to Railway/Fly. *Risk: slower global load.*
+- [x] **10. Set up Cloudflare CDN** — DONE (2026-06-12): traffic proxies through Cloudflare (orange-clouded A/CNAME records), so caching + DDoS + SSL are active at the edge.
 - [ ] **11. Google AdSense** — Apply at adsense.google.com. *Risk: no ad revenue from free tier.*
 - [ ] **12. Add Redis in Production** — `railway add --plugin redis`. *Risk: redundant API calls under concurrent load.*
 - [ ] **13. Upgrade SendGrid** — Essentials (~$20/mo) before daily signups + resets exceed 100 emails/day.
@@ -52,7 +53,7 @@ Actionable items derived from today's session. Ordered by payoff ÷ effort.
 
 ### Scale & Delivery (before first paying user)
 - [ ] **SP1-5. Enable Telegram broadcast channel** — Create private Telegram channel, add bot as admin, set `TELEGRAM_BROADCAST_CHANNEL_ID=-100...` in `.env`. Test: send one broadcast signal, confirm it posts to the channel. Unblocks: scaling past 50 subscribers without hitting Telegram rate limits.
-- [ ] **SP1-6. Add Redis** — `docker run -d -p 6379:6379 redis:7-alpine` locally, set `REDIS_URL=redis://localhost:6379` in `.env`. Verify: startup logs show "Redis worker bus active" (or similar). Unblocks: concurrent scan safety, cross-process job distribution.
+- [x] **SP1-6. Add Redis** — DONE (2026-06-12): local `redis:7-alpine` container running on `localhost:6379`, `REDIS_URL=redis://localhost:6379/0` set in `backend/.env`; startup logs confirm `[cache] Redis connected`. Test isolation fixed so the suite stays green with Redis enabled.
 
 ### Revenue & Growth (parallel track)
 - [ ] **SP1-7. Apply for Google AdSense** — 10-minute form at adsense.google.com. Use `signal.trade` domain (or whatever you plan to deploy to). Approval takes 1–14 days; starting now removes a future blocker.
@@ -116,11 +117,15 @@ Goal: raise Sharpe while holding or growing trade count. Ordering reflects expec
 ## ⚙️ Operational, Deployment & Testing TODOs
 Infrastructure, testing, and system-level follow-ups.
 
-- [~] **DEPLOY-2. Sentry + UptimeRobot Setup** — Sentry wired in `main.py` (2026-06-12); UptimeRobot endpoint monitoring still TODO.
-- [ ] **DEPLOY-3. DB Backups** — Automated daily backup of `trading.db` to a Cloudflare R2 or S3 bucket (Railway volumes are ephemeral). Retention: 7 daily, 4 weekly.
-- [ ] **QENG-3d. Execution policy simulator** — Compare market, limit, midpoint, delayed-entry, and bracket variants in paper/shadow mode. Promote only on cost-adjusted expected value.
+- [x] **DEPLOY-2. Public health endpoint + local watchdog** — `GET /api/health/uptime` added (2026-06-13). `scripts/watchdog.sh` + `com.signal.trade.watchdog` LaunchAgent alert via macOS notification if backend or tunnel agents die. External Sentry Uptime / UptimeRobot can point at `https://signaltrade.org/api/health/uptime` once DNS resolves.
+- [x] **DEPLOY-3. DB Backups (local)** — `scripts/backup_db.sh` uses `sqlite3 .backup` for online-consistent snapshots; `com.signal.trade.backup` LaunchAgent runs daily at 04:00, keeps 7 days. Cloud upload (R2/S3) still TODO.
+- [x] **DEPLOY-3a. Log rotation** — `scripts/rotate_logs.sh` + `com.signal.trade.rotate-logs` LaunchAgent runs daily at 03:30, keeps 14 days of compressed logs.
+- [x] **QENG-3d. Execution policy simulator** — DONE (2026-06-12): `services/execution_policy_simulator.py` + `scripts/run_execution_policy_simulation.py` compare market/limit/midpoint/next-open/next-close/delayed-1d on a cost-adjusted basis. Input is a backtest trades CSV; output is `summary.json` + `per_trade.csv` and an optional `ResearchExperiment` row. Tests in `tests/test_execution_policy_simulator.py`.
 - [ ] **ACT-7. Validate bracket stop in Alpaca paper account** — Enable auto-execution for owner account on paper, trigger a manual signal delivery, and verify Alpaca dashboard shows bracket order legs correctly.
-- [ ] **ACT-8. Install shap for ML-5 live audit** — Install `shap` and re-run live audit once ≥50 post-A19 resolved signals are available.
+- [~] **ACT-8. Install shap for ML-5 live audit** — `shap` installed in `.venv311` (0.49.1). Re-run live audit remains gated on ≥50 post-A19 resolved signals.
+- [x] **OPS-1. Remove dead ^BDI fetch** — `_fetch_bdi()` in `services/supply_chain.py` now returns `None` instead of repeatedly hitting the unavailable yfinance ticker.
+- [x] **OPS-2. Frontend accessibility pass** — axe-core audit run on landing, login, and app pages. Fixed missing button labels (settings/refresh) and one nested-interactive violation (search wrapper). Remaining: 147 color-contrast items require a design pass; 2 nested-interactive and 1 scrollable-region-focusable issue remain in charts/tabs.
+- [x] **OPS-3. Kill-switch endpoint tests** — Added `test_get_kill_switch_status_owner`, `test_post_kill_switch_toggles_state`, `test_post_kill_switch_creates_settings_row_if_missing`, and owner-required 403 tests in `tests/test_routers_admin_unit.py`.
 - [ ] **ACT-9. Push to GitHub to trigger CI/CD validation** — Verify the full CI/CD pipeline, including gitleaks scanning on Fernet ciphertext, coverage floor (25%), and deployment steps.
 
 ---
@@ -162,7 +167,7 @@ Concrete work to take each [Stats.md §15](Stats.md#L359) rating aspect to 10/10
 
 ### Infrastructure & ML
 - [~] **R10-14: ML Methodology (8.9 → 10)** ⏳gated — deploy the live entry model at **N ≥ 300** (Pre-Launch #7) once AUC delta clears 0.005; **REF-6 meta-label feature hardening DONE (2026-06-10)** — all 15 features now flow from backtest to live (14 + §89 FF ST_Rev), but CV-AUC 0.4364 < 0.52 activation threshold → meta_prob disabled until N growth pushes AUC above gate; **ML-2** sector sub-models pending (≥200 sector-resolved signals); require champion/challenger shadow-win before promotion.
-- [ ] **R10-17: Data Pipeline (8.3 → 10)** — prove live reliability, not just breadth: health-scorecard + PIT feature store run a full week with 0 errors; remove the remaining dead `^TRIN`/`^NYAD`/`^BDI`/ETF-fundamentals fetches (or route them to providers that serve them); add **§84** point-in-time data so the pipeline is survivorship-correct.
+- [~] **R10-17: Data Pipeline (8.3 → 10)** — dead `^TRIN`/`^NYAD`/`^BDI` fetches already removed; ETF-fundamentals fetch not present in current code. Remaining: prove health-scorecard + PIT feature store run a full week with 0 errors; add **§84** point-in-time data so the pipeline is survivorship-correct.
 - [~] **R10-18: Test Coverage (7.5 → 8.0, partial)** — **DONE (2026-06-08):** `tests/test_r10_hardening.py` (8 tests). **DONE (2026-06-10):** §69–§74 gate unit tests in `tests/test_gates_5982.py` (all passing) + SPRT monitor 12 tests + E2E framework installed. **Still open:** true end-to-end "scan persists against real Postgres" test; **TEST-4** mutation testing (>70%).
 
 ---

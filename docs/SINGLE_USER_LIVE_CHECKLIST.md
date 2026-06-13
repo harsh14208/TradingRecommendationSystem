@@ -32,25 +32,50 @@
   ```
 
 - [ ] **1.4. Set up automated DB backups.**
-  - Create `backend/scripts/backup_db.sh`:
-    ```bash
-    #!/bin/bash
-    SRC="/Users/harshv.singh/TradingRecommendationSystem/backend/data/trading.db"
-    DST="$HOME/Backups/signal-trade/$(date +%Y%m%d_%H%M%S)_trading.db"
-    mkdir -p "$(dirname "$DST")"
-    cp "$SRC" "$DST"
-    ls -t "$HOME/Backups/signal-trade" | tail -n +8 | xargs -I {} rm "$HOME/Backups/signal-trade/{}"
-    ```
-  - Make executable and add to cron / `launchd` daily.
-  - Test restore: copy backup to `backend/data/trading.db.restore-test`, start app, verify data.
+  - `backend/scripts/backup_db.sh` already exists and uses `sqlite3 .backup` for online-consistent copies.
+  - LaunchAgent `com.signal.trade.backup` runs daily at 04:00 and keeps 7 days in `$HOME/Backups/signal-trade/`.
+  - Test restore: copy a backup to `backend/data/trading.db.restore-test`, start app, verify data.
 
 - [ ] **1.5. Run the backend with a process manager.**
-  - Use a `launchd` plist or `systemd` user unit so the app restarts on crash and after reboot.
-  - Log output to `backend/logs/` (already configured).
+  - Use a `launchd` user agent so the app restarts on crash and after reboot.
+  - Plist: `~/Library/LaunchAgents/com.signal.trade.plist`
+  - Use `.venv311/bin/python` (already configured).
+  - Reload:
+    ```bash
+    MYUID=$(id -u)
+    launchctl bootout gui/${MYUID}/com.signal.trade 2>/dev/null
+    launchctl bootstrap gui/${MYUID} ~/Library/LaunchAgents/com.signal.trade.plist
+    ```
+
+- [ ] **1.5a. Keep the Mac awake and monitored.**
+  - A user LaunchAgent runs `caffeinate -i` permanently: `~/Library/LaunchAgents/com.signal.trade.keepawake.plist`.
+  - Watchdog `com.signal.trade.watchdog` polls `/api/health/uptime` and critical agents every 5 minutes and alerts via macOS notification.
+  - Log rotation `com.signal.trade.rotate-logs` runs daily at 03:30 and keeps 14 days of compressed logs.
+  - For full sleep disable (display + battery + lid), also run:
+    ```bash
+    sudo pmset -c sleep 0
+    ```
 
 - [ ] **1.6. Optional but recommended: wire Sentry.**
   - Add `SENTRY_DSN=...` to `backend/.env`.
-  - Verify with `curl http://localhost:8000/api/health/sentry`.
+  - Verify error reporting with `curl http://localhost:8000/api/health/sentry`.
+  - For Sentry Uptime Monitoring, point the monitor at:
+    ```
+    https://<your-domain>/api/health/uptime
+    ```
+    This endpoint is public, requires no auth, and returns HTTP 200 only when the DB is reachable.
+
+- [ ] **1.7. Use a named Cloudflare Tunnel for a stable public URL.**
+  - Quick tunnels change domain on every restart. For 24/7 access and Sentry uptime checks, create a named tunnel with your own domain.
+  - Authenticate once:
+    ```bash
+    cloudflared tunnel login
+    ```
+  - Then run the helper script (replace `app.yourdomain.com`):
+    ```bash
+    ./scripts/setup_cloudflare_tunnel.sh app.yourdomain.com
+    ```
+  - The script creates the tunnel, writes `~/.cloudflared/config.yml`, routes DNS, and installs a user LaunchAgent that survives reboots.
 
 ---
 
@@ -95,13 +120,16 @@
   - Run:
     ```bash
     curl -X POST -H "Authorization: Bearer $OWNER_TOKEN" \
-      http://<your-mac-ip>:8000/api/admin/signals/pause
+      https://<your-tunnel-domain>/api/admin/execution-kill-switch
     ```
+  - Expected response: `{"execution_paused": true}`.
   - Confirm in logs that the scan loop pauses and no new signals are generated for 5 minutes.
-  - Re-enable with the resume endpoint.
+  - Call the same endpoint again to resume; expected response: `{"execution_paused": false}`.
 
 - [ ] **3.3. Verify global kill switch UI.**
-  - In the web app (localhost), toggle the kill switch and confirm it stops scans.
+  - In the web app, toggle the owner-only **KILL SWITCH** button in the top bar.
+  - It should turn into **RESUME AUTO-EXEC** and call `POST /api/admin/execution-kill-switch`.
+  - Verify over a Cloudflare Tunnel public URL as well as localhost.
 
 - [ ] **3.4. Confirm drawdown circuit breaker is enabled.**
   - Check `backend/.env` / settings for drawdown threshold (e.g., 10% account-level pause).

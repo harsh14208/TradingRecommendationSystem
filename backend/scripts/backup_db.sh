@@ -1,5 +1,5 @@
 #!/bin/bash
-# Backup the local SQLite trading database.
+# Backup the local SQLite trading database safely while the app is running.
 # Intended for a single-user localhost deployment.
 # Add to cron or launchd to run daily.
 
@@ -20,7 +20,12 @@ mkdir -p "$BACKUP_ROOT"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 DST="${BACKUP_ROOT}/${TIMESTAMP}_trading.db"
 
-cp "$SRC" "$DST"
+# Use sqlite3 .backup for a consistent, online-safe copy; fall back to cp.
+if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$SRC" ".backup '$DST'"
+else
+    cp "$SRC" "$DST"
+fi
 
 # Remove backups older than retention window.
 find "$BACKUP_ROOT" -name '*_trading.db' -type f -mtime +"$RETAIN_DAYS" -delete

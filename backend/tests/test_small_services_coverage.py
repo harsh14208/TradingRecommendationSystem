@@ -10,6 +10,24 @@ from fastapi.testclient import TestClient
 # ── services/redis_cache.py ────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _reset_redis_state():
+    """Force redis_cache into a clean, no-Redis state before every test.
+
+    Without this, a prior test or the live `REDIS_URL` env can leave the
+    module-level client initialised, causing the memory-fallback tests to
+    fail on a machine with Redis running.
+    """
+    import services.redis_cache as rc
+
+    rc._redis_client = None
+    rc._redis_init_tried = False
+    with patch("services.redis_cache._get_redis_url", return_value=""):
+        yield
+    rc._redis_client = None
+    rc._redis_init_tried = False
+
+
 def test_cache_stats_no_redis():
     from services.redis_cache import cache_stats
 

@@ -375,18 +375,15 @@ Never size up while live WR is below 50%.
 5. Review `stripe_events` for any anomalous transitions or replayed events
    during the exposure window.
 
-### 8.3 OAuth credentials leaked (Google or Discord)
+### 8.3 OAuth credentials leaked (Google)
 
 1. Rotate the compromised client secret in the provider console:
    - Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client
-   - Discord Developer Portal → OAuth2 → Client Secret → Regenerate
-2. Update `GOOGLE_CLIENT_SECRET` and/or `DISCORD_CLIENT_SECRET` in production
-   `.env`.
+2. Update `GOOGLE_CLIENT_SECRET` in production `.env`.
 3. Verify that `OAuthState` rows do not contain plaintext long-lived secrets
    (PKCE verifiers are stored but are short-lived).
-4. Redeploy and run a test login flow end-to-end.
-5. Audit `auth_audit_log` for logins from unexpected OAuth providers or
-   accounts.
+4. Redeploy and run a test Google login flow end-to-end.
+5. Audit `auth_audit_log` for unexpected OAuth login accounts.
 
 ---
 

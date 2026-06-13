@@ -37,8 +37,12 @@ backend/data/*_log.txt
 backend/data/cache_gdelt/
 
 # Logs
+backend/logs/
 backend/logs/*.log
 *.log
+
+# Temporary screenshots / test artifacts
+kill-switch-*.png
 
 # macOS
 .DS_Store

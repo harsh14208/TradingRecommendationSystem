@@ -828,11 +828,9 @@ STRIPE_PRICE_PRO=           # Auto-filled by: python3 stripe_setup.py
 # SMTP_FROM=noreply@yourdomain.com
 # SMTP_FROM_NAME=Signal.Trade
 
-# ── OAuth (optional — enables Google/Discord sign-in) ─────────────────────────
+# ── Google OAuth (optional — enables "Sign in with Google") ───────────────────
 # GOOGLE_CLIENT_ID=
 # GOOGLE_CLIENT_SECRET=
-# DISCORD_CLIENT_ID=
-# DISCORD_CLIENT_SECRET=
 
 # ── Web Push (optional — VAPID browser notifications) ────────────────────────
 # VAPID_PRIVATE_KEY=         # Generate: cd backend && python3 -c "from py_vapid import Vapid; ..."

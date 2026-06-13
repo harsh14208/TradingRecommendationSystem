@@ -266,10 +266,18 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 }
 @media(max-width:600px) {
   .sources-grid,.pricing-grid,.flow,.docs-grid { grid-template-columns:1fr; }
-  .nav { padding:14px 20px; }
-  .nav-links,.nav-cta .btn.ghost { display:none; }
+  .nav { padding:14px 16px; gap:12px; }
+  .nav-status { display:none; }
+  .brand .v { display:none; }
+  .nav-links { display:flex; gap:14px; flex:1 1 auto; min-width:0; overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  .nav-links::-webkit-scrollbar { display:none; }
+  .nav-cta { margin-left:auto; gap:8px; }
+  .nav-cta .btn { white-space:nowrap; }
+  .nav-cta .btn.ghost { display:inline-flex; padding:7px 10px; font-size:12px; }
   .section,.hero { padding:48px 20px; }
   .hero .headline { font-size:36px; }
-  .stat-strip { grid-template-columns:1fr; }
+  .stat-strip { grid-template-columns:1fr 1fr; }
+  .stat-strip > div { padding:20px 16px; }
+  .stat-num { font-size:24px; }
   .footer { grid-template-columns:1fr; }
 }

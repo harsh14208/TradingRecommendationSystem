@@ -52,47 +52,14 @@ _FREIGHT_BEAR = {"UPS", "FDX", "UNP", "CSX", "XPO"}
 
 async def _fetch_bdi() -> dict | None:
     """
-    Fetch Baltic Dry Index via yfinance (ticker: ^BDI).
-    Returns dict with latest value, 20-day momentum, and 5-day change.
+    Baltic Dry Index fetch is disabled.
+
+    yfinance consistently returns 404 for ^BDI, so the fetch has been removed
+    rather than logging repeated failures. The downstream signal builder already
+    tolerates a None BDI value.
     """
-    try:
-        from services.market_data import get_history
-
-        df = await get_history("^BDI", period="3mo", interval="1d")
-        if df is None or df.empty or len(df) < 5:
-            return None
-
-        closes = df["Close"].astype(float).dropna().tolist()
-        if len(closes) < 5:
-            return None
-
-        latest = closes[-1]
-        prev5 = closes[-6] if len(closes) >= 6 else closes[0]
-        prev20 = closes[-21] if len(closes) >= 21 else closes[0]
-        chg_5d = (latest - prev5) / (prev5 or 1) * 100
-        chg_20d = (latest - prev20) / (prev20 or 1) * 100
-
-        if chg_20d > 15:
-            trend = "strong_bull"
-        elif chg_20d > 5:
-            trend = "bull"
-        elif chg_20d < -15:
-            trend = "strong_bear"
-        elif chg_20d < -5:
-            trend = "bear"
-        else:
-            trend = "neutral"
-
-        return {
-            "value": round(latest, 0),
-            "chg_5d": round(chg_5d, 1),
-            "chg_20d": round(chg_20d, 1),
-            "trend": trend,
-            "history": [round(c, 0) for c in closes[-20:]],
-        }
-    except Exception as e:
-        log.debug(f"[supply_chain] BDI (^BDI) fetch failed: {e}")
-        return None
+    log.debug("[supply_chain] BDI (^BDI) fetch skipped — ticker unavailable via yfinance")
+    return None
 
 
 async def _fetch_energy_momentum() -> dict | None:

@@ -3,7 +3,7 @@ import logging
 import logging.handlers
 import os
 import resource
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import certifi
@@ -14,9 +14,24 @@ import pytz
 _sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
 if _sentry_dsn:
     import sentry_sdk
+    from fastapi import HTTPException
     from sentry_sdk.integrations.fastapi import FastApiIntegration
     from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
     from sentry_sdk.integrations.starlette import StarletteIntegration
+
+    def _ignore_expected_oauth_error(event, hint):
+        """Drop expected 503 'OAuth not configured' events from Sentry."""
+        try:
+            exc_info = hint.get("exc_info")
+            if exc_info:
+                exc_type, exc_value, _ = exc_info
+                if exc_type is not None and exc_value is not None and issubclass(exc_type, HTTPException):
+                    detail = str(exc_value.detail or "")
+                    if exc_value.status_code == 503 and "OAuth not configured" in detail:
+                        return None
+        except Exception:
+            pass
+        return event
 
     sentry_sdk.init(
         dsn=_sentry_dsn,
@@ -25,6 +40,7 @@ if _sentry_dsn:
             FastApiIntegration(),
             SqlalchemyIntegration(),
         ],
+        before_send=_ignore_expected_oauth_error,
         traces_sample_rate=0.1,  # 10% of requests profiled — adjust up/down by cost
         profiles_sample_rate=0.05,
         environment="production" if not os.environ.get("DEBUG") else "development",
@@ -1848,6 +1864,29 @@ async def sentry_health():
         "environment": "production" if not os.environ.get("DEBUG") else "development",
         "event_id": event_id,
     }
+
+
+@app.get("/api/health/uptime", tags=["meta"])
+async def uptime_check():
+    """Lightweight public endpoint for external uptime monitors (e.g. Sentry Uptime).
+
+    Returns HTTP 200 only if the database is reachable. No authentication required.
+    Point Sentry Uptime Monitoring at: https://<your-domain>/api/health/uptime
+    """
+    from database import AsyncSessionLocal
+    from sqlalchemy import text
+
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        return {
+            "status": "ok",
+            "url": settings.app_url,
+            "sentry_configured": bool(_sentry_dsn),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"DB unavailable: {e}")
 
 
 @app.get("/api/scan/status", tags=["meta"])

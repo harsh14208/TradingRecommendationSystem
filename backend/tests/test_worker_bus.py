@@ -9,6 +9,7 @@ No Redis is used — all tests run against the default asyncio.Queue backend.
 
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -25,6 +26,17 @@ from services.worker_bus import (
 )
 
 # ── WorkerBus asyncio.Queue backend ──────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _force_asyncio_backend():
+    """Ensure these tests use the asyncio.Queue backend even when REDIS_URL is set."""
+    import services.worker_bus as wb_module
+
+    wb_module._bus = None
+    with patch.dict(os.environ, {"REDIS_URL": ""}):
+        yield
+    wb_module._bus = None
 
 
 class TestWorkerBusAsyncioBackend:

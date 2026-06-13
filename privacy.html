@@ -18,9 +18,23 @@ li{margin-bottom:6px}
 strong{color:#e6edf3}
 a{color:#10b981;text-decoration:none}
 a:hover{text-decoration:underline}
-table{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px}
+.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:600px}
 th{text-align:left;padding:10px 12px;color:#e6edf3;background:#161b22;border-bottom:2px solid #30363d}
 td{padding:10px 12px;color:#8b949e;border-bottom:1px solid #21262d;vertical-align:top}
+@media(max-width:600px){
+  .table-wrap{overflow:visible}
+  table,thead,tbody,th,td,tr{display:block;min-width:0}
+  thead tr{display:none}
+  tr{margin-bottom:16px;border:1px solid #21262d;border-radius:8px;padding:10px;background:#161b22}
+  td{border:none;border-bottom:1px solid #21262d;padding:8px 12px;display:flex;justify-content:space-between;gap:12px;text-align:right}
+  td:last-child{border-bottom:none}
+  td::before{content:attr(data-label);font-weight:600;color:#e6edf3;flex:none;text-align:left}
+  td:nth-child(1)::before{content:"Category:"}
+  td:nth-child(2)::before{content:"Data:"}
+  td:nth-child(3)::before{content:"Why we collect it:"}
+  td:nth-child(4)::before{content:"Retention:"}
+}
 nav{position:sticky;top:0;background:rgba(13,17,23,0.95);backdrop-filter:blur(8px);border-bottom:1px solid #21262d;padding:14px 24px;display:flex;align-items:center;gap:20px}
 nav a{font-size:13px;color:#8b949e}
 nav .logo{font-weight:800;color:#10b981;font-size:16px;margin-right:auto}
@@ -46,50 +60,56 @@ footer{text-align:center;padding:40px 0;font-size:12px;color:#484f58;border-top:
 
   <h2>1. Data We Collect</h2>
 
+  <div class="table-wrap">
   <table>
-    <tr>
-      <th>Category</th>
-      <th>Data</th>
-      <th>Why we collect it</th>
-      <th>Retention</th>
-    </tr>
-    <tr>
-      <td><strong>Account</strong></td>
-      <td>Email address, full name (optional), hashed password</td>
-      <td>Authentication and account management</td>
-      <td>Until you delete your account + 30 days</td>
-    </tr>
-    <tr>
-      <td><strong>Telegram</strong></td>
-      <td>Telegram chat ID (if you link your account)</td>
-      <td>Signal delivery to your Telegram</td>
-      <td>Until you unlink or delete account</td>
-    </tr>
-    <tr>
-      <td><strong>Subscription</strong></td>
-      <td>Stripe customer ID, subscription tier, subscription status, billing period end date</td>
-      <td>Billing, feature gating, receipts</td>
-      <td>Until account deletion (Stripe retains payment records per their policy)</td>
-    </tr>
-    <tr>
-      <td><strong>Usage</strong></td>
-      <td>Signal delivery timestamps, last seen date</td>
-      <td>Service operation, delivery tracking</td>
-      <td>90 days rolling</td>
-    </tr>
-    <tr>
-      <td><strong>Trade journal</strong></td>
-      <td>Notes you manually write on signals</td>
-      <td>Storing your own notes for you</td>
-      <td>Until you delete the note or your account</td>
-    </tr>
-    <tr>
-      <td><strong>Server logs</strong></td>
-      <td>IP address, request path, timestamp (standard web server logs)</td>
-      <td>Security, debugging, abuse prevention</td>
-      <td>30 days</td>
-    </tr>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Data</th>
+        <th>Why we collect it</th>
+        <th>Retention</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Account</strong></td>
+        <td>Email address, full name (optional), hashed password</td>
+        <td>Authentication and account management</td>
+        <td>Until you delete your account + 30 days</td>
+      </tr>
+      <tr>
+        <td><strong>Telegram</strong></td>
+        <td>Telegram chat ID (if you link your account)</td>
+        <td>Signal delivery to your Telegram</td>
+        <td>Until you unlink or delete account</td>
+      </tr>
+      <tr>
+        <td><strong>Subscription</strong></td>
+        <td>Stripe customer ID, subscription tier, subscription status, billing period end date</td>
+        <td>Billing, feature gating, receipts</td>
+        <td>Until account deletion (Stripe retains payment records per their policy)</td>
+      </tr>
+      <tr>
+        <td><strong>Usage</strong></td>
+        <td>Signal delivery timestamps, last seen date</td>
+        <td>Service operation, delivery tracking</td>
+        <td>90 days rolling</td>
+      </tr>
+      <tr>
+        <td><strong>Trade journal</strong></td>
+        <td>Notes you manually write on signals</td>
+        <td>Storing your own notes for you</td>
+        <td>Until you delete the note or your account</td>
+      </tr>
+      <tr>
+        <td><strong>Server logs</strong></td>
+        <td>IP address, request path, timestamp (standard web server logs)</td>
+        <td>Security, debugging, abuse prevention</td>
+        <td>30 days</td>
+      </tr>
+    </tbody>
   </table>
+  </div>
 
   <p>We do <strong>not</strong> collect: payment card details (handled entirely by Stripe), portfolio holdings, brokerage account info, or browsing history outside the Service.</p>
 

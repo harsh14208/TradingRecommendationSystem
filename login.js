@@ -43,10 +43,7 @@ setInterval(() => { if (_serverUp) _checkServer(); }, 10000);
 // ── OAuth error messages ─────────────────────────────────────────────────────
 const oauthError = params.get('error');
 if (oauthError) {
-  const errMessages = {
-    discord_no_email:          'Your Discord account has no email address. Add one in Discord settings and try again.',
-    discord_unverified_email:  'Your Discord email is not verified. Verify it in Discord settings first.',
-  };
+  const errMessages = {};
   const msg = errMessages[oauthError] || 'Sign-in failed. Please try again.';
   const box = document.getElementById('error');
   if (box) { box.textContent = msg; box.style.display = 'block'; }
@@ -56,8 +53,7 @@ if (oauthError) {
 // ── Pass ?ref= through OAuth buttons ────────────────────────────────────────
 const ref = params.get('ref');
 if (ref) {
-  document.getElementById('google-btn')?.setAttribute('href',  `/api/auth/google?ref=${encodeURIComponent(ref)}`);
-  document.getElementById('discord-btn')?.setAttribute('href', `/api/auth/discord?ref=${encodeURIComponent(ref)}`);
+  document.getElementById('google-btn')?.setAttribute('href', `/api/auth/google?ref=${encodeURIComponent(ref)}`);
 }
 
 // ── Load live stats for left panel ──────────────────────────────────────────

@@ -22,6 +22,7 @@ Target (both models)        : binary win (net_pct > 0 for BUY, < 0 for SELL).
 import json
 import logging
 import math
+import numbers
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -1170,14 +1171,19 @@ def get_challenger_model():
 def validate_feature_schema(features: list, expected_names: list) -> bool:
     """TSYS-7b: Validate feature vector shape and types before inference."""
     if len(features) != len(expected_names):
-        log.error(f"[schema_val] Length mismatch: got {len(features)} features, expected {len(expected_names)}")
+        log.warning("[schema_val] Length mismatch: got %s features, expected %s", len(features), len(expected_names))
         return False
     for i, val in enumerate(features):
         if val is None:
             continue
-        if not isinstance(val, (int, float)):
-            log.error(
-                f"[schema_val] Type shift detected for feature '{expected_names[i]}' at index {i}: value={val} type={type(val)}"
+        # bool is a Real subclass but must not be accepted as a numeric feature value
+        if isinstance(val, bool) or not isinstance(val, numbers.Real):
+            log.warning(
+                "[schema_val] Type shift detected for feature '%s' at index %s: value=%s type=%s",
+                expected_names[i],
+                i,
+                val,
+                type(val),
             )
             return False
     return True
@@ -1197,7 +1203,7 @@ def predict_challenger_prob(sig_dict: dict, model) -> "float | None":
 
         features = _extract_challenger_features(sig_dict)
         if not validate_feature_schema(features, _CHALLENGER_FEATURE_NAMES):
-            log.error("[signal_ml] Schema validation failed for predict_challenger_prob")
+            log.warning("[signal_ml] Schema validation failed for predict_challenger_prob")
             return None
         dm = xgb.DMatrix(
             np.array([features], dtype=float),
@@ -1284,7 +1290,7 @@ def predict_live_prob(sig_dict: dict, model) -> float | None:
         features = _extract_features(sig_dict)
         _check_feature_drift(features, label="live")
         if not validate_feature_schema(features, _FEATURE_NAMES):
-            log.error("[signal_ml] Schema validation failed for predict_live_prob")
+            log.warning("[signal_ml] Schema validation failed for predict_live_prob")
             return None
         dm = xgb.DMatrix(np.array([features], dtype=float), feature_names=_FEATURE_NAMES)
         return float(model.predict(dm)[0])
@@ -1311,7 +1317,7 @@ def predict_entry_prob(
         features = _extract_entry_features(tech, vix, sector_etf, now.weekday(), now.month)
         _check_feature_drift(features, label="entry")
         if not validate_feature_schema(features, _ENTRY_FEATURE_NAMES):
-            log.error("[signal_ml] Schema validation failed for predict_entry_prob")
+            log.warning("[signal_ml] Schema validation failed for predict_entry_prob")
             return None
         dm = xgb.DMatrix(np.array([features], dtype=float), feature_names=_ENTRY_FEATURE_NAMES)
         return float(model.predict(dm)[0])

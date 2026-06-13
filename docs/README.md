@@ -113,7 +113,7 @@ See [HOWTO.md](HOWTO.md) §10+ for broker connection steps and [RUNBOOK.md](RUNB
 | `/app` | Main dashboard — signal feed, charts, backtest, paper trading |
 | `/mobile` | Mobile PWA — Feed, Watchlist, Portfolio, Account, Notifications, Paywall |
 | `/design` | Design canvas — 8 iOS 26 Liquid Glass screens on a pan/zoom canvas |
-| `/login` | Sign-in (Google + Discord OAuth, email/password) |
+| `/login` | Sign-in (Google OAuth, email/password) |
 | `/signup` | Registration with plan picker → Stripe Checkout |
 | `/track-record` | Public win-rate scorecard (no auth required) |
 | `/tos` | Terms of Service |
@@ -256,7 +256,7 @@ TradingRecommendationSystem/
 │   │                             POST /orders requires Pro tier (or owner).
 │   │   ├── watchlist_router.py   Watchlist CRUD
 │   │   ├── admin.py              Owner-only: users, MRR, setup status
-│   │   ├── oauth.py              Google + Discord OAuth2 with PKCE
+│   │   ├── oauth.py              Google OAuth2 with PKCE
 │   │   └── websocket_router.py   Real-time /ws push; requires valid access token
 │   └── services/
 │       ├── signal_engine.py      50+ block scoring engine; style from rationale;
@@ -286,7 +286,7 @@ TradingRecommendationSystem/
 ├── mobile.jsx                    Mobile PWA — 8 screens
 ├── styles.css                    Dashboard design-system CSS
 ├── landing.html / app.html       Entry points
-├── login.html / signup.html      Auth pages (Google + Discord + email)
+├── login.html / signup.html      Auth pages (Google + email)
 ├── Dockerfile / docker-compose.yml
 ├── railway.toml / fly.toml       Deployment configs
 ├── .env.example                  All variables documented
@@ -324,7 +324,6 @@ SMTP_HOST=...                # Transactional email (users auto-verified without 
 STRIPE_SECRET_KEY=...        # Billing (subscription tiers work without it in dev)
 STRIPE_WEBHOOK_SECRET=...    # whsec_... from Stripe dashboard (required for paid subs)
 GOOGLE_CLIENT_ID=...         # OAuth
-DISCORD_CLIENT_ID=...
 ```
 
 ---

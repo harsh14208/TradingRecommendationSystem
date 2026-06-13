@@ -11,6 +11,45 @@ const DEFAULTS = {
   weight_overrides: {},
 };
 
+/* ─── Owner kill-switch control ─────────────────────────────────────────────── */
+function KillSwitch({ currentUser }) {
+  const [paused, setPaused] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser?.is_owner) return;
+    let alive = true;
+    apiFetch("/api/admin/execution-kill-switch").then(d => {
+      if (alive && d) setPaused(d.execution_paused);
+    });
+    return () => { alive = false; };
+  }, [currentUser]);
+
+  const toggle = async () => {
+    setLoading(true);
+    const d = await apiFetch("/api/admin/execution-kill-switch", { method: "POST" });
+    if (d) setPaused(d.execution_paused);
+    setLoading(false);
+  };
+
+  if (!currentUser?.is_owner || paused === null) return null;
+
+  return (
+    <button
+      onClick={toggle}
+      disabled={loading}
+      title={paused ? "Auto-execution is paused — click to resume" : "Immediately pause all auto-execution"}
+      style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", height:28,
+        background: paused ? "rgba(16,185,129,0.10)" : "rgba(239,68,68,0.10)",
+        border: `1px solid ${paused ? "rgba(16,185,129,0.35)" : "rgba(239,68,68,0.35)"}`,
+        borderRadius:5, color: paused ? "var(--up)" : "var(--down)", fontFamily:"var(--font-mono)", fontSize:10,
+        fontWeight:600, letterSpacing:"0.06em", cursor:"pointer", whiteSpace:"nowrap", opacity: loading ? 0.5 : 1 }}>
+      <span style={{ width:7, height:7, borderRadius:"50%", background: paused ? "var(--up)" : "var(--down)", boxShadow: `0 0 6px ${paused ? "var(--up)" : "var(--down)"}` }}/>
+      {paused ? "RESUME AUTO-EXEC" : "KILL SWITCH"}
+    </button>
+  );
+}
+
 /* ─── Disclaimer ─────────────────────────────────────────────────────────────── */
 /* ─── Disclaimer ─────────────────────────────────────────────────────────────── */
 const DISCLAIMER_KEY = "signal_trade_disclaimer_v1";
@@ -633,6 +672,7 @@ function App() {
 
   return (
     <div className="app">
+      <h1 style={{ position:"absolute", width:"1px", height:"1px", padding:0, margin:"-1px", overflow:"hidden", clip:"rect(0,0,0,0)", whiteSpace:"nowrap", border:0 }}>Signal.Trade Dashboard</h1>
       {/* ── Top bar ── */}
       <div className="topbar">
         <div className="brand">
@@ -640,7 +680,7 @@ function App() {
           SIGNAL.TRADE
           <span className="faint mono" style={{ fontWeight:400, marginLeft:8, fontSize:10 }}>v5.2</span>
         </div>
-        <div className="search" onClick={() => searchRef.current?.focus()} style={{ cursor:"text" }} role="button" tabIndex={0}>
+        <div className="search" onClick={() => searchRef.current?.focus()} style={{ cursor:"text" }}>
           <Icon name="search" size={12}/>
           <input
             ref={searchRef}
@@ -711,7 +751,8 @@ function App() {
             title="Seconds until next auto-refresh">
             {refreshing ? "…" : `${countdown}s`}
           </span>
-          <button className={`iconbtn ${tweaksOpen?"active":""}`} onClick={() => setTweaksOpen(!tweaksOpen)}><Icon name="settings"/></button>
+          <KillSwitch currentUser={currentUser}/>
+          <button className={`iconbtn ${tweaksOpen?"active":""}`} onClick={() => setTweaksOpen(!tweaksOpen)} aria-label="Settings"><Icon name="settings"/></button>
           <button
             onClick={handleLogout}
             title="Sign out"
@@ -805,7 +846,7 @@ function App() {
         <div className="nav-item" style={{ gap:6, cursor:"default" }}>
           <Icon name="slider" size={15}/>
           <span style={{ flex:1 }}>Threshold</span>
-          <div style={{ display:"flex", alignItems:"center", gap:4 }} onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
+          <div style={{ display:"flex", alignItems:"center", gap:4 }} onClick={e => e.stopPropagation()}>
             <button
               onClick={() => setTweak({ customConf: Math.max(0, threshold - 5) })}
               style={{ width:18, height:18, border:"1px solid var(--line)", borderRadius:3,
@@ -940,7 +981,7 @@ function App() {
               </span>
             )}
             <div className="right">
-              <button className="iconbtn" style={{ width:24, height:24 }} onClick={manualScan}><Icon name="refresh" size={12}/></button>
+              <button className="iconbtn" style={{ width:24, height:24 }} onClick={manualScan} aria-label="Refresh signals"><Icon name="refresh" size={12}/></button>
             </div>
           </div>
           <FilterChips

@@ -10,12 +10,6 @@ function googleSignup(e) {
   const ref = params.get('ref');
   window.location.href = '/api/auth/google' + (ref ? `?ref=${encodeURIComponent(ref)}` : '');
 }
-
-function discordSignup(e) {
-  e.preventDefault();
-  const ref = params.get('ref');
-  window.location.href = '/api/auth/discord' + (ref ? `?ref=${encodeURIComponent(ref)}` : '');
-}
 if (urlPlan && ['free','basic','pro'].includes(urlPlan)) {
   selectedPlan = urlPlan;
   document.querySelectorAll('.plan-card').forEach(c => c.classList.remove('selected','selected-pro'));
@@ -213,7 +207,6 @@ document.querySelectorAll('.plan-card').forEach(card => {
 document.getElementById('continue-btn')?.addEventListener('click', goToAccount);
 document.getElementById('change-plan-btn')?.addEventListener('click', goToPlan);
 document.getElementById('google-btn')?.addEventListener('click', googleSignup);
-document.getElementById('discord-btn')?.addEventListener('click', discordSignup);
 
 async function resendVerification(email) {
   const btn = document.getElementById('resend-btn');

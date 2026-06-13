@@ -57,7 +57,8 @@ class TestJwtSecretKey:
         assert s.jwt_secret_key == "MY_VERY_SECRET_KEY_THAT_IS_LONG_ENOUGH_32"
 
     def test_falls_back_to_dev_secret_when_empty(self):
-        s = Settings(jwt_secret="")
+        # Dev fallback is only allowed on localhost; force that context.
+        s = Settings(jwt_secret="", app_url="http://localhost:8000")
         # Dev secret is a non-empty random string
         assert len(s.jwt_secret_key) > 0
         assert s.jwt_secret_key != ""

@@ -1,4 +1,5 @@
 import hashlib
+import re
 import time as _time
 
 from pydantic import Field, SecretStr, field_validator
@@ -66,10 +67,6 @@ class Settings(BaseSettings):
     google_client_id: str = ""  # from Google Cloud Console → Credentials
     google_client_secret: SecretStr = Field(default=SecretStr(""))
 
-    # ── Discord OAuth ─────────────────────────────────────────────────────────
-    discord_client_id: str = ""  # from discord.com/developers/applications → OAuth2
-    discord_client_secret: SecretStr = Field(default=SecretStr(""))
-
     # ── Email (SMTP) ──────────────────────────────────────────────────────────
     smtp_host: str = ""
     smtp_port: int = 587
@@ -112,7 +109,7 @@ class Settings(BaseSettings):
 
     @property
     def tickers(self) -> list[str]:
-        return [t.strip().upper() for t in self.watchlist.split(",") if t.strip()]
+        return [t.strip().upper() for t in re.split(r"[,\s]+", self.watchlist) if t.strip()]
 
     @property
     def jwt_secret_key(self) -> str:

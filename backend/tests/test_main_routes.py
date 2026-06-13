@@ -53,6 +53,17 @@ def test_sentry_health_when_configured(client):
     capture.assert_called_once_with("Sentry health check", level="info")
 
 
+def test_uptime_check(client):
+    """Public uptime endpoint returns ok and the configured app URL."""
+    resp = client.get("/api/health/uptime")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "url" in data
+    assert "sentry_configured" in data
+    assert "ts" in data
+
+
 def test_landing_page(client):
     resp = client.get("/")
     assert resp.status_code == 200

@@ -177,6 +177,22 @@
   }
   .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981; }
   .brand-row .v { font-weight: 400; color: #56617a; }
+
+  @media (max-width: 900px) {
+    .hub { padding: 48px 24px; }
+    h1 { font-size: 46px; }
+    .surfaces { grid-template-columns: 1fr; }
+    .surface-thumb { aspect-ratio: 16 / 10; }
+  }
+  @media (max-width: 520px) {
+    .hub { padding: 36px 18px; }
+    h1 { font-size: 34px; }
+    .hub-sub { font-size: 15px; }
+    .hub-meta { gap: 18px; }
+    .hub-meta span { flex: 1 1 40%; }
+    .surface-info h3 { font-size: 20px; }
+    .surface-info p { font-size: 12px; }
+  }
 </style>
 </head>
 <body>

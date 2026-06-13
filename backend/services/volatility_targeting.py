@@ -32,7 +32,15 @@ async def _fetch_returns(tickers: list[str], period: str = "3mo") -> pd.DataFram
     """Fetch daily % returns for each ticker. Returns DataFrame[ticker → daily_return]."""
     from services.market_data import get_histories_batch
 
-    histories = await get_histories_batch(tickers, period=period, interval="1d")
+    try:
+        histories = await get_histories_batch(tickers, period=period, interval="1d")
+    except Exception as e:
+        log.warning("[vol_target] market data unavailable: %s", e)
+        return pd.DataFrame()
+
+    if histories is None:
+        return pd.DataFrame()
+
     returns: dict[str, pd.Series] = {}
     for t in tickers:
         df = histories.get(t)
