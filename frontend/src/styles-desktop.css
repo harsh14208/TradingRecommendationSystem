@@ -315,6 +315,8 @@ input, select, textarea { font: inherit; color: inherit; }
   grid-template-columns: 6.4px 1fr auto;
   gap: 9.6px;
   align-items: center;
+  width: 100%;
+  text-align: left;
 }
 .signal-dot { width: 6.4px; height: 6.4px; border-radius: 50%; }
 .signal-dot.BUY  { background: var(--up);   box-shadow: 0 0 0 1.6px color-mix(in oklch, var(--up)   20%, transparent); }
@@ -411,7 +413,7 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--text); background: var(--bg-3);
   overflow: hidden; flex-shrink: 0;
 }
-.rationale-item h4 { margin: 0 0 1.6px; font-size: var(--fs-md); font-weight: 500; }
+.rationale-item h2 { margin: 0 0 1.6px; font-size: var(--fs-md); font-weight: 500; }
 .rationale-item p  { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); font-family: var(--font-mono); }
 .rationale-item .meta { font-size: 8px; color: var(--text-faint); font-family: var(--font-mono); margin-top: 3.2px; }
 .rationale-item .sentiment { display: inline-block; padding: 0.8px 4px; border-radius: 2.4px; font-size: 7.2px; margin-right: 4.8px; }
@@ -545,8 +547,8 @@ input, select, textarea { font: inherit; color: inherit; }
   box-shadow: 0 16px 32px rgba(0,0,0,0.5); z-index: 50; padding: 11.2px; display: none;
 }
 .tweaks.open { display: block; }
-.tweaks h4 { margin: 0 0 9.6px; font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-faint); display: flex; align-items: center; }
-.tweaks h4 .cl { margin-left: auto; cursor: pointer; color: var(--text-faint); }
+.tweaks h2 { margin: 0 0 9.6px; font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-faint); display: flex; align-items: center; }
+.tweaks h2 .cl { margin-left: auto; cursor: pointer; color: var(--text-faint); }
 .tweak-row { margin-bottom: 9.6px; }
 .tweak-row > .l { font-size: 8px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); font-family: var(--font-mono); margin-bottom: 4.8px; display: block; }
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--bg-2); border: 0.8px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }

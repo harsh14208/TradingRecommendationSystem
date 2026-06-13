@@ -16,8 +16,8 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
     return prev.length >= 1 ? [...prev, conf] : null;
   }, [allSignals, s.ticker, s.action, s.id, conf]);
   return (
-    <div className={`signal${active?" active":""}${expanded?" expanded":""}${suppressed?" suppressed":""}`} onClick={onToggle} role="button" tabIndex={0}>
-      <div className="signal-row-inner">
+    <div className={`signal${active?" active":""}${expanded?" expanded":""}${suppressed?" suppressed":""}`}>
+      <button className="signal-row-inner" onClick={onToggle} aria-expanded={expanded} aria-label={`${s.action} ${s.ticker} signal`}>
         <div className={`signal-dot ${s.action}`}/>
         <div className="signal-body">
           <div className="signal-top">
@@ -129,10 +129,10 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
             <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
         </div>
-      </div>
+      </button>
 
       {expanded && (
-        <div className="signal-expand" onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
+        <div className="signal-expand" onClick={e => e.stopPropagation()}>
           <div className="se-row">
             <div>
               <div className="se-price mono">${fmt(s.price)}</div>

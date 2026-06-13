@@ -1544,7 +1544,7 @@ function App() {
                       <div key={i} className="rationale-item">
                         <div className="src" title={r.src}>{srcAbbr(r.src)}</div>
                         <div>
-                          <h4>{tipifyHead(r.head)}</h4>
+                          <h2>{tipifyHead(r.head)}</h2>
                           <p>{r.body}</p>
                           <div className="meta">
                             <span className={`sentiment chip ${r.sentiment==="pos"?"up":r.sentiment==="neg"?"down":"warn"}`}>{r.sentiment?.toUpperCase()}</span>

@@ -160,7 +160,7 @@ function InfoPop({ title, children }) {
   const portal = open && pos && ReactDOM.createPortal(
     <>
       <div onClick={() => setOpen(false)}
-        style={{ position:"fixed", inset:0, zIndex:99997, background:"transparent" }} role="button" tabIndex={0}/>
+        style={{ position:"fixed", inset:0, zIndex:99997, background:"transparent" }}/>
       <div style={{
         position:"fixed", left:pos.x,
         top:       pos.above ? undefined : pos.y,
@@ -170,7 +170,7 @@ function InfoPop({ title, children }) {
         borderRadius:10, padding:"14px 18px", fontSize:12,
         color:"#e2e8f0", lineHeight:1.7, zIndex:99998,
         boxShadow:"0 12px 48px rgba(0,0,0,0.7)",
-      }} onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
+      }} onClick={e => e.stopPropagation()}>
         <strong style={{ color:"#10b981", display:"block", marginBottom:8,
           textTransform:"uppercase", letterSpacing:"0.08em", fontSize:10 }}>
           {title}
@@ -357,6 +357,8 @@ function Chart({ signal, style, period = "3M" }) {
 
     chart.timeScale().fitContent();
     chartRef.current  = chart;
+    // Accessibility: the LightweightCharts canvas wrapper is focusable but has no name.
+    el.querySelector('div[role="button"]')?.setAttribute('aria-label', `${signal?.ticker || "Price"} interactive chart`);
     priceSeriesRef.current = priceSeries;
     priceLinesRef.current  = [];
 
@@ -504,7 +506,7 @@ function Chart({ signal, style, period = "3M" }) {
           opacity: loading ? 0.2 : 1, transition:"opacity 0.2s",
           cursor: drawMode ? "crosshair" : "default",
         }}
-       role="button" tabIndex={0}/>
+      />
     </div>
   );
 }
@@ -569,6 +571,7 @@ function CompareChart({ ticker, versus, period = "3M" }) {
 
     chart.timeScale().fitContent();
     chartRef.current = chart;
+    containerRef.current?.querySelector('div[role="button"]')?.setAttribute('aria-label', `${ticker} vs ${versus} relative performance chart`);
 
     const ro = new ResizeObserver(() => {
       if (chartRef.current) chartRef.current.applyOptions({ width: containerRef.current.clientWidth });

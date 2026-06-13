@@ -1764,8 +1764,8 @@ function DemoTour({ open, onClose }) {
   useEffect(() => { if (open) setStep(0); }, [open]);
   if (!open) return null;
   return (
-    <div className="hk-backdrop" onClick={onClose} role="button" tabIndex={0}>
-      <div className="tour-modal" onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
+    <div className="hk-backdrop" onClick={onClose}>
+      <div className="tour-modal" onClick={e => e.stopPropagation()}>
         <div className="tour-progress">
           {steps.map((_, i) => <span key={i} className={`tp-dot ${i === step ? "on" : i < step ? "done" : ""}`}/>)}
         </div>
@@ -1796,8 +1796,8 @@ function HotkeyHelp({ open, onClose, onTour }) {
   ];
   if (!open) return null;
   return (
-    <div className="hk-backdrop" onClick={onClose} role="button" tabIndex={0}>
-      <div className="hk-modal" onClick={e => e.stopPropagation()} role="button" tabIndex={0}>
+    <div className="hk-backdrop" onClick={onClose}>
+      <div className="hk-modal" onClick={e => e.stopPropagation()}>
         <div className="hk-head">
           <span className="crumb">SHORTCUTS</span>
           <h3>Keyboard cheat sheet</h3>
