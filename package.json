@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "@axe-core/react": "^4.11.3",
+    "@lhci/cli": "^0.15.1",
     "esbuild": "^0.25.0"
   }
 }

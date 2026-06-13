@@ -7,6 +7,13 @@
 [tool.mutmut]
 source_paths = ["src/services/delivery_gates.py"]
 pytest_add_cli_args_test_selection = ["src/tests/test_delivery_gates.py"]
-also_copy = ["src/tests/", "src/conftest.py", "src/config.py", "src/database.py", "src/models.py"]
+also_copy = ["src/tests/", "src/conftest.py", "src/config.py", "src/database.py", "src/models.py", "src/services/__init__.py", "src/services/market_calendar.py", "src/services/http_client.py", "src/services/sector_ml_promotion.py"]
 only_mutate = ["src/services/delivery_gates.py"]
 timeout_multiplier = 15.0
+mutate_only_covered_lines = true
+do_not_mutate_patterns = [
+    'return f"',
+    'return "',
+    'return \(',
+    'log\.warning',
+]

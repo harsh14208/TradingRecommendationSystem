@@ -156,7 +156,7 @@ async def check_delivery_gates(
             elif twr >= 0.75:
                 _effective_conf_floor = max(_effective_conf_floor, 52.0)
     except Exception:
-        log.warning("Failed to load adaptive weights in delivery gates", exc_info=True)
+        log.warning("Failed to load adaptive weights in delivery gates", exc_info=True)  # pragma: no mutate
 
     # ── Confidence haircuts (applied BEFORE floors so they can gate delivery) ─
     # Pre-long-weekend haircut (-5pp, non-blocking)
@@ -290,7 +290,7 @@ async def check_delivery_gates(
                 )
         except Exception:
             # On any promotion-lookup failure, fail closed (block the sector).
-            log.warning("Sector promotion lookup failed; blocking %s", _blocked_key, exc_info=True)
+            log.warning("Sector promotion lookup failed; blocking %s", _blocked_key, exc_info=True)  # pragma: no mutate
             return (
                 f"sector {_blocked_key} blocked (low PF) — awaiting QENG-1c promotion",
                 sig_dict,

@@ -42,6 +42,29 @@ async def _db_no_sector_count():
     return db
 
 
+# ── Internal helper tests ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_days_to_nearest_fomc_returns_initial_when_no_dates_match():
+    """A date far outside the 2026 schedule should return the sentinel value."""
+    from services.delivery_gates import _days_to_nearest_fomc
+
+    assert _days_to_nearest_fomc("2030-01-01") == 999
+
+
+@pytest.mark.asyncio
+async def test_utcnow_naive_uses_utc_timezone():
+    """_utcnow_naive must call datetime.now with timezone.utc."""
+    from datetime import timezone
+    from services.delivery_gates import _utcnow_naive
+
+    with patch("services.delivery_gates.datetime") as mock_dt:
+        mock_dt.now.return_value.replace.return_value = "naive-ts"
+        assert _utcnow_naive() == "naive-ts"
+        mock_dt.now.assert_called_once_with(timezone.utc)
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
@@ -851,6 +874,7 @@ async def test_october_seasonality_gate_blocks_low_conf():
 @pytest.mark.asyncio
 async def test_pre_long_weekend_haircut_applied():
     from services.delivery_gates import check_delivery_gates
+    import services.market_calendar  # noqa: F401  # ensure module is loaded for patch targets
 
     db = await _db_no_sector_count()
 

@@ -102,3 +102,4 @@ backend/mutants/
 .playwright-mcp/
 .serena/
 .venv311/
+.lighthouseci/
