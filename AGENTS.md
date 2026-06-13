@@ -26,6 +26,20 @@ Conventions for coding agents working on the Signal.Trade monorepo.
 - Broker credentials must be encrypted with scrypt KDF v2 and a per-credential
   salt.
 
+## Dependency Security Audit
+
+- `pip-audit` was removed from `.pre-commit-config.yaml` because it re-installs
+  `backend/requirements.txt` against the system Python 3.14 and fails building
+  `scipy` from source (missing `gfortran`).
+- **When modifying `backend/requirements.txt`**, run `pip-audit` manually inside
+  the `.venv311` environment before committing:
+  ```bash
+  cd backend
+  ../.venv311/bin/pip-audit -r requirements.txt --ignore-vuln PYSEC-2022-42969
+  ```
+- Do **not** use `git commit --no-verify` routinely; it bypasses ruff, EOF
+  fixers, YAML checks, and large-file guards.
+
 ## Transaction Rules
 
 - **Services commit, routers don't.**
