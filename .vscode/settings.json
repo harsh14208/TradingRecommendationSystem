@@ -3,6 +3,33 @@
     "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/bin/python",
     "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
     "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.exclude": [
+        "**/backend/venv",
+        "**/backend/mutants",
+        "**/.venv",
+        "**/.venv311",
+        "**/.venv_test_cov",
+        "**/node_modules",
+        "**/.mcp",
+        "**/.serena",
+        "**/.pytest_cache",
+        "**/.ruff_cache",
+        "**/__pycache__"
+    ],
+    "files.exclude": {
+        "**/.git": true,
+        "**/backend/venv": true,
+        "**/backend/mutants": true,
+        "**/.venv": true,
+        "**/.venv311": true,
+        "**/.venv_test_cov": true,
+        "**/node_modules": true,
+        "**/.mcp": true,
+        "**/.serena": true,
+        "**/.pytest_cache": true,
+        "**/.ruff_cache": true,
+        "**/__pycache__": true
+    },
     "[python]": {
         "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,

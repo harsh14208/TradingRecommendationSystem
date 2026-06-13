@@ -50,7 +50,6 @@ kill-switch-*.png
 .LSOverride
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
