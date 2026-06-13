@@ -46,7 +46,7 @@ Actionable items still open. Completed sprint items are archived below.
 - [ ] **SP1-2. Configure SMTP** — Add `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` to `.env` (SendGrid free tier is enough to start). Test: trigger password-reset flow for owner account. Unblocks: email verification, weekly digests, password resets. *Risk: users who forget passwords have no recovery path.*
 
 ### Observability & Pipeline
-- [ ] **SP1-3. Sentry DSN signup & verification** — SDK wiring is complete (archived); remaining: sign up at sentry.io, paste DSN into `backend/.env`, restart, and hit `/api/health/sentry`.
+- [x] **SP1-3. Sentry DSN signup & verification** — DSN added to `backend/.env`. Fixed `main.py` to load `.env` at import time before the Sentry SDK init, restarted the `com.signal.trade` LaunchAgent, and verified `/api/health/sentry` returns `configured:true` with a real `event_id`.
 
 ### Scale & Delivery (before first paying user)
 - [ ] **SP1-5. Enable Telegram broadcast channel** — Create private Telegram channel, add bot as admin, set `TELEGRAM_BROADCAST_CHANNEL_ID=-100...` in `.env`. Test: send one broadcast signal, confirm it posts to the channel. Unblocks: scaling past 50 subscribers without hitting Telegram rate limits.
