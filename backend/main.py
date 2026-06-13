@@ -14,12 +14,21 @@ import pytz
 _sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
 if _sentry_dsn:
     import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+    from sentry_sdk.integrations.starlette import StarletteIntegration
 
     sentry_sdk.init(
         dsn=_sentry_dsn,
+        integrations=[
+            StarletteIntegration(),
+            FastApiIntegration(),
+            SqlalchemyIntegration(),
+        ],
         traces_sample_rate=0.1,  # 10% of requests profiled — adjust up/down by cost
         profiles_sample_rate=0.05,
         environment="production" if not os.environ.get("DEBUG") else "development",
+        release=os.environ.get("GIT_SHA", "unknown"),
     )
 
 # Raise the per-process open-file limit early so long-running scan cycles
@@ -1819,6 +1828,26 @@ async def health_check():
         from fastapi import HTTPException
 
         raise HTTPException(status_code=503, detail=f"DB unavailable: {e}")
+
+
+@app.get("/api/health/sentry", tags=["meta"])
+async def sentry_health():
+    """Return whether Sentry is configured and reachable.
+
+    To verify the integration end-to-end, set SENTRY_DSN and hit this endpoint;
+    a test message is sent to Sentry and the event ID is returned.
+    """
+    if not _sentry_dsn:
+        return {"configured": False, "environment": None, "event_id": None}
+
+    import sentry_sdk
+
+    event_id = sentry_sdk.capture_message("Sentry health check", level="info")
+    return {
+        "configured": True,
+        "environment": "production" if not os.environ.get("DEBUG") else "development",
+        "event_id": event_id,
+    }
 
 
 @app.get("/api/scan/status", tags=["meta"])

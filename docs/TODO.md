@@ -25,7 +25,7 @@ Actionable items derived from today's session. Ordered by payoff ÷ effort.
 - [ ] **SP1-2. Configure SMTP** — Add `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` to `.env` (SendGrid free tier is enough to start). Test: trigger password-reset flow for owner account. Unblocks: email verification, weekly digests, password resets. *Risk: users who forget passwords have no recovery path.*
 
 ### Observability & Pipeline (before next deploy)
-- [ ] **SP1-3. Wire Sentry DSN** — Sign up at sentry.io, create a Python/FastAPI project, paste DSN into `backend/.env` `SENTRY_DSN=...`. Restart server, verify a test 404 appears in Sentry dashboard within 30s.
+- [x] **SP1-3. Wire Sentry DSN** — DONE (2026-06-12): `sentry-sdk[fastapi]` added to `requirements.txt`; FastAPI, Starlette, and SQLAlchemy integrations initialized in `backend/main.py`; `/api/health/sentry` endpoint added to verify configuration. Remaining step: sign up at sentry.io, paste DSN into `backend/.env` `SENTRY_DSN=...`, restart server, and hit `/api/health/sentry`.
 - [ ] **SP1-4. Push to GitHub & verify CI** — Commit today's changes, push to `main`, verify `.github/workflows/` passes (ruff, pytest coverage floor, gitleaks). Fix any red checks before they rot. *Risk: broken CI masks regressions.*
 
 ### Scale & Delivery (before first paying user)
@@ -94,7 +94,7 @@ Goal: raise Sharpe while holding or growing trade count. Ordering reflects expec
 ## ⚙️ Operational, Deployment & Testing TODOs
 Infrastructure, testing, and system-level follow-ups.
 
-- [ ] **DEPLOY-2. Sentry + UptimeRobot Setup** — Configure Sentry (free tier) for Python exception tracking and UptimeRobot for endpoint availability monitoring. Add `SENTRY_DSN` to `.env` and wire it in `main.py`.
+- [~] **DEPLOY-2. Sentry + UptimeRobot Setup** — Sentry wired in `main.py` (2026-06-12); UptimeRobot endpoint monitoring still TODO.
 - [ ] **DEPLOY-3. DB Backups** — Automated daily backup of `trading.db` to a Cloudflare R2 or S3 bucket (Railway volumes are ephemeral). Retention: 7 daily, 4 weekly.
 - [ ] **QENG-3d. Execution policy simulator** — Compare market, limit, midpoint, delayed-entry, and bracket variants in paper/shadow mode. Promote only on cost-adjusted expected value.
 - [ ] **ACT-7. Validate bracket stop in Alpaca paper account** — Enable auto-execution for owner account on paper, trigger a manual signal delivery, and verify Alpaca dashboard shows bracket order legs correctly.

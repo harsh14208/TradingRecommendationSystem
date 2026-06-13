@@ -1315,6 +1315,9 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
 
     # ── BUY:SELL saturation circuit breaker (7-day ratio) ────────────────────
     try:
+        from datetime import date as _date, timedelta as _timedelta
+
+        _cutoff = (_date.today() - _timedelta(days=7)).isoformat()
         async with AsyncSessionLocal() as db:
             from sqlalchemy import text as _sa_text
 
@@ -1325,9 +1328,10 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
                     SUM(CASE WHEN action='BUY'  THEN 1 ELSE 0 END) AS buys,
                     SUM(CASE WHEN action='SELL' THEN 1 ELSE 0 END) AS sells
                 FROM signals
-                WHERE date(created_at) >= date('now', '-7 days')
+                WHERE created_at >= :cutoff
                   AND action IN ('BUY', 'SELL')
-            """)
+            """),
+                    {"cutoff": _cutoff},
                 )
             ).fetchone()
         _buys = _ratio_row[0] or 0

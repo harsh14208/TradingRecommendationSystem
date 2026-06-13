@@ -26,6 +26,7 @@ aiosmtplib>=3.0.0
 slowapi>=0.1.9              # rate limiting for FastAPI (Limiter, _rate_limit_exceeded_handler)
 playwright>=1.44.0          # optional: Finviz JS fallback; run: playwright install chromium
 pywebpush>=2.0.0            # web push notifications (VAPID)
+sentry-sdk[fastapi]>=2.0    # error tracking + performance monitoring (activated via SENTRY_DSN)
 
 # ── ML ──
 xgboost>=2.0.0

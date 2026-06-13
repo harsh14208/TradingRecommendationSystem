@@ -30,6 +30,29 @@ def test_health_check(client):
     assert "db" in data
 
 
+def test_sentry_health_when_not_configured(client):
+    """Sentry health endpoint reports unconfigured when SENTRY_DSN is absent."""
+    with patch("main._sentry_dsn", ""):
+        resp = client.get("/api/health/sentry")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["configured"] is False
+    assert data["event_id"] is None
+
+
+def test_sentry_health_when_configured(client):
+    """Sentry health endpoint sends a test message when SENTRY_DSN is set."""
+    fake_event_id = "abc123"
+    with patch("main._sentry_dsn", "https://fake@example.ingest.sentry.io/1"):
+        with patch("sentry_sdk.capture_message", return_value=fake_event_id) as capture:
+            resp = client.get("/api/health/sentry")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["configured"] is True
+    assert data["event_id"] == fake_event_id
+    capture.assert_called_once_with("Sentry health check", level="info")
+
+
 def test_landing_page(client):
     resp = client.get("/")
     assert resp.status_code == 200

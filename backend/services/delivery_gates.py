@@ -150,7 +150,7 @@ async def check_delivery_gates(
         app_data = (_srow.data or {}) if _srow else {}
         ticker_wrs = app_data.get("adaptive_weights", {}).get("ticker_win_rates", {})
         twr = ticker_wrs.get(ticker)
-        if twr is not None:
+        if isinstance(twr, (int, float)) and not isinstance(twr, bool):
             if twr < 0.45:
                 _effective_conf_floor = max(_effective_conf_floor, 68.0)
             elif twr >= 0.75:
