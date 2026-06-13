@@ -40,6 +40,16 @@ Conventions for coding agents working on the Signal.Trade monorepo.
 - Do **not** use `git commit --no-verify` routinely; it bypasses ruff, EOF
   fixers, YAML checks, and large-file guards.
 
+## Git Workflow
+
+- **Commit completed changes.** Once a fix or feature is implemented, tests pass,
+  and pre-commit checks are clean, create a focused, descriptive commit. Do not
+  leave finished work uncommitted on the working tree.
+- Keep commits small and atomic; one logical change per commit.
+- Use clear commit messages in the style `area: what changed (why)`.
+- Ask for explicit confirmation before force-pushing, rewriting history, or any
+  destructive git operation.
+
 ## Transaction Rules
 
 - **Services commit, routers don't.**
