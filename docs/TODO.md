@@ -90,7 +90,7 @@ Items marked [~] are partially wired but not yet proven/deployed.
 
 - [ ] **ACT-7. Validate bracket stop in Alpaca paper account** — Enable auto-execution for owner account on paper, trigger a manual signal delivery, and verify Alpaca dashboard shows bracket order legs correctly.
 - [~] **ACT-8. Install shap for ML-5 live audit** — `shap` installed in `.venv311` (0.49.1). Re-run live audit remains gated on ≥50 post-A19 resolved signals.
-- [~] **OPS-2. Frontend accessibility pass (remaining)** — axe-core audit fixed missing button labels and one nested-interactive violation. Remaining: 147 color-contrast items require a design pass; 2 nested-interactive and 1 scrollable-region-focusable issue remain in charts/tabs.
+- [x] **OPS-2. Frontend accessibility pass** — axe-core audit of `/app` reports 0 violations across the default dashboard, expanded signal rows, and the Tweaks/settings panel. Color-contrast tokens now meet WCAG AA in both dark and light themes, modal backdrops no longer create nested-interactive controls, chart canvases have accessible names, and form inputs in Tweaks are labeled.
 
 ---
 
