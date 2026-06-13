@@ -52,11 +52,13 @@ Conventions for coding agents working on the Signal.Trade monorepo.
 ## Documentation Requirements
 
 When changing any of the following, update the relevant docs files
-(`docs/README.md`, `docs/SECURITY.md`, `docs/ARCHITECTURE.md`,
-`docs/RUNBOOK.md`):
+(`docs/README.md`, `docs/HOWTO.md`, `docs/SECURITY.md`, `docs/ARCHITECTURE.md`,
+`docs/RUNBOOK.md`, `docs/SIGNAL_VALIDATION.md`, `docs/QUANT_ENGINE_REVIEW.md`):
 
 - Authentication or authorization flows (JWT, OAuth, tier checks, owner-only
-  endpoints).
+  endpoints, risk acknowledgement).
 - Billing, Stripe webhooks, subscription lifecycle, or trial logic.
 - Database schema, migrations, or foreign-key / delete policies.
 - Secrets / config keys, encryption / KDF versions, or rate-limiting rules.
+- Broker auto-execution, order lifecycle, risk limits, drawdown circuit-breakers,
+  kill switches, or broker credential encryption.

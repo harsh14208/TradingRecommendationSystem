@@ -22,31 +22,33 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 8. [Sending Signals to Telegram](#8-sending-signals-to-telegram)
 9. [Linking Telegram (subscriber flow)](#9-linking-telegram)
 10. [Paper Trading](#10-paper-trading)
-11. [Backtesting & Win Rates](#11-backtesting--win-rates)
-12. [Outcome Backfill](#12-outcome-backfill)
-13. [Track Record (per-ticker)](#13-track-record)
-14. [Signal Correlation Matrix](#14-signal-correlation-matrix)
-15. [Predictive Confidence Intervals](#15-predictive-confidence-intervals)
-16. [Sector Heatmap](#16-sector-heatmap)
-17. [Watchlist Management](#17-watchlist-management)
-18. [Configuring Filters & Rules](#18-configuring-filters--rules)
-19. [Position Sizing Calculator](#19-position-sizing-calculator)
-20. [Price Alerts](#20-price-alerts)
-21. [Mobile App (/mobile)](#21-mobile-app)
-22. [Design Canvas (/design)](#22-design-canvas)
-23. [Account Settings](#23-account-settings)
-24. [Subscription & Billing](#24-subscription--billing)
-25. [Admin Panel (owner only)](#25-admin-panel)
-26. [Keyboard Shortcuts](#26-keyboard-shortcuts)
-27. [Data Sources & API Usage](#27-data-sources--api-usage)
-28. [Environment Variables Reference](#28-environment-variables-reference)
-29. [Deploying to Production](#29-deploying-to-production)
-30. [Troubleshooting](#30-troubleshooting)
-31. [XGBoost ML Confidence Model](#31-xgboost-ml-confidence-model)
-32. [Custom Screener Builder](#32-custom-screener-builder)
-33. [PostgreSQL Migration](#33-postgresql-migration)
-34. [Redis Cache Setup](#34-redis-cache-setup)
-35. [CI/CD & Testing](#35-cicd--testing)
+11. [Going Live with Auto-Execution](#11-going-live-with-auto-execution)
+12. [Backtesting & Win Rates](#12-backtesting--win-rates)
+13. [Outcome Backfill](#13-outcome-backfill)
+14. [Track Record (per-ticker)](#14-track-record)
+15. [Signal Correlation Matrix](#15-signal-correlation-matrix)
+16. [Predictive Confidence Intervals](#16-predictive-confidence-intervals)
+17. [Sector Heatmap](#17-sector-heatmap)
+18. [Watchlist Management](#18-watchlist-management)
+19. [Configuring Filters & Rules](#19-configuring-filters--rules)
+20. [Position Sizing Calculator](#20-position-sizing-calculator)
+21. [Price Alerts](#21-price-alerts)
+22. [Mobile App (/mobile)](#22-mobile-app)
+23. [Design Hub & Design Canvas](#23-design-hub--design-canvas)
+24. [Account Settings](#24-account-settings)
+25. [Subscription & Billing](#25-subscription--billing)
+26. [Admin Panel (owner only)](#26-admin-panel)
+27. [Keyboard Shortcuts](#27-keyboard-shortcuts)
+28. [Data Sources & API Usage](#28-data-sources--api-usage)
+29. [Environment Variables Reference](#29-environment-variables-reference)
+30. [Deploying to Production](#30-deploying-to-production)
+31. [Troubleshooting](#31-troubleshooting)
+32. [XGBoost ML Confidence Model](#32-xgboost-ml-confidence-model)
+33. [Custom Screener Builder](#33-custom-screener-builder)
+34. [PostgreSQL Migration](#34-postgresql-migration)
+35. [Redis Cache Setup](#35-redis-cache-setup)
+36. [CI/CD & Testing](#36-cicd--testing)
+37. [Performance Analytics & Snapshots](#37-performance-analytics--snapshots)
 
 ---
 
@@ -329,7 +331,66 @@ Open from sidebar or mobile → Paper tab:
 
 ---
 
-## 11. Backtesting & Win Rates
+## 11. Going Live with Auto-Execution
+
+Once paper trading proves an edge, you can let the engine place real-money orders through Alpaca or IBKR.
+
+### 11.1 Paper → live graduation criteria
+
+Do **not** connect live keys until all of these are true:
+
+- ≥ 100 resolved paper trades or ≥ 3 months of paper trading
+- Clean live win rate > 55% on delivered BUY signals
+- Brier score ≤ 0.30 and calibration gap ≤ 10pp
+- You have personally tested the kill switch (`POST /api/admin/signals/pause`)
+
+### 11.2 Connect live broker account
+
+1. Create a live account at Alpaca (or fund IBKR).
+2. Generate live API keys from the broker dashboard.
+3. In Signal.Trade, go to **Account Settings → Broker Connection** (requires Pro).
+4. Acknowledge risk: the UI calls `POST /api/me/risk-acknowledge`.
+5. Enter live keys and click **Connect**. The system verifies the account status before saving.
+
+### 11.3 Enable auto-execute with conservative settings
+
+Recommended first-live settings:
+
+| Setting | Value | Why |
+|---|---|---|
+| Auto-execute | On | Only after paper validation |
+| Min confidence | 75% | Highest-confidence tier only |
+| Notional per trade | $100 | Tiny size while validating live fills |
+| Max daily orders | 3 | Limit bad-day damage |
+| Max ticker notional | $500 | No single ticker can dominate |
+
+These are stored on the user record and enforced in `services/broker_svc.py`.
+
+### 11.4 What happens when a signal fires
+
+1. Scanner generates a signal.
+2. Delivery gates check confidence, MR-count, sector, time-of-day.
+3. For users with `auto_execute=True`, `broker_svc.execute_signal_for_user()` runs:
+   - Decrypt broker keys.
+   - Check portfolio drawdown (< −5% blocks).
+   - Check daily/ticker limits.
+   - Check slippage/capacity.
+   - Submit bracket-stop order.
+   - Record `BrokerOrder`.
+4. You receive a Telegram alert with the order details.
+
+### 11.5 Monitoring live trades
+
+- **Broker status:** `/api/me/broker/status`
+- **Order history:** `/api/me/broker/orders`
+- **Live win rate:** `/api/admin/live-wr-stats`
+- **Reconciliation:** run `python scripts/reconcile_broker_orders.py` daily
+
+If live win rate drops below 50%, disable auto-execute and return to paper/analysis.
+
+---
+
+## 12. Backtesting & Win Rates
 
 Go to **Backtest** in the sidebar (requires Basic plan).
 
@@ -365,7 +426,7 @@ Go to **Backtest** in the sidebar (requires Basic plan).
 
 ---
 
-## 12. Outcome Backfill
+## 13. Outcome Backfill
 
 Signal outcomes are recorded automatically as they age (1d after 1 day, 3d after 3 days, etc.). If you missed some historical outcomes, you can backfill them:
 
@@ -378,7 +439,7 @@ This is also available via API: `POST /api/signals/backtest/backfill`
 
 ---
 
-## 13. Track Record
+## 14. Track Record
 
 The **per-ticker** performance view is in the Archive section of the sidebar.
 
@@ -388,7 +449,7 @@ There is also a **public track record page** at `/track-record` that shows aggre
 
 ---
 
-## 14. Signal Correlation Matrix
+## 15. Signal Correlation Matrix
 
 Open **Correlation** from the Archive sidebar group (requires Pro).
 
@@ -401,7 +462,7 @@ Reading the matrix:
 
 ---
 
-## 15. Predictive Confidence Intervals
+## 16. Predictive Confidence Intervals
 
 Shown automatically in the detail pane for every active signal.
 
@@ -413,7 +474,7 @@ The system finds historically similar signals (same action, similar confidence, 
 
 ---
 
-## 16. Sector Heatmap
+## 17. Sector Heatmap
 
 Click **Sectors** in the sidebar.
 
@@ -427,7 +488,7 @@ Click **Sectors** in the sidebar.
 
 ---
 
-## 17. Watchlist Management
+## 18. Watchlist Management
 
 Open **Watchlist** from the sidebar.
 
@@ -448,7 +509,7 @@ DELETE /api/watchlist/{ticker}     — remove ticker
 
 ---
 
-## 18. Configuring Filters & Rules
+## 19. Configuring Filters & Rules
 
 Open **Rules & filters** from the sidebar.
 
@@ -467,7 +528,7 @@ Open **Rules & filters** from the sidebar.
 
 ---
 
-## 19. Position Sizing Calculator
+## 20. Position Sizing Calculator
 
 Shown in the detail pane below the trade plan for any signal with a stop defined.
 
@@ -483,7 +544,7 @@ The calculator shows:
 
 ---
 
-## 20. Price Alerts
+## 21. Price Alerts
 
 Click the **bell icon** on any signal card or in the detail pane action row.
 
@@ -503,7 +564,7 @@ DELETE /api/alerts/{id}      — delete alert
 
 ---
 
-## 21. Mobile App
+## 22. Mobile App
 
 Visit `/mobile` on your phone, or install as a PWA:
 - **iPhone/iPad**: Safari → Share → Add to Home Screen
@@ -525,7 +586,7 @@ The mobile app fetches real API data when authenticated and falls back to mock d
 
 ---
 
-## 22. Design Hub & Design Canvas
+## 23. Design Hub & Design Canvas
 
 ### Design Hub (`/hub`)
 
@@ -552,7 +613,7 @@ Every screen is wrapped in an iOS 26 Liquid Glass device frame with Dynamic Isla
 
 ---
 
-## 23. Account Settings
+## 24. Account Settings
 
 Click your avatar in the top bar or the account nav item in the sidebar.
 
@@ -570,7 +631,7 @@ Click your avatar in the top bar or the account nav item in the sidebar.
 
 ---
 
-## 24. Subscription & Billing
+## 25. Subscription & Billing
 
 ### Creating a subscription
 
@@ -600,7 +661,7 @@ python3 stripe_setup.py
 
 ---
 
-## 25. Admin Panel (Owner Only)
+## 26. Admin Panel (Owner Only)
 
 Available in Account Settings → **Admin** section (only visible when logged in as owner).
 
@@ -642,7 +703,7 @@ GET  /api/admin/snapshots/diff/{a}/{b} — field-level delta between two snapsho
 
 ---
 
-## 26. Keyboard Shortcuts
+## 27. Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
@@ -657,7 +718,7 @@ GET  /api/admin/snapshots/diff/{a}/{b} — field-level delta between two snapsho
 
 ---
 
-## 27. Data Sources & API Usage
+## 28. Data Sources & API Usage
 
 ### Finnhub (free tier)
 
@@ -711,7 +772,7 @@ Visit **Workspace → Massive API Catalog** in the sidebar to browse all availab
 
 ---
 
-## 28. Environment Variables Reference
+## 29. Environment Variables Reference
 
 ```bash
 # ── Market data ───────────────────────────────────────────────────────────────
@@ -783,7 +844,7 @@ STRIPE_PRICE_PRO=           # Auto-filled by: python3 stripe_setup.py
 
 ---
 
-## 29. Deploying to Production
+## 30. Deploying to Production
 
 ### Pre-launch checklist
 
@@ -864,7 +925,7 @@ docker run -p 8000:8000 --env-file .env signal-trade
 
 ---
 
-## 30. Troubleshooting
+## 31. Troubleshooting
 
 ### "No signals showing" / empty feed
 
@@ -942,7 +1003,7 @@ docker run -p 8000:8000 --env-file .env signal-trade
 
 ---
 
-## 31. XGBoost ML Confidence Model
+## 32. XGBoost ML Confidence Model
 
 The ML model is an XGBoost binary classifier that augments the deterministic signal scores with a data-driven confidence adjustment.
 
@@ -993,7 +1054,7 @@ The model is loaded lazily and only applies when the file exists. To disable: de
 
 ---
 
-## 32. Custom Screener Builder
+## 33. Custom Screener Builder
 
 The screener builder lets you define named filter presets and run them against the live signal feed — without changing the global confidence threshold.
 
@@ -1060,7 +1121,7 @@ All rules are AND-joined. Maximum 20 rules per screener, 20 screeners per accoun
 
 ---
 
-## 33. PostgreSQL Migration
+## 34. PostgreSQL Migration
 
 PostgreSQL is now the **default database** for both local dev and production. SQLite is the automatic fallback when `DATABASE_URL` is not set.
 
@@ -1131,7 +1192,7 @@ fly postgres attach signal-trade-db
 
 ---
 
-## 34. Redis Cache Setup
+## 35. Redis Cache Setup
 
 Redis provides a shared cache layer for hot data (macro context, fear & greed, sector data) that is fetched from external APIs on every scan cycle. Without Redis, each service maintains its own in-process dict — shared cache across multiple workers requires Redis.
 
@@ -1176,7 +1237,7 @@ railway add --plugin redis
 
 ---
 
-## 35. CI/CD & Testing
+## 36. CI/CD & Testing
 
 A GitHub Actions workflow runs on every push/PR to `main`.
 
@@ -1219,7 +1280,7 @@ Tests live in `backend/tests/`. Key test files:
 
 ---
 
-## 36. Performance Analytics & Snapshots
+## 37. Performance Analytics & Snapshots
 
 The institutional performance report is generated by `backend/scripts/calc_tbd_metrics.py`.
 

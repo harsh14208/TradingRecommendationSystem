@@ -222,6 +222,45 @@ async def test_gate_allows_unblocked_sector():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sector", ["XLF", "XLP", "XLU", "XLI"])
+async def test_gate_allows_promoted_sector(sector):
+    """§117: blocked sectors pass delivery gates when QENG-1c promotion is live."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    with patch("services.sector_ml_promotion.get_promoted_sectors_cached", new=AsyncMock(return_value={sector})):
+        reason, _ = await check_delivery_gates(_sig(sectorEtf=sector), db, _Settings())
+    assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_gate_reblocks_expired_promotion():
+    """§117: promotion expiration/rollback removes the sector unblock."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    with patch("services.sector_ml_promotion.get_promoted_sectors_cached", new=AsyncMock(return_value=set())):
+        reason, _ = await check_delivery_gates(_sig(sectorEtf="XLF"), db, _Settings())
+    assert reason is not None
+    assert "XLF" in reason
+    assert "QENG-1c" in reason
+
+
+@pytest.mark.asyncio
+async def test_gate_promotion_lookup_failure_fails_closed():
+    """§117: if promotion lookup fails, blocked sectors stay blocked (fail closed)."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    with patch(
+        "services.sector_ml_promotion.get_promoted_sectors_cached", new=AsyncMock(side_effect=RuntimeError("db down"))
+    ):
+        reason, _ = await check_delivery_gates(_sig(sectorEtf="XLP"), db, _Settings())
+    assert reason is not None
+    assert "XLP" in reason
+
+
+@pytest.mark.asyncio
 async def test_gate_blocks_pre_earnings():
     from services.delivery_gates import check_delivery_gates
 

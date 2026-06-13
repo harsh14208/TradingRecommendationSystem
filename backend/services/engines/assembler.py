@@ -20,8 +20,15 @@ from services.engines.helpers import (
     _score_to_action,
 )
 from services.sector import SECTOR_MAP
+from services.sector_ml_promotion import effective_sector_config
 
 log = logging.getLogger("signal.trade.engine")
+
+
+def _effective_sector_config(sector_etf: str | None, promoted_sectors: set[str] | None) -> dict:
+    """Return sector MR config with buy_thresh cleared for promoted blocked sectors."""
+    base = _SECTOR_MR_CONFIG.get(sector_etf, {})
+    return effective_sector_config(sector_etf, base, promoted_sectors)
 
 
 def _assemble_signal(
@@ -48,6 +55,7 @@ def _assemble_signal(
     _is_lev_etf: bool = False,
     data_warnings: Optional[list[dict]] = None,
     days_to_exdiv: Optional[int] = None,
+    promoted_sectors: Optional[set[str]] = None,
 ) -> Optional[dict]:
     """
     Apply risk gates, calibrate confidence, derive style, and build
@@ -307,7 +315,7 @@ def _assemble_signal(
         days_to_earnings=days_to_earnings,
         is_low_atr=_is_low_atr,
         atr_pct_pre=_atr_pct_pre,
-        sector_config=_SECTOR_MR_CONFIG.get(_se_sector_etf_ctx, {}),
+        sector_config=_effective_sector_config(_se_sector_etf_ctx, promoted_sectors),
         is_lev_etf=_is_lev_etf,
     )
 

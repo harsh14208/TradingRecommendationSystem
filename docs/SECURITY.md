@@ -102,7 +102,56 @@ Signal.Trade backend after the security/architecture refactor.
 - All async `fetch` paths use `AbortController` to cancel in-flight requests on
   unmount or navigation.
 
-## 9. Compliance Language (TSYS-13a)
+## 9. Live Trading Safety Controls
+
+Auto-execution of real-money orders is the highest-risk surface in the system.
+The following controls are enforced in code and must never be bypassed:
+
+1. **Explicit opt-in**
+   - `auto_execute` defaults to `false` for every user.
+   - Live auto-execution requires `POST /api/me/risk-acknowledge`, which records
+     `risk_acknowledged_at` immutably.
+
+2. **Credential encryption**
+   - Alpaca/IBKR keys are encrypted at rest with Fernet over scrypt KDF v2 +
+     per-credential salt (`services/broker_svc.py`).
+   - Keys are decrypted only at order time and never logged or returned to clients.
+
+3. **Drawdown circuit breaker**
+   - New orders are blocked if unrealized P&L / equity < **−5%**.
+   - Owner receives a Telegram alert on first breach.
+
+4. **Per-user runtime limits**
+   - `max_daily_orders` — caps order count per day.
+   - `max_ticker_notional` — caps same-ticker notional per day.
+   - `auto_execute_qty_dollars` — fixed notional per trade (default $100).
+
+5. **Global kill switch**
+   - `POST /api/admin/signals/pause` immediately halts all signal delivery and
+     broker auto-execution.
+   - Use this for deploys, incidents, or model decay alarms.
+
+6. **Bracket stop orders**
+   - Live orders include a stop-loss at the signal `stopPrice` when available.
+   - This is the primary loss-control mechanism; never trade without it.
+
+7. **Capacity / slippage guard**
+   - `check_capacity_limits()` blocks or downsizes orders when expected slippage
+     exceeds the configured threshold.
+
+8. **Order reconciliation**
+   - A background/nightly pass reconciles `BrokerOrder` status against the broker.
+   - Orphaned orders (`status='submitted'` with no broker record after 24h) are
+     flagged for manual review.
+
+### Owner responsibilities
+
+- Do **not** enable live auto-execute until paper-track-record criteria are met.
+- Keep `JWT_SECRET` in a secrets manager; rotation invalidates stored broker keys.
+- Review `broker_orders` and `pnl_daily` tables daily when live.
+- Test the kill switch from a mobile device before going live.
+
+## 10. Compliance Language (TSYS-13a)
 
 *(Folded in from the retired `docs/COMPLIANCE_LANGUAGE_AUDIT.md`; last audit run 2026-06-07.)*
 

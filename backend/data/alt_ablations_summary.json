@@ -1,0 +1,91 @@
+{
+  "methodology": {
+    "script": "scripts/cross_sectional_alpha_model.py",
+    "flags": "--walk-forward --wf-start 2012 --wf-test-years 1 --placebo --placebo-seed 42 --universe curated --cost-bps 10 --decile 0.10",
+    "horizon_days": 21,
+    "folds": 15,
+    "universe": "curated (109 survivorship-bias-free single names)"
+  },
+  "results": {
+    "baseline": {
+      "name": "baseline",
+      "rebalances": 174,
+      "mean_ic": 0.0203,
+      "net_sharpe": 0.395,
+      "gross_sharpe": 0.479,
+      "ann_return_net_pct": 6.97,
+      "max_drawdown_pct": -41.67,
+      "net_sharpe_ci_90": [
+        -0.058,
+        0.919
+      ],
+      "positive_folds": "10/15",
+      "coverage_note": null
+    },
+    "sec_ftd": {
+      "name": "sec_ftd",
+      "rebalances": 174,
+      "mean_ic": 0.0209,
+      "net_sharpe": 0.353,
+      "gross_sharpe": 0.436,
+      "ann_return_net_pct": 6.41,
+      "max_drawdown_pct": -42.96,
+      "net_sharpe_ci_90": [
+        -0.056,
+        0.853
+      ],
+      "positive_folds": "11/15",
+      "coverage_note": "45% coverage"
+    },
+    "naaim": {
+      "name": "naaim",
+      "rebalances": 174,
+      "mean_ic": 0.0151,
+      "net_sharpe": -0.04,
+      "gross_sharpe": 0.039,
+      "ann_return_net_pct": -0.77,
+      "max_drawdown_pct": -63.42,
+      "net_sharpe_ci_90": [
+        -0.496,
+        0.453
+      ],
+      "positive_folds": "7/15",
+      "coverage_note": "umcsent=100%, naaim=89%"
+    },
+    "wiki": {
+      "name": "wiki",
+      "rebalances": 174,
+      "mean_ic": 0.0211,
+      "net_sharpe": 0.41,
+      "gross_sharpe": 0.494,
+      "ann_return_net_pct": 7.42,
+      "max_drawdown_pct": -42.96,
+      "net_sharpe_ci_90": [
+        -0.007,
+        0.905
+      ],
+      "positive_folds": "11/15",
+      "coverage_note": "4% coverage"
+    },
+    "combined": {
+      "name": "combined",
+      "rebalances": 174,
+      "mean_ic": 0.0192,
+      "net_sharpe": 0.029,
+      "gross_sharpe": 0.106,
+      "ann_return_net_pct": 0.55,
+      "max_drawdown_pct": -51.33,
+      "net_sharpe_ci_90": [
+        -0.442,
+        0.513
+      ],
+      "positive_folds": "8/15",
+      "coverage_note": "45% coverage"
+    }
+  },
+  "not_tested": {
+    "finra_ats": "historical endpoint blocked (returns HTML); live-forward accumulation only",
+    "cboe_iv_rank": "self-grown history began 2026-06-12; need >=252 snapshots per ticker"
+  },
+  "verdict": "No free alt-data config cleared the harness noise floor at h=21. All net Sharpe CIs include zero and the deltas vs baseline are within sampling variation."
+}

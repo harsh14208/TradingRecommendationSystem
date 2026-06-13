@@ -12,6 +12,13 @@
 
 ## Executive Summary
 
+> **Live-trading readiness:** The execution infrastructure (broker credential encryption,
+> drawdown circuit-breaker, bracket-stop orders, per-user risk limits, order reconciliation,
+> global kill switch) is production-ready. The **strategy is not** ready for real-money auto-execution
+> until the live win rate is consistently above 55%. The current live WR of ~42.5% is below
+> the breakeven threshold; auto-execute should remain on paper until the forward window improves.
+> See [RUNBOOK.md](RUNBOOK.md) §7 and [SIGNAL_VALIDATION.md](SIGNAL_VALIDATION.md) for the go-live checklist.
+
 **Overall assessment:** This is a far more honest backtest than most retail-grade systems — signal-at-close/fill-at-next-open discipline, stop-before-target intrabar priority, per-trade (non-annualized) Sharpe, block-bootstrap CIs, pre-specified held-out ticker sets, and a documented "honest forward Sharpe 0.13–0.18" that already haircuts the IS number. The core price/indicator pipeline is point-in-time clean: I found **no `.shift(-1)`-style look-ahead in any signal-time feature**.
 
 However, three serious problems undermine specific subsystems:

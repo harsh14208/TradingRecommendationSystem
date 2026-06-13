@@ -404,6 +404,7 @@ async def generate_signal(
     market_ctx: Optional[dict] = None,
     prefetched_df: Optional[pd.DataFrame] = None,
     prefetched_info: Optional[dict] = None,
+    promoted_sectors: Optional[set[str]] = None,
 ) -> Optional[dict]:
     try:
         # Use pre-fetched batch data when available; fall back to individual fetches.
@@ -5529,6 +5530,7 @@ async def generate_signal(
             _is_lev_etf=_is_lev_etf,
             data_warnings=data_warnings,
             days_to_exdiv=days_to_exdiv,
+            promoted_sectors=promoted_sectors,
         )
 
     except Exception:
@@ -5541,6 +5543,7 @@ async def scan_all(
     market_ctx: Optional[dict] = None,
     histories: Optional[dict] = None,
     infos: Optional[dict] = None,
+    promoted_sectors: Optional[set[str]] = None,
 ) -> list[dict]:
     histories = histories or {}
     infos = infos or {}
@@ -5574,6 +5577,7 @@ async def scan_all(
                 market_ctx=market_ctx,
                 prefetched_df=histories.get(t),
                 prefetched_info=infos.get(t),
+                promoted_sectors=promoted_sectors,
             )
 
     results = await asyncio.gather(*[_guarded(t) for t in tickers], return_exceptions=True)

@@ -7,6 +7,22 @@
 
 ---
 
+## The Goal: From Research to Live Automated Trading
+
+Signal.Trade is built as a complete pipeline that starts with research signals and ends with
+**broker-executed trades**. The north-star is unattended, risk-controlled live trading:
+
+1. **Research & backtest** — validate mean-reversion edge on 23 years of data.
+2. **Paper trade** — run the engine against Alpaca/IBKR paper accounts until live win rate is stable.
+3. **Shadow/live validation** — compare broker fills to signal assumptions and verify decay monitors.
+4. **Live auto-execution** — enable broker auto-execute with strict per-trade and daily risk limits.
+
+> **Current status:** Live delivery is active; broker auto-execution is implemented but should remain on
+> **paper until the live win rate is consistently above 55%**. See [Signal Validation](SIGNAL_VALIDATION.md)
+> and [Runbook](RUNBOOK.md) §7 for the go-live checklist.
+
+---
+
 ## What it is
 
 Signal.Trade is a personal quant desk that:
@@ -59,6 +75,32 @@ open http://localhost:8000/design # iOS 26 design canvas
 
 > **Owner account** is auto-created from `OWNER_EMAIL` / `OWNER_PASSWORD` on first startup.
 > If SMTP is not configured, new users are auto-verified — no blocked signups in dev.
+
+---
+
+## Live Trading Readiness
+
+Before connecting real money, complete every item:
+
+| Gate | Requirement | Evidence |
+|---|---|---|
+| **Paper track record** | ≥100 resolved signals or ≥3 months of paper trading | `BrokerOrder` table with `account_type='paper'` |
+| **Live win rate** | > 55% on clean delivered BUY signals | `/api/admin/live-wr-stats` |
+| **Calibration** | Brier score ≤ 0.30 and confidence gap ≤ 10pp | Backtest → Calibration tab |
+| **Drawdown tolerance** | Max expected DD < 10% of account | Simulated Returns panel, position sizing ≤ 5% |
+| **Risk limits set** | `max_daily_orders`, `max_ticker_notional`, `auto_execute_qty_dollars` | User record / admin panel |
+| **Kill switch tested** | `POST /api/admin/signals/pause` works from your phone | Runbook §5.2 |
+| **Broker connection verified** | Alpaca/IBKR status returns `connected: true` | `/api/me/broker/status` |
+| **Risk acknowledged** | `POST /api/me/risk-acknowledge` recorded | DB `risk_acknowledged_at` |
+
+**Recommended first live settings:**
+- `auto_execute_qty_dollars = 100`
+- `min_conf = 75`
+- `max_daily_orders = 3`
+- `max_ticker_notional = 500`
+- Keep ≥ 90% of account in cash initially.
+
+See [HOWTO.md](HOWTO.md) §10+ for broker connection steps and [RUNBOOK.md](RUNBOOK.md) §7 for operational procedures.
 
 ---
 

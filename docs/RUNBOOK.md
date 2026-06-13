@@ -260,6 +260,89 @@ python scripts/backfill_confidence.py --force --apply   # recalibrate
 
 ---
 
+## 7. Going Live with Real-Money Auto-Execution
+
+This section is the operational checklist for transitioning from paper trading to live broker auto-execution.
+
+### 7.1 Pre-live validation (do not skip)
+
+| Check | Minimum bar | How to verify |
+|---|---|---|
+| Paper track record | ≥ 100 resolved signals or ≥ 3 months | `SELECT COUNT(*) FROM broker_orders WHERE account_type='paper' AND status='filled'` |
+| Clean live WR | > 55% on delivered BUYs | `GET /api/admin/live-wr-stats` |
+| Calibration | Brier ≤ 0.30, confidence gap ≤ 10pp | Backtest → Calibration tab |
+| Drawdown simulation | Max DD < 10% at intended size | Simulated Returns panel |
+| Kill switch | `pause` works in < 30 seconds | `POST /api/admin/signals/pause` |
+| Broker API health | Status `ACTIVE`, equity > 0 | `GET /api/me/broker/status` |
+
+### 7.2 Configure live risk limits
+
+Set these on the user row **before** enabling live auto-execute:
+
+```sql
+UPDATE users
+SET auto_execute = false,
+    auto_execute_min_conf = 75.0,
+    auto_execute_qty_dollars = 100.0,
+    max_daily_orders = 3,
+    max_ticker_notional = 500.0,
+    alpaca_account_type = 'live'
+WHERE id = <your_user_id>;
+```
+
+### 7.3 Connect live broker credentials
+
+```bash
+# 1. Acknowledge risk (records immutable timestamp)
+curl -X POST https://your-app/api/me/risk-acknowledge \
+  -H "Authorization: Bearer <access_token>"
+
+# 2. Connect live Alpaca keys
+curl -X POST https://your-app/api/me/broker/connect \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"broker":"alpaca","account_type":"live","api_key":"...","api_secret":"..."}'
+
+# 3. Enable auto-execute
+curl -X PATCH https://your-app/api/me/broker/settings \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"min_conf":75.0,"qty_dollars":100.0}'
+```
+
+### 7.4 First live day protocol
+
+- Start with **market open only**; avoid the 11:00–12:00 ET midday window (historically weak).
+- Watch Telegram alerts for the first 3 signals.
+- Verify each `BrokerOrder` row gets a broker `alpaca_order_id` and fills correctly.
+- At market close, run reconciliation:
+  ```bash
+  cd backend && python scripts/reconcile_broker_orders.py
+  ```
+
+### 7.5 Daily live monitoring
+
+| Task | Command / Location |
+|---|---|
+| Check overnight P&L | `/api/admin/live-wr-stats` |
+| Review fills vs signal prices | `SELECT symbol, side, notional, arrival_price, filled_avg_price FROM broker_orders` |
+| Verify drawdown circuit breaker | Logs for `RISK-2 portfolio DD` |
+| Confirm no orphans | `SELECT * FROM broker_orders WHERE status='submitted' AND created_at < now() - interval '24 hours'` |
+
+### 7.6 Sizing up
+
+Only increase size after 30+ additional resolved live signals:
+
+| Stage | `auto_execute_qty_dollars` | Max account % at risk |
+|---|---|---|
+| Validation | $100 | ≤ 5% |
+| Confirmed edge | $500 | ≤ 10% |
+| Full size | $1,000–$2,000 | ≤ 20% |
+
+Never size up while live WR is below 50%.
+
+---
+
 ## 8. Security Incident Response
 
 ### 8.1 JWT_SECRET leaked or suspected compromised
@@ -307,7 +390,7 @@ python scripts/backfill_confidence.py --force --apply   # recalibrate
 
 ---
 
-## 7. Contacts and Resources
+## 9. Contacts and Resources
 
 | Resource | URL |
 |---|---|

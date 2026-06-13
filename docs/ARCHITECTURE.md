@@ -1,5 +1,10 @@
 # Signal.Trade — Architecture Guide
 
+> This architecture is designed to support the full lifecycle from research signals to
+> **live broker execution**. Every layer is built so that a validated signal can flow
+> automatically into an Alpaca or IBKR order with risk checks, audit logging, and a
+> human-operated kill switch.
+
 ## System Overview
 
 ```text
@@ -22,6 +27,35 @@
 │  (business)   │◄────►│  PostgreSQL/SQLite │   │  (optional)   │
 └───────────────┘      └────────────────────┘   └───────────────┘
 ```
+
+## Live Execution Flow
+
+When a user enables broker auto-execution, the signal path is:
+
+```text
+Scanner (15-min market-hours loop)
+  └── Signal generated → delivery gates (confidence, MR-count, sector, time-of-day)
+        └── _maybe_auto_execute_for_signal()
+              ├── Fetch users with auto_execute=True + valid broker keys
+              ├── Per-user runtime risk limits (daily orders, per-ticker notional)
+              ├── Portfolio drawdown circuit-breaker (< −5% equity blocks)
+              ├── TCA / capacity check (expected slippage)
+              ├── Submit bracket-stop order via Alpaca/IBKR REST
+              └── Record BrokerOrder + audit log
+```
+
+Key components:
+
+| Component | File | Responsibility |
+|-----------|------|----------------|
+| Scanner orchestration | `services/scanner.py` | Triggers auto-execute after signal delivery |
+| Broker abstraction | `services/broker_svc.py` | Credential encryption, risk limits, order placement, reconciliation |
+| Broker REST clients | `services/alpaca_rest.py`, `services/ibkr_rest.py` | Low-level order APIs |
+| Portfolio allocator | `services/portfolio_allocator.py` | HRP-based target weights when portfolio mode is used |
+| TCA / capacity | `services/tca_service.py` | Slippage estimation and fill-quality feedback |
+| User settings | `models.py` | `auto_execute`, `auto_execute_qty_dollars`, `max_daily_orders`, etc. |
+| API surface | `routers/broker.py` | Connect credentials, toggle auto-execute, view status |
+| Kill switch | `routers/admin.py` | Global pause/resume of all signal delivery and broker execution |
 
 ## Layer Boundaries
 

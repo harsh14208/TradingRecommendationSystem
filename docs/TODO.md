@@ -18,6 +18,28 @@ These are critical tasks that must be completed before public launch or marketin
 
 ---
 
+## 🟢 Live Trading Readiness Checklist
+
+These gates must be cleared before broker auto-execute is enabled with real money.
+They are separate from public-launch readiness; a launched product can (and should)
+remain on paper trading until the empirical bar is met.
+
+- [ ] **LIVE-1. Paper track record** — ≥ 100 resolved paper trades or ≥ 3 months of auto-execution on Alpaca paper.
+- [ ] **LIVE-2. Live win rate > 55%** — Clean delivered BUY win rate from `/api/admin/live-wr-stats` over ≥ 100 resolved signals.
+- [ ] **LIVE-3. Calibration check** — Brier ≤ 0.30 and confidence gap ≤ 10pp on the backtest calibration tab.
+- [ ] **LIVE-4. Risk limits configured** — `max_daily_orders`, `max_ticker_notional`, `auto_execute_qty_dollars`, `auto_execute_min_conf` set conservatively.
+- [ ] **LIVE-5. Drawdown simulation** — Simulated max DD < 10% at intended live size.
+- [ ] **LIVE-6. Kill switch tested** — `POST /api/admin/signals/pause` executed and verified from a mobile device.
+- [ ] **LIVE-7. Risk acknowledgement recorded** — `POST /api/me/risk-acknowledge` called and `risk_acknowledged_at` populated.
+- [ ] **LIVE-8. Live broker keys verified** — `/api/me/broker/status` returns `connected: true` for a live Alpaca/IBKR account.
+- [ ] **LIVE-9. Decay monitor green** — No `"decay"` alarm from `scripts/decay_monitor.py` for 30 consecutive days.
+- [ ] **LIVE-10. First-live day protocol** — Start with $100/trade, max 3 daily orders, 75% min confidence; review fills at market close.
+
+> **Do not enable live auto-execute until LIVE-1 through LIVE-8 are complete.**
+> See [RUNBOOK.md](RUNBOOK.md) §7, [HOWTO.md](HOWTO.md) §11, and the single-user localhost checklist in [`SINGLE_USER_LIVE_CHECKLIST.md`](SINGLE_USER_LIVE_CHECKLIST.md) for detailed procedures.
+
+---
+
 ## 🚀 Next Sprint (2026-06-11)
 Actionable items derived from today's session. Ordered by payoff ÷ effort.
 
@@ -49,7 +71,7 @@ These are targeted research and statistical modeling opportunities to improve si
 ### Free alt-data agenda — §104–§110 (added 2026-06-10 night; validation COMPLETE 2026-06-12)
 **Guardrail (hard-won, from the §104/§105 failures): pre-check the expected firing rate before ablating — a per-trade condition firing on <20% of the ~217-trade book is unfalsifiable in IS (N≈8 cohorts are pure noise: ≥7/8 wins happens ~23% of the time by luck). Rare-extreme features belong in the cross-sectional harness (breadth = N) or forward SPRT, not IS tilts. And the pre-registered threshold's verdict is THE verdict — thresholds found by re-searching the same sample only ever graduate via forward data.**
 
-**Outcome (2026-06-11/12):** all backtestable sources were backfilled, defect-corrected (market-wide z-score death + 1-day lookahead — see LEARNINGS §104–§110), and tested against a placebo noise floor. **No alt-data source produced a deployable edge:** §104 FINRA SV inside/below placebo band at both horizons; §105 FTD per-trade tilt unfalsifiable at N≈5 (panel retained, 2004+); §106 NAAIM tilt failed (AAII deferred — sources WAF'd); §107 GDELT fired 0/217 per-trade, Δ −0.003 cross-sectional (inside noise); §110 CBOE options snapshot shipped (live-only, accumulating from day 1). Full per-item detail in the Completed Tasks Archive below + `docs/LEARNINGS.md §104–§110`. Open follow-ups continue as §111–§119.
+**Outcome (2026-06-11/12):** all backtestable sources were backfilled, defect-corrected (market-wide z-score death + 1-day lookahead — see LEARNINGS §104–§110), and tested against a placebo noise floor. **No alt-data source produced a deployable edge:** §104 FINRA SV inside/below placebo band at both horizons; §105 FTD per-trade tilt unfalsifiable at N≈5 (panel retained, 2004+); §106 NAAIM tilt failed (AAII deferred — sources WAF'd); §107 GDELT fired 0/217 per-trade, Δ −0.003 cross-sectional (inside noise); §110 CBOE options snapshot shipped (live-only, accumulating from day 1). Full per-item detail in the Completed Tasks Archive below + `docs/LEARNINGS.md §104–§110`. **§112–§116 ablations completed 2026-06-12 (see below) — no free alt-data path cleared the noise floor.** Open follow-ups continue as §111, §117–§119.
 
 - [ ] **§104c. FINRA SV forward path only:** (i) keep SPRT ID 8 for the pre-registered definition; (ii) optionally register the −10/40 variant as a NEW explicitly-exploratory forward SPRT (provenance: threshold chosen on IS — forward live data is the only untouched sample that can validate it); (iii) the panel's real reuse is the cross-sectional model (§86/§100 harness) where 500-name breadth gives actual N. Live-gate data-source swap to FINRA-direct still worthwhile independently (removes the Massive dependency).
 
@@ -64,12 +86,12 @@ These are targeted research and statistical modeling opportunities to improve si
 ### Next-best alpha-improvement candidates — §112–§119 (added 2026-06-12, post-audit)
 These items surfaced from the remaining audit gaps and an external deep-dive. They are ranked by expected deployability and independence from the spent OHLCV parameter space. The same research discipline applies: pre-registered hypothesis, walk-forward per-fold, live shadow accrual before promotion, and PIT lags enforced.
 
-- [~] **§112. Options implied-volatility surface history via CBOE snapshot accumulation.** **Infra wired 2026-06-12:** `compute_iv_rank()`/`append_iv_history()` in `services/options_cboe.py` — nightly snapshot job now appends `avg_iv` to a self-grown parquet (`data/cache_options/options_iv_history.parquet`) and `iv_rank` is computed from it in both the live chain fetch and the daily snapshot row (returns None until ≥252 prior observations accrue). **Open:** once enough history exists, test IV-rank/IVRP as a sizing tilt for MR entries. This is the free-data path that reduces the question the paid §98 ORATS month must answer to *deep IV history only*.
-- [~] **§113. FINRA ATS dark-pool weekly institutional participation.** Unauthenticated FINRA Query API (`POST https://api.finra.org/data/group/otcMarket/name/weeklySummary`). **Infra wired 2026-06-12:** `services/finra_ats_dark_pool.py` + `--finra-ats` flag in `cross_sectional_alpha_model.py` (merges `ats_ratio` with the 2-week publication lag enforced). **Open:** backfill the per-security weekly panel + walk-forward ablation vs placebo. Slow regime/quality feature for L8-style sizing, not an entry trigger.
-- [~] **§114. SEC fails-to-deliver (FTD) panel 2004–now.** Panel backfilled (2017–2024 so far); **velocity feature added 2026-06-12** (`ftd_pctile_chg_1m` alongside `ftd_63d_pctile` in the cross-sectional merge — less sparse than the binary high flag). **Open:** extend backfill to 2004, walk-forward ablation vs placebo; per-trade risk-off context only after N≥30 forward signals accumulate (SPRT ID 9).
-- [~] **§115. NAAIM weekly exposure + UMCSENT regime sizing.** NAAIM since-inception xlsx backfilled (1,039 weekly rows, 2006+); UMCSENT backfilled; **percentile features added 2026-06-12** (`naaim_exposure_pctile`, `umcsent_pctile` pass through raw as market-wide regime features). **Open:** walk-forward read vs placebo; the raw-level `--naaim` config tested 2026-06-11 was inside/below the placebo band.
-- [~] **§116. Wikipedia pageviews attention spike.** Wikimedia REST API, 2015+; panel backfilled (66k rows, 20-mega-cap pilot); **cross-sectional attention feature added 2026-06-12** (`views_z_xs` alongside `views_z`). **Open:** per-trade ablation with corrected PIT lag; widen ticker coverage past the 20-name pilot. The 2026-06-11 `--wiki` walk-forward read was inside the placebo band at both horizons.
-- [ ] **§117. Sector-specific XGBoost models for blocked sectors (XLF/XLP/XLU/XLI).** Unblock only when a sector model clears the same promotion gates as the global model. Reuses existing ML-2 infrastructure.
+- [x] **§112. Options implied-volatility surface history via CBOE snapshot accumulation — WIRED, VALIDATION GATED ON HISTORY (2026-06-12).** `compute_iv_rank()`/`append_iv_history()` in `services/options_cboe.py` — nightly snapshot job appends `avg_iv` to a self-grown parquet (`data/cache_options/options_iv_history.parquet`) and `iv_rank` is computed from it (returns None until ≥252 prior observations accrue). **Ablated:** not backtestable — history began 2026-06-12 (68 tickers, 1 snapshot). Re-test after ≥252 nightly snapshots per ticker (~12 months). This is the free-data path that reduces the paid §98 ORATS month to *deep IV history only*.
+- [x] **§113. FINRA ATS dark-pool weekly institutional participation — WIRED, HISTORICAL BACKFILL BLOCKED (2026-06-12).** `services/finra_ats_dark_pool.py` + `--finra-ats` flag in `cross_sectional_alpha_model.py` (merges `ats_ratio` with the 2-week publication lag enforced). **Ablated:** historical backfill is blocked — `otctransparency.finra.org` returns HTML instead of CSV; the newer `api.finra.org` sample lacks the per-ticker total-volume denominator needed for `ats_ratio`. Verdict: live-forward accumulation only; no research claim until ≥1 year of weekly data accrues. Slow regime/quality feature for L8-style sizing, not an entry trigger.
+- [x] **§114. SEC fails-to-deliver (FTD) panel 2004–now — BACKFILLED + ABLATED, NO EDGE (2026-06-12).** Panel extended to 2004 (`build_ftd_panel`) → 11.2M rows; velocity feature `ftd_pctile_chg_1m` added alongside `ftd_63d_pctile` with +30d publication lag. **Ablated (h=21, 15 folds, placebo seed=42):** net Sharpe 0.353 vs baseline 0.395, mean IC +0.0209, 45% coverage — inside the harness noise floor. Per-trade risk-off context remains deferred until N≥30 forward signals accumulate (SPRT ID 9).
+- [x] **§115. NAAIM weekly exposure + UMCSENT regime sizing — BACKFILLED + ABLATED, NO EDGE (2026-06-12).** NAAIM since-inception xlsx backfilled (1,039 weekly rows, 2006+); UMCSENT backfilled; percentile features `naaim_exposure_pctile` and `umcsent_pctile` pass through raw as market-wide regime features. **Ablated (h=21, 15 folds, placebo seed=42):** net Sharpe −0.040 vs baseline 0.395, mean IC +0.0151 — inside/below the placebo band. Market-wide sentiment does not create a net-of-cost cross-sectional spread at h=21.
+- [x] **§116. Wikipedia pageviews attention spike — BACKFILLED + ABLATED, NO EDGE AT 4% COVERAGE (2026-06-12).** Wikimedia REST API panel backfilled (66k rows, 20-mega-cap pilot); cross-sectional attention feature `views_z_xs` added with +1d PIT lag. **Ablated (h=21, 15 folds, placebo seed=42):** net Sharpe 0.410 vs baseline 0.395, mean IC +0.0211, but only **4% coverage** — the Δ is inside the harness noise floor. Widening ticker coverage is the only remaining free-data hope, but the pilot gives no evidence it will help.
+- [x] **§117. Sector-specific XGBoost promotion gate — INFRASTRUCTURE IMPLEMENTED + TESTED (2026-06-12).** `services/sector_ml_promotion.py` is the single source of truth for promoted blocked sectors; `delivery_gates.py` and `assembler.py` now consult an explicit QENG-1c promotion record (`ModelRegistry` + `ResearchExperiment`) instead of file existence. `scripts/train_backtest_ml.py` raises the sector training bar to ≥100 samples and purged expanding-window CV; `scripts/promote_sector_model.py` enforces the checklist (OOS AUC ≥0.55, cost-adjusted Sharpe >0, rollback plan, expiration). New tests: `tests/test_delivery_gates.py` (promoted/unblocked/expired/fail-closed) + `tests/test_train_sector_model.py` (insufficient data, beats champion, registry record, promotion checklist, rejection). **Training/promotion itself is gated on ≥100 resolved backtest trades per sector and remains open until data accrues.**
 - [x] **§118. Live realized-spread TCA feedback loop — WIRED (2026-06-12).** `tca_service` expected/realized slippage now feeds `portfolio_allocator` sizing against a configurable 20bps threshold (details in the Completed Tasks Archive). **Open follow-up:** verify live behavior after N≥50 auto-executed fills (RISK-3).
 - [ ] **§119. Point-in-time survivorship-bias correction.** Paid EODHD/Norgate path; required before claiming IS/OOS above 8/10 rating.
 
@@ -148,7 +170,7 @@ Concrete work to take each [Stats.md §15](Stats.md#L359) rating aspect to 10/10
 ## 👁️ Known Issues
 Ongoing known issues or constraints.
 
-- **XLF/XLP/XLU/XLI blocked**: Blocks in place due to negative contribution. Requires sector-specific XGBoost retraining to resolve.
+- **XLF/XLP/XLU/XLI blocked**: Hard blocks remain in place due to negative contribution. Sector-specific unblocking is now gated by an explicit QENG-1c promotion record (§117 infrastructure complete); training/promotion requires ≥100 resolved backtest trades per sector.
 - **Calibration recalibration post-A19**: Calibration v4 used pre-A19 data only. Needs recalibration once post-A19 resolved signals accrue.
 
 ---

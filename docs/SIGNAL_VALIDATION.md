@@ -12,6 +12,25 @@
 
 ---
 
+## Live Trading Validation Criteria
+
+A gate may be kept in the live engine, but **that does not mean the engine is ready to trade real money**.
+The following criteria must be met before broker auto-execute is enabled:
+
+| Criterion | Minimum bar | Evidence source |
+|---|---|---|
+| Backtest gate validation | All active gates in ✅ or ⚠ tables; no 🔴 gate live | This document |
+| Paper track record | ≥ 100 resolved paper trades or ≥ 3 months | `broker_orders` with `account_type='paper'` |
+| Clean live win rate | > 55% on delivered BUY signals | `gate_contribution_analysis.py --live` |
+| Calibration | Brier ≤ 0.30, confidence gap ≤ 10pp | `backtest_calibration` endpoint |
+| Drawdown tolerance | Simulated max DD < 10% at intended size | Simulated Returns panel / `run_portfolio_simulation` |
+| Decay monitor | No `"decay"` alarm for 30 days | `scripts/decay_monitor.py` |
+| Broker readiness | Live Alpaca/IBKR keys verified, risk acknowledged | `/api/me/broker/status`, `users.risk_acknowledged_at` |
+
+> **Current status:** Live delivery is active and audited; broker auto-execute is implemented but should remain on **paper** until the live win rate is consistently above the 55% bar. See [RUNBOOK.md](RUNBOOK.md) §7 for operational steps.
+
+---
+
 ## Summary
 
 | Category | Count | Validated? |

@@ -18,6 +18,7 @@ Usage:
   cd backend && python scripts/train_backtest_ml.py
 """
 
+import asyncio
 import json
 import math
 import multiprocessing
@@ -30,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 import pandas as pd
+from sqlalchemy import select
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _MODEL_FILE = _DATA_DIR / "backtest_ml_model.json"
@@ -483,16 +485,56 @@ def main():
     print()
 
 
+def _sector_purged_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    params: dict,
+    n_folds: int = 4,
+    embargo: int = 10,
+) -> tuple[float | None, list[float]]:
+    """Purged expanding-window CV for sector models."""
+    try:
+        import xgboost as xgb
+        from sklearn.metrics import roc_auc_score
+    except ImportError:
+        return None, []
+
+    fold_aucs: list[float] = []
+    n = len(X)
+    fold_size = n // n_folds
+    for fold in range(1, n_folds + 1):
+        test_start = (fold - 1) * fold_size
+        test_end = fold * fold_size if fold < n_folds else n
+        train_end = max(0, test_start - embargo)
+        if train_end < 30:
+            continue
+        dtrain = xgb.DMatrix(X[:train_end], label=y[:train_end], feature_names=ENTRY_FEATURE_NAMES)
+        dtest = xgb.DMatrix(X[test_start:test_end], label=y[test_start:test_end], feature_names=ENTRY_FEATURE_NAMES)
+        booster = xgb.train(
+            params,
+            dtrain,
+            num_boost_round=200,
+            evals=[(dtrain, "train"), (dtest, "test")],
+            early_stopping_rounds=20,
+            verbose_eval=False,
+        )
+        preds = booster.predict(dtest)
+        if len(set(y[test_start:test_end].tolist())) > 1:
+            fold_aucs.append(float(roc_auc_score(y[test_start:test_end], preds)))
+    return (float(np.mean(fold_aucs)) if fold_aucs else None, fold_aucs)
+
+
 def train_sector_model(
     all_results: list,
     vix_dict: dict,
     sector_etf: str,
     sector_tickers: set[str],
     champion_auc: "float | None",
-) -> "float | None":
+    min_samples: int = 100,
+) -> dict | None:
     """Train a sector-specific entry model and save if it beats the champion.
 
-    Returns the deployed OOS AUC, or None if training was skipped / failed.
+    Returns model metadata when a model is saved, otherwise None.
     """
     try:
         import xgboost as xgb
@@ -520,34 +562,35 @@ def train_sector_model(
             X_rows.append(features)
             y_rows.append(label)
 
-    if len(X_rows) < 20:
-        print(f"  {sector_etf}: {len(X_rows)} trades — insufficient for sector model (need ≥20). Skipped.")
+    n_total = len(X_rows)
+    if n_total < min_samples:
+        print(f"  {sector_etf}: {n_total} trades — insufficient for sector model (need ≥{min_samples}). Skipped.")
         return None
 
     X = np.array(X_rows, dtype=float)
     y = np.array(y_rows, dtype=int)
 
     split = int(len(X) * 0.70)
-    if split < 10 or len(X) - split < 5:
+    if split < 20 or len(X) - split < 10:
         print(f"  {sector_etf}: not enough data for train/test split ({len(X)} trades). Skipped.")
         return None
 
     X_train, X_test = X[:split], X[split:]
     y_train, y_test = y[:split], y[split:]
 
-    dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=ENTRY_FEATURE_NAMES)
-    dtest = xgb.DMatrix(X_test, label=y_test, feature_names=ENTRY_FEATURE_NAMES)
-
     params = {
         "objective": "binary:logistic",
         "eval_metric": "auc",
-        "max_depth": 3,  # shallower than global model — less data
+        "max_depth": 3,
         "eta": 0.05,
         "subsample": 0.8,
         "colsample_bytree": 0.8,
         "min_child_weight": 3,
         "seed": 42,
     }
+    dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=ENTRY_FEATURE_NAMES)
+    dtest = xgb.DMatrix(X_test, label=y_test, feature_names=ENTRY_FEATURE_NAMES)
+
     booster = xgb.train(
         params,
         dtrain,
@@ -559,11 +602,16 @@ def train_sector_model(
 
     oos_preds = booster.predict(dtest)
     oos_auc = float(roc_auc_score(y_test, oos_preds)) if len(set(y_test)) > 1 else None
+    cv_auc_mean, cv_fold_aucs = _sector_purged_cv(X, y, params)
+
+    # Champion comparison uses CV-AUC when available, else OOS AUC.
+    challenger_score = cv_auc_mean if cv_auc_mean is not None else oos_auc
+    champion_score = champion_auc
+
+    should_deploy = challenger_score is not None and (champion_score is None or challenger_score > champion_score)
 
     model_file = _DATA_DIR / f"backtest_ml_model_{sector_etf}.json"
     feature_file = _DATA_DIR / f"backtest_ml_features_{sector_etf}.json"
-
-    should_deploy = oos_auc is not None and (champion_auc is None or oos_auc > champion_auc)
 
     if should_deploy:
         booster.save_model(str(model_file))
@@ -574,11 +622,15 @@ def train_sector_model(
             key=lambda x: -x["importance"],
         )
         meta = {
+            "model_id": f"sector-entry-{sector_etf}-{int(datetime.utcnow().timestamp())}",
             "trained_at": datetime.utcnow().isoformat(),
             "sector_etf": sector_etf,
+            "n_total": n_total,
             "n_train": int(len(X_train)),
             "n_test": int(len(X_test)),
             "oos_auc": oos_auc,
+            "cv_auc_mean": cv_auc_mean,
+            "cv_fold_aucs": cv_fold_aucs,
             "champion_auc": champion_auc,
             "deployed": True,
             "feature_names": ENTRY_FEATURE_NAMES,
@@ -586,14 +638,15 @@ def train_sector_model(
         }
         feature_file.write_text(json.dumps(meta, indent=2))
         label = "First" if champion_auc is None else "New"
+        _cmp = f" > {champion_auc:.4f}" if champion_auc else ""
+        _cv = f"{cv_auc_mean:.4f}" if cv_auc_mean is not None else "—"
         print(
-            f"  {sector_etf}: ✅ {label} sector model — N={len(X)} trades | "
-            f"OOS AUC {oos_auc:.4f}{f' > {champion_auc:.4f}' if champion_auc else ''}"
+            f"  {sector_etf}: ✅ {label} sector model — N={n_total} trades | CV-AUC {_cv} | OOS AUC {oos_auc:.4f}{_cmp}"
         )
-        return oos_auc
+        return meta
     else:
         print(
-            f"  {sector_etf}: ⛔ Challenger rejected — OOS AUC {f'{oos_auc:.4f}' if oos_auc else '—'} "
+            f"  {sector_etf}: ⛔ Challenger rejected — CV-AUC {f'{cv_auc_mean:.4f}' if cv_auc_mean else '—'} "
             f"≤ champion {f'{champion_auc:.4f}' if champion_auc else '—'}. Keeping existing."
         )
         return None
@@ -607,6 +660,68 @@ _SECTOR_TICKER_SETS: dict[str, set[str]] = {
     "XLU": {"NEE", "DUK", "SO", "D", "AEP", "EXC", "XEL", "SRE", "ED", "AWK"},
     "XLI": {"HON", "CAT", "DE", "RTX", "LMT", "UNP", "CSX", "ETN", "XYL", "GE", "WM"},
 }
+
+
+async def _record_sector_model_pending(meta: dict) -> None:
+    """Create pending ModelRegistry + ResearchExperiment rows for a trained sector model.
+
+    The model is NOT activated here — activation requires a separate QENG-1c
+    promotion step (scripts/promote_sector_model.py).
+    """
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from database import AsyncSessionLocal
+    from models import ActionAuditLog, ModelRegistry, ResearchExperiment
+
+    model_id = meta["model_id"]
+    sector_etf = meta["sector_etf"]
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(select(ModelRegistry).where(ModelRegistry.model_id == model_id))
+        if existing.scalar_one_or_none() is None:
+            db.add(
+                ModelRegistry(
+                    model_id=model_id,
+                    training_data_hash=f"sector-{sector_etf}-{meta['n_total']}",
+                    feature_schema_hash=",".join(meta["feature_names"]),
+                    hyperparameters={"max_depth": 3, "eta": 0.05, "seed": 42},
+                    metrics={
+                        "oos_auc": meta["oos_auc"],
+                        "cv_auc_mean": meta.get("cv_auc_mean"),
+                        "cv_fold_aucs": meta.get("cv_fold_aucs"),
+                        "n_total": meta["n_total"],
+                        "n_train": meta["n_train"],
+                        "n_test": meta["n_test"],
+                    },
+                    approval_decision="pending",
+                    is_active=False,
+                )
+            )
+        exp = ResearchExperiment(
+            experiment_type="ml_training",
+            hypothesis=f"Sector-specific entry model for {sector_etf} ({model_id})",
+            universe={"sector_etf": sector_etf, "tickers": list(meta.get("tickers", []))},
+            data_version="1.0",
+            search_space={"model_id": model_id, "sector": sector_etf},
+            number_of_trials=1,
+            is_metrics={
+                "oos_auc": meta["oos_auc"],
+                "cv_auc_mean": meta.get("cv_auc_mean"),
+            },
+            decision="pending",
+            promotion_status="pending",
+        )
+        db.add(exp)
+        audit = ActionAuditLog(
+            action="train_sector_model",
+            details={
+                "model_id": model_id,
+                "sector_etf": sector_etf,
+                "oos_auc": meta["oos_auc"],
+                "cv_auc_mean": meta.get("cv_auc_mean"),
+            },
+        )
+        db.add(audit)
+        await db.commit()
+        print(f"  {sector_etf}: recorded pending ModelRegistry / ResearchExperiment rows.")
 
 
 if __name__ == "__main__":
@@ -686,7 +801,16 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
-            train_sector_model(all_results_s, vix_dict_s, sector_etf, sector_tickers, champion_auc_s)
+            meta = train_sector_model(
+                all_results_s,
+                vix_dict_s,
+                sector_etf,
+                sector_tickers,
+                champion_auc_s,
+                min_samples=100,
+            )
+            if meta:
+                asyncio.run(_record_sector_model_pending(meta))
 
     except Exception as _e:
         print(f"Sector model training failed: {_e}")

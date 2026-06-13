@@ -2217,6 +2217,25 @@ async def _run_scan_impl(broadcast_fn=None):
         if q:
             _diff_state[t] = {"price": q["p"], "ts": datetime.now(timezone.utc).replace(tzinfo=None)}
 
+    # ── Step 4c: refresh promoted sector list (§117) ─────────────────────
+    # Blocked sectors may be unblocked only via explicit QENG-1c promotion.
+    # Refresh once per scan so new promotions are picked up promptly, and cache
+    # the result so delivery_gates sees the same state without extra DB hits.
+    _promoted_sectors: set[str] = set()
+    try:
+        from services.sector_ml_promotion import (
+            cache_promoted_sectors,
+            refresh_promoted_sectors,
+        )
+
+        async with AsyncSessionLocal() as _promo_db:
+            _promoted_sectors = await refresh_promoted_sectors(_promo_db)
+            cache_promoted_sectors(_promoted_sectors)
+            log.info(f" promoted sectors: {_promoted_sectors or 'none'}")
+    except Exception:
+        log.warning("Failed to refresh promoted sectors", exc_info=True)
+        _promoted_sectors = set()
+
     # ── Step 5: generate signals ─────────────────────────────────────────
     _mark_scan_stage("signal_generation")
     signals: list[dict] = []
@@ -2227,6 +2246,7 @@ async def _run_scan_impl(broadcast_fn=None):
                 market_ctx=market_ctx,
                 histories={t: histories[t] for t in active_tickers if t in histories},
                 infos={t: infos.get(t, {}) for t in active_tickers},
+                promoted_sectors=_promoted_sectors,
             )
 
             # QENG-6a/b/c: Enrich signals with Meta-Label probability and Cohort assignment

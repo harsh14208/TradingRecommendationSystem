@@ -1,19 +1,49 @@
 # Signal.Trade — Development Progress
 
-> **Version: v8.6** · Updated: 2026-06-11 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v8.7** · Updated: 2026-06-12 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+>
+> **Live-trading milestone framing:** The platform is architecturally complete for unattended broker auto-execution (Alpaca + IBKR, encrypted credentials, drawdown circuit-breaker, bracket-stop orders, per-user limits, global kill switch). The remaining gate is empirical: live win rate must be consistently > 55% before real-money auto-execute is enabled. See [RUNBOOK.md](RUNBOOK.md) §7 and [HOWTO.md](HOWTO.md) §11 for the go-live checklist.
+> **v8.8 (2026-06-12) — §117 sector-specific XGBoost promotion gate implemented + tested.** Blocked sectors (XLF/XLP/XLU/XLI) are now unblocked only by an explicit, auditable QENG-1c promotion record (`ModelRegistry` + `ResearchExperiment`), never by artifact file existence — the v8.1 live-book leak pattern is structurally removed. `services/sector_ml_promotion.py` is the single source of truth; `delivery_gates.py` and `assembler.py` consume it via a runtime `promoted_sectors` override. Sector model training raised to ≥100 backtest trades + purged expanding-window CV; `scripts/promote_sector_model.py` enforces OOS AUC ≥0.55, positive cost-adjusted Sharpe, rollback plan, and expiration. New tests pass: `tests/test_delivery_gates.py` (promoted/unblocked/expired/fail-closed) and `tests/test_train_sector_model.py` (insufficient data, beats champion, registry record, promotion checklist, rejection). No sector model has been trained or promoted yet; ratings unchanged until live-and-proven.
+>
+> **v8.7 (2026-06-12) — Free alt-data paths wired + ablated + TCA slippage feedback loop completed.** (1) CBOE options snapshots self-accumulate into per-ticker IV history (`services/options_cboe.py` → `data/cache_options/options_iv_history.parquet`), enabling `iv_rank` without paid historical data. (2) FINRA ATS weekly dark-pool participation merged into cross-sectional panel with 2-week PIT lag (`--finra-ats`). (3) SEC FTD velocity feature `ftd_pctile_chg_1m` added and panel backfilled to 2004. (4) NAAIM/UMCSENT rolling percentiles and Wikipedia `views_z_xs` cross-sectional attention wired. (5) §118 live TCA slippage feedback wired into `portfolio_allocator`: expected/realized slippage floor sizes orders against a configurable 20 bps threshold. (6) `test_portfolio_allocator_optimizations` made deterministic via monkeypatched market data/slippage. (7) Walk-forward/placebo ablations vs baseline: **no free alt-data config clears the noise floor** at h=21; FINRA ATS historical backfill is blocked by the endpoint; CBOE IV-rank is live-forward only until ≥252 snapshots accrue. **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Stats.md §15 v8.7: Data Pipeline 8.4→8.5, Execution & Friction 7.8→7.9, Test Coverage 7.9→8.0; overall unchanged).
 > **v8.6 (2026-06-11, later same day) — Alt-data retraction + nested-horizon validation + parallel h=63 shadow.** (1) §104–§110 cross-sectional alt-data claims **retracted** after a code review found two harness defects (market-wide NAAIM/UMCSENT/AAII z-scored to dead all-zero columns; FINRA SV/Wikipedia merged with ~1-day lookahead) — both fixed; new `--placebo` control shows every alt-data Δ inside the ~±0.1 noise band at both horizons (no alt-data claim stands); panels migrated pickle→Parquet (numpy version-skew irreproducibility); strict merge-failure guards; pyarrow into backend/venv. (2) **First selection-clean Sharpe validation since the IS budget was declared spent:** `--nested-horizon` (per-fold ex-ante horizon choice from prior folds only, grid {21,40,63}) picked **h=63 in all 12 eval folds (2014–2025)** → nested net Sharpe **+0.576 [90% CI +0.22, +0.91]**, selection haircut 0.000; full h=63 track net 0.616 [CI +0.29, +0.94], cost-robust to 40bps (+0.481, where h=21 goes negative), borrow breakeven ≈700bps/yr. (3) **Parallel h=63 live shadow deployed** (server restarted): `*_h63.json` artifacts, `score_batch_h63()`, `crossSectionalShadowPctH63` per directional signal; §92 promotion criteria stay h=21-only. §96b close-entry A/B re-confirmed neutral (ΔSharpe +0.01, lower MaxDD; closes the fill-timing confound in live-vs-IS reconciliation). **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Stats.md §15 v8.6: Backtest Infra 7.9→8.1; the h=63 result is shadow-only and moves nothing per v8.0.1 discipline).
 > **v8.5 (2026-06-11) — External research agenda §96–§103 complete + infrastructure hardening.** §96a-d overnight/intraday decomposition (61% alpha from overnight gaps), §96b close-entry A/B neutral (ΔSharpe 0.00), §97a limit-order grid all failed deploy bar, §99 SPRT protocol live (4 hypotheses pre-registered, monitor built, admin surfaced), §100 SimFin fundamentals wired into cross-sectional model, §101 TSMOM sleeve Sharpe 0.57 (4/4 epochs positive, deploy bar not cleared), §103 decay monitor with VIX regime context. Infrastructure: §85-2 MD&A EDGAR bug fixed (primaryDocument endpoint), fill-rate counter bug fixed, VAPID keys generated, E2E Playwright 5 passed, §69–§74 gate unit tests added. **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Stats.md §15 v8.5: Security 8.0→8.2, Deployment 7.7→7.9, Test Coverage 7.7→7.9, Backtest Infra 7.8→7.9).
 > **v8.4 (2026-06-10 evening) — Live delivery overhaul: the live-vs-IS gap was mostly delivery leaks, not signal.** DB-level audit found and same-day-fixed six leaks: (1) **sector model-file "dynamic unblock"** — XLF/XLP/XLI were never actually blocked (file existence lifted the block); they were **32% of the delivered book at ≈−1.4%/trade** (clause deleted, 6 files quarantined to `data/quarantine/`); (2) **SELL delivery disabled** (35.2% net WR, −1.00%/trade, conf-35 floor bypass; backtest §32 had already disabled SELLs); (3) **all 6 `sector_rs` couplings decoupled** to static SECTOR_MAP (81% of the historical resolved sample ran with per-sector calibration silently OFF → all pre-fix live audits contaminated); (4) **§55 + §14 hard blocks deleted from delivery** (fresh canon A/B: §14 **−0.06 Sharpe, harmful**); (5) **DELIV-1 entry-validity guard** — latency was confounded with sector (clean-sector stale deliveries earn +2.12%/trade); EOD batch now skips on price escape (≥entry+0.5×ATR or ≤stop), not age; (6) **`skip_reason` persisted** (migration `4a7f6b33eb49`) — delivery funnel auditable by query. **Honest re-baseline:** clean live book (May+ BUYs ex-blocked) = **57.8% net WR, +2.06%/trade net** vs +0.25% blended old policy. **§87 verified & deployed:** weighted A/B on v10.9 canon Sharpe 0.24→**0.30 (+0.06)**, ΔN=0 → `_apply_l10_conviction_sizing()` live in `scanner.py` + first global sizing-stack clamp [0.10, 3.00] (+5 tests). **IS canon v10.9:** N=217, WR=69.1%, Sh=0.24, MC P5=0.07 ✅, Lo CI [0.10, 0.37] ✅, **deflated Sharpe FAILS at honest 744 trials** ⚠ → IS lever statistically spent; edge proof shifts to the post-fix forward window. Meta-model: v8.3 CRITICAL closed (15-feature retrain + `_MIN_META_AUC=0.52` self-gating floor → meta_prob OFF at CV-AUC 0.4364). **Ratings: 8.9/10 product · 8.2/10 B+ quality** (Stats.md §15 v8.4: Live Alpha 6.8→7.6, ML 7.2→7.8, Sector 7.8→8.3, IS 7.4→7.6, Cal 6.8→7.0). Full data: `Stats.md §DELIV`.
 > **v10.8 backtest — Sharpe improvement sweep (2026-06-09):** 12 candidate approaches tested on 100-ticker/23yr IS. Score-band sizing (L7 non-linear step function) → +0.05 Sharpe, zero trade-count impact. Dynamic RSI stops (2.0× ATR when RSI<30) → embedded in baseline. MR-count=2 (≥2 MR conditions vs 1) → +0.01 Sharpe, −1 trade. Consecutive-score filter → +0.14 Sharpe (−73% trades) — best as high-conviction tier, not main flow. Score acceleration and entry-delay both hurt. Live engine updated: `assembler.py` L7 score-band sizing + `_has_mr` MR-count=2 + `helpers.py` dynamic RSI stops. See `docs/Stats.md §83`.
 > **§87–§94 Sharpe×N agenda (2026-06-10):** All free-subscription items implemented and validated. §87 L10 consec-score sizing (initial +0.03 claim corrected same day — verified weighted A/B: **+0.06**, ΔN=0; deployed live in v8.4). §88 calm-regime sleeve ABANDONED (0 trades in 23yr — structural mismatch). §89 FF ST_Rev wired as 15th meta-label feature; §89a regime sizing negligible (+0.008); §89b factor attribution confirms genuine alpha (+0.87%/day, p=0.044, R²=0.05). §90 WATCH bench all rejected (0/9 trades). §91 SI rising tilt wired, live +2.42pp spread, backtest unvalidatable. §92 shadow criteria locked. §93a sector_rs bug fixed; §93c net-of-friction calibration (43.6%→40.5%); §93d gap decomposition v2 (25.5pp WR gap, midday 11–12 ET catastrophic, p=0.000). §94 per-sector hold-days (+0.04 Sharpe). Full 23yr backtest: 217 trades, 69.1% WR, 0.24 Sharpe, −2.31% MaxDD. Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of trades in that window. Post-2022 epoch (rate-hike cycle) shows negative Sharpe (−0.10), explaining live underperformance.
-> **Ratings live in [`docs/Stats.md §15`](Stats.md) (single source of truth, v8.4). This file is a chronological dev log.**
+> **Ratings live in [`docs/Stats.md §15`](Stats.md) (single source of truth, v8.7). This file is a chronological dev log.**
 > ~210 tickers (incl. 52 leveraged ETFs) · 150 API endpoints · dual auto-execution brokers (Alpaca + IBKR)
 > **Data: Polygon.io-first (bulk OHLCV + quotes + reference) · yfinance fallback · FRED (macro) · EDGAR (fundamentals/8-K) — pooled aiohttp + cached TLS across 20 modules**
 > **Database: PostgreSQL 16 (primary) · single Alembic head · Alembic-only prod schema policy ([`SCHEMA_CHANGE_POLICY.md`](SCHEMA_CHANGE_POLICY.md))**
-> **Tests: 1871 passed (ex-e2e) · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.8: N=155, WR=67.1%, Sharpe=0.25 with L7 score-band sizing + MR-count=2 (survivorship-corrected + §63 ADF gate)**
+> **Tests: 2536 passed (ex-e2e) · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.8: N=155, WR=67.1%, Sharpe=0.25 with L7 score-band sizing + MR-count=2 (survivorship-corrected + §63 ADF gate)**
 > **v8.2 (2026-06-09) — Sharpe improvement sweep + live engine updates.** v10.8 backtest sweep: 12 candidate approaches on 100-ticker/23yr IS. Score-band sizing (+0.05 Sharpe, zero trade impact), MR-count=2 (+0.01 Sharpe, −1 trade), and dynamic RSI stops all validated and shipped live. IS Sharpe 0.23→0.25. See `docs/Stats.md §83`.
 > **v8.1 (2026-06-09) — Survivorship correction + new live gates + correctness fixes + open-source quant-library audit.** Survivorship bias corrected via free PIT S&P constituents (the #1 named ceiling); new live gates (§14 FRED macro-regime, Polygon short-volume, dynamic sector limits + XLI ML); live correctness fixes (`sector_etf` decouple — was nulling ~81% of signals; cohort-enrichment restore; dark_pool restart-storm); §63 cointegration ADF correctness fix + macro-regime HMM→hmmlearn (both live); cross-sectional model net-positive at h=21 (net +0.347, borrow-robust) deployed in **SHADOW**. **Overall 8.8/10 product · 8.6/10 quality** (+0.1 from v8.0.1; shadow/research work excluded per "implemented ≠ working live"). See Stats.md §15.
 > **v8.0 — Quant Engine (QENG) Roadmap Implementation (16/17 QENG features complete):** experiment registry, PBO report, checklist promotions, PIT feature store, replay engine, version lineage, live fill ledger, TCA service, capacity limits, portfolio allocator, HRP, cost-aware turnover control, stat-arb residual sleeve, TS momentum trend sleeve, cross-sectional factors, cross-sleeve capital allocator, triple-barrier meta-labeling, shadow-control cohort routing, and policy versioning. Overall 8.6/10 product · 8.3/10 quality (v8.0.1, revised down after a server-log audit found the PIT feature store crashing every live scan on NaN→json and the TSYS-5a health scorecard recording 0 calls due to a constraint/race — both green in the test suite; see Stats.md §15 v8.0.1).
+
+### v8.8 (2026-06-12) — §117 Sector-Specific XGBoost Promotion Gate
+
+**Why this matters:** v8.1 shipped a "dynamic unblock" based on the existence of `backtest_ml_model_{SECTOR}.json`. A sector model training run reopened blocked XLI three days after it was blocked, leaking ~32% of the live book at negative edge. §117 removes that entire class of bug.
+
+**Policy changes:**
+- `services/sector_ml_promotion.py` is the single source of truth for which blocked sectors are currently promoted.
+- Promotion requires an approved, active `ModelRegistry` row linked to a live `ResearchExperiment` row with `decision='promoted'` and `promotion_status='live'`.
+- `delivery_gates.py` consults `get_promoted_sectors_cached()`; blocked sectors fail closed if the lookup errors.
+- `services/engines/assembler.py` applies a runtime `promoted_sectors` override to clear `buy_thresh` for promoted sectors.
+- `scanner.py` refreshes the promoted set once per scan and caches it.
+
+**Training bar:**
+- Minimum sector backtest trades raised from 20 to 100.
+- Sector models use purged expanding-window CV (3 folds) in addition to a 70/30 holdout.
+- `scripts/train_backtest_ml.py` stages a pending `ModelRegistry` + `ResearchExperiment` row after training; it does NOT activate the model.
+
+**Promotion CLI (`scripts/promote_sector_model.py`):**
+- Requires `--model-id`, `--sector`, `--oos-auc`, `--cost-adjusted-sharpe`, `--rollback-plan`, `--expiration-days`.
+- Enforces OOS AUC ≥ 0.55, cost-adjusted Sharpe > 0, expiration ≥ 1 day.
+- Writes an `ActionAuditLog` entry and refreshes the in-memory promotion cache.
+
+**Tests:** `tests/test_delivery_gates.py` (promoted/unblocked, expired re-block, lookup fail-closed) + `tests/test_train_sector_model.py` (insufficient data, beats champion, registry record, promotion checklist, rejection). All passing. Also fixed an f-string format bug in `train_sector_model()`'s champion-beats print statement.
+
+**Status:** Infrastructure complete and gated. No sector model trained or promoted yet; ratings unchanged until live proof.
 
 ### v8.5 (2026-06-11) — External Research Agenda §96–§103 Complete + Infrastructure Hardening
 
@@ -105,6 +135,34 @@ At h=21, `--finra-sv` lands inside the placebo band; `--wiki` and `--naaim` land
 **§96b close vs next-open entry A/B:** Pre-registered binary test on the 217-trade IS book. Close-entry: WR 66.4%, avg ret +0.92%, Sharpe 0.25, MaxDD −1.79%. Next-open canon: WR 69.1%, avg ret +0.80%, Sharpe 0.24, MaxDD −2.31%. **ΔSharpe ≈ +0.01** — close-entry is not a material edge improvement; it is at best an execution convenience. Logs: `backend/data/backtest_default.log`, `backend/data/backtest_close.log`.
 
 **Honest status:** No alt-data config has demonstrated a reproducible, properly-lagged, selection-adjusted effect above the harness noise floor. The h=63 net 0.769 claim is **withdrawn**. Details and full tables: `docs/LEARNINGS.md §104–§110`. Analysis script: `backend/scripts/analyze_cross_sectional_alt_data.py`; raw results: `backend/data/alt_data_attribution.json` and `backend/data/alt_data_fundamentals.json`.
+
+### v8.7 (2026-06-12) — Free Alt-Data Paths Wired + Ablated + TCA Slippage Feedback Loop
+
+**§112–§116 cross-sectional free alt-data expansion:**
+- CBOE options snapshots self-accumulate into per-ticker IV history (`services/options_cboe.py` → `data/cache_options/options_iv_history.parquet`), enabling `iv_rank` without paid historical options data.
+- FINRA ATS weekly dark-pool participation merged with a 2-week PIT lag (`--finra-ats` in `cross_sectional_alpha_model.py`).
+- SEC FTD velocity feature `ftd_pctile_chg_1m` added; panel backfilled to 2004 (`build_ftd_panel`).
+- NAAIM/UMCSENT rolling percentiles (`naaim_exposure_pctile`, `umcsent_pctile`) and Wikipedia cross-sectional attention (`views_z_xs`) wired as market-wide/cross-sectional features.
+
+**Walk-forward/placebo ablations (h=21, 15 expanding folds, curated 109-name universe, 10bps one-way, placebo seed=42):**
+
+| Config | Net Sharpe | Mean IC | Coverage | Verdict |
+|---|---:|---:|---:|---|
+| Baseline (price + placebo) | **0.395** | +0.0203 | — | — |
+| +SEC FTD velocity | 0.353 | +0.0209 | 45% | inside noise |
+| +NAAIM/UMCSENT pctile | −0.040 | +0.0151 | 100%/89% | inside noise / worse |
+| +Wikipedia `views_z_xs` | 0.410 | +0.0211 | 4% | inside noise |
+| +All three combined | 0.029 | +0.0192 | mixed | inside noise / worse |
+| +FINRA ATS | not testable | — | 0% | historical endpoint blocked |
+| +CBOE IV-rank | not testable | — | <1d | live-forward only |
+
+**Result:** no free alt-data config produced a net-of-cost Sharpe uplift distinguishable from the harness noise floor. The v8.6 alt-data retraction is reinforced. FINRA ATS historical backfill is blocked by the endpoint (returns HTML); CBOE IV-rank requires ~12 months of self-grown history before validation. Raw logs: `backend/data/alt_ablations/*.log`; machine-readable summary: `backend/data/alt_ablations_summary.json`.
+
+**§118 live TCA feedback loop wired:** `tca_service.py` expected/realized slippage feeds `portfolio_allocator.py` sizing against a configurable 20 bps threshold. Live verification pending (RISK-3, ≥50 fills).
+
+**Tests:** `test_portfolio_allocator_optimizations` made deterministic via monkeypatched market data/slippage.
+
+**Ratings:** 8.9/10 product · 8.3/10 B+ quality (headline unchanged; Data Pipeline 8.4→8.5, Execution & Friction 7.8→7.9, Test Coverage 7.9→8.0 — all infrastructure-only).
 
 ## 📊 Live database stats (2026-06-10)
 

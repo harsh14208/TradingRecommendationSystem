@@ -1,6 +1,12 @@
 # Signal.Trade — Research Learnings & Alpha Inventory
 
 > Living document. Updated as each research section completes.
+>
+> **North star:** Every research thread in this document serves one final objective —
+> generating a tradable, risk-controlled edge that can be auto-executed through a broker.
+> A signal is not "done" when it improves backtest Sharpe; it is done when it survives
+> paper trading, calibration, decay monitoring, and operational risk controls enough to
+> be trusted with live capital. See [RUNBOOK.md](RUNBOOK.md) §7 for the live-graduation criteria.
 > Last updated: 2026-06-12 after §107 GDELT bounded pilot validation. Key new findings: (1) **§107 GDELT news tone adds no deployable edge** — per-trade tilt fired on 0/217 trades; cross-sectional ΔSharpe -0.003 inside placebo noise. (2) **The live-vs-IS gap was mostly DELIVERY LEAKS, not signal** — clean book = 57.8% net WR, +2.06%/trade net. (3) Strategy is structurally a **VIX 20–30 stress-regime play** — 100% of 23yr backtest trades in that window; calm sleeve abandoned (0 trades). (4) Factor attribution confirms **genuine idiosyncratic alpha** (+0.87%/day, p=0.044). (5) WATCH bench all rejected — 111-name curated list is already well-filtered. (6) §87 L10 conviction sizing verified +0.06 Sharpe at ΔN=0, deployed live. (7) v10.9 canon **fails deflated Sharpe at honest 744 trials** — IS iteration is statistically spent. (8) **§96: 61% of alpha from overnight gaps** — validates close-slot timing. (9) **§97: limit-order entries fail deploy bar** across all k values — adverse selection dominates. (10) **§101: TSMOM sleeve Sharpe 0.57** on vanilla config — genuine diversifying premia, but 2015-22 fold 0.277 just misses 0.30 bar; correlation +0.27 vs MR book.
 > Primary research script: `backend/scripts/signal_alpha_decomposition.py`
 > Primary backtest: `backend/scripts/backtest_technicals.py`
@@ -839,3 +845,80 @@ A 415-line external-lens analysis (`SHARPE_IMPROVEMENT_ANALYSIS.md`, repo root) 
 **Open items (tracked as §85-2b in TODO):** monitor signals with `mda_delta != 0` going forward; evaluate ΔWR at N≥50 and disable the modifier if no improvement. `_KNOWN_CIKS` covers only ~60 tickers — unknown tickers silently return `{}`.
 
 **Lesson (same family as the FRED `realtime_start` trap):** a modifier whose data dependency fails silently is indistinguishable from a modifier with no edge — instrument the *input* (fetch success rate), not just the output.
+
+## §112–§116 Free Alt-Data Ablations — v8.7 (2026-06-12)
+
+**Context:** v8.7 wired five additional free alternative-data paths into the cross-sectional harness (§112 CBOE self-grown IV-rank history, §113 FINRA ATS weekly dark-pool participation, §114 SEC FTD velocity, §115 NAAIM/UMCSENT rolling percentiles, §116 Wikipedia cross-sectional attention). This section reports the corrected walk-forward/placebo ablations and the honest verdict on each.
+
+**Infrastructure / panel status before the ablation:**
+- SEC FTD panel rebuilt and extended to 2004: `build_ftd_panel(start=2004-01-01)` → 11.2M rows, date range 2017-07-15 → 2026-06-13; features `ftd_63d_pctile` and `ftd_pctile_chg_1m` merged with +30d publication lag.
+- NAAIM/UMCSENT panels regenerated with percentile features: `naaim_exposure_pctile` (52-week rolling percentile) and `umcsent_pctile` (24-week rolling percentile), passed through raw as market-wide regime features.
+- Wikipedia panel recalculated with cross-sectional z-score `views_z_xs` (per-date demeaning) and +1d PIT lag.
+- FINRA ATS downloader hardened: the historical `otctransparency.finra.org` endpoint now returns HTML instead of CSV; historical backfill is blocked, so the ATS panel is empty and only live-forward accumulation is possible.
+- CBOE IV-rank history self-accumulates from 2026-06-12 onward; only 68 one-day observations exist, so no historical backtest is possible yet.
+
+**Methodology:** All runs use `backend/scripts/cross_sectional_alpha_model.py --walk-forward --wf-start 2012 --wf-test-years 1 --placebo --placebo-seed 42 --universe curated --cost-bps 10 --decile 0.10`. This is the same h=21 expanding-window harness used in the §104–§110 retraction, with price/volume base features plus one placebo noise feature. The baseline therefore already includes the full price-feature set and a placebo control; each row below adds the named alt-data feature(s) on top.
+
+**h=21 walk-forward results (15 expanding folds, 2012→2026):**
+
+| Config | Net Sharpe | Gross Sharpe | Mean IC | Positive folds | Coverage | Verdict |
+|---|---:|---:|---:|---:|---:|---|
+| Baseline (price + placebo) | **0.395** | 0.479 | +0.0203 | 10/15 | — | — |
+| +SEC FTD velocity (`ftd_pctile_chg_1m`) | 0.353 | 0.436 | +0.0209 | 11/15 | 45% | inside noise |
+| +NAAIM/UMCSENT pctile | −0.040 | 0.039 | +0.0151 | 7/15 | 100%/89% | inside noise / worse |
+| +Wikipedia `views_z_xs` | 0.410 | 0.494 | +0.0211 | 11/15 | 4% | inside noise |
+| +All three above combined | 0.029 | 0.106 | +0.0192 | 8/15 | mixed | inside noise / worse |
+| +FINRA ATS `ats_ratio` | *not testable* | — | — | — | 0% | endpoint blocked |
+| +CBOE IV-rank | *not testable* | — | — | — | <1d | live-forward only |
+
+**Placebo interpretation:** The baseline itself has a 90% Sharpe CI of [−0.058, +0.919]; every alt-data variant's net Sharpe CI also includes zero. The ΔSharpe between any alt-data config and baseline is within the harness noise floor (the +0.015 wiki Δ, −0.042 sec_ftd Δ, −0.435 naaim Δ, and −0.366 combined Δ are all small relative to sampling variation across folds).
+
+**Per-source verdicts:**
+- **§114 SEC FTD velocity:** No edge. The 1-month change in FTD percentile is available for 45% of ticker-days but does not improve rank IC or net Sharpe. The 2017+ coverage epoch is too short and the signal too weak to beat 10bps one-way turnover.
+- **§115 NAAIM/UMCSENT percentiles:** No edge; combined config is actually worse (net Sharpe −0.040). Market-wide sentiment as a raw regime feature does not interact strongly enough with the cross-sectional price features to produce a net-of-cost spread. This aligns with the §106 retraction.
+- **§116 Wikipedia attention (`views_z_xs`):** No edge at 4% coverage. The 20-name pilot is too narrow to move the 109-name curated book; the feature is nearly always missing and is ignored or imputed by the booster. Widening coverage is the only remaining free-data hope, but the pilot result gives no evidence it will help.
+- **§113 FINRA ATS:** Historical backfill is blocked by FINRA (`otctransparency.finra.org` returns HTML). The newer `api.finra.org` sample lacks per-ticker total-volume denominator needed for `ats_ratio`. Verdict: live-forward accumulation only; no research claim possible until ≥1 year of weekly data accrues.
+- **§112 CBOE IV-rank:** Live-only by design. The self-grown history began 2026-06-12 (68 tickers, one snapshot). A backtest requires ≥252 prior observations per ticker; earliest possible validation is ~12 months of nightly snapshots.
+
+**What the ablations teach:**
+1. **Coverage breadth matters more than feature cleverness.** Wikipedia's cross-sectional z-score is statistically sensible but covers only 4% of the book; it cannot influence the portfolio. FINRA ATS has 0% coverage historically.
+2. **Market-wide features face a high bar.** NAAIM/UMCSENT are regime/context variables; trees can split on them but they do not create a cross-sectional spread at h=21 after costs.
+3. **Turnover cost dominates weak features.** Even a feature with positive mean IC (~0.021) does not lift net Sharpe because the added turnover (1.25→1.27×) and the 10bps cost drag consume the spread.
+4. **Combining weak features does not create a strong one.** The combined config is the worst performer — trees overfit to the extra noise and the turnover structure is unchanged.
+
+**Forward gates (unchanged):**
+- §91 rising-SI sizing tilt: ≥50 rising-SI resolved signals.
+- §92 cross-sectional shadow promotion: ≥150 tagged signals (h=21 field only).
+- Post-fix forward audit: ≥50 post-fix resolved signals for CAL-1 v5.
+- OOS v7/v8 validation: ≥30 live trades per pre-specified ticker list.
+- §112 CBOE IV-rank: ≥252 nightly snapshots per ticker before any backtest.
+
+**Honest status:** No free alt-data path among §112–§116 has demonstrated a deployable edge. The v8.6 retraction stands. Paid alt-data (§98 ORATS, Unusual Whales, ORTEX) remains unjustified until a free-data path first clears IC > ~0.03 in a properly lagged, walk-forward, cost-adjusted harness. The infrastructure is retained because the sources are free and the forward-shadow/SPRT gates can reuse them; the only honest near-term action is live-forward accumulation for §112 and §113.
+
+**Code:** `backend/scripts/run_free_alt_ablations.sh` runs baseline, SEC FTD, NAAIM, Wikipedia, and combined ablations; `backend/scripts/cross_sectional_alpha_model.py` enforces PIT lags and raises on merge failure; `backend/scripts/summarize_free_alt_ablations.py` parses logs into `backend/data/alt_ablations_summary.json`; panel builders are in `backend/services/{options_cboe.py, finra_ats_dark_pool.py, sec_ftd.py, sentiment_naaim_aaii.py, wikipedia_pageviews.py}`. Raw logs: `backend/data/alt_ablations/{baseline,sec_ftd,naaim,wiki,combined}.log`.
+
+## §117 Sector-Specific XGBoost Promotion Gate — Implementation Notes (2026-06-12)
+
+**Problem:** v8.1 unblocked blocked sectors (XLF/XLP/XLU/XLI) by checking whether `data/backtest_ml_model_{SECTOR}.json` existed. A training run wrote `backtest_ml_model_XLI.json` three days after XLI was blocked, reopening the sector and leaking ~32% of the live book at ≈−1.4%/trade.
+
+**Fix:** Promotion is now explicit, auditable, and database-driven:
+- `services/sector_ml_promotion.py` is the single source of truth for promoted sectors.
+- A sector is promoted only when an approved, active `ModelRegistry` row is linked to a live `ResearchExperiment` row (`decision='promoted'`, `promotion_status='live'`).
+- `delivery_gates.py` and `assembler.py` consult this registry via a runtime `promoted_sectors` set. File existence plays no role in the unblock decision.
+- `scanner.py` refreshes the promoted set once per scan and caches it for the duration of the scan.
+
+**Training discipline:**
+- Sector models require ≥100 backtest trades (raised from 20).
+- Purged expanding-window CV (3 folds) is required in addition to a 70/30 holdout.
+- `scripts/train_backtest_ml.py` writes pending registry/experiment rows only; it does not activate the model.
+
+**Promotion checklist (`scripts/promote_sector_model.py`):**
+- OOS AUC ≥ 0.55
+- Cost-adjusted Sharpe > 0
+- Rollback plan documented
+- Expiration date set
+- Action logged in `ActionAuditLog`
+
+**Tests:** `tests/test_delivery_gates.py` covers promoted/unblocked, expired re-block, and promotion-lookup fail-closed. `tests/test_train_sector_model.py` covers insufficient data, champion-beats save, pending registry record, promotion checklist, and rejection of sub-threshold models. All passing.
+
+**Status:** The gate infrastructure is complete and tested. No sector model has been trained or promoted yet; actual unblocking requires ≥100 resolved backtest trades per sector and a successful QENG-1c promotion.

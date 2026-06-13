@@ -274,12 +274,27 @@ async def check_delivery_gates(
     # Also check ticker itself: sector ETFs (XLF, XLP, XLU) have sector_etf=None
     # because they ARE the sector — the column isn't self-referential.
     ticker_as_sector = sig_dict.get("ticker", "")
-    if (sector and sector in BLOCKED_SECTORS) or (ticker_as_sector in BLOCKED_SECTORS):
-        _blocked_key = sector if (sector and sector in BLOCKED_SECTORS) else ticker_as_sector
-        return (
-            f"sector {_blocked_key} blocked (low PF) — awaiting retraining",
-            sig_dict,
-        )
+    _blocked_key = sector if (sector and sector in BLOCKED_SECTORS) else ticker_as_sector
+    if _blocked_key in BLOCKED_SECTORS:
+        # §117: blocked sectors may be unblocked only via explicit QENG-1c promotion.
+        try:
+            from services.sector_ml_promotion import get_promoted_sectors_cached
+
+            _promoted = await get_promoted_sectors_cached(db)
+            if _blocked_key in _promoted:
+                pass  # promoted sector is allowed through
+            else:
+                return (
+                    f"sector {_blocked_key} blocked (low PF) — awaiting QENG-1c promotion",
+                    sig_dict,
+                )
+        except Exception:
+            # On any promotion-lookup failure, fail closed (block the sector).
+            log.warning("Sector promotion lookup failed; blocking %s", _blocked_key, exc_info=True)
+            return (
+                f"sector {_blocked_key} blocked (low PF) — awaiting QENG-1c promotion",
+                sig_dict,
+            )
 
     # ── §54 VIX<15 suspension (ultra-low vol — MR setups statistically fail) ───
     # Backtest §54: VIX<15 regime shows mean-reversion entries cluster at bottom

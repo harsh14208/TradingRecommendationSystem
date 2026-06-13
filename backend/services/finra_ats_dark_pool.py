@@ -37,12 +37,18 @@ _PICKLE_PATH = _CACHE_DIR / "finra_ats_panel.pkl"  # legacy
 _cache: dict[str, tuple[pd.DataFrame, float]] = {}
 _CACHE_TTL = 86400.0
 
+# Track whether we've already logged the HTML-block message so we don't spam
+# one warning per week during a bulk backfill.
+_HTML_WARNED = False
+
 # FINRA OTC Transparency file-download API
 _FINRA_OTC_URL = "https://otctransparency.finra.org/api/v1/download"
 
 
 def _parse_ats_csv(content: bytes) -> pd.DataFrame | None:
     """Parse FINRA ATS weekly CSV."""
+    if content.lstrip()[:9].lower() == b"<!doctype":
+        return None
     try:
         df = pd.read_csv(io.BytesIO(content), dtype=str)
         # Expected columns vary by year; common ones:
@@ -106,6 +112,19 @@ async def download_finra_ats_week(
                 return None
             content = await resp.read()
             if not content:
+                return None
+            # The legacy OTC Transparency SPA now returns HTML instead of CSV.
+            # Historical backfill via this endpoint is blocked; the newer
+            # api.finra.org endpoint only exposes a limited sample and lacks
+            # the per-ticker total-volume denominator needed for ats_ratio.
+            global _HTML_WARNED
+            if content.lstrip()[:9].lower() == b"<!doctype":
+                if not _HTML_WARNED:
+                    log.warning(
+                        "[finra_ats] endpoint returned HTML (CSV unavailable). "
+                        "Historical backfill is currently blocked; live-forward accumulation only."
+                    )
+                    _HTML_WARNED = True
                 return None
             cache_file.write_bytes(content)
             df = _parse_ats_csv(content)
