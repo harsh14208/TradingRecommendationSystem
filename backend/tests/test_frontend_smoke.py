@@ -13,6 +13,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent.parent  # project root
+# Frontend reorganized 2026-06-13: sources in frontend/src, assets in
+# frontend/public, served HTML in frontend/pages.
+_FE = ROOT / "frontend"
+SRC, PAGES, PUBLIC = _FE / "src", _FE / "pages", _FE / "public"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -22,7 +26,7 @@ def _load(path: Path) -> str:
 
 
 def _jsx_files() -> list[Path]:
-    return sorted(ROOT.glob("*.jsx"))
+    return sorted(SRC.glob("*.jsx"))
 
 
 def _html_files() -> list[Path]:
@@ -35,7 +39,7 @@ def _html_files() -> list[Path]:
         "landing.html",
         "mobile.html",
     ]
-    return [ROOT / f for f in keys if (ROOT / f).exists()]
+    return [PAGES / f for f in keys if (PAGES / f).exists()]
 
 
 class _HTMLValidate(HTMLParser):
@@ -126,8 +130,8 @@ def test_login_uses_refresh_cookie_not_localstorage():
     (external script satisfies CSP script-src 'self' without 'unsafe-inline').
     Check whichever file contains the implementation.
     """
-    login_html = ROOT / "login.html"
-    login_js = ROOT / "login.js"
+    login_html = PAGES / "login.html"
+    login_js = PUBLIC / "login.js"
     if not login_html.exists():
         return
     # Combine both files — implementation may be in either
@@ -141,7 +145,7 @@ def test_login_uses_refresh_cookie_not_localstorage():
 
 def test_auth_jsx_uses_module_variable_not_localstorage():
     """app.auth.jsx must use _accessToken module variable, not localStorage."""
-    auth = ROOT / "app.auth.jsx"
+    auth = SRC / "app.auth.jsx"
     if not auth.exists():
         return
     src = _load(auth)
@@ -164,5 +168,5 @@ def test_core_jsx_files_exist():
         "app.modals.jsx",
         "app.analysis.jsx",
     ]
-    missing = [f for f in required if not (ROOT / f).exists()]
+    missing = [f for f in required if not (SRC / f).exists()]
     assert not missing, f"Missing core JSX files: {missing}"

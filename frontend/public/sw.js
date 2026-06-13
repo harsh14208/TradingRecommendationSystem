@@ -1,16 +1,16 @@
 // A8 migration 2026-05-31: esbuild bundles replace Babel CDN.
 // React production builds replace dev builds. Babel removed from cache.
-const CACHE = 'signal-trade-v4';
+//
+// v5 (2026-06-12): only same-origin, always-available URLs are precached.
+// Precaching cross-origin CDN scripts (unpkg) made cache.addAll() REJECT under
+// the strict CSP connect-src — which failed the whole install, so the new SW
+// never activated and users were stuck on a stale cached bundle. App code
+// (bundles, CSS, HTML) is now network-first so deploys land immediately; the
+// CDN libs are cached opportunistically on first fetch instead.
+const CACHE = 'signal-trade-v5';
 const STATIC = [
   '/',
-  '/styles.css?v=3',
   '/manifest.json',
-  '/dist/app-bundle.js',
-  '/dist/mobile-bundle.js',
-  '/dist/site-bundle.js',
-  'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
-  'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
-  'https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js',
 ];
 
 self.addEventListener('install', e => {
@@ -30,6 +30,14 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
 
+  // Never intercept cross-origin requests (React/LightweightCharts on unpkg,
+  // Google Fonts, Cloudflare beacon). The page CSP restricts the SW's own
+  // fetch() via connect-src, so intercepting them makes fetch() throw and we'd
+  // serve the HTML fallback in place of the script — which is exactly what
+  // broke React with "MIME type ('text/html') is not executable". Let the
+  // browser load these directly under script-src/font-src.
+  if (url.origin !== location.origin) return;
+
   // Always go network-first for API calls
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) {
     e.respondWith(
@@ -42,10 +50,13 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Network-first for HTML pages and JSX/JS app code so changes deploy instantly.
-  // Cache-first only for immutable CDN assets (React, Babel, LightweightCharts).
+  // Network-first for ALL same-origin app code (HTML, the esbuild bundles, CSS,
+  // JSX) so a redeploy lands immediately instead of being pinned to a stale
+  // cached bundle. Cache-first only for immutable cross-origin CDN libs.
   const isCDN    = url.hostname !== location.hostname;
   const isAppCode = url.pathname.endsWith('.jsx') ||
+                    url.pathname.endsWith('.js') ||
+                    url.pathname.endsWith('.css') ||
                     url.pathname.endsWith('.html') ||
                     url.pathname === '/app' ||
                     url.pathname === '/' ||

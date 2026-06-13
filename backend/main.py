@@ -114,7 +114,7 @@ os.environ.setdefault("CURL_CA_BUNDLE", certifi.where())
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1666,6 +1666,155 @@ class HttpsRedirectMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(HttpsRedirectMiddleware)
 
+
+# ── Private preview mode middleware ───────────────────────────────────────────
+# Locks the entire site behind a secret token while the product is not ready for
+# public traffic. Health checks stay public so Fly.io/Railway keep the app alive.
+# Visitors see a static login page and must enter the preview token to continue.
+class PrivatePreviewMiddleware(BaseHTTPMiddleware):
+    _PUBLIC_PATHS = {"/api/health", "/api/health/uptime", "/health"}
+    _LOGIN_PATH = "/preview-login"
+
+    @classmethod
+    def _login_html(cls, error: str = "") -> str:
+        error_block = f'<div class="error">{error}</div>' if error else ""
+        return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signal.Trade — Private Preview</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+    }}
+    .card {{
+      width: 100%;
+      max-width: 360px;
+      padding: 2rem;
+      border-radius: 1rem;
+      background: #1e293b;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      text-align: center;
+    }}
+    .logo {{
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 1rem;
+      background: #3b82f6;
+      border-radius: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+    }}
+    h1 {{ margin: 0 0 0.5rem; font-size: 1.5rem; }}
+    p {{ margin: 0 0 1.5rem; color: #94a3b8; font-size: 0.95rem; }}
+    input[type="password"] {{
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border: 1px solid #334155;
+      border-radius: 0.5rem;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 1rem;
+      margin-bottom: 1rem;
+    }}
+    input[type="password"]:focus {{
+      outline: none;
+      border-color: #3b82f6;
+    }}
+    button {{
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border: none;
+      border-radius: 0.5rem;
+      background: #3b82f6;
+      color: white;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    button:hover {{ background: #2563eb; }}
+    .error {{
+      color: #f87171;
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🔒</div>
+    <h1>Signal.Trade</h1>
+    <p>This site is currently in private preview.</p>
+    {error_block}
+    <form method="post" action="/preview-login">
+      <input type="password" name="token" placeholder="Enter preview token" autofocus required>
+      <button type="submit">Enter</button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        cfg = get_settings()
+        raw_token = cfg.site_private_token.get_secret_value() if cfg.site_private_token else ""
+        if not raw_token:
+            return await call_next(request)
+
+        path = request.url.path
+        if path in self._PUBLIC_PATHS:
+            return await call_next(request)
+
+        # Handle login form submission.
+        if path == self._LOGIN_PATH and request.method == "POST":
+            form = await request.form()
+            provided = str(form.get("token", "")).strip()
+            next_url = str(form.get("next", "/"))
+            if provided == raw_token:
+                response = RedirectResponse(url=next_url, status_code=302)
+                response.set_cookie(
+                    key="preview_token",
+                    value=provided,
+                    httponly=True,
+                    secure=request.url.scheme == "https",
+                    samesite="lax",
+                    max_age=60 * 60 * 24 * 30,  # 30 days
+                )
+                return response
+            return HTMLResponse(
+                content=self._login_html("Invalid preview token. Please try again."),
+                status_code=403,
+            )
+
+        provided = request.query_params.get("preview_token") or request.cookies.get("preview_token")
+        if provided == raw_token:
+            response = await call_next(request)
+            if "preview_token" not in request.cookies:
+                response.set_cookie(
+                    key="preview_token",
+                    value=provided,
+                    httponly=True,
+                    secure=request.url.scheme == "https",
+                    samesite="lax",
+                    max_age=60 * 60 * 24 * 30,
+                )
+            return response
+
+        return HTMLResponse(content=self._login_html(), status_code=403)
+
+
+app.add_middleware(PrivatePreviewMiddleware)
+
 _cors_origin = get_settings().app_url.rstrip("/")
 _allowed_origins = (
     ["*"] if _cors_origin.startswith("http://localhost") or _cors_origin.startswith("http://127.") else [_cors_origin]
@@ -1758,11 +1907,19 @@ app.add_middleware(DataComplianceMiddleware)
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # esbuild pre-compiles JSX via dist/app-bundle.js — Babel standalone no longer loaded.
     # 'unsafe-eval' removed: no dynamic eval() required in production bundle.
-    _SCRIPT_SRC = "'self' https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com"
+    # static.cloudflareinsights.com — Cloudflare Web Analytics beacon (auto-injected
+    # at the edge). Allowing the domain in script-src/connect-src clears the CSP
+    # console errors without weakening the policy to 'unsafe-inline'.
+    _SCRIPT_SRC = (
+        "'self' https://unpkg.com https://fonts.googleapis.com "
+        "https://fonts.gstatic.com https://static.cloudflareinsights.com"
+    )
     _STYLE_SRC = "'self' 'unsafe-inline' https://fonts.googleapis.com"
     _FONT_SRC = "'self' https://fonts.gstatic.com data:"
     _IMG_SRC = "'self' data: blob:"
-    _CONNECT_SRC = "'self' wss: ws: https://api.stripe.com"
+    _CONNECT_SRC = (
+        "'self' wss: ws: https://api.stripe.com https://cloudflareinsights.com https://static.cloudflareinsights.com"
+    )
 
     async def dispatch(self, request: StarletteRequest, call_next):
         response = await call_next(request)
@@ -1937,74 +2094,89 @@ async def admin_weekly_digest_status(user: User = Depends(get_current_user)):
     }
 
 
+# ── Frontend layout (reorganized 2026-06-13) ─────────────────────────────────
+# Sources (JSX + CSS) live in frontend/src, static assets in frontend/public,
+# served HTML in frontend/pages, built bundles in frontend/dist. Public URLs are
+# preserved: /src/* and /dist/* mounts plus the frontend/public catch-all at /
+# reproduce the original root URL space.
+_FE = ROOT / "frontend"
+_PAGES, _PUBLIC, _SRC, _DIST = _FE / "pages", _FE / "public", _FE / "src", _FE / "dist"
+
+
 # ── Named page routes (must be registered before the static catch-all) ──────────
 @app.get("/favicon.ico")
 async def serve_favicon_ico():
-    return FileResponse(str(ROOT / "favicon.svg"), media_type="image/svg+xml")
+    return FileResponse(str(_PUBLIC / "favicon.svg"), media_type="image/svg+xml")
 
 
 @app.get("/favicon.svg")
 async def serve_favicon_svg():
-    return FileResponse(str(ROOT / "favicon.svg"), media_type="image/svg+xml")
+    return FileResponse(str(_PUBLIC / "favicon.svg"), media_type="image/svg+xml")
 
 
 @app.get("/")
 async def serve_landing():
-    return FileResponse(str(ROOT / "landing.html"))
+    return FileResponse(str(_PAGES / "landing.html"))
 
 
 @app.get("/app")
 async def serve_app():
-    return FileResponse(str(ROOT / "Trading Recommendation System.html"))
+    return FileResponse(str(_PAGES / "Trading Recommendation System.html"))
 
 
 @app.get("/login")
 async def serve_login():
-    return FileResponse(str(ROOT / "login.html"))
+    return FileResponse(str(_PAGES / "login.html"))
 
 
 @app.get("/signup")
 async def serve_signup():
-    return FileResponse(str(ROOT / "signup.html"))
+    return FileResponse(str(_PAGES / "signup.html"))
 
 
 @app.get("/track-record")
 async def serve_track_record():
-    return FileResponse(str(ROOT / "track-record.html"))
+    return FileResponse(str(_PAGES / "track-record.html"))
 
 
 @app.get("/tos")
 async def serve_tos():
-    return FileResponse(str(ROOT / "tos.html"))
+    return FileResponse(str(_PAGES / "tos.html"))
 
 
 @app.get("/privacy")
 async def serve_privacy():
-    return FileResponse(str(ROOT / "privacy.html"))
+    return FileResponse(str(_PAGES / "privacy.html"))
 
 
 @app.get("/mobile")
 async def serve_mobile():
-    return FileResponse(str(ROOT / "mobile.html"))
+    return FileResponse(str(_PAGES / "mobile.html"))
 
 
 @app.get("/design")
 async def serve_design():
-    return FileResponse(str(ROOT / "design.html"))
+    return FileResponse(str(_PAGES / "design.html"))
 
 
 @app.get("/hub")
 async def serve_hub():
-    return FileResponse(str(ROOT / "hub.html"))
+    return FileResponse(str(_PAGES / "hub.html"))
 
 
 @app.get("/verify-email")
 async def serve_verify_email():
-    return FileResponse(str(ROOT / "verify-email.html"))
+    return FileResponse(str(_PAGES / "verify-email.html"))
 
 
-# ── Static files (CSS, JS, etc.) served from project root ────────────────────
-app.mount("/", StaticFiles(directory=str(ROOT)), name="static")
+# ── Static mounts — specific prefixes before the root catch-all ──────────────
+#   /dist  → built bundles (frontend/dist)
+#   /src   → JSX + CSS sources (frontend/src; dev Babel fallback + stylesheets)
+#   /      → static assets (frontend/public: images, manifest, sw.js, *.js, data)
+_DIST.mkdir(parents=True, exist_ok=True)  # gitignored build output — ensure it exists
+app.mount("/dist", StaticFiles(directory=str(_DIST), check_dir=False), name="dist")
+app.mount("/src", StaticFiles(directory=str(_SRC), check_dir=False), name="src")
+app.mount("/", StaticFiles(directory=str(_PUBLIC), check_dir=False), name="static")
 
 
 if __name__ == "__main__":

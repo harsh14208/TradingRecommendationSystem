@@ -55,29 +55,34 @@ const LANDING_FILES = ['site.jsx'];
 // Mobile PWA — standalone single-file build.
 const MOBILE_FILES = ['mobile.jsx'];
 
-const TARGETS = [
-  { files: APP_FILES,     out: 'dist/app-bundle.js' },
-  { files: LANDING_FILES, out: 'dist/site-bundle.js' },
-  { files: MOBILE_FILES,  out: 'dist/mobile-bundle.js' },
-];
+// Reorganized 2026-06-13: JSX sources live in frontend/src, bundles emit to
+// frontend/dist (served at /dist). Paths are relative to the repo root, where
+// `node build.mjs` runs (CI + local).
+const SRC_DIR = 'frontend/src';
+const OUT_DIR = 'frontend/dist';
 
-const OUT_DIR = 'dist';
+const TARGETS = [
+  { files: APP_FILES,     out: 'app-bundle.js' },
+  { files: LANDING_FILES, out: 'site-bundle.js' },
+  { files: MOBILE_FILES,  out: 'mobile-bundle.js' },
+];
 
 function buildTarget({ files, out }) {
   const start = Date.now();
   mkdirSync(OUT_DIR, { recursive: true });
 
   const parts = files.map((file) => {
-    const source = readFileSync(file, 'utf8');
+    const source = readFileSync(`${SRC_DIR}/${file}`, 'utf8');
     const result = transformSync(source, { ...ESBUILD_OPTS, sourcefile: file });
     return result.code;
   });
 
   const bundle = parts.join('\n');
-  writeFileSync(out, bundle);
+  const outPath = `${OUT_DIR}/${out}`;
+  writeFileSync(outPath, bundle);
 
   const kb = Math.round(bundle.length / 1024);
-  console.log(`[build] ${out} — ${kb} KB (${Date.now() - start}ms)`);
+  console.log(`[build] ${outPath} — ${kb} KB (${Date.now() - start}ms)`);
 }
 
 function buildAll() {
@@ -100,7 +105,7 @@ if (isWatch) {
   console.log('[build] Watching for changes…');
   const allFiles = new Set(TARGETS.flatMap((t) => t.files));
   for (const file of allFiles) {
-    watch(file, () => {
+    watch(`${SRC_DIR}/${file}`, () => {
       console.log(`[build] ${file} changed — rebuilding`);
       // Rebuild only the target(s) that include this file.
       for (const target of TARGETS) {

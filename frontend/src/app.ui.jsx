@@ -685,7 +685,7 @@ function Sparkline({ ticker, up }) {
   }, [ticker, up, realPts]);
 
   const lo = Math.min(...pts), hi = Math.max(...pts);
-  const xs = i => (i / (pts.length - 1)) * w;
+  const xs = i => pts.length <= 1 ? w / 2 : (i / (pts.length - 1)) * w;
   const ys = v => h - ((v - lo) / (hi - lo || 1)) * h;
   const realUp = realPts ? realPts[realPts.length - 1] >= realPts[0] : up;
   const color = realUp ? "var(--up)" : "var(--down)";

@@ -319,11 +319,18 @@ function SimulatedReturnsPanel({ signal, onClose }) {
   const dollarRewardPerTrade = dollarRiskPerTrade * rrNum;
 
   const CW = 320, CH = 90;
-  const lo = Math.min(...simData.curve), hi = Math.max(...simData.curve, lo + 1);
-  const ys = v => CH - 8 - ((v - lo) / (hi - lo)) * (CH - 16);
-  const xs = i => (i / (simData.curve.length - 1)) * CW;
-  const pathD = simData.curve.map((v, i) => `${i === 0 ? "M" : "L"} ${xs(i).toFixed(1)} ${ys(v).toFixed(1)}`).join(" ");
-  const areaD = `${pathD} L ${CW} ${CH} L 0 ${CH} Z`;
+  // Guard against a single-point (pre-simulation) curve and zero range so the
+  // SVG path never emits NaN coordinates (M NaN …) before the worker resolves.
+  const curve = (simData.curve || []).filter(Number.isFinite);
+  const nPts = curve.length;
+  const lo = nPts ? Math.min(...curve) : 0;
+  const hi = nPts ? Math.max(...curve, lo + 1) : 1;
+  const span = (hi - lo) || 1;
+  const ys = v => CH - 8 - ((v - lo) / span) * (CH - 16);
+  const xs = i => nPts <= 1 ? CW / 2 : (i / (nPts - 1)) * CW;
+  const hasCurve = nPts >= 2;
+  const pathD = hasCurve ? curve.map((v, i) => `${i === 0 ? "M" : "L"} ${xs(i).toFixed(1)} ${ys(v).toFixed(1)}`).join(" ") : "";
+  const areaD = hasCurve ? `${pathD} L ${CW} ${CH} L 0 ${CH} Z` : "";
   const lineColor = simData.ret >= 0 ? "var(--up)" : "var(--down)";
 
   const summaryText = (() => {
@@ -776,9 +783,9 @@ function MarketOverviewView({ open, onClose, online }) {
   );
 
   // VIX lives in hmm_regime.features, not in macro directly
-  const vix = hmm?.features?.vix ?? null;
-  const vixColor = vix > 30 ? "var(--down)" : vix > 20 ? "var(--warn)" : vix != null && vix < 14 ? "var(--up)" : "var(--text)";
-  const vixLabel = vix > 30 ? "DANGER" : vix > 20 ? "ELEVATED" : vix != null && vix < 14 ? "CALM" : "NORMAL";
+  const vix = hmm?.features?.vix ?? macro?.vix ?? null;
+  const vixColor = vix == null ? "var(--text-faint)" : vix > 30 ? "var(--down)" : vix > 20 ? "var(--warn)" : vix < 14 ? "var(--up)" : "var(--text)";
+  const vixLabel = vix == null ? "NO DATA" : vix > 30 ? "DANGER" : vix > 20 ? "ELEVATED" : vix < 14 ? "CALM" : "NORMAL";
   // yc_spread = 10Y − 2Y (positive = normal curve, negative = inverted)
   const spreadColor = (macro.yc_spread ?? 0) < 0 ? "var(--down)" : (macro.yc_spread ?? 0) > 0.5 ? "var(--up)" : "var(--warn)";
   const macroColor = (macro.macro_score ?? 0) > 5 ? "var(--up)" : (macro.macro_score ?? 0) < -5 ? "var(--down)" : "var(--warn)";
@@ -871,11 +878,15 @@ function MarketOverviewView({ open, onClose, online }) {
                     {vixLabel}
                   </span>
                 </div>
-                {vix != null && (
+                {vix != null ? (
                   <div style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-dim)", marginTop:8 }}>
                     VIX z-score vs 1Y avg: <span style={{ color: (hmm.vix_z ?? 0) < 0 ? "var(--up)" : "var(--warn)" }}>
                       {hmm.vix_z != null ? `${hmm.vix_z > 0 ? "+" : ""}${hmm.vix_z.toFixed(2)}σ` : "—"}
                     </span>
+                  </div>
+                ) : (
+                  <div style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-faint)", marginTop:8 }}>
+                    Awaiting volatility data — refreshes on the next market scan.
                   </div>
                 )}
               </Card>
@@ -885,6 +896,11 @@ function MarketOverviewView({ open, onClose, online }) {
             <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:14, padding:"14px 28px 0" }}>
               {/* Yield Curve — API: macro.t10y, macro.t2y, macro.yc_spread, macro.fed_funds */}
               <Card title="Yield Curve">
+                {macro.t10y == null && macro.t2y == null && macro.yc_spread == null && (
+                  <div style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-faint)", padding:"6px 0" }}>
+                    Awaiting Treasury data — refreshes on the next market scan.
+                  </div>
+                )}
                 <div style={{ display:"flex", gap:16, alignItems:"baseline", flexWrap:"wrap" }}>
                   {macro.t10y != null && <div style={{ fontFamily:"var(--font-mono)" }}>
                     <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em" }}>10Y</div>

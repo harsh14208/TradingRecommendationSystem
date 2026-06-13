@@ -47,9 +47,15 @@ cd backend && python scripts/backtest_edgar.py --ticker NVDA  # debug single tic
 cd backend && python scripts/gate_contribution_analysis.py                        # A5: all gates, full report
 cd backend && python scripts/gate_contribution_analysis.py --section85 --after 2026-06-01  # §85-1: fundamentals only (needs ≥200 resolved signals)
 
-# Frontend build (A8 complete — bundle pre-built in dist/)
+# Frontend build — sources in frontend/src/, bundles emit to frontend/dist/ (served at /dist)
 node build.mjs                                                         # rebuild after JSX changes
 # Or: .venv_test_cov/lib/python3.14/site-packages/playwright/driver/node build.mjs (no npm needed)
+# Frontend layout (reorganized 2026-06-13):
+#   frontend/src/     JSX (app.*.jsx, site.jsx, mobile.jsx) + CSS (styles*.css, site.css, mobile.css) — served at /src/*
+#   frontend/pages/   served HTML (Trading Recommendation System.html, landing.html, login.html, …) — routed in main.py
+#   frontend/public/  static assets (init.js, load-app.js, sw.js, data.js, *.js, manifest.json, images) — served at /*
+#   frontend/dist/    built bundles (gitignored) — served at /dist/*
+# Public URLs are unchanged; main.py mounts /dist, /src, then / (frontend/public catch-all).
 
 # Russell 1000 screener
 cd backend && python scripts/screen_russell1000_mr_candidates.py --fast   # 2006-2016 only (~2hr)

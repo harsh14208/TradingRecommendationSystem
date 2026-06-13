@@ -146,6 +146,7 @@ function App() {
   const [tourOpen,       setTourOpen]       = useState(false);
   const [alertOpen,      setAlertOpen]      = useState(false);
   const [whatsNewSeen,   setWhatsNewSeen]   = useState(false);
+  const [navMenuOpen,    setNavMenuOpen]    = useState(false);  // mobile nav drawer
   const searchRef       = useRef(null);
 
   /* Auth bootstrap — also handles ?oauth_code= redirect from Google OAuth */
@@ -195,6 +196,10 @@ function App() {
     const t = setTimeout(() => setTourOpen(true), 650);
     return () => clearTimeout(t);
   }, [currentUser, disclaimerAck]);
+
+  // Close the mobile nav drawer whenever the active view changes (a drawer item
+  // was tapped) so selecting a destination dismisses the menu.
+  useEffect(() => { setNavMenuOpen(false); }, [nav]);
 
   /* ── WebSocket Connection ── */
   useEffect(() => {
@@ -413,7 +418,7 @@ function App() {
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 
       if (e.key === "?" || (e.shiftKey && e.key === "/")) { e.preventDefault(); setHkOpen(v => !v); return; }
-      if (e.key === "Escape") { if (tourOpen) { setTourOpen(false); return; } setHkOpen(false); if (!hkOpen) setFullDetailOpen(false); return; }
+      if (e.key === "Escape") { if (navMenuOpen) { setNavMenuOpen(false); return; } if (tourOpen) { setTourOpen(false); return; } setHkOpen(false); if (!hkOpen) setFullDetailOpen(false); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setTweak({ density: tweakState.density === "compact" ? "comfortable" : "compact" }); return; }
       if (!typing && e.key === "1") { setFeedFilter("all");  return; }
       if (!typing && e.key === "2") { setFeedFilter("buy");  return; }
@@ -484,7 +489,7 @@ function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [active, activeId, currentUser, tweakState.density, filteredSignals, hkOpen, tourOpen]);
+  }, [active, activeId, currentUser, tweakState.density, filteredSignals, hkOpen, tourOpen, navMenuOpen]);
 
   /* ── Clock state — always New York time, DST-aware ── */
   // "16:32:07"
@@ -772,7 +777,15 @@ function App() {
           <span className="chip mono" title={`Your local time: ${localClock} (${localTz})`}>
             {etClock} {etAbbr}
           </span>
-          <button className="iconbtn" onClick={() => setTweak({ density: tweakState.density === "compact" ? "comfortable" : "compact" })} title={`Density · ${tweakState.density} (⌘\\)`}>
+          <button className="iconbtn hamburger-btn"
+            onClick={() => {
+              // Mobile: open the full navigation drawer (the bottom bar only shows
+              // 6 of ~16 destinations). Desktop: toggle row density as before.
+              if (typeof window !== "undefined" && window.innerWidth <= 768) setNavMenuOpen(v => !v);
+              else setTweak({ density: tweakState.density === "compact" ? "comfortable" : "compact" });
+            }}
+            aria-label="Menu"
+            title="Menu / density (⌘\\)">
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>{tweakState.density==="compact"&&<><line x1="3" y1="9" x2="21" y2="9" opacity="0.4"/><line x1="3" y1="15" x2="21" y2="15" opacity="0.4"/></>}</svg>
           </button>
           <button className="iconbtn" onClick={() => setHkOpen(true)} title="Keyboard shortcuts (?)">
@@ -820,8 +833,15 @@ function App() {
         </div>
       </div>
 
-      {/* ── Sidebar ── */}
-      <div className="sidebar">
+      {/* ── Mobile nav drawer backdrop ── */}
+      {navMenuOpen && <div className="nav-drawer-backdrop" onClick={() => setNavMenuOpen(false)} role="presentation"/>}
+
+      {/* ── Sidebar (slides in as a drawer on mobile) ── */}
+      <div className={`sidebar${navMenuOpen ? " open" : ""}`}>
+        <div className="nav-drawer-head">
+          <span>Menu</span>
+          <button className="iconbtn" aria-label="Close menu" onClick={() => setNavMenuOpen(false)}><Icon name="x" size={14}/></button>
+        </div>
         <div className="nav-label">Workspace</div>
         <div className={`nav-item ${nav==="feed"?"active":""}`} onClick={() => setNav("feed")} role="button" tabIndex={0}>
           <Icon name="feed" size={15}/>

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="icon" type="image/png" href="/favicon.png"/>
+<title>Signal Track Record — Signal.Trade</title>
+<meta name="description" content="Verified signal performance record: win rate, average return, Sharpe ratio, and top signals from Signal.Trade's automated algorithm."/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh}
+nav{position:sticky;top:0;background:rgba(13,17,23,0.96);backdrop-filter:blur(8px);border-bottom:1px solid #21262d;padding:14px 24px;display:flex;align-items:center;gap:20px}
+nav a{font-size:13px;color:#8b949e}nav a:hover{color:#e6edf3}
+.logo{margin-right:auto;text-decoration:none;display:inline-flex;align-items:center}
+.logo img{height:90px;width:auto;display:block}
+.hero{text-align:center;padding:64px 24px 48px;border-bottom:1px solid #21262d}
+.hero h1{font-size:40px;font-weight:800;letter-spacing:-0.04em;margin-bottom:12px}
+.hero p{font-size:16px;color:#8b949e;max-width:520px;margin:0 auto 16px}
+.badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;font-family:monospace;background:rgba(16,185,129,0.1);color:#10b981;border:1px solid rgba(16,185,129,0.3)}
+.wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+.grid{display:grid;gap:16px;margin-bottom:32px}
+.grid-4{grid-template-columns:repeat(4,1fr)}
+.grid-3{grid-template-columns:repeat(3,1fr)}
+.grid-2{grid-template-columns:repeat(2,1fr)}
+@media(max-width:700px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr 1fr}}
+@media(max-width:400px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}}
+.card{background:#161b22;border:1px solid #21262d;border-radius:12px;padding:20px}
+.card-label{font-size:10px;color:#8b949e;font-family:monospace;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
+.card-value{font-size:28px;font-weight:800;font-family:monospace}
+.card-sub{font-size:11px;color:#8b949e;margin-top:4px}
+.up{color:#10b981}.down{color:#ef4444}.warn{color:#f59e0b}.dim{color:#8b949e}
+section{margin-bottom:40px}
+.section-title{font-size:12px;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.1em;margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.section-title::after{content:"";flex:1;height:1px;background:#21262d}
+.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:500px}
+th{text-align:right;padding:8px 12px;color:#8b949e;font-weight:500;font-family:monospace;font-size:11px;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid #21262d}
+th:first-child{text-align:left}
+td{padding:9px 12px;border-bottom:1px solid rgba(33,38,45,0.6);font-family:monospace}
+td:first-child{font-weight:700;font-size:14px;text-align:left}
+@media(max-width:520px){
+  .table-wrap table{min-width:420px;font-size:11px}
+  th,td{padding:7px 8px}
+}
+tr:last-child td{border-bottom:none}
+.bar-wrap{height:4px;background:#21262d;border-radius:2px;overflow:hidden;margin-top:6px}
+.bar-fill{height:100%;border-radius:2px;transition:width .6s ease}
+.signal-card{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:14px 16px}
+.signal-card .ticker{font-size:18px;font-weight:800;font-family:monospace}
+.signal-card .ret{font-size:22px;font-weight:800;font-family:monospace;margin:6px 0 4px}
+.action-pill{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;font-family:monospace}
+.action-pill.BUY{background:rgba(16,185,129,.15);color:#10b981;border:1px solid rgba(16,185,129,.3)}
+.action-pill.SELL{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
+.month-bar{display:flex;align-items:flex-end;gap:6px;height:80px}
+.month-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+.month-col .pct{font-size:10px;font-weight:700;font-family:monospace}
+.month-col .rect{width:100%;border-radius:3px 3px 0 0;min-height:4px;transition:height .6s}
+.month-col .lbl{font-size:9px;color:#8b949e;font-family:monospace}
+.disclaimer{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:16px 20px;margin-bottom:32px}
+.disclaimer p{font-size:12px;color:#8b949e;line-height:1.6;margin:0}
+.cta{text-align:center;padding:48px 24px;border-top:1px solid #21262d;margin-top:48px}
+.cta h2{font-size:24px;font-weight:800;margin-bottom:10px}
+.cta p{color:#8b949e;margin-bottom:24px}
+.btn{display:inline-block;padding:12px 28px;background:#10b981;color:#fff;border-radius:8px;font-weight:700;font-size:15px;text-decoration:none;transition:opacity .2s}
+.btn:hover{opacity:.85}
+.spinner{text-align:center;padding:60px;color:#8b949e;font-family:monospace}
+footer{text-align:center;padding:32px;font-size:12px;color:#484f58;border-top:1px solid #21262d}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo"><img src="/logo-full.png" alt="Signal.Trade"/></a>
+  <a href="/tos">Terms</a>
+  <a href="/privacy">Privacy</a>
+  <a href="/" style="margin-left:auto;background:#10b981;color:#fff;padding:6px 16px;border-radius:6px;font-weight:600;font-size:13px">Open App →</a>
+</nav>
+
+<div class="hero">
+  <h1>Signal Track Record</h1>
+  <p>Verified aggregate performance of all algorithmic signals. Updated in real time from live trading data.</p>
+  <span class="badge">Live data · No PII · Aggregate stats only</span>
+</div>
+
+<div class="wrap">
+
+  <div class="disclaimer">
+    <p>⚠️ <strong style="color:#e6edf3">Not financial advice.</strong> Past performance does not guarantee future results. These statistics reflect algorithmic signal output — not real money trades. All trading involves substantial risk of loss. Signal.Trade is not a registered investment adviser.</p>
+  </div>
+
+  <div id="content"><div class="spinner">Loading track record…</div></div>
+
+</div>
+
+<div class="cta">
+  <h2>Get these signals in your Telegram</h2>
+  <p>Sign up for Signal.Trade and receive real-time alerts when high-confidence signals fire.</p>
+  <a href="/" class="btn">Start Free →</a>
+  <div style="margin-top:14px;font-size:11px;color:#484f58">No card required for Free plan · Cancel anytime</div>
+</div>
+
+<footer>
+  Signal.Trade &nbsp;·&nbsp; <a href="/tos" style="color:#484f58">Terms of Service</a> &nbsp;·&nbsp; <a href="/privacy" style="color:#484f58">Privacy Policy</a> &nbsp;·&nbsp; Not financial advice
+</footer>
+
+<script src="/track-record.js"></script>
+</body>
+</html>
