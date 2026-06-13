@@ -171,7 +171,7 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
 }
 
 /* ─── Telegram / Delivery pane ──────────────────────────────────────────────── */
-function TelegramPane({ log, online, onOpenAccount }) {
+function TelegramPane({ log, online, onOpenAccount, onClose }) {
   const [view, setView] = useState("log");
   const sent    = (log||[]).filter(l => l.status === "sent");
   const failed  = (log||[]).filter(l => l.status === "fail");
@@ -191,6 +191,11 @@ function TelegramPane({ log, online, onOpenAccount }) {
         </span>
         <div className="right">
           <span className="chip">{today.length} today</span>
+          {onClose && (
+            <button className="btn ghost" onClick={onClose} style={{ marginLeft: 8 }}>
+              <Icon name="x" size={14}/> Close
+            </button>
+          )}
         </div>
       </div>
       <div className="del-tabs">

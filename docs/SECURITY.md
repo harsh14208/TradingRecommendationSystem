@@ -102,7 +102,20 @@ Signal.Trade backend after the security/architecture refactor.
 - All async `fetch` paths use `AbortController` to cancel in-flight requests on
   unmount or navigation.
 
-## 9. Live Trading Safety Controls
+## 9. HTTPS & Transport Security
+
+- Public deployments must set `APP_URL` to an `https://` URL. The backend
+  startup checks treat non-localhost `http://` URLs as development-only.
+- `HttpsRedirectMiddleware` inspects the `X-Forwarded-Proto` header. When
+  `APP_URL` is HTTPS and a request arrives over HTTP, the middleware returns a
+  `301 Moved Permanently` to the HTTPS equivalent.
+- This is a defence-in-depth fallback. The primary enforcement should be
+  Cloudflare's **Always Use HTTPS** toggle (SSL/TLS → Edge Certificates) so
+  HTTP requests never reach the origin.
+- `SecurityHeadersMiddleware` emits `Strict-Transport-Security` (HSTS) on HTTPS
+  responses when the request scheme is `https`.
+
+## 10. Live Trading Safety Controls
 
 Auto-execution of real-money orders is the highest-risk surface in the system.
 The following controls are enforced in code and must never be bypassed:
@@ -151,7 +164,7 @@ The following controls are enforced in code and must never be bypassed:
 - Review `broker_orders` and `pnl_daily` tables daily when live.
 - Test the kill switch from a mobile device before going live.
 
-## 10. Compliance Language (TSYS-13a)
+## 11. Compliance Language (TSYS-13a)
 
 *(Folded in from the retired `docs/COMPLIANCE_LANGUAGE_AUDIT.md`; last audit run 2026-06-07.)*
 

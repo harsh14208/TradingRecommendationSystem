@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
+<link rel="icon" type="image/png" href="/favicon.png"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Signal.Trade — Design Hub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -42,22 +42,14 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .hub-logo {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  justify-content: center;
   margin-bottom: 32px;
 }
 
-.hub-logo-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 12px var(--accent);
-  animation: pulse 2s ease-in-out infinite;
+.hub-logo img {
+  height: 180px;
+  width: auto;
+  display: block;
 }
 
 @keyframes pulse {
@@ -439,8 +431,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
   <div class="hub-header">
     <div class="hub-logo">
-      <span class="hub-logo-dot"></span>
-      Signal.Trade
+      <img src="/logo-full.png" alt="Signal.Trade"/>
     </div>
     <h1 class="hub-title">A personal quant desk,<br/>designed end-to-end.</h1>
     <p class="hub-sub">Three surfaces. One system. 65+ signal blocks — Polygon.io primary, dark pool reconstruction, Macro HMM, 13F institutional flow. 58.2% 7-day win rate · Sharpe 1.97.</p>

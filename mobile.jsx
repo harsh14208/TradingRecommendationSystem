@@ -173,7 +173,7 @@ function FeedScreen({ signals, onSelect }) {
     <>
       <MStatusBar/>
       <div className="m-top">
-        <span className="brand"><span className="d"></span>SIGNAL.TRADE</span>
+        <span className="brand"><img src="/logo-full.png" alt="Signal.Trade" style={{ height: 65, width: "auto" }}/></span>
         <span className="live">LIVE · {signals.length}</span>
         <span className="ico"><MIcon name="filter" size={18}/></span>
       </div>

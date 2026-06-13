@@ -1,18 +1,16 @@
 # Signal.Trade — TODO
 
-## 🔴 Pre-Launch Checklist
-These are critical tasks that must be completed before public launch or marketing scale.
+---
 
-- [x] **1. Change owner password** — FIXED 2026-06-09 — `.env` has 32-char secure password. Startup fails on `ChangeMe123!` in production.
-- [x] **2. Deploy to public HTTPS URL** — DONE (2026-06-12): public HTTPS served via Cloudflare Tunnel to `signaltrade.org` and `app.signaltrade.org`. `APP_URL=https://signaltrade.org` set in `backend/.env`; backend reloaded. *Stripe/OAuth/SMTP/Telegram webhooks still need their own credentials.*
-- [x] **2a. Verify signaltrade.org DNS + tunnel** — DONE (2026-06-12): Cloudflare authoritative NS and `1.1.1.1` resolve both domains to Cloudflare edge IPs. The tunnel connector is healthy. `APP_URL=https://signaltrade.org` set and `/api/health/uptime` returns 200 via the public URL. Some local resolvers (e.g., Tailscale `100.64.0.2`) may still cache NXDOMAIN; propagation will finish shortly.
+## 🔴 Pre-Launch Checklist
+Critical tasks that must be completed before public launch or marketing scale.
+Completed items (#1, #2, #2a, #9, #10) are archived below.
+
 - [ ] **3. Configure Stripe billing** — `STRIPE_SECRET_KEY` and price IDs set. Still needed: register webhook in Stripe Dashboard, copy `whsec_...` to `STRIPE_WEBHOOK_SECRET`. (Note: startup now logs CRITICAL if `STRIPE_WEBHOOK_SECRET` is empty in prod; webhook handler returns 500 explicitly). *Risk: checkout completes but tier never activates.*
 - [ ] **4. Register Telegram webhook** — After HTTPS deploy: `curl -X POST <https://your-app>/api/telegram/set-webhook`. *Risk: subscribers cannot link Telegram.*
 - [ ] **5. Configure SMTP (email)** — Add `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` to `.env`. *Risk: no email verification, no password reset, no weekly digest.*
 - [ ] **6. Enable Telegram broadcast channel** — Create private channel, make bot admin, add `TELEGRAM_BROADCAST_CHANNEL_ID=-100...`. *Risk: at >50 subscribers, per-user DM loop hits Telegram rate limit.*
 - [ ] **8. Configure Google OAuth** — `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`.
-- [x] **9. Configure VAPID web push** — FIXED 2026-06-10 — keys generated via `py_vapid`, added to `.env`, `config.py` reads correctly. Web push ready for HTTPS deploy.
-- [x] **10. Set up Cloudflare CDN** — DONE (2026-06-12): traffic proxies through Cloudflare (orange-clouded A/CNAME records), so caching + DDoS + SSL are active at the edge.
 - [ ] **11. Google AdSense** — Apply at adsense.google.com. *Risk: no ad revenue from free tier.*
 - [ ] **12. Add Redis in Production** — `railway add --plugin redis`. *Risk: redundant API calls under concurrent load.*
 - [ ] **13. Upgrade SendGrid** — Essentials (~$20/mo) before daily signups + resets exceed 100 emails/day.
@@ -41,146 +39,146 @@ remain on paper trading until the empirical bar is met.
 
 ---
 
-## 🚀 Next Sprint (2026-06-11)
-Actionable items derived from today's session. Ordered by payoff ÷ effort.
+## 🚀 Next Sprint (2026-06-12)
+Actionable items still open. Completed sprint items are archived below.
 
 ### Security & Auth (do first — blocking everything else)
 - [ ] **SP1-2. Configure SMTP** — Add `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` to `.env` (SendGrid free tier is enough to start). Test: trigger password-reset flow for owner account. Unblocks: email verification, weekly digests, password resets. *Risk: users who forget passwords have no recovery path.*
 
-### Observability & Pipeline (before next deploy)
-- [x] **SP1-3. Wire Sentry DSN** — DONE (2026-06-12): `sentry-sdk[fastapi]` added to `requirements.txt`; FastAPI, Starlette, and SQLAlchemy integrations initialized in `backend/main.py`; `/api/health/sentry` endpoint added to verify configuration. Remaining step: sign up at sentry.io, paste DSN into `backend/.env` `SENTRY_DSN=...`, restart server, and hit `/api/health/sentry`.
-- [x] **SP1-4. Push to GitHub & verify CI** — DONE (2026-06-12): pushed v8.8.4 to `main`. CI run https://github.com/harsh14208/TradingRecommendationSystem/actions/runs/27455656678 passed ruff, pytest, 25% coverage floor, gitleaks, pip-audit, and npm audit. Fixed missing `dist/` bundles by adding an `npm install && npm run build` step before tests.
+### Observability & Pipeline
+- [ ] **SP1-3. Sentry DSN signup & verification** — SDK wiring is complete (archived); remaining: sign up at sentry.io, paste DSN into `backend/.env`, restart, and hit `/api/health/sentry`.
 
 ### Scale & Delivery (before first paying user)
 - [ ] **SP1-5. Enable Telegram broadcast channel** — Create private Telegram channel, add bot as admin, set `TELEGRAM_BROADCAST_CHANNEL_ID=-100...` in `.env`. Test: send one broadcast signal, confirm it posts to the channel. Unblocks: scaling past 50 subscribers without hitting Telegram rate limits.
-- [x] **SP1-6. Add Redis** — DONE (2026-06-12): local `redis:7-alpine` container running on `localhost:6379`, `REDIS_URL=redis://localhost:6379/0` set in `backend/.env`; startup logs confirm `[cache] Redis connected`. Test isolation fixed so the suite stays green with Redis enabled.
 
 ### Revenue & Growth (parallel track)
-- [ ] **SP1-7. Apply for Google AdSense** — 10-minute form at adsense.google.com. Use `signal.trade` domain (or whatever you plan to deploy to). Approval takes 1–14 days; starting now removes a future blocker.
+- [ ] **SP1-7. Apply for Google AdSense** — 10-minute form at adsense.google.com. Use `signal.trade` domain. Approval takes 1–14 days; starting now removes a future blocker.
 
 ---
 
 ## 🎯 Active Research & Alpha TODOs
-These are targeted research and statistical modeling opportunities to improve signal edge.
+Targeted research and statistical modeling opportunities to improve signal edge.
+Items marked [~] are partially wired but not yet proven/deployed.
 
-### External-research agenda — §96–§103 (added 2026-06-10 evening, post-§DELIV)
-**6 of 8 items COMPLETE** (§96, §97, §99, §100, §101, §103). **2 remain open:** §98 (paid, ~$99) and §102 (Nov 2026 calendar item).
+### External-research agenda — §96–§103
+- [ ] **§98. ORATS one-month sprint** — make §62/§48/§49 historically testable for the first time (PAID ~$99 one-off, time-boxed).
+- [ ] **§102. Tick-size regime change watch** — SEC half-penny quoting + access-fee cut Nov 2026 calendar item.
 
-- [ ] **§98. ORATS one-month sprint — make §62/§48/§49 historically testable for the first time (PAID ~$99 one-off, time-boxed).** [ORATS](https://flashalpha.com/articles/best-options-data-apis-2026) serves per-stock EOD IV indicators back to 2007 at $99/mo. Pre-register thresholds, pull ~19yr of IV history for the 111-name universe in one subscription month, and run the standard ablation on the IS window. Decision rule: deploy/keep live gates only on measured ΔSharpe.
-- [ ] **§102. Tick-size regime change watch (FREE — Nov 2026 calendar item).** SEC half-penny quoting + access-fee cut takes effect the first business day of Nov 2026 for ~2,000 liquid names. Action: calendar a post-implementation review of realized spreads via the TCA service + re-tune §80 bands on Dec-2026 data.
+### Free alt-data agenda — §104–§110 / follow-ups
+- [ ] **§104c. FINRA SV forward path only** — keep SPRT ID 8 for the pre-registered definition; optionally register the −10/40 variant as a NEW explicitly-exploratory forward SPRT; the panel's real reuse is the cross-sectional model (§86/§100 harness).
+- [ ] **§111. Cross-sectional model → LIVE promotion gates** — h=21 and h=63 shadows are accruing forward data. Promotion criteria locked; activation must come from `check_promotion_criteria()` returning True, not a manual override.
+  - [ ] §111a. Tier 1 sizing haircut on existing signals (h=21).
+  - [ ] §111b. Tier 1 for h=63 (independent N≥150 clock).
+  - [ ] §111c. Tier 2 standalone dollar-neutral L/S book.
+  - [ ] §111d. Kill criteria after 12 months if neither passes.
+- [ ] **§119. Point-in-time survivorship-bias correction** — Paid EODHD/Norgate path; required before claiming IS/OOS above 8/10 rating.
 
-### Free alt-data agenda — §104–§110 (added 2026-06-10 night; validation COMPLETE 2026-06-12)
-**Guardrail (hard-won, from the §104/§105 failures): pre-check the expected firing rate before ablating — a per-trade condition firing on <20% of the ~217-trade book is unfalsifiable in IS (N≈8 cohorts are pure noise: ≥7/8 wins happens ~23% of the time by luck). Rare-extreme features belong in the cross-sectional harness (breadth = N) or forward SPRT, not IS tilts. And the pre-registered threshold's verdict is THE verdict — thresholds found by re-searching the same sample only ever graduate via forward data.**
+### Next-best alpha-improvement candidates — §112–§119
+- [~] **§91. Short-interest rising-SI sizing tilt** — wired, live read positive (+2.42pp spread, N=335), backtest unvalidatable (pre-2017). Deploy gate: live resolved N≥50 with rising SI.
+- [~] **§86. Market-Neutral Cross-Sectional Ranking Architecture** — v1 built and deployed in SHADOW mode. Nested h=63 WF net +0.576 [90% CI +0.22, +0.91]; live promotion gated by §111.
+- [ ] **§62. VRP per-stock** — Needs per-stock IV history (Polygon Options upgrade, ~$79-199/mo).
+- [ ] **§84. Survivorship bias correction** — Purchase EODHD (~$20/mo) or Norgate ($33/mo) delisted constituent lists.
+- [ ] **Options flow confirmation gate** — Subscribe to Unusual Whales API (~$50/mo).
+- [ ] **GEX support levels** — SpotGamma API (~$99/mo).
+- [ ] **Market-neutral beta hedge** — Short 0.9× position value in SPY at entry. Requires margin account.
 
-**Outcome (2026-06-11/12):** all backtestable sources were backfilled, defect-corrected (market-wide z-score death + 1-day lookahead — see LEARNINGS §104–§110), and tested against a placebo noise floor. **No alt-data source produced a deployable edge:** §104 FINRA SV inside/below placebo band at both horizons; §105 FTD per-trade tilt unfalsifiable at N≈5 (panel retained, 2004+); §106 NAAIM tilt failed (AAII deferred — sources WAF'd); §107 GDELT fired 0/217 per-trade, Δ −0.003 cross-sectional (inside noise); §110 CBOE options snapshot shipped (live-only, accumulating from day 1). Full per-item detail in the Completed Tasks Archive below + `docs/LEARNINGS.md §104–§110`. **§112–§116 ablations completed 2026-06-12 (see below) — no free alt-data path cleared the noise floor.** Open follow-ups continue as §111, §117–§119.
-
-- [ ] **§104c. FINRA SV forward path only:** (i) keep SPRT ID 8 for the pre-registered definition; (ii) optionally register the −10/40 variant as a NEW explicitly-exploratory forward SPRT (provenance: threshold chosen on IS — forward live data is the only untouched sample that can validate it); (iii) the panel's real reuse is the cross-sectional model (§86/§100 harness) where 500-name breadth gives actual N. Live-gate data-source swap to FINRA-direct still worthwhile independently (removes the Massive dependency).
-
-- [ ] **§111. Cross-sectional model → LIVE promotion gates (pre-registered 2026-06-11, BEFORE any forward shadow data is read).** Both shadows (h=21 `crossSectionalShadowPct` since 2026-06-09, h=63 `crossSectionalShadowPctH63` since 2026-06-11) are accruing forward data. This section locks WHEN each may touch real behavior — changing these criteria after peeking at the forward sample invalidates the test (§92 discipline). Three escalating tiers:
-  - [ ] §111a. **Tier 1 — sizing haircut on existing signals (h=21; criteria already locked in code).** `SHADOW_PROMOTION_CRITERIA` in `cross_sectional_shadow.py`: ≥150 resolved signals carrying the h=21 percentile AND bottom-decile (≤10th pctile) live WR ≥3pp worse than the rest AND top-decile WR ≥ bottom-decile WR. Then and only then flip `_SHADOW_SIZING_ACTIVE` (activates the 0.75× positionSizeScale haircut on bottom-decile names — a haircut, never a block). Activation must come from `check_promotion_criteria()` returning True, not a manual override.
-  - [ ] §111b. **Tier 1 for h=63:** identical criteria evaluated independently on `crossSectionalShadowPctH63` (own N≥150 clock, started 2026-06-11). If both horizons pass, apply whichever shows the larger bottom-decile WR spread — never stack two XS haircuts on one signal.
-  - [ ] §111c. **Tier 2 — standalone dollar-neutral L/S book with real capital (the backtest-0.616 product).** ALL of: (i) ≥12 months of live shadow rank-vs-outcome IC > 0 (monthly Spearman of percentile vs realized relative return; ≥7/12 months positive); (ii) §111a or §111b passed (proof the ranking transfers outside the research harness); (iii) short-leg execution verified — locate/borrow available at ≤150bps/yr for bottom-decile names through Alpaca/IBKR; (iv) ≥1 quarter paper-traded through the existing paper/live parity path with realized one-way slippage ≤20bps (the cost sweep says the edge dies ~40bps); (v) nested-horizon validation re-run including the forward period still selects h=63 ex ante. Initial allocation ≤5% of capital, quarterly rebalance, review after 4 rebalances.
-  - [ ] §111d. **Kill criteria (equally pre-registered):** if after 12 months neither §111a nor §111b passes, or the live monthly IC is ≤0 in aggregate, retire both shadow fields, log the negative result in LEARNINGS, and do NOT re-tune thresholds against the same forward sample — a new threshold needs a new forward window.
-
-**Explicitly rejected after research** (so they don't get re-proposed): CBOE put/call CSVs (403'd, DataShop-only — known since 2026-06-08), Google Trends (rescaling/quota artifacts make panels non-reproducible; Wikipedia pageviews dominate it), 13F-based ownership (quarterly + 45d lag — horizon mismatch, already deferred), IEX HIST pcap files (free but parsing cost ≫ value for daily signals), iBorrowDesk borrow fees (unofficial scrape, spotty history — revisit only if §104/§105 confirm the squeeze-fuel channel).
-
-### Next-best alpha-improvement candidates — §112–§119 (added 2026-06-12, post-audit)
-These items surfaced from the remaining audit gaps and an external deep-dive. They are ranked by expected deployability and independence from the spent OHLCV parameter space. The same research discipline applies: pre-registered hypothesis, walk-forward per-fold, live shadow accrual before promotion, and PIT lags enforced.
-
-- [x] **§112. Options implied-volatility surface history via CBOE snapshot accumulation — WIRED, VALIDATION GATED ON HISTORY (2026-06-12).** `compute_iv_rank()`/`append_iv_history()` in `services/options_cboe.py` — nightly snapshot job appends `avg_iv` to a self-grown parquet (`data/cache_options/options_iv_history.parquet`) and `iv_rank` is computed from it (returns None until ≥252 prior observations accrue). **Ablated:** not backtestable — history began 2026-06-12 (68 tickers, 1 snapshot). Re-test after ≥252 nightly snapshots per ticker (~12 months). This is the free-data path that reduces the paid §98 ORATS month to *deep IV history only*.
-- [x] **§113. FINRA ATS dark-pool weekly institutional participation — WIRED, HISTORICAL BACKFILL BLOCKED (2026-06-12).** `services/finra_ats_dark_pool.py` + `--finra-ats` flag in `cross_sectional_alpha_model.py` (merges `ats_ratio` with the 2-week publication lag enforced). **Ablated:** historical backfill is blocked — `otctransparency.finra.org` returns HTML instead of CSV; the newer `api.finra.org` sample lacks the per-ticker total-volume denominator needed for `ats_ratio`. Verdict: live-forward accumulation only; no research claim until ≥1 year of weekly data accrues. Slow regime/quality feature for L8-style sizing, not an entry trigger.
-- [x] **§114. SEC fails-to-deliver (FTD) panel 2004–now — BACKFILLED + ABLATED, NO EDGE (2026-06-12).** Panel extended to 2004 (`build_ftd_panel`) → 11.2M rows; velocity feature `ftd_pctile_chg_1m` added alongside `ftd_63d_pctile` with +30d publication lag. **Ablated (h=21, 15 folds, placebo seed=42):** net Sharpe 0.353 vs baseline 0.395, mean IC +0.0209, 45% coverage — inside the harness noise floor. Per-trade risk-off context remains deferred until N≥30 forward signals accumulate (SPRT ID 9).
-- [x] **§115. NAAIM weekly exposure + UMCSENT regime sizing — BACKFILLED + ABLATED, NO EDGE (2026-06-12).** NAAIM since-inception xlsx backfilled (1,039 weekly rows, 2006+); UMCSENT backfilled; percentile features `naaim_exposure_pctile` and `umcsent_pctile` pass through raw as market-wide regime features. **Ablated (h=21, 15 folds, placebo seed=42):** net Sharpe −0.040 vs baseline 0.395, mean IC +0.0151 — inside/below the placebo band. Market-wide sentiment does not create a net-of-cost cross-sectional spread at h=21.
-- [x] **§116. Wikipedia pageviews attention spike — BACKFILLED + ABLATED, NO EDGE AT 4% COVERAGE (2026-06-12).** Wikimedia REST API panel backfilled (66k rows, 20-mega-cap pilot); cross-sectional attention feature `views_z_xs` added with +1d PIT lag. **Ablated (h=21, 15 folds, placebo seed=42):** net Sharpe 0.410 vs baseline 0.395, mean IC +0.0211, but only **4% coverage** — the Δ is inside the harness noise floor. Widening ticker coverage is the only remaining free-data hope, but the pilot gives no evidence it will help.
-- [x] **§117. Sector-specific XGBoost promotion gate — INFRASTRUCTURE IMPLEMENTED + TESTED (2026-06-12).** `services/sector_ml_promotion.py` is the single source of truth for promoted blocked sectors; `delivery_gates.py` and `assembler.py` now consult an explicit QENG-1c promotion record (`ModelRegistry` + `ResearchExperiment`) instead of file existence. `scripts/train_backtest_ml.py` raises the sector training bar to ≥100 samples and purged expanding-window CV; `scripts/promote_sector_model.py` enforces the checklist (OOS AUC ≥0.55, cost-adjusted Sharpe >0, rollback plan, expiration). New tests: `tests/test_delivery_gates.py` (promoted/unblocked/expired/fail-closed) + `tests/test_train_sector_model.py` (insufficient data, beats champion, registry record, promotion checklist, rejection). **Training/promotion itself is gated on ≥100 resolved backtest trades per sector and remains open until data accrues.**
-- [x] **§118. Live realized-spread TCA feedback loop — WIRED (2026-06-12).** `tca_service` expected/realized slippage now feeds `portfolio_allocator` sizing against a configurable 20bps threshold (details in the Completed Tasks Archive). **Open follow-up:** verify live behavior after N≥50 auto-executed fills (RISK-3).
-- [ ] **§119. Point-in-time survivorship-bias correction.** Paid EODHD/Norgate path; required before claiming IS/OOS above 8/10 rating.
-
-**Critical invariant:** the IS Sharpe ceiling appears spent (Deflated Sharpe fails at 744 trials). Future edge must come from orthogonal data (options flow, short-interest velocity, cross-sectional ranking) or execution cost reduction, not more OHLCV parameter sweeps.
-
-### Next Sharpe×N agenda — §87–§94 (added 2026-06-10)
-Goal: raise Sharpe while holding or growing trade count. Ordering reflects expected value ÷ effort.
-**Guardrails (hard-won, from §83 / exit-sweep / §86 per-fold lessons):** (1) prefer **sizing over filtering** — sizing is the only lever that has repeatedly added Sharpe at zero N cost (L7 +0.05, L8 +0.06, score-band +0.05); filters that lift per-trade Sharpe almost always lose it back through √N (ATR≤70 trap). (2) Judge changes on **per-trade Sharpe + CAGR + MaxDD**, never portfolio ANN Sharpe (event-time annualization rewards turnover; the exit-sweep "winner" was an artifact). (3) **Per-fold walk-forward** before believing any aggregate number (the §86 SI feature sold a false dawn one fold wide). (4) Per-sector application over global gates (LEARNINGS insight #5).
-
-- [~] **§91. Short-interest rising-SI sizing tilt — wired, live read positive, backtest inconclusive (2026-06-10).** `simulate_ticker()` now accepts `si_rising_map`; applies 1.15× when `si_rising=True`. `--si-rising-sizing` flag added. Postgres `short_interest_biweekly` exported to `data/cache_si/si_panel.json` (182 tickers, 36K rows). **Live read (N=335 resolved signals):** rising SI WR 39.3% avg +1.01% vs falling SI WR 38.0% avg −1.41% — **+2.42pp avg spread**, directionally consistent with first read. **Backtest:** only 3/217 trades had SI data (most trades pre-2017). Deploy gate: live resolved N≥50 with rising SI before evaluating sizing impact. ΔN = 0.
-
-- [~] **§86. Market-Neutral Cross-Sectional Ranking Architecture** — Move from time-series prediction to cross-sectional ranking. **v1 built 2026-06-09** in `backend/scripts/cross_sectional_alpha_model.py`. RESULT: OOS 2019→2026 **net Sharpe ≈ 0.44–0.50** (gross 0.73–0.78), mean IC +0.018, quintiles NOT monotonic. Beta-neutrality lowers vol but adds no alpha — "1.0+ mathematically" is a fallacy (Sharpe = IC × √breadth × √turnover-eff; generic price-factor IC ≈0.018 caps it). Honest verdict: competitive with the ~0.28 IS / ~0.14 fwd single-name engine, NOT a ceiling break. Data caveats: `cache_earnings` is dates-only (proximity feature, no surprise); short interest is Postgres bi-weekly 2017-12+ (`--short-interest` opt-in). **STATUS 2026-06-09 (Step 10):** the original 0.44–0.50 leaned on pre-survivorship-correction breadth; honest survivorship-corrected canon is net **−0.058 at the old 5d rebalance → +0.347 at 21d** (cost + stock-borrow robust). DEFAULT HORIZON raised 5→21; model deployed LIVE in SHADOW mode (observe-only). Net-positive but thin (CI grazes 0); see Step 10. **STATUS 2026-06-11 (Step 11):** First-pass alt-data results (h=21 net +0.308, h=63 net +0.769) were found to have **two implementation defects**: (1) market-wide UMCSENT/NAAIM/AAII were z-scored to death (std=0 → NaN → 0), so their claimed contribution was colsample noise; (2) FINRA SV and Wikipedia were merged same-day with ~1-day lookahead. Both defects are now fixed in code. Single-split previews with fixes: baseline 0.369, `--finra-sv` 0.414, `--wiki` 0.451, `--naaim` −0.182, `--naaim --wiki` 0.111; placebo noise 0.151–0.159. **STATUS 2026-06-11 (Step 12):** corrected WF complete — all alt-data Δs inside the placebo band (no alt-data claim stands; 0.769 permanently withdrawn). The HORIZON effect survived honest validation: `--nested-horizon` chose h=63 ex ante in 12/12 eval folds → nested net **+0.576 [CI +0.22, +0.91]**, haircut 0.000, cost/borrow-robust. **Parallel h=63 live shadow deployed** (`crossSectionalShadowPctH63`; §92 stays h=21-only). See Step 12.
-  - [~] **Step 9 (decision): the ceiling is IC/data, not architecture.** Four 2023-24 "structural alpha" frameworks now evaluated against this engine's own data: (1) Meta-label+triple-barrier — **RETRAINED (2026-06-10)** on CSV with full 15 features (entry_prob, HMM, VIX term structure, sector momentum, FF ST_Rev); CV-AUC **0.4364** on N=217 — still below random, but all 15 features now have non-zero importance (was 3). `_MIN_META_AUC=0.52` gate added in `signal_ml.py`; model auto-activates only when retrain crosses threshold. Train/serve skew resolved, guard removed from `assembler.py`. Exit-sweep already "exhausted"; (2) Qlib cross-sectional — built §86, net ≤0.42; TopkDropout worse (Step 7); (3) Hierarchical RL — untrainable at N≈221, overfit guaranteed; (4) Adaptive sleeve allocation — sleeves just disabled (commit 3e4e102), 5d-rolling routing whipsaws at this N. ALL rearrange/filter existing alpha; none raise IC. Only real levers left: new ORTHOGONAL data (§62 options-IV, options-flow, short-interest velocity) or accept honest ~0.2–0.4. Paid alt-data still NOT justified until a free-data path shows IC > ~0.03. **[PARTIALLY OVERTURNED by Step 10 — see below: the ceiling claim holds for IC, but rebalance/cost structure DID cross the book to net-positive.]**
-- [ ] **§62. VRP per-stock** — Needs per-stock IV history (Polygon Options upgrade, ~$79-199/mo). High IVR (>80th percentile) at oversold MR entry should add an additional +6pp.
-- [ ] **§84. Survivorship bias correction** — Purchase EODHD (~$20/mo) or Norgate ($33/mo) delisted constituent lists. Add delisted tickers to `TICKERS` for their active periods to make IS -> OOS gap more honest.
-- [ ] **Options flow confirmation gate** — Subscribe to Unusual Whales API (~$50/mo). Enter only when options flow confirms setup (e.g. large put sweeps → −10pp, large call sweeps on oversold → +8pp). Expected ΔSharpe: +0.15–0.25.
-- [ ] **GEX support levels** — SpotGamma API (~$99/mo). Enter only when `price ≤ gex_support_level × 1.01` to ensure dealer positioning reinforces mean reversion. Expected ΔSharpe: +0.10.
-- [ ] **Market-neutral beta hedge** — Short 0.9× position value in SPY at entry. Requires margin account. (QuantEngine validated: IS Sharpe 0.29 = 0.12 pure alpha + 0.17 beta. True forward estimate ≈ 0.10–0.15).
+> **Critical invariant:** the IS Sharpe ceiling appears spent (Deflated Sharpe fails at 744 trials). Future edge must come from orthogonal data (options flow, short-interest velocity, cross-sectional ranking) or execution cost reduction, not more OHLCV parameter sweeps.
 
 ---
 
 ## ⚙️ Operational, Deployment & Testing TODOs
-Infrastructure, testing, and system-level follow-ups.
 
-- [x] **DEPLOY-2. Public health endpoint + local watchdog** — `GET /api/health/uptime` added (2026-06-13). `scripts/watchdog.sh` + `com.signal.trade.watchdog` LaunchAgent alert via macOS notification if backend or tunnel agents die. External Sentry Uptime / UptimeRobot can point at `https://signaltrade.org/api/health/uptime` once DNS resolves.
-- [x] **DEPLOY-3. DB Backups (local)** — `scripts/backup_db.sh` uses `sqlite3 .backup` for online-consistent snapshots; `com.signal.trade.backup` LaunchAgent runs daily at 04:00, keeps 7 days. Cloud upload (R2/S3) still TODO.
-- [x] **DEPLOY-3a. Log rotation** — `scripts/rotate_logs.sh` + `com.signal.trade.rotate-logs` LaunchAgent runs daily at 03:30, keeps 14 days of compressed logs.
-- [x] **QENG-3d. Execution policy simulator** — DONE (2026-06-12): `services/execution_policy_simulator.py` + `scripts/run_execution_policy_simulation.py` compare market/limit/midpoint/next-open/next-close/delayed-1d on a cost-adjusted basis. Input is a backtest trades CSV; output is `summary.json` + `per_trade.csv` and an optional `ResearchExperiment` row. Tests in `tests/test_execution_policy_simulator.py`.
 - [ ] **ACT-7. Validate bracket stop in Alpaca paper account** — Enable auto-execution for owner account on paper, trigger a manual signal delivery, and verify Alpaca dashboard shows bracket order legs correctly.
 - [~] **ACT-8. Install shap for ML-5 live audit** — `shap` installed in `.venv311` (0.49.1). Re-run live audit remains gated on ≥50 post-A19 resolved signals.
-- [x] **OPS-1. Remove dead ^BDI fetch** — `_fetch_bdi()` in `services/supply_chain.py` now returns `None` instead of repeatedly hitting the unavailable yfinance ticker.
-- [x] **OPS-2. Frontend accessibility pass** — axe-core audit run on landing, login, and app pages. Fixed missing button labels (settings/refresh) and one nested-interactive violation (search wrapper). Remaining: 147 color-contrast items require a design pass; 2 nested-interactive and 1 scrollable-region-focusable issue remain in charts/tabs.
-- [x] **OPS-3. Kill-switch endpoint tests** — Added `test_get_kill_switch_status_owner`, `test_post_kill_switch_toggles_state`, `test_post_kill_switch_creates_settings_row_if_missing`, and owner-required 403 tests in `tests/test_routers_admin_unit.py`.
-- [x] **ACT-9. Push to GitHub to trigger CI/CD validation** — DONE (2026-06-12): pushed and CI passed (see SP1-4). Deployment steps are gated on `RAILWAY_TOKEN`/`FLY_API_TOKEN`, which are not set, so deploy job correctly skips.
+- [~] **OPS-2. Frontend accessibility pass (remaining)** — axe-core audit fixed missing button labels and one nested-interactive violation. Remaining: 147 color-contrast items require a design pass; 2 nested-interactive and 1 scrollable-region-focusable issue remain in charts/tabs.
 
 ---
 
 ## 📊 Live Findings & Calibration TODOs
-Actions derived from empirical performance audits on the live system.
 
-- [ ] **WATCH-1. XLV Healthcare live WR contradicts IS promotion (2026-06-09, N=62).** Healthcare was moved to `_MR_SECTORS` (live-eligible) on the cross-sectional model's t=+2.12, but post-backfill live WR is **40.3% (−3.3pp, N=62)**. Not yet block-worthy (single ~7-week window, CI [29%–53%] straddles baseline) but no longer a small-N fluke. Re-check at N≥100; if still <45%, reconsider the IS promotion / add to watch-block.
+- [ ] **WATCH-1. XLV Healthcare live WR contradicts IS promotion (2026-06-09, N=62).** Re-check at N≥100; if still <45%, reconsider the IS promotion / add to watch-block.
 - [ ] **OOS-1. Accumulate ≥30 live trades in OOS v7 tickers** — SYK, RMD, IDXX, ZBH, RL, DECK, POOL, NDAQ, CBOE, BR. Run `python scripts/backtest_technicals.py --oos`. If OOS v7 CLEAN Sharpe ≥ 0.10, promote to IS.
 - [ ] **OOS-2. Accumulate ≥30 live trades in OOS v8 tickers** — LNC, AMG, PAYC, SIG, AEO. Cautiously evaluate the 0.2% Russell 2000 pass rate.
-- [ ] **§85-2b. MD&A sentiment live monitoring (2026-06-09)** — `get_mda_delta()` bug fixed (was returning `{}` for all tickers due to broken EDGAR `-index.json` fetch). Historical audit: **0/566 resolved signals** had MD&A rationale. Going forward, tag signals that receive `mda_delta != 0` and compute ΔWR after N≥50 such signals accumulate. If no improvement vs baseline, disable the modifier.
-- [ ] **CAL-1 / A25. Calibration v5** — Run `python scripts/backfill_confidence.py --force --apply` when ≥50 post-A19 resolved signals are available to reflect the corrected scoring pipeline.
-- [ ] **ML-2 / A15. Sector-specific XGBoost models** — Retrain sub-models for concentrated sectors (e.g. XLK) when sector-specific resolved signals reach ≥200.
-- [ ] **RISK-3. Position sizing live audit** — After N≥50 auto-executed trades, compare realized notional vs theoretical scaling. Check for rounding errors if mean size deviates >20%.
-- [ ] **ACT-3. Sector-conditional calibration (CAL-V5)** — XLK Brier deviates +0.015, XLV deviates −0.016. Run `backfill_confidence.py --force --apply` with sector grouping to deploy separate isotonic curves.
-- [ ] **ACT-4. Investigate live WR gap (Part b)** — Perform detailed validation on the remaining gap between live WR and IS WR after resolving EOD-batch delivery bugs.
+- [ ] **§85-2b. MD&A sentiment live monitoring (2026-06-09)** — tag signals that receive `mda_delta != 0` and compute ΔWR after N≥50 such signals accumulate.
+- [ ] **CAL-1 / A25. Calibration v5** — Run `python scripts/backfill_confidence.py --force --apply` when ≥50 post-A19 resolved signals are available.
+- [ ] **ML-2 / A15. Sector-specific XGBoost models** — Retrain sub-models for concentrated sectors when sector-specific resolved signals reach ≥200.
+- [ ] **RISK-3. Position sizing live audit** — After N≥50 auto-executed trades, compare realized notional vs theoretical scaling.
+- [ ] **ACT-3. Sector-conditional calibration (CAL-V5)** — Run `backfill_confidence.py --force --apply` with sector grouping.
+- [ ] **ACT-4. Investigate live WR gap (Part b)** — Detailed validation on the remaining gap between live WR and IS WR after resolving EOD-batch delivery bugs.
 
 ---
 
 ## 🏁 Path to 10/10 — Per-Aspect Rating TODOs
-Concrete work to take each [Stats.md §15](Stats.md#L359) rating aspect to 10/10. Honesty note: aspects marked **⏳gated** cannot reach 10 by code alone — they need paid point-in-time/options data, an accrued live sample (N), or elapsed time. A literal 10 on IS/OOS is aspirational (survivorship + sample-size ceilings the doc itself flags at 8/7); the tasks below are what *would* close the gap, not a promise the gap closes this quarter.
+Concrete work to take each [Stats.md §15](Stats.md#L359) rating aspect to 10/10.
+Aspects marked **⏳gated** cannot reach 10 by code alone.
 
 ### Signal & Research
-- [ ] **R10-1: IS Backtest Accuracy (7.9 → 10)** ⏳gated — bust the survivorship ceiling: complete **§84** (EODHD/Norgate delisted constituents, add to `TICKERS` for active periods) + **ACT-5** full flag-validation sweeps + the **--pbo** CSCV report showing PBO < 5%. Honest IS WR will *drop* a few pp; the score rises because the number becomes trustworthy.
-- [ ] **R10-2: OOS / Forward Validation (6.5 → 10)** ⏳gated — accrue resolved signals to **N ≥ 387** (clears SR=0 from the 95% CI) via **OOS-1** (v7) + **OOS-2** (v8); then run expanding **--walk-forward** and confirm OOS CLEAN Sharpe ≥ 0.10 with the curation gap < 0.10.
-- [ ] **R10-3: Live Alpha Quality (7.0 → 10)** ⏳gated — run **§85-1 audit** (ALPHA-2, ≥200 resolved) to prune negative modifiers; prove a *causally positive* treatment effect via the **REF-4** cohort dashboard (delivered vs withheld); sustain live Sharpe ≥ IS midpoint over ≥2 quarters.
-- [ ] **R10-4: Gate Stack §47–§83 (8.8 → 10)** ⏳gated — wire the last 2 of 31 strategies: **§62 VRP per-stock** + the **Options-flow** and **GEX** confirmation gates (all need paid options data); validate each adds ΔSharpe via `--validate-live-gates`.
-- [ ] **R10-5: Backtest Infrastructure (7.8 → 10)** — give the just-fixed PIT feature store (QENG-2a) a burn-in window with zero persist errors; ship **REF-2** replay-parity drift detection (weekly live-vs-replay diff = 0); fold in **§84** point-in-time data so snapshots are survivorship-correct.
-- [ ] **R10-6: Confidence Calibration (7.6 → 10)** ⏳gated — **CAL-1** Calibration v5 on ≥50 post-A19 signals + **ACT-3** per-sector isotonic curves; target val-Brier ≤ 0.23 and reliability-diagram ECE < 0.03.
+- [ ] **R10-1: IS Backtest Accuracy (7.9 → 10)** ⏳gated — complete §84 (EODHD/Norgate delisted constituents) + ACT-5 full flag-validation sweeps + `--pbo` CSCV report showing PBO < 5%.
+- [ ] **R10-2: OOS / Forward Validation (6.5 → 10)** ⏳gated — accrue resolved signals to N ≥ 387 via OOS-1 + OOS-2; expanding walk-forward with OOS CLEAN Sharpe ≥ 0.10.
+- [ ] **R10-3: Live Alpha Quality (7.0 → 10)** ⏳gated — run §85-1 audit (≥200 resolved) and prove causally positive treatment effect via REF-4 cohort dashboard.
+- [ ] **R10-4: Gate Stack §47–§83 (8.8 → 10)** ⏳gated — wire §62 VRP per-stock, options-flow, and GEX confirmation gates (all need paid options data).
+- [ ] **R10-5: Backtest Infrastructure (7.8 → 10)** — zero PIT feature-store persist errors; ship REF-2 replay-parity drift detection; fold §84 point-in-time data.
+- [ ] **R10-6: Confidence Calibration (7.6 → 10)** ⏳gated — CAL-1 Calibration v5 on ≥50 post-A19 signals + ACT-3 per-sector isotonic curves.
 
 ### Risk & Execution
-- [ ] **R10-9: Sector Concentration (7.6 → 10)** — make limits **dynamic/correlation-aware** (size off the live covariance via **REF-5** HRP-in-scanner, not static 30/20%); unblock XLF/XLP/XLU/XLI by training **ML-2** sector XGBoost models that earn them back rather than hard-blocking.
+- [ ] **R10-9: Sector Concentration (7.6 → 10)** — make limits dynamic/correlation-aware via REF-5 HRP-in-scanner; unblock XLF/XLP/XLU/XLI via ML-2 sector XGBoost models.
 
 ### Product & Deployment
-- [ ] **R10-10: Product Completeness (9.3 → 10)** — finish **FE-2** accessibility (WCAG 2.1 AA) and clear the remaining Pre-Launch items that gate user-visible flows (Telegram broadcast, SMTP digests, web push).
-- [ ] **R10-11: Frontend (8.8 → 10)** — **FE-2** accessibility + lift Architecture sub-score: typed API client, ≥1 golden-path **ACT-6** E2E green in CI, and a Lighthouse perf budget enforced on PRs.
-- [ ] **R10-12: Security Posture (8.0 → 10)** — rotate the **owner password** (Pre-Launch #1) out of source, enforce **HTTPS** (#2), move secrets to a vault/Railway secrets (not committed `.env`), and pass an external dependency + auth pen-test with no highs.
-- [ ] **R10-13: Deployment Readiness (7.7 → 10)** — clear Pre-Launch #2/#3/#5/#9 (HTTPS, Stripe webhook, SMTP, VAPID) + **DEPLOY-2** Sentry/UptimeRobot + **DEPLOY-3** automated DB backups; demonstrate a green **ACT-9** CI/CD deploy + a restore-from-backup drill.
+- [ ] **R10-10: Product Completeness (9.3 → 10)** — finish FE-2 accessibility (WCAG 2.1 AA) and clear Pre-Launch items gating user-visible flows.
+- [ ] **R10-11: Frontend (8.8 → 10)** — FE-2 accessibility + typed API client + ≥1 golden-path ACT-6 E2E green in CI + Lighthouse perf budget.
+- [ ] **R10-12: Security Posture (8.0 → 10)** — rotate owner password out of source, enforce HTTPS, move secrets to vault/Railway secrets, pass auth pen-test.
+- [ ] **R10-13: Deployment Readiness (7.7 → 10)** — clear Pre-Launch #2/#3/#5/#9 + DEPLOY-2 Sentry/UptimeRobot + DEPLOY-3 automated backups; green deploy + restore drill.
 
 ### Infrastructure & ML
-- [~] **R10-14: ML Methodology (8.9 → 10)** ⏳gated — deploy the live entry model at **N ≥ 300** (Pre-Launch #7) once AUC delta clears 0.005; **REF-6 meta-label feature hardening DONE (2026-06-10)** — all 15 features now flow from backtest to live (14 + §89 FF ST_Rev), but CV-AUC 0.4364 < 0.52 activation threshold → meta_prob disabled until N growth pushes AUC above gate; **ML-2** sector sub-models pending (≥200 sector-resolved signals); require champion/challenger shadow-win before promotion.
-- [~] **R10-17: Data Pipeline (8.3 → 10)** — dead `^TRIN`/`^NYAD`/`^BDI` fetches already removed; ETF-fundamentals fetch not present in current code. Remaining: prove health-scorecard + PIT feature store run a full week with 0 errors; add **§84** point-in-time data so the pipeline is survivorship-correct.
-- [~] **R10-18: Test Coverage (7.5 → 8.0, partial)** — **DONE (2026-06-08):** `tests/test_r10_hardening.py` (8 tests). **DONE (2026-06-10):** §69–§74 gate unit tests in `tests/test_gates_5982.py` (all passing) + SPRT monitor 12 tests + E2E framework installed. **Still open:** true end-to-end "scan persists against real Postgres" test; **TEST-4** mutation testing (>70%).
+- [~] **R10-14: ML Methodology (8.9 → 10)** ⏳gated — live entry model at N ≥ 300 once AUC delta clears 0.005; ML-2 sector sub-models pending; champion/challenger shadow-win required.
+- [~] **R10-17: Data Pipeline (8.3 → 10)** — dead fetches removed; remaining: 1-week zero-error health scorecard + PIT store + §84 PIT data.
+- [~] **R10-18: Test Coverage (7.5 → 8.0, partial)** — still open: true end-to-end Postgres test; TEST-4 mutation testing (>70%).
 
 ---
 
 ## 👁️ Known Issues
-Ongoing known issues or constraints.
 
-- **XLF/XLP/XLU/XLI blocked**: Hard blocks remain in place due to negative contribution. Sector-specific unblocking is now gated by an explicit QENG-1c promotion record (§117 infrastructure complete); training/promotion requires ≥100 resolved backtest trades per sector.
-- **Calibration recalibration post-A19**: Calibration v4 used pre-A19 data only. Needs recalibration once post-A19 resolved signals accrue.
+- **XLF/XLP/XLU/XLI blocked** — Hard blocks remain in place due to negative contribution. Sector-specific unblocking is now gated by an explicit QENG-1c promotion record (§117 infrastructure complete); training/promotion requires ≥100 resolved backtest trades per sector.
+- **Calibration recalibration post-A19** — Calibration v4 used pre-A19 data only. Needs recalibration once post-A19 resolved signals accrue.
 
 ---
 
 ## ✅ Completed Tasks Archive
+
+<details>
+<summary><b>v8.8.4 Sprint Close-out (2026-06-12)</b></summary>
+
+### Pre-Launch
+- **#1 Owner password** — fixed 2026-06-09 (32-char secure password; startup fails on `ChangeMe123!` in prod).
+- **#2 Deploy to public HTTPS URL** — public HTTPS served via Cloudflare Tunnel to `signaltrade.org` and `app.signaltrade.org`; `APP_URL=https://signaltrade.org` set and backend reloaded.
+- **#2a Verify DNS + tunnel** — Cloudflare authoritative NS and `1.1.1.1` resolve both domains; tunnel connector healthy; `/api/health/uptime` returns 200 via public URL.
+- **#9 VAPID web push** — keys generated via `py_vapid`, added to `.env`, `config.py` reads correctly.
+- **#10 Cloudflare CDN** — traffic proxies through Cloudflare (orange-clouded A/CNAME records); caching + DDoS + SSL active at edge.
+
+### Sprint SP1
+- **SP1-3 Sentry SDK wired** — `sentry-sdk[fastapi]` added, integrations initialized in `main.py`, `/api/health/sentry` endpoint added. Remaining: signup + DSN paste.
+- **SP1-4 Push to GitHub & verify CI** — pushed v8.8.4 to `main`; CI run passed ruff, pytest, 25% coverage floor, gitleaks, pip-audit, npm audit. Missing `dist/` bundles fixed by adding `npm install && npm run build`.
+- **SP1-6 Add Redis** — local `redis:7-alpine` container on `localhost:6379`, `REDIS_URL` set, LaunchAgent added; test isolation fixed.
+
+### Operational
+- **DEPLOY-2 Public health endpoint + local watchdog** — `GET /api/health/uptime` added; `scripts/watchdog.sh` + LaunchAgent alert if backend/tunnel agents die.
+- **DEPLOY-3 DB Backups (local)** — `scripts/backup_db.sh` with `sqlite3 .backup`; daily LaunchAgent keeps 7 days.
+- **DEPLOY-3a Log rotation** — `scripts/rotate_logs.sh` + LaunchAgent keeps 14 days compressed.
+- **OPS-1 Remove dead ^BDI fetch** — `_fetch_bdi()` returns `None` instead of hitting unavailable yfinance ticker.
+- **OPS-2 Frontend accessibility pass (partial)** — fixed missing button labels and one nested-interactive violation; 147 color-contrast items remain.
+- **OPS-3 Kill-switch endpoint tests** — added status/toggle/create/403 tests in `tests/test_routers_admin_unit.py`.
+- **ACT-9 Push to GitHub for CI/CD validation** — pushed; CI passed.
+
+### Research & Alpha
+- **§112 CBOE options IV history** — snapshot accumulation wired; validation gated on ≥252 nightly snapshots.
+- **§113 FINRA ATS dark-pool participation** — weekly `ats_ratio` merged with 2-week PIT lag; historical backfill blocked by endpoint.
+- **§114 SEC FTD panel** — backfilled to 2004 + velocity feature; ablated, no edge.
+- **§115 NAAIM/UMCSENT regime sizing** — backfilled + ablated, no edge.
+- **§116 Wikipedia pageviews attention spike** — backfilled + ablated, no edge at 4% coverage.
+- **§117 Sector-specific XGBoost promotion gate** — `services/sector_ml_promotion.py` SSoT; promotion requires `ModelRegistry` + `ResearchExperiment` record; training bar raised to ≥100 samples; tests pass.
+- **§118 Live realized-spread TCA feedback loop** — expected/realized slippage feeds `portfolio_allocator` sizing against 20 bps threshold.
+- **QENG-3d Execution policy simulator** — `services/execution_policy_simulator.py`, CLI script, and tests added.
+</details>
 
 <details>
 <summary><b>v8.6 Alt-Data Validation, Discovered-Issue Fixes & TCA Wiring (2026-06-11/12)</b></summary>

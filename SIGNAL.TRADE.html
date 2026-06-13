@@ -171,12 +171,10 @@
 
   .brand-row {
     display: flex; align-items: center; gap: 10px;
-    font-family: "JetBrains Mono", ui-monospace, monospace;
-    font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
     margin-bottom: 22px;
   }
-  .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981; }
-  .brand-row .v { font-weight: 400; color: #56617a; }
+  .brand-row img { height: 100px; width: auto; display: block; }
+  .brand-row .v { font-weight: 400; color: #56617a; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
 
   @media (max-width: 900px) {
     .hub { padding: 48px 24px; }
@@ -199,8 +197,7 @@
 
 <div class="hub">
   <div class="brand-row">
-    <span class="brand-dot"></span>
-    SIGNAL.TRADE
+    <img src="/logo-full.png" alt="Signal.Trade"/>
     <span class="v">v5.2 · Complete design</span>
   </div>
 

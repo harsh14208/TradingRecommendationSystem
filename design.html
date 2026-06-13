@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="icon" type="image/png" href="/favicon.png"/>
 <title>Signal.Trade — Design Preview</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="/mobile.css"/>
@@ -18,7 +19,8 @@
     padding:12px 24px; display:flex; align-items:center; gap:20px;
     font-family:'JetBrains Mono',monospace; font-size:12px; color:rgba(255,255,255,0.6);
   }
-  .design-nav .logo{ color:#10b981; font-weight:700; font-size:14px; margin-right:8px; }
+  .design-nav .logo{ margin-right:8px; display:inline-flex; align-items:center; }
+  .design-nav .logo img{ height:80px; width:auto; display:block; }
   .design-nav a{ color:rgba(255,255,255,0.4); text-decoration:none; font-size:11px; }
   .design-nav a:hover{ color:rgba(255,255,255,0.8); }
   .design-nav .hint{ margin-left:auto; font-size:10px; color:rgba(255,255,255,0.3); }
@@ -26,7 +28,7 @@
 </head>
 <body>
 <div class="design-nav">
-  <span class="logo">Signal.Trade</span>
+  <span class="logo"><img src="/logo-full.png" alt="Signal.Trade"/></span>
   <span>Design Preview · iOS 26 Liquid Glass</span>
   <a href="/">Landing</a>
   <a href="/app">Dashboard</a>

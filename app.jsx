@@ -45,7 +45,7 @@ function KillSwitch({ currentUser }) {
         borderRadius:5, color: paused ? "var(--up)" : "var(--down)", fontFamily:"var(--font-mono)", fontSize:10,
         fontWeight:600, letterSpacing:"0.06em", cursor:"pointer", whiteSpace:"nowrap", opacity: loading ? 0.5 : 1 }}>
       <span style={{ width:7, height:7, borderRadius:"50%", background: paused ? "var(--up)" : "var(--down)", boxShadow: `0 0 6px ${paused ? "var(--up)" : "var(--down)"}` }}/>
-      {paused ? "RESUME AUTO-EXEC" : "KILL SWITCH"}
+      <span className="btn-text">{paused ? "RESUME AUTO-EXEC" : "KILL SWITCH"}</span>
     </button>
   );
 }
@@ -367,6 +367,37 @@ function App() {
   // Reset detail tab when active signal changes so each signal opens fresh at "Why".
   useEffect(() => { setDetailTab("why"); }, [activeId]);
 
+  /* ── Mobile horizontal panel paging ─────────────────────────────────────── */
+  const mainRef = useRef(null);
+  const [panelIdx, setPanelIdx] = useState(0);
+  const panelCount = 2 + (active ? 1 : 0); // feed + detail + delivery
+
+  // Keep the active dot in sync with swipe scrolling.
+  useEffect(() => {
+    const m = mainRef.current;
+    if (!m) return;
+    const onScroll = () => {
+      const idx = Math.min(panelCount - 1, Math.max(0, Math.round(m.scrollLeft / Math.max(1, m.clientWidth))));
+      setPanelIdx(idx);
+    };
+    m.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => m.removeEventListener('scroll', onScroll);
+  }, [panelCount]);
+
+  // Clamp the current index if the number of panels changes (e.g. no active signal).
+  useEffect(() => {
+    setPanelIdx(prev => Math.min(prev, panelCount - 1));
+  }, [panelCount]);
+
+  const scrollToPanel = (idx) => {
+    const m = mainRef.current;
+    if (!m) return;
+    const target = Math.max(0, Math.min(idx, panelCount - 1));
+    m.scrollTo({ left: m.clientWidth * target, behavior: 'smooth' });
+    setPanelIdx(target);
+  };
+
   /* Keyboard shortcuts: ⌘K, d, p, s, ?, Esc, ⌘\, 1-4 */
   useEffect(() => {
     const handler = e => {
@@ -676,8 +707,7 @@ function App() {
       {/* ── Top bar ── */}
       <div className="topbar">
         <div className="brand">
-          <div className="dot"/>
-          SIGNAL.TRADE
+          <img src="/logo-full.png" alt="Signal.Trade" style={{ height: 95, width: "auto" }}/>
           <span className="faint mono" style={{ fontWeight:400, marginLeft:8, fontSize:10 }}>v5.2</span>
         </div>
         <div className="search" onClick={() => searchRef.current?.focus()} style={{ cursor:"text" }}>
@@ -765,7 +795,7 @@ function App() {
               <polyline points="16 17 21 12 16 7"/>
               <line x1="21" y1="12" x2="9" y2="12"/>
             </svg>
-            Sign out
+            <span className="btn-text">Sign out</span>
           </button>
           <button
             className="user-avatar"
@@ -964,7 +994,7 @@ function App() {
       </div>
 
       {/* ── Main ── */}
-      <div className="main">
+      <div className="main" ref={mainRef}>
         {/* Feed pane */}
         <div className="pane">
           {/* Slim ad banner for free-tier users — above the feed header */}
@@ -1042,7 +1072,13 @@ function App() {
                   expanded={s.id === expandedId}
                   onToggle={() => { setActiveId(s.id); setExpandedId(expandedId === s.id ? null : s.id); }}
                   onOpen={() => setActiveId(s.id)}
-                  onFullDetail={() => { setActiveId(s.id); setDetailTab("simulate"); }}
+                  onFullDetail={() => {
+                    setActiveId(s.id);
+                    setDetailTab("simulate");
+                    if (window.innerWidth <= 768) {
+                      setTimeout(() => scrollToPanel(1), 0);
+                    }
+                  }}
                   onSend={() => sendToTelegram(s.id)}
                   onSkip={() => skipSignal(s.id)}
                   outcomeByTicker={outcomeByTicker}
@@ -1597,6 +1633,34 @@ function App() {
         <PricingView open={pricingOpen} onClose={() => setPricingOpen(false)} user={currentUser}/>
         <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} user={currentUser} setUser={setCurrentUser} onUpgrade={() => { setAccountOpen(false); setPricingOpen(true); }}/>
         <PriceAlertModal open={alertOpen} onClose={() => setAlertOpen(false)} ticker={active?.ticker} currentPrice={active?.price}/>
+
+        {/* Mobile delivery-log overlay */}
+        <div className={`overlay ${nav==="delivery"?"open":""}`}>
+          <TelegramPane log={log} online={online} onOpenAccount={() => setAccountOpen(true)} onClose={() => setNav("feed")}/>
+        </div>
+      </div>
+
+      {/* ── Mobile panel pager (hidden on desktop) ── */}
+      <div className="mobile-pager" aria-label="Panel navigation">
+        <button
+          className="pager-arrow"
+          aria-label="Previous panel"
+          disabled={panelIdx <= 0}
+          onClick={() => scrollToPanel(panelIdx - 1)}>
+          {'‹'}
+        </button>
+        <div className="pager-dots" aria-hidden="true">
+          {Array.from({ length: panelCount }).map((_, i) => (
+            <span key={i} className={`pager-dot${i === panelIdx ? ' active' : ''}`}/>
+          ))}
+        </div>
+        <button
+          className="pager-arrow"
+          aria-label="Next panel"
+          disabled={panelIdx >= panelCount - 1}
+          onClick={() => scrollToPanel(panelIdx + 1)}>
+          {'›'}
+        </button>
       </div>
 
       {/* ── Mobile bottom navigation bar (hidden on desktop via CSS) ── */}
@@ -1606,6 +1670,7 @@ function App() {
           ["history","clock","History"],
           ["backtest","bar-chart","Backtest"],
           ["watchlist","eye","Watchlist"],
+          ["delivery","send","Delivery"],
           ["overview","globe","Market"],
         ].map(([id, icon, label]) => (
           <div key={id} className={`mobile-nav-item${nav===id?" active":""}`} onClick={() => setNav(id)} role="button" tabIndex={0}>

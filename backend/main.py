@@ -114,9 +114,11 @@ os.environ.setdefault("CURL_CA_BUNDLE", certifi.where())
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
@@ -1645,6 +1647,25 @@ app = FastAPI(title="Signal.Trade API", version="1.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+# ── HTTPS redirect middleware ─────────────────────────────────────────────────
+# Cloudflare Tunnel forwards traffic to localhost:8000 over HTTP. When a visitor
+# hits http://signaltrade.org, Cloudflare currently serves the origin response
+# without redirecting. This middleware catches X-Forwarded-Proto: http on a
+# production APP_URL and sends a 301 to HTTPS. It is a fallback/safety net; the
+# primary fix is enabling "Always Use HTTPS" in the Cloudflare dashboard.
+class HttpsRedirectMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        # Only redirect in production (APP_URL is HTTPS). Local dev and tests
+        # using http://localhost must not be redirected.
+        if get_settings().app_url.startswith("https://") and request.headers.get("x-forwarded-proto") == "http":
+            url = request.url.replace(scheme="https")
+            return RedirectResponse(str(url), status_code=301)
+        return await call_next(request)
+
+
+app.add_middleware(HttpsRedirectMiddleware)
+
 _cors_origin = get_settings().app_url.rstrip("/")
 _allowed_origins = (
     ["*"] if _cors_origin.startswith("http://localhost") or _cors_origin.startswith("http://127.") else [_cors_origin]
@@ -1656,11 +1677,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ── No-cache middleware for JSX/JS so browsers always get the latest code ────
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request as StarletteRequest
-
-
 class CacheMiddleware(BaseHTTPMiddleware):
     """
     CDN-aware cache control:

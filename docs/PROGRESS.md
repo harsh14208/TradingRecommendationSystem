@@ -444,10 +444,10 @@ RSI removed from MR gate (non-binding). MR weight 0.50→0.70 (optimal, 105-tick
 | 2 | **Confidence gap +11pp** — model systematically overconfident | High | ✅ Calibration tightened (blend 0.97, N_FULL 15). Monitoring next training run. |
 | 3 | **Sector model gaps** — XLF/XLP/XLU blocked (PF < 0.40x) | High | 🔄 Blocked until sector-specific sub-models retrained |
 | 4 | **Intraday recalibration** — 34.8% WR, PF 0.73x | Medium | 🔄 Restored at ≥68% conf floor; quality improvement in progress |
-| 5 | **Hardcoded owner password** | Critical | ❌ `OWNER_PASSWORD=ChangeMe123!` still in source |
+| 5 | **Hardcoded owner password** | Critical | ✅ Fixed 2026-06-09 — `.env` has 32-char secure password; startup fails on `ChangeMe123!` in production. |
 | 6 | **Monolithic `run_scan`** | Medium | 🔄 Delivery gates extracted; full scanner decomposition pending |
 | 7 | **Chart drawing tools** | High | ❌ Not yet implemented |
-| 8 | **Autonomous execution** | Critical | ❌ OAuth broker integration not started |
+| 8 | **Autonomous execution** | Critical | 🔄 Alpaca + IBKR integration implemented; auto-execute gated on live WR > 55% and LIVE-1→LIVE-8 checklist |
 
 ---
 

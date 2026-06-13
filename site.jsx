@@ -55,8 +55,7 @@ const W_FAQS = [
 function Logo({ size = 13 }) {
   return (
     <span className="brand">
-      <span className="dot"/>
-      <span style={{ fontSize: size }}>SIGNAL.TRADE</span>
+      <img src="/logo-full.png" alt="Signal.Trade" className="brand-logo-img" style={{ height: size + 87 }}/>
       <span className="v" style={{ fontSize: size - 2 }}>v5.2</span>
     </span>
   );

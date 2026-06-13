@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response
 
 
 @pytest.fixture(scope="module")
@@ -211,3 +213,87 @@ def test_static_js_file(client):
     resp = client.get("/dist/app-bundle.js")
     assert resp.status_code == 200
     assert "javascript" in resp.headers.get("content-type", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_https_redirect_middleware_redirects_http_in_prod():
+    """HTTP requests forwarded by Cloudflare (X-Forwarded-Proto: http) are 301'd to HTTPS."""
+    from main import HttpsRedirectMiddleware
+
+    async def call_next(request):
+        return Response("ok")
+
+    middleware = HttpsRedirectMiddleware(app=None)
+    prod_settings = MagicMock()
+    prod_settings.app_url = "https://signaltrade.org"
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "scheme": "http",
+        "server": ("signaltrade.org", 80),
+        "path": "/",
+        "headers": [(b"x-forwarded-proto", b"http")],
+    }
+    request = StarletteRequest(scope)
+    with patch("main.get_settings", return_value=prod_settings):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 301
+    assert response.headers["location"] == "https://signaltrade.org/"
+
+
+@pytest.mark.asyncio
+async def test_https_redirect_middleware_no_redirect_for_https():
+    """HTTPS requests (X-Forwarded-Proto: https) are served normally."""
+    from main import HttpsRedirectMiddleware
+
+    async def call_next(request):
+        return Response("ok")
+
+    middleware = HttpsRedirectMiddleware(app=None)
+    prod_settings = MagicMock()
+    prod_settings.app_url = "https://signaltrade.org"
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "scheme": "https",
+        "server": ("signaltrade.org", 443),
+        "path": "/app",
+        "headers": [(b"x-forwarded-proto", b"https")],
+    }
+    request = StarletteRequest(scope)
+    with patch("main.get_settings", return_value=prod_settings):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    assert response.body == b"ok"
+
+
+@pytest.mark.asyncio
+async def test_https_redirect_middleware_no_redirect_in_local_dev():
+    """Local dev (APP_URL=http://localhost:8000) must not redirect HTTP requests."""
+    from main import HttpsRedirectMiddleware
+
+    async def call_next(request):
+        return Response("ok")
+
+    middleware = HttpsRedirectMiddleware(app=None)
+    local_settings = MagicMock()
+    local_settings.app_url = "http://localhost:8000"
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "scheme": "http",
+        "server": ("localhost", 8000),
+        "path": "/",
+        "headers": [(b"x-forwarded-proto", b"http")],
+    }
+    request = StarletteRequest(scope)
+    with patch("main.get_settings", return_value=local_settings):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    assert response.body == b"ok"
