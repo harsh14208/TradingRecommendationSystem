@@ -180,6 +180,24 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 - **QENG-3d Execution policy simulator** — `services/execution_policy_simulator.py`, CLI script, and tests added.
 </details>
 
+<details open>
+<summary><b>v8.8.5 UI Scaling & Mobile Panel Navigation (2026-06-12)</b></summary>
+
+### Dashboard UX
+- **Desktop scaling fix** — removed the `zoom:0.8` + `125vw/125vh` block from `styles.css` that was clipping the right edge; added `styles-desktop.css` with real 0.8× token/spacing overrides gated to `min-width: 769px`.
+- **Mobile horizontal panels** — `styles.css` turns `.main` into a scroll-snap carousel on `≤768px` (Feed → Detail → Delivery); each `.pane` is `flex: 0 0 100%`.
+- **Mobile pager** — added a bottom arrow/dot pager in `app.jsx` + `styles.css`; arrows and swipe both navigate; dots stay in sync with scroll.
+- **Missing mobile nav icons** — added `bar-chart`, `eye`, and `globe` SVGs to the `Icon` component so Backtest, Watchlist, and Market show logos.
+- **Responsive detail pane** — pane headers, detail rows, tabs, chart headers, similar-grid, and MC stats now wrap/stack on phones so content is no longer cut off.
+- **Responsive topbar** — constrained dashboard logo to `28px` and hid text labels on Kill Switch / Sign-out buttons on mobile.
+- **Full-detail jump** — clicking **Full detail** on a mobile signal card now scrolls the carousel to the center (detail) panel.
+- **Asset cleanup** — resized `logo-full.png` and `logo-icon.png` to stay under the pre-commit 500 KB file-size limit.
+
+### Verification
+- `npm run build` succeeded (`dist/app-bundle.js` rebuilt).
+- Backend non-E2E tests: **2550 passed, 18 skipped**.
+</details>
+
 <details>
 <summary><b>v8.6 Alt-Data Validation, Discovered-Issue Fixes & TCA Wiring (2026-06-11/12)</b></summary>
 
