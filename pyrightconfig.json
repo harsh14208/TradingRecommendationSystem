@@ -1,0 +1,24 @@
+{
+  "include": ["backend", "src"],
+  "exclude": [
+    "**/venv",
+    "**/.venv*",
+    "**/mutants",
+    "**/node_modules",
+    "**/.mcp",
+    "**/.serena",
+    "**/.pytest_cache",
+    "**/.ruff_cache",
+    "**/__pycache__",
+    "**/dist",
+    "**/data"
+  ],
+  "ignore": [],
+  "stubPath": "",
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Darwin",
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false
+}
