@@ -14,6 +14,24 @@ from sqlalchemy import select
 from models import FeatureSnapshot, Instrument
 
 
+def _safe_float(value) -> Optional[float]:
+    """Coerce a feature value to a finite float, or None.
+
+    Hot-scalar columns are populated straight from the (provider-supplied)
+    feature dict. A stray string ("N/A"), None, or non-finite value would make
+    a bare ``float(...)`` raise and abort the whole snapshot insert — the same
+    persist-error class that NaN/Inf caused before ``_json_safe``. Null the
+    column instead of crashing the scan.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
 def _json_safe(value):
     """Recursively replace non-finite floats (NaN/Inf) with None.
 
@@ -68,26 +86,32 @@ async def save_feature_snapshot(
     features_json = json.dumps(features, sort_keys=True)
     vector_hash = hashlib.sha256(features_json.encode("utf-8")).hexdigest()
 
-    # Extract hot scalars for indexing if present
+    # Extract hot scalars for indexing if present. _safe_float guarantees a
+    # finite float or None so a malformed provider value can never abort the
+    # snapshot insert (and with it the whole scan persist step).
     rsi = features.get("rsi")
     bb_pct_b = features.get("bb_pct_b")
     ibs = features.get("ibs")
     vwap_pct = features.get("vwap_pct")
-    atr_pct = features.get("atr_pct") or features.get("atr_pct_rank")
+    atr_pct = features.get("atr_pct")
+    if atr_pct is None:
+        atr_pct = features.get("atr_pct_rank")
     zscore = features.get("zscore")
-    quality_score = features.get("quality_score") or features.get("qualityScore")
+    quality_score = features.get("quality_score")
+    if quality_score is None:
+        quality_score = features.get("qualityScore")
 
     snapshot = FeatureSnapshot(
         instrument_id=inst.id,
         signal_id=signal_id,
         ts=ts,  # observation time
-        rsi=float(rsi) if rsi is not None else None,
-        bb_pct_b=float(bb_pct_b) if bb_pct_b is not None else None,
-        ibs=float(ibs) if ibs is not None else None,
-        vwap_pct=float(vwap_pct) if vwap_pct is not None else None,
-        atr_pct=float(atr_pct) if atr_pct is not None else None,
-        zscore=float(zscore) if zscore is not None else None,
-        quality_score=float(quality_score) if quality_score is not None else None,
+        rsi=_safe_float(rsi),
+        bb_pct_b=_safe_float(bb_pct_b),
+        ibs=_safe_float(ibs),
+        vwap_pct=_safe_float(vwap_pct),
+        atr_pct=_safe_float(atr_pct),
+        zscore=_safe_float(zscore),
+        quality_score=_safe_float(quality_score),
         features=features,
         effective_time=effective_time or datetime.now(),
         provider_timestamp=provider_timestamp or ts,

@@ -112,6 +112,54 @@ async def test_replay_engine_run():
 
 
 @pytest.mark.asyncio
+async def test_drift_detector_flags_decision_drift():
+    """REF-2: detect_drift returns a structured result and flags a signal whose
+    replayed delivery decision disagrees with the live ``is_sent`` outcome,
+    while a signal that replays identically is counted as matched. A signal
+    with no FeatureSnapshot is counted as ``no_snapshot`` (skipped, not drift)."""
+    from unittest.mock import AsyncMock, patch
+
+    from models import Signal
+    from scripts.drift_detector import detect_drift
+
+    async def _fake_gates(sig_dict, db, settings):
+        # The DRIFT ticker is "blocked" on replay; everything else passes.
+        if sig_dict["ticker"] == "DRIFTX":
+            return "blocked_sector_test", sig_dict
+        return None, sig_dict
+
+    async with AsyncSessionLocal() as db:
+        # MATCH: live sent, replay passes → no drift
+        s_ok = Signal(ticker="MATCHX", action="BUY", confidence=55.0, price=100.0, headline="ok", is_sent=True)
+        # DRIFT: live sent, replay blocks → decision discrepancy
+        s_drift = Signal(ticker="DRIFTX", action="BUY", confidence=55.0, price=100.0, headline="drift", is_sent=True)
+        # NO-SNAPSHOT: no FeatureSnapshot attached → cannot verify
+        s_nosnap = Signal(ticker="NOSNAPX", action="BUY", confidence=55.0, price=100.0, headline="x", is_sent=True)
+        db.add_all([s_ok, s_drift, s_nosnap])
+        await db.flush()
+
+        for sig in (s_ok, s_drift):
+            await save_feature_snapshot(
+                db=db,
+                ticker=sig.ticker,
+                ts=datetime.utcnow(),
+                features={"rsi": 38.0, "bb_pct_b": 0.18, "quality_score": 55.0, "hasMr": True},
+                signal_id=sig.id,
+            )
+        await db.commit()
+
+        with patch("scripts.drift_detector.check_delivery_gates", AsyncMock(side_effect=_fake_gates)):
+            result = await detect_drift(lookback_days=7, db=db, verbose=False)
+
+    drift_tickers = {d["ticker"] for d in result["discrepancies"]}
+    assert "DRIFTX" in drift_tickers
+    assert "MATCHX" not in drift_tickers
+    assert result["drifts"] >= 1
+    assert result["matched"] >= 1
+    assert result["no_snapshot"] >= 1  # NOSNAPX had no snapshot
+
+
+@pytest.mark.asyncio
 async def test_promote_model_checklist():
     """Test model promotion script against registry and checklist requirements."""
 

@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.feature_store import _json_safe, save_feature_snapshot
+from services.feature_store import _json_safe, _safe_float, save_feature_snapshot
 
 
 # ── Bug #1: NaN/Inf → json column ──────────────────────────────────────────
@@ -100,6 +100,57 @@ async def test_save_feature_snapshot_sanitizes_nan_before_storage():
     import math
 
     assert math.isnan(features["rsi"])
+
+
+# ── R10-5: hot-scalar extraction must never raise on a malformed value ──────
+
+
+def test_safe_float_coerces_or_nulls():
+    assert _safe_float(1.5) == 1.5
+    assert _safe_float("2.5") == 2.5  # numeric string coerced
+    assert _safe_float(3) == 3.0
+    # anything non-numeric / non-finite / None → None, never an exception
+    assert _safe_float(None) is None
+    assert _safe_float("N/A") is None
+    assert _safe_float("") is None
+    assert _safe_float(float("nan")) is None
+    assert _safe_float(float("inf")) is None
+    assert _safe_float([1, 2]) is None
+    assert _safe_float({"a": 1}) is None
+
+
+@pytest.mark.asyncio
+async def test_save_feature_snapshot_tolerates_malformed_hot_scalars():
+    """A provider value like "N/A" in a hot-scalar slot must null the indexed
+    column rather than raise ``ValueError`` and abort the whole snapshot —
+    the PIT feature-store persist-error class targeted by R10-5."""
+    inst = MagicMock()
+    inst.id = 11
+
+    res = MagicMock()
+    res.scalar_one_or_none.return_value = inst
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=res)
+    db.flush = AsyncMock()
+    db.add = MagicMock()
+
+    features = {
+        "rsi": "N/A",  # malformed string
+        "bb_pct_b": None,
+        "ibs": 0.0,  # falsy-but-valid: must survive as 0.0, not be dropped
+        "vwap_pct": "-0.8",  # numeric string
+        "atr_pct": float("inf"),  # non-finite (already nulled by _json_safe)
+        "quality_score": 0.0,  # falsy-but-valid; no fallthrough to qualityScore
+    }
+    snap = await save_feature_snapshot(db=db, ticker="MSFT", ts=datetime.utcnow(), features=features)
+
+    assert snap.rsi is None  # "N/A" nulled, did not raise
+    assert snap.bb_pct_b is None
+    assert snap.ibs == 0.0  # falsy zero preserved
+    assert snap.vwap_pct == -0.8  # numeric string coerced
+    assert snap.atr_pct is None
+    assert snap.quality_score == 0.0  # falsy zero preserved
 
 
 # ── Bug #2: duplicate scorecard rows → MultipleResultsFound ─────────────────

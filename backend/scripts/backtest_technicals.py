@@ -3242,10 +3242,13 @@ def simulate_ticker(
                 "sector_momentum": (
                     round(float(sector_momentum_map.get(TICKER_TO_SECTOR.get(ticker, "XLK"), {}).get(_date_key)), 4)
                     if sector_momentum_map
+                    and sector_momentum_map.get(TICKER_TO_SECTOR.get(ticker, "XLK"), {}).get(_date_key) is not None
                     else None
                 ),
                 "vix_9d_ratio": (_compute_vix_9d_ratio(vix, _date_key) if vix else None),
-                "ff_str": (round(float(ff_str.get(_date_key)), 4) if ff_str else None),
+                "ff_str": (
+                    round(float(ff_str.get(_date_key)), 4) if ff_str and ff_str.get(_date_key) is not None else None
+                ),
                 "si_rising": (si_rising_map.get(ticker, {}).get(_date_key) if si_rising_map else None),
                 # ── §104–§110: Alt-data features at entry ────────────────────────
                 "sv_ratio": (

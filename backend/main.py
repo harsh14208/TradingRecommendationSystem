@@ -716,6 +716,47 @@ async def _weekly_ml_retrain():
             log.warning(f"[ml] retrain failed: {e}")
 
 
+async def _weekly_drift_detection():
+    """REF-2: replay-parity drift check Sunday 11:30am ET — runs after ML retrain.
+
+    Replays the last 7 days of live signals through the delivery gates using
+    their point-in-time feature snapshots and flags any decision/confidence
+    drift. A non-zero drift count is logged at ERROR level so it surfaces in
+    Sentry / the admin readiness view.
+    """
+    ET = pytz.timezone("America/New_York")
+    await asyncio.sleep(5400)  # offset: start checking 1.5h after boot
+    while True:
+        now_et = datetime.now(ET)
+        days_until_sunday = (6 - now_et.weekday()) % 7
+        if days_until_sunday == 0 and (now_et.hour > 11 or (now_et.hour == 11 and now_et.minute >= 30)):
+            days_until_sunday = 7
+        next_run = now_et.replace(hour=11, minute=30, second=0, microsecond=0)
+        next_run = next_run + timedelta(days=days_until_sunday)
+        await asyncio.sleep((next_run - now_et).total_seconds())
+        try:
+            from scripts.drift_detector import detect_drift
+
+            result = await detect_drift(lookback_days=7, verbose=False)
+            if result["drifts"]:
+                log.error(
+                    "[drift] REF-2 replay-parity drift: %d/%d signals drifted (%d no-snapshot). First: %s",
+                    result["drifts"],
+                    result["checked"],
+                    result["no_snapshot"],
+                    (result["discrepancies"][0]["description"] if result["discrepancies"] else "?"),
+                )
+            else:
+                log.info(
+                    "[drift] REF-2 replay-parity OK: %d checked, %d matched, %d no-snapshot.",
+                    result["checked"],
+                    result["matched"],
+                    result["no_snapshot"],
+                )
+        except Exception as e:
+            log.warning(f"[drift] REF-2 drift detection failed: {e}")
+
+
 async def _weekly_factor_mining():
     """Re-mine factor weights every Sunday after the weekly digest runs."""
     ET = pytz.timezone("America/New_York")
@@ -1277,6 +1318,7 @@ async def _ensure_owner_account():
             full_name="Owner",
             is_owner=True,
             is_active=True,
+            email_verified=True,
             subscription_tier="pro",
             subscription_status="active",
             telegram_chat_id=s.telegram_chat_id or None,
@@ -1609,6 +1651,7 @@ async def lifespan(app: FastAPI):
     _supervise("weekly_digest", _weekly_digest, restart=True)
     _supervise("weekly_factor_mining", _weekly_factor_mining, restart=True)
     _supervise("weekly_ml_retrain", _weekly_ml_retrain, restart=True)
+    _supervise("weekly_drift_detection", _weekly_drift_detection, restart=True)
     _supervise("nightly_signal_cleanup", _nightly_signal_cleanup, restart=True)
     _supervise("nightly_stripe_reconciliation", _nightly_stripe_reconciliation, restart=True)
     _supervise("nightly_outcome_resolution", _nightly_outcome_resolution, restart=True)

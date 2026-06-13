@@ -9,6 +9,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # R10-18: a real PostgreSQL service so the true-E2E test in
+    # tests/test_postgres_e2e.py actually runs (it auto-skips when
+    # TEST_POSTGRES_URL is unset). The rest of the suite still uses SQLite
+    # via the DISC-5 guard / conftest — this URL is read only by that test.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/postgres
     defaults:
       run:
         working-directory: backend
