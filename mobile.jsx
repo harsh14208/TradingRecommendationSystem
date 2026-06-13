@@ -487,11 +487,11 @@ function OnboardScreen({ onLogin, onSignup }) {
           Quant signals.<br/><span style={{ color:"var(--accent)" }}>Plain English.</span>
         </div>
         <div style={{ marginTop:18, fontSize:14, color:"var(--text-dim)", lineHeight:1.5 }}>
-          65+ signal blocks — Polygon.io primary data, dark pool prints, 13F institutional flow, Macro HMM — fused into one confidence score (max 84%) and pushed to Telegram.
+          Dozens of signals across technical, options, institutional, and macro data — fused into one calibrated confidence score and pushed to Telegram.
         </div>
         <div style={{ flex:1 }}/>
         <div style={{ display:"grid", gap:10, marginBottom:14, textAlign:"left" }}>
-          {[["📊","65+ signal blocks, Polygon.io primary"],["🎯","Entry, stop & target on every BUY/SELL"],["📱","Telegram + Discord + Web Push, your hours"]].map((f, i) => (
+          {[["📊","Multi-factor market signals"],["🎯","Entry, stop & target on every BUY/SELL"],["📱","Telegram + Web Push, your hours"]].map((f, i) => (
             <div key={i} style={{ display:"flex", gap:12, alignItems:"center", padding:"12px 14px", background:"var(--bg-2)", borderRadius:12, border:"1px solid var(--line)" }}>
               <span style={{ fontSize:18 }}>{f[0]}</span>
               <span style={{ fontSize:13, color:"var(--text)" }}>{f[1]}</span>
@@ -704,7 +704,7 @@ function NotifScreen({ notifs = NOTIFS_MOCK }) {
 function PaywallScreen({ onClose }) {
   const tiers = [
     { name:"Free",   price:"$0",     per:"/forever", fav:false, current:true,  cta:"Current plan",    desc:"5 signals/day, 1h delay, top tickers only" },
-    { name:"Basic",  price:"$29",   per:"/month",   fav:true,  current:false, cta:"Start 7-day trial", desc:"Unlimited live signals, Telegram + Discord + Web Push, backtest, Excel export" },
+    { name:"Basic",  price:"$29",   per:"/month",   fav:true,  current:false, cta:"Start 7-day trial", desc:"Unlimited live signals, Telegram + Web Push, backtest, Excel export" },
     { name:"Pro",    price:"$79",   per:"/month",   fav:false, current:false, cta:"Upgrade to Pro",  desc:"Everything in Basic + paper trading, volatility targeting, correlation matrix, weekly digest" },
   ];
   return (

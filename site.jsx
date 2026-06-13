@@ -28,23 +28,24 @@ const W_SIGNALS = [
 ];
 
 const W_FEATURES = [
-  { ico: "📊", t: "13F Institutional Flow",      d: "Tracks Berkshire, Pershing, Tiger and 12 more — fires when they buy or add. Quarterly + Form 4 insider clusters." },
-  { ico: "🐋", t: "Unusual Options Sweeps",      d: "Volume >5× OI, OTM spikes, IV term structure across 3 expiries. GEX computed daily." },
-  { ico: "📰", t: "Polygon.io News + Analyst",   d: "Polygon primary news (<5min latency), Finnhub real-time, analyst upgrades, price target changes." },
-  { ico: "📄", t: "SEC Form 4 Insider Trades",   d: "Cluster buys flagged within 30 days. EDGAR XBRL parsing for 15 top hedge funds." },
-  { ico: "📈", t: "65+ Technical Signal Blocks", d: "RSI weekly/daily, MACD, EMA(200), Bollinger, ADX, Ichimoku, Supertrend, Hurst, FDI, Z-score and more." },
-  { ico: "🌐", t: "Macro Regime (HMM)",          d: "2-state Gaussian HMM on VIX, SPY return, yield curve, realised vol — replaces static VIX thresholds." },
-  { ico: "🔮", t: "Bayesian Calibration",        d: "Platt scaling blends raw score toward empirical win rate. Max confidence capped at 84% to prevent overconfidence." },
-  { ico: "🦈", t: "Dark Pool Block Trades",      d: "Live FINRA TRF prints via Massive WebSocket. Lee-Ready tick rule infers direction. Block threshold: $250K+." },
-  { ico: "🏭", t: "Supply Chain Alt Data",       d: "Baltic Dry Index, Brent crude momentum, Cass Freight — sector impact map for 20+ watchlist tickers." },
-  { ico: "📱", t: "Telegram + Discord + Push",   d: "Per-subscriber fan-out, Discord webhooks, Web Push (VAPID). Plain-English rationale + full disclaimer." },
-  { ico: "⚖️", t: "Polygon Financial Ratios",   d: "FCF yield, gross/net margin, debt/equity from SEC filings via Polygon vX. Dividend Aristocrat streak bonus." },
-  { ico: "🔗", t: "Related Company Peer Check", d: "Polygon co-occurrence peers (NVDA→AMD/INTC/TSM) confirm BUY signals. More precise than GICS sector groups." },
+  { ico: "📊", t: "Institutional Flow",     d: "Tracks large-fund holdings and insider clusters to detect accumulation or distribution." },
+  { ico: "🐋", t: "Options Flow",           d: "Unusual volume, OTM spikes, and gamma-exposure signals across multiple expiries." },
+  { ico: "📰", t: "News & Analyst",         d: "Real-time news, analyst upgrades, and price target changes from premium data feeds." },
+  { ico: "📄", t: "Insider Activity",       d: "Cluster buys and selling pressure flagged from SEC insider filings." },
+  { ico: "📈", t: "Technical Analysis",     d: "Multi-timeframe momentum, trend, volatility, and mean-reversion indicators." },
+  { ico: "🌐", t: "Macro Regime",           d: "Market regime detection using volatility, trend, and yield-curve context instead of static thresholds." },
+  { ico: "🔮", t: "Confidence Calibration", d: "Calibrated confidence score capped to prevent overconfidence and keep expectations realistic." },
+  { ico: "🦈", t: "Dark Pool Flow",         d: "Large off-exchange block prints and inferred directional flow." },
+  { ico: "🏭", t: "Macro & Supply Signals", d: "Freight, energy, and macro indicators mapped to watchlist sectors." },
+  { ico: "📱", t: "Telegram + Web Push",    d: "Instant delivery via Telegram and browser push notifications with plain-English rationale + full disclaimer." },
+  { ico: "⚖️", t: "Fundamental Ratios",     d: "Free cash flow yield, margins, debt/equity, and dividend quality from SEC filings." },
+  { ico: "🔗", t: "Peer Confirmation",      d: "Related-company peer confirmation for stronger, more precise signals." },
 ];
 
 const W_FAQS = [
   { q: "Is this financial advice?", a: "No. Every signal is published with a full disclaimer — for educational and informational purposes only. Past performance does not predict future results. Trade at your own risk; consult a licensed advisor." },
-  { q: "How fresh is the data?", a: "Polygon.io is the primary OHLCV + news source (<5min news latency). Live dark pool prints via Massive WebSocket. Scan cycle runs every 60 seconds. SEC 13F filings cached 6 hours. Free-tier rate limits respected; circuit breaker protects against yfinance 429 bans." },
+  { q: "How fresh is the data?", a: "Market data is refreshed every 60 seconds. News and filings are cached briefly. Circuit breakers protect against upstream rate limits so alerts stay reliable." },
+  { q: "How are signals delivered?", a: "Signals are sent instantly via Telegram and browser push notifications. You choose your active days and delivery window." },
   { q: "Can I cancel anytime?", a: "Yes. Stripe Billing Portal — one click, no questions. Service runs through end of billing period." },
   { q: "Why Telegram, not email?", a: "Telegram has a free, robust Bot API. Delivers in < 2 seconds. Same instant push, lighter infrastructure, no SMTP headaches." },
   { q: "Do I need to babysit the alerts?", a: "No. Set delivery window (e.g. 09:30–16:00 ET) + active days. Confidence threshold suppresses noise. Quiet hours block off-hours sends." },
@@ -123,9 +124,9 @@ function Hero({ go, stats }) {
     <section className="hero">
       <div className="hero-grid">
         <div>
-          <div className="eyebrow"><span className="pulse"/>NEW · POLYGON.IO PRIMARY · MACRO HMM · DARK POOL RECONSTRUCTION</div>
+          <div className="eyebrow"><span className="pulse"/>LIVE SIGNAL ENGINE</div>
           <h1 className="headline">Your personal <em>quant desk</em>, beamed straight to Telegram.</h1>
-          <p className="sub">65+ independent signal blocks, institutional 13F flow, dark pool block prints, options sweeps, and a Markov macro regime model — all fused into one confidence score, capped at 84% to prevent overconfidence.</p>
+          <p className="sub">Dozens of independent signals, institutional flow, options activity, dark-pool prints and macro context — all fused into one calibrated confidence score and capped to prevent overconfidence.</p>
           <div className="hero-actions">
             <button className="btn primary lg" onClick={() => go("signup")}>Start 7-day free trial</button>
             <button className="btn lg" onClick={() => go("track")}>See live track record →</button>
@@ -133,7 +134,7 @@ function Hero({ go, stats }) {
           <div className="hero-meta">
             <span><strong className="b">{n ?? "—"}</strong> signals tracked</span>
             <span><strong className="b">{wr != null ? wr.toFixed(1)+"%" : "—"}</strong> win rate</span>
-            <span><strong className="b">65+</strong> signal blocks</span>
+            <span><strong className="b">Multi-factor</strong> model</span>
             <span><strong className="b">164</strong> watchlist tickers</span>
           </div>
         </div>
@@ -175,8 +176,8 @@ function Sources() {
     <section className="section" id="features">
       <div className="section-head">
         <div className="section-eyebrow">02 · The Signal Stack</div>
-        <h2 className="section-title">12 data sources, fused into one confidence score.</h2>
-        <p className="section-sub">Polygon.io as primary OHLCV + news + financials (free tier). Every signal shows exactly which sources agreed and why.</p>
+        <h2 className="section-title">Multiple data sources, fused into one confidence score.</h2>
+        <p className="section-sub">Primary market data, news, and fundamentals. Every signal shows which sources agreed and why.</p>
       </div>
       <div className="sources-grid">
         {W_FEATURES.map((f, i) => (
@@ -199,10 +200,10 @@ function Sources() {
 /* ── Flow ─────────────────────────────────────────────────────────────────── */
 function Flow() {
   const steps = [
-    { n:"01", t:"Sources scan",     d:"Polygon.io (primary OHLCV + indicators + news + financials), Massive WebSocket dark pool, EDGAR 13F + Form 4, Finnhub, FRED, CBOE, Alpaca IEX — all polled or streamed." },
-    { n:"02", t:"Score fusion",     d:"65+ signal blocks across 11 scoring families, capped per group, HMM regime-gated, Bayesian-calibrated. Max confidence 84%." },
-    { n:"03", t:"Filters apply",    d:"Confidence threshold, R:R floor, ex-dividend blackout, earnings cooldown, low-ATR regime switch, your delivery window + style filter." },
-    { n:"04", t:"You get pinged",   d:"Telegram / Discord / Web Push with plain-English rationale, entry/stop/target, R:R, and full legal disclaimer." },
+    { n:"01", t:"Sources scan",     d:"Market data, news, options flow, insider filings, and macro indicators — all polled or streamed." },
+    { n:"02", t:"Score fusion",     d:"Dozens of signals across multiple scoring families are blended, regime-gated, and calibrated. Confidence is capped to prevent overconfidence." },
+    { n:"03", t:"Filters apply",    d:"Confidence threshold, R:R floor, ex-dividend blackout, earnings cooldown, low-volatility regime filter, your delivery window + style filter." },
+    { n:"04", t:"You get pinged",   d:"Telegram and Web Push with plain-English rationale, entry/stop/target, R:R, and full legal disclaimer." },
   ];
   return (
     <section className="section" id="how">
@@ -237,15 +238,15 @@ function Pricing({ go }) {
     },
     {
       name: "Basic", amt: "$29", per: "/month",
-      desc: "The full alerting experience. Telegram + Discord + Web Push delivery, backtest engine, Excel export.",
+      desc: "The full alerting experience. Telegram and Web Push delivery, backtest engine, Excel export.",
       cta: "Start 7-day trial", btn: "btn primary", featured: true,
-      feats: [["✓","Everything in Free",true],["✓","Telegram + Discord + Web Push alerts",true],["✓","Configure days + delivery window",true],["✓","Backtesting engine (1d/3d/7d/14d)",true],["✓","Watchlist + price alerts + Excel export",true],["✗","Paper trading + correlation",false]]
+      feats: [["✓","Everything in Free",true],["✓","Telegram + Web Push alerts",true],["✓","Configure days + delivery window",true],["✓","Backtesting engine (1d/3d/7d/14d)",true],["✓","Watchlist + price alerts + Excel export",true],["✗","Paper trading + correlation",false]]
     },
     {
       name: "Pro", amt: "$79", per: "/month",
       desc: "Full institutional quant desk. Paper trading, volatility targeting, correlation matrix, weekly digest.",
       cta: "Start 7-day trial", btn: "btn",
-      feats: [["✓","Everything in Basic",true],["✓","Alpaca paper trading",true],["✓","Signal correlation matrix",true],["✓","Bayesian + predictive confidence intervals",true],["✓","Portfolio volatility targeting (15% target)",true],["✓","Simulated backtest with slippage + weekly digest",true]]
+      feats: [["✓","Everything in Basic",true],["✓","Paper trading",true],["✓","Signal correlation matrix",true],["✓","Predictive confidence intervals",true],["✓","Portfolio risk targeting",true],["✓","Simulated backtest with slippage + weekly digest",true]]
     },
   ];
   return (
@@ -541,10 +542,10 @@ function TrackPage({ stats }) {
 function DocsPage() {
   const sections = [
     { t:"Getting started", items:["Installation","First signal","Telegram bot setup","Confidence threshold","Owner account"] },
-    { t:"Data sources",    items:["Polygon.io (primary OHLCV + news + financials + indicators)","yfinance (fallback)","Massive WebSocket (dark pool)","Finnhub news","SEC EDGAR 13F + Form 4","CBOE P/C ratio","FRED macro","Alpaca IEX WebSocket"] },
-    { t:"Signal engine",   items:["65+ signal blocks across 11 scoring families","Options sweep + GEX detection","13F institutional flow + Form 4 clusters","Macro HMM regime (2-state Gaussian)","Platt scaling calibration (84% max confidence)","Dark pool block trade reconstruction","Supply chain alt data (BDI, Brent, Cass Freight)","Ex-dividend & earnings blackouts","Low-ATR regime switch (mean-reversion only)"] },
+    { t:"Data sources",    items:["Market data & OHLCV","News & analyst data","Options flow","Insider & institutional filings","Macro indicators","Real-time quote stream"] },
+    { t:"Signal engine",   items:["Multi-factor technical model","Options sweep detection","Institutional flow clusters","Macro regime model","Confidence calibration","Dark pool block prints","Macro supply signals","Ex-dividend & earnings blackouts","Low-volatility regime filter"] },
     { t:"Backtesting",     items:["Win rate analytics","By-horizon breakdown","Outcome backfill","Auditable simulation","Track record"] },
-    { t:"Subscription",    items:["Free / Basic / Pro","Stripe checkout","stripe_setup.py","Billing portal","Webhook setup"] },
+    { t:"Subscription",    items:["Free / Basic / Pro","Stripe checkout","Billing portal","Plan upgrades/downgrades"] },
     { t:"Legal",           items:["Risk disclosure","Terms of service","Privacy policy","Not financial advice"] },
   ];
   return (
@@ -560,7 +561,7 @@ function DocsPage() {
       <div className="docs-code">
         <div className="docs-code-head">Example · GET /api/signals</div>
         <pre>{`curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \\
-  http://localhost:8000/api/signals
+  https://signaltrade.org/api/signals
 
 [
   {
@@ -613,7 +614,7 @@ function TelegramPage() {
           </div>
           <div className="tg-handle">@signal_trade_bot</div>
           <div style={{ fontSize:12, color:"var(--text-dim)", lineHeight:1.6 }}>
-            Requires Basic or Pro plan · Also supports Discord webhooks + Web Push (VAPID) · Full legal disclaimer included
+            Requires Basic or Pro plan · Also supports Web Push · Full legal disclaimer included
           </div>
         </div>
       </div>
@@ -652,18 +653,15 @@ function LegalPage({ kind, go }) {
 /* ── Status page ─────────────────────────────────────────────────────────── */
 function StatusPage() {
   const services = [
-    { n:"Signal engine (65+ blocks)",    s:"operational",  up:99.97, last:"60s cycle" },
-    { n:"Polygon.io OHLCV + indicators", s:"operational",  up:99.95, last:"primary source" },
-    { n:"Polygon.io news (free tier)",   s:"operational",  up:99.92, last:"<5min latency" },
-    { n:"yfinance (fallback)",           s:"operational",  up:99.80, last:"circuit breaker active on 429" },
-    { n:"Finnhub news feed",             s:"operational",  up:99.99, last:"2s ago" },
-    { n:"Massive WebSocket (dark pool)", s:"operational",  up:99.90, last:"live stream" },
-    { n:"SEC EDGAR 13F + Form 4",        s:"operational",  up:100,   last:"6h cache" },
-    { n:"CBOE put/call ratio",           s:"operational",  up:99.80, last:"1d cache" },
-    { n:"FRED macro data",               s:"operational",  up:99.99, last:"daily" },
-    { n:"Alpaca IEX WebSocket",          s:"operational",  up:99.97, last:"live" },
-    { n:"Telegram / Discord delivery",   s:"operational",  up:99.99, last:"9s ago" },
-    { n:"Stripe billing",                s:"operational",  up:100,   last:"—" },
+    { n:"Signal engine",          s:"operational",  up:99.97, last:"60s cycle" },
+    { n:"Market data feed",       s:"operational",  up:99.95, last:"primary source" },
+    { n:"News feed",              s:"operational",  up:99.92, last:"<5min latency" },
+    { n:"Options flow",           s:"operational",  up:99.90, last:"live stream" },
+    { n:"Insider filings",        s:"operational",  up:100,   last:"6h cache" },
+    { n:"Macro indicators",       s:"operational",  up:99.99, last:"daily" },
+    { n:"Real-time quotes",       s:"operational",  up:99.97, last:"live" },
+    { n:"Telegram / Web Push",    s:"operational",  up:99.99, last:"9s ago" },
+    { n:"Stripe billing",         s:"operational",  up:100,   last:"—" },
   ];
   const color = s => s === "operational" ? "var(--up)" : s === "degraded" ? "var(--warn)" : "var(--down)";
   const allGreen = services.every(s => s.s === "operational");
@@ -694,15 +692,14 @@ function StatusPage() {
 /* ── Changelog ───────────────────────────────────────────────────────────── */
 function ChangelogPage() {
   const items = [
-    { v:"v5.2", d:"May 2026", t:"Polygon.io Free-Tier Full Exploitation", b:["Pre-computed RSI/MACD/SMA/EMA(200) blended 60/40 with pandas","Weekly RSI + SMA multi-timeframe confirmation (72% win rate)","3-year annual revenue acceleration 'Earnings Torpedo' (+8pts)","Dividend Aristocrat bonus (Achiever/Aristocrat/King tiers)","Accurate TTM dividend yield from Polygon (fixes 40% yfinance None rate)","Macro news sentiment (SPY/QQQ) BUY cap when VIX >20","Market holiday −5pp haircut before 3-day weekends","Polygon related-company peer confirmation replaces GICS sector","Market status from Polygon (NYSE open/close authoritative)"] },
-    { v:"v5.1", d:"May 2026", t:"Macro HMM + Dark Pool + Supply Chain", b:["2-state Gaussian HMM (Baum-Welch) replaces static VIX thresholds","Dark pool block trade reconstruction with Lee-Ready direction inference","Supply chain alt data: Baltic Dry, Brent crude, Cass Freight","Float from Polygon reference data (fixes 30% yfinance None rate)","WebSocket heartbeat watchdog (15s timeout, exponential backoff)","Differential scan: skips stable tickers, saves ~80/154 API calls/cycle"] },
-    { v:"v5.0", d:"May 2026", t:"Performance + Infrastructure overhaul", b:["Semaphore(5) parallel signal generation — 5× scan speedup","yfinance global circuit breaker (15min backoff on 429)","Polygon OHLCV shared cache (15-min TTL, no redundant downloads)","News batch fetch: 154 tickers → 3 paginated Polygon calls (~5s vs 35s)","Indicator cache warming on startup (1 ticker/23s over 60min)","SQLite → PostgreSQL migration path (DATABASE_URL env var)","5-min analytics cache for /backtest + /correlation endpoints"] },
-    { v:"v4.9", d:"May 2026", t:"Signals + Delivery + UI", b:["Monte Carlo Web Worker (500-path simulation off main thread)","Signal history Excel export (openpyxl, styled, action color-coded)","Confidence trend sparkline added to every expanded signal card","Discord webhook delivery (PATCH /api/auth/integrations)","Outbound webhook with HMAC-SHA256 signature","Price alert evaluator wired into scan cycle","DOM feed pagination (30 initial, Show More button)"] },
-    { v:"v4.0", d:"May 2026", t:"Signal quality + calibration overhaul", b:["Platt scaling calibration — max confidence ceiling 84%","Style classification overhaul (position/swing/intraday)","Loss-aware duplicate signal cooldown (48h/72h streak penalty)","Recency-weighted per-ticker win rates (60-day halflife decay)","Bear + high-VIX hard BUY gate; macro contradiction confidence cap","Post-earnings cooldown (days 0–2 hard HOLD, days 3–4 ×0.80)","Cointegration pairs trading (14 pre-defined pairs)","Macro regime 4-stage sector rotation model"] },
-    { v:"v3.4", d:"Apr 2026", t:"Complete subscription stack", b:["JWT auth (register, login, refresh, me, change-password)","Stripe Checkout + Billing Portal + Webhooks","Free / Basic / Pro tiers with 7-day free trial","Multi-user Telegram fan-out via signal_deliveries table","Admin panel: setup health, MRR, user list, webhook registration"] },
-    { v:"v3.3", d:"Apr 2026", t:"13F + enhanced options sweeps", b:["SEC EDGAR XBRL parsing for 15 top hedge funds","Multi-expiry options sweep detection (vol >5× OI)","OTM call/put volume spike analysis","IV term structure spike detection"] },
-    { v:"v3.2", d:"Mar 2026", t:"Mobile app + design canvas", b:["Mobile PWA at /mobile with tab bar navigation","iOS 26 Liquid Glass device frames","Figma-style design canvas at /design with 9 artboards","Marketing landing page + signup/login flow"] },
-    { v:"v3.1", d:"Feb 2026", t:"Backtest + predictive intervals", b:["Win rate, Sharpe, max drawdown, Calmar by hold period","Outcome backfill from yfinance historical prices","Bayesian predictive confidence intervals","Signal correlation matrix"] },
+    { v:"v5.2", d:"May 2026", t:"Faster, leaner signal engine", b:["Blended multi-timeframe technical confirmation","Revenue acceleration and dividend-quality signals","Macro news sentiment gate","Market holiday and related-peer confirmation"] },
+    { v:"v5.1", d:"May 2026", t:"Macro regime + dark pool + supply signals", b:["Dynamic macro regime model replaces static volatility thresholds","Dark pool block trade direction inference","Supply chain macro indicators","Differential scan skips stable tickers to reduce API usage"] },
+    { v:"v5.0", d:"May 2026", t:"Performance + infrastructure overhaul", b:["Parallel signal generation for faster scan cycles","Global circuit breaker on rate-limited fallback feeds","Shared OHLCV cache and batched news fetching","Indicator cache warming and analytics caching"] },
+    { v:"v4.9", d:"May 2026", t:"Signals + Delivery + UI", b:["In-browser Monte Carlo trade simulation","Signal history Excel export","Confidence trend sparkline on every signal card","Outbound webhook delivery with HMAC signature","Price alert evaluator wired into scan cycle"] },
+    { v:"v4.0", d:"May 2026", t:"Signal quality + calibration overhaul", b:["Confidence calibration capped to prevent overconfidence","Style classification and duplicate-signal cooldown","Recency-weighted per-ticker win rates","Macro contradiction confidence cap","Post-earnings and ex-dividend blackouts"] },
+    { v:"v3.4", d:"Apr 2026", t:"Complete subscription stack", b:["JWT auth and Stripe checkout","Free / Basic / Pro tiers with 7-day trial","Multi-user Telegram fan-out","Admin panel for setup health and user management"] },
+    { v:"v3.2", d:"Mar 2026", t:"Mobile app + design canvas", b:["Mobile PWA at /mobile with tab bar navigation","Marketing landing page + signup/login flow"] },
+    { v:"v3.1", d:"Feb 2026", t:"Backtest + predictive intervals", b:["Win rate, Sharpe, max drawdown, Calmar by hold period","Outcome backfill from historical prices","Predictive confidence intervals","Signal correlation matrix"] },
   ];
   return (
     <PageShell eyebrow="08 · CHANGELOG" title="What's new in SIGNAL.TRADE" sub="Engine releases & feature rollouts.">
