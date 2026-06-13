@@ -1322,7 +1322,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     try:
         from datetime import date as _date, timedelta as _timedelta
 
-        _cutoff = (_date.today() - _timedelta(days=7)).isoformat()
+        _cutoff = _date.today() - _timedelta(days=7)
         async with AsyncSessionLocal() as db:
             from sqlalchemy import text as _sa_text
 
