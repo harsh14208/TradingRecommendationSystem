@@ -11,11 +11,13 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from config import (
+    SIGNAL_QUOTAS,
     TIER_LABELS,
     TIER_PLAN_FEATURES,
     TIER_PRICES_CENTS,
     TIERS,
     Settings,
+    get_quota_for_tier,
     get_settings,
     has_feature,
     tier_gte,
@@ -143,6 +145,36 @@ class TestTiersConstant:
         assert set(TIER_PLAN_FEATURES) == set(TIERS)
         assert "Telegram signal delivery" in TIER_PLAN_FEATURES["basic"]
         assert "Paper trading (Alpaca)" in TIER_PLAN_FEATURES["pro"]
+
+
+# ── signal quotas ──────────────────────────────────────────────────────────────
+
+
+class TestSignalQuotas:
+    def test_quotas_defined_for_all_tiers(self):
+        assert set(SIGNAL_QUOTAS) == set(TIERS)
+
+    def test_free_has_finite_limit(self):
+        assert isinstance(SIGNAL_QUOTAS["free"], int)
+        assert SIGNAL_QUOTAS["free"] > 0
+
+    def test_basic_has_finite_limit(self):
+        assert isinstance(SIGNAL_QUOTAS["basic"], int)
+        assert SIGNAL_QUOTAS["basic"] > SIGNAL_QUOTAS["free"]
+
+    def test_pro_is_unlimited(self):
+        assert SIGNAL_QUOTAS["pro"] is None
+
+    def test_get_quota_for_tier_respects_tier(self):
+        assert get_quota_for_tier("free") == SIGNAL_QUOTAS["free"]
+        assert get_quota_for_tier("basic") == SIGNAL_QUOTAS["basic"]
+        assert get_quota_for_tier("pro") is None
+
+    def test_get_quota_for_tier_owner_bypass(self):
+        assert get_quota_for_tier("free", is_owner=True) is None
+
+    def test_get_quota_for_tier_unknown_defaults_to_free(self):
+        assert get_quota_for_tier("enterprise") == SIGNAL_QUOTAS["free"]
 
 
 # ── get_settings ───────────────────────────────────────────────────────────────

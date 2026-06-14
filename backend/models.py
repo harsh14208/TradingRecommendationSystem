@@ -191,6 +191,24 @@ class User(Base):
     risk_acknowledged_at = Column(DateTime, nullable=True)
 
 
+class UserSignalQuota(Base):
+    """Tracks how many signals a user has viewed in the current UTC day."""
+
+    __tablename__ = "user_signal_quotas"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    window_start = Column(DateTime, nullable=False)  # UTC midnight of current window
+    views_count = Column(Integer, default=0, nullable=False, server_default="0")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
     id = Column(Integer, primary_key=True, autoincrement=True)

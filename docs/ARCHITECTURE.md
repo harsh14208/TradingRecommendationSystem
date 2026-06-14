@@ -114,6 +114,33 @@ Key components:
   or CI databases; production migrations go through Alembic.
 - Never drop columns or tables inside `init_db()`.
 
+## Tier & Entitlement Model
+
+Three subscription tiers are defined in `backend/config.py`: `free`, `basic`,
+and `pro`.  `services/auth_svc.require_tier()` enforces feature-level gates,
+and owners bypass all tier checks.
+
+### Signal view quotas
+
+Signal consumption is capped per user per UTC day via
+`services/signal_quota_svc`:
+
+| Tier  | Daily signal views | Enforcement                         |
+|-------|-------------------:|-------------------------------------|
+| free  | 5                  | `GET /api/signals`, `/api/signals/history` |
+| basic | 100                | Same endpoints                      |
+| pro   | unlimited          | No cap                              |
+| owner | unlimited          | Bypass                              |
+
+The quota is tracked in the `user_signal_quotas` table (one row per user,
+window reset at UTC midnight).  Routers call `apply_signal_quota()` before
+fetching rows and `record_signal_views()` after serialization, then commit the
+session.  Quota state is returned in `X-Signal-Quota-*` headers and inside the
+`signal_quota` field of `GET /api/billing/status`.
+
+Paid users whose `subscription_status` is not `active` are downgraded to the
+free quota until billing is resolved.
+
 ## Testing Standards
 
 - Use the `override_deps(app, ...)` context manager from

@@ -7,9 +7,10 @@ from typing import Optional
 import pytz
 from config import get_settings
 from database import get_db
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from models import SendLog, Signal, SignalDelivery, User
 from services.auth_svc import get_current_user
+from services.signal_quota_svc import apply_signal_quota, record_signal_views
 from services.telegram_svc import format_signal
 from sqlalchemy import case, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +50,19 @@ def _cache_set(key: str, data):
 def clear_analytics_cache():
     """TSYS-8c: Invalidate the analytics cache on signal/outcome mutation."""
     _analytics_cache.clear()
+
+
+def _add_quota_headers(response: Response, quota: dict) -> None:
+    """Attach daily signal quota state to the response."""
+    if quota["limit"] is None:
+        response.headers["X-Signal-Quota-Limit"] = "unlimited"
+        response.headers["X-Signal-Quota-Remaining"] = "unlimited"
+    else:
+        response.headers["X-Signal-Quota-Limit"] = str(quota["limit"])
+        response.headers["X-Signal-Quota-Remaining"] = str(quota["remaining"])
+    response.headers["X-Signal-Quota-Resets-At"] = (
+        quota["window_start"].strftime("%Y-%m-%dT%H:%M:%SZ") if quota["window_start"] else ""
+    )
 
 
 def _to_dict(s: Signal) -> dict:
@@ -96,7 +110,18 @@ def _to_dict(s: Signal) -> dict:
 
 
 @router.get("")
-async def list_signals(db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
+async def list_signals(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    quota = await apply_signal_quota(db, user, 300)
+    if quota["exceeded"]:
+        raise HTTPException(
+            status_code=402,
+            detail="Daily signal quota exceeded. Upgrade to Basic or Pro for more signals.",
+        )
+
     action_priority = case(
         (Signal.action == "BUY", 0),
         (Signal.action == "SELL", 1),
@@ -108,19 +133,24 @@ async def list_signals(db: AsyncSession = Depends(get_db), _user: User = Depends
                 select(Signal)
                 .where(Signal.is_active == True)
                 .order_by(action_priority, desc(Signal.confidence), desc(Signal.created_at))
-                .limit(300)
+                .limit(quota["allowed_count"])
             )
         )
         .scalars()
         .all()
     )
-    return [_to_dict(r) for r in rows]
+    result = [_to_dict(r) for r in rows]
+    await record_signal_views(db, quota["quota"], len(result))
+    await db.commit()
+    _add_quota_headers(response, quota)
+    return result
 
 
 @router.get("/history")
 async def signal_history(
+    response: Response,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     ticker: Optional[str] = Query(None, description="Filter to a specific ticker (case-insensitive)"),
@@ -157,11 +187,22 @@ async def signal_history(
     elif outcome == "open":
         filters.append(Signal.outcome_pct.is_(None))
 
-    stmt = select(Signal).order_by(desc(Signal.created_at)).limit(500)
+    quota = await apply_signal_quota(db, user, 500)
+    if quota["exceeded"]:
+        raise HTTPException(
+            status_code=402,
+            detail="Daily signal quota exceeded. Upgrade to Basic or Pro for more signals.",
+        )
+
+    stmt = select(Signal).order_by(desc(Signal.created_at)).limit(quota["allowed_count"])
     for f in filters:
         stmt = stmt.where(f)
     rows = (await db.execute(stmt)).scalars().all()
-    return [_to_dict(r) for r in rows]
+    result = [_to_dict(r) for r in rows]
+    await record_signal_views(db, quota["quota"], len(result))
+    await db.commit()
+    _add_quota_headers(response, quota)
+    return result
 
 
 @router.post("/{signal_id}/send")

@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -113,3 +114,30 @@ def test_billing_webhook_invalid_signature():
             assert response.status_code == 400
     except ImportError:
         pass
+
+
+def test_billing_status_includes_signal_quota(mock_db):
+    """GET /api/billing/status includes the daily signal quota breakdown."""
+    quota_row = MagicMock()
+    quota_row.views_count = 2
+
+    with patch(
+        "routers.billing.apply_signal_quota",
+        AsyncMock(
+            return_value={
+                "quota": quota_row,
+                "limit": 5,
+                "remaining": 3,
+                "allowed_count": 0,
+                "window_start": datetime(2024, 1, 1),
+                "exceeded": True,
+            }
+        ),
+    ):
+        response = client.get("/api/billing/status")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["signal_quota"]["limit"] == 5
+        assert body["signal_quota"]["used"] == 2
+        assert body["signal_quota"]["remaining"] == 3
+        assert body["signal_quota"]["resets_at"] is not None

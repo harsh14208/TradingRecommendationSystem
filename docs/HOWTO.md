@@ -651,6 +651,35 @@ Account Settings → **Manage Billing** → opens Stripe Customer Portal where y
 
 If payment fails, status changes to `past_due`. You receive an email and Telegram message. Update your card in Stripe Customer Portal within the grace period to avoid downgrade.
 
+### Signal view quotas
+
+Live signals (`/api/signals`) and signal history (`/api/signals/history`) are
+capped per user per UTC day. The cap resets at midnight UTC.
+
+| Tier  | Daily signals | Notes                              |
+|-------|--------------:|------------------------------------|
+| Free  | 5             | Enough to evaluate quality         |
+| Basic | 100           | Covers active retail traders       |
+| Pro   | Unlimited     | No cap                             |
+| Owner | Unlimited     | Bypass                             |
+
+Quota state is returned in response headers on every request:
+
+```
+X-Signal-Quota-Limit: 5
+X-Signal-Quota-Remaining: 3
+X-Signal-Quota-Resets-At: 2026-06-14T00:00:00Z
+```
+
+For unlimited users the first two headers are `unlimited`.
+`GET /api/billing/status` also returns a `signal_quota` object with
+`limit`, `used`, `remaining`, and `resets_at` so the frontend can render
+upgrade prompts without parsing headers.
+
+If a free user exhausts their quota, the API returns **402 Payment Required**
+with the message *"Daily signal quota exceeded. Upgrade to Basic or Pro for
+more signals."*
+
 ### Stripe setup (for owner)
 
 ```bash

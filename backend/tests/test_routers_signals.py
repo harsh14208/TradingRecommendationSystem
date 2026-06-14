@@ -2,6 +2,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+
+def _make_quota_result(allowed=300, limit=None, remaining=None, views=0, exceeded=False):
+    """Return a mock quota result suitable for patching apply_signal_quota."""
+    quota_row = MagicMock()
+    quota_row.views_count = views
+    return {
+        "quota": quota_row,
+        "limit": limit,
+        "remaining": remaining,
+        "allowed_count": allowed,
+        "window_start": datetime(2024, 1, 1),
+        "exceeded": exceeded,
+    }
+
+
 import pytest
 from pydantic import SecretStr
 from database import get_db
@@ -80,10 +95,16 @@ def test_signals_list_success():
     mock_scalars.all.return_value = [sig1]
     mock_result.scalars.return_value = mock_scalars
     mock_db_session.execute = AsyncMock(return_value=mock_result)
+    mock_db_session.commit = AsyncMock()
+    mock_db_session.flush = AsyncMock()
 
-    with TestClient(app) as c:
-        res = c.get("/api/signals/")
-        assert res.status_code == 200
+    with (
+        patch("routers.signals.apply_signal_quota", AsyncMock(return_value=_make_quota_result(allowed=300))),
+        patch("routers.signals.record_signal_views", AsyncMock()),
+    ):
+        with TestClient(app) as c:
+            res = c.get("/api/signals/")
+            assert res.status_code == 200
         body = res.json()
         assert isinstance(body, list)
         assert body[0]["ticker"] == "AAPL"
@@ -157,11 +178,17 @@ def test_signals_history_filters_and_404_not_found_on_send():
             MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
         ]
     )
+    mock_db_session.commit = AsyncMock()
+    mock_db_session.flush = AsyncMock()
 
-    with TestClient(app) as c:
-        # history endpoint should return list
-        res = c.get("/api/signals/history?start_date=2024-01-01&ticker=aapl")
-        assert res.status_code == 200
+    with (
+        patch("routers.signals.apply_signal_quota", AsyncMock(return_value=_make_quota_result(allowed=500))),
+        patch("routers.signals.record_signal_views", AsyncMock()),
+    ):
+        with TestClient(app) as c:
+            # history endpoint should return list
+            res = c.get("/api/signals/history?start_date=2024-01-01&ticker=aapl")
+            assert res.status_code == 200
         assert isinstance(res.json(), list)
 
         # send endpoint when signal missing → 404
@@ -405,3 +432,179 @@ class TestExecutionConfirm:
             )
         assert resp.status_code == 200
         assert sig.sent_at is not None
+
+
+# ── quota-gating tests ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(router is None, reason="routers.signals import failed")
+class TestSignalQuotaGating:
+    def _setup_app(self, user, mock_db):
+        app = FastAPI()
+        app.include_router(router, prefix="")
+        app.dependency_overrides[get_current_user] = lambda: user
+        app.dependency_overrides[get_db] = lambda: mock_db
+        return app
+
+    def _make_signal(self, ticker="AAPL"):
+        sig = MagicMock(spec=Signal)
+        sig.id = 1
+        sig.ticker = ticker
+        sig.company = ticker
+        sig.action = "BUY"
+        sig.confidence = 70
+        sig.confidence_warning = False
+        sig.price = 100.0
+        sig.change = 0
+        sig.change_pct = 0
+        sig.entry = 99.0
+        sig.stop = 95.0
+        sig.target = 105.0
+        sig.rr = "2.0"
+        sig.headline = "h"
+        sig.sentiment = 0
+        sig.style = "swing"
+        sig.sources = []
+        sig.rationale = []
+        sig.created_at = datetime(2024, 1, 1)
+        sig.is_sent = False
+        sig.is_skipped = False
+        sig.reviewed = False
+        sig.notes = ""
+        sig.plain_english = None
+        sig.session = "regular"
+        sig.days_to_earnings = None
+        sig.next_earnings_date = None
+        sig.sector_etf = None
+        sig.rs_vs_sector = None
+        sig.outcome_pct = None
+        sig.outcome_1d = None
+        sig.outcome_3d = None
+        sig.outcome_14d = None
+        sig.outcome_at = None
+        sig.is_active = True
+        return sig
+
+    def _mock_db(self, signals):
+        mock_db_session = MagicMock()
+        mock_result = MagicMock()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = signals
+        mock_result.scalars.return_value = mock_scalars
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+        mock_db_session.commit = AsyncMock()
+        mock_db_session.flush = AsyncMock()
+        return mock_db_session
+
+    def test_free_user_quota_exceeded_returns_402(self):
+        user = User(id=1, email="free@example.com", subscription_tier="free", subscription_status="inactive")
+        mock_db = self._mock_db([])
+        app = self._setup_app(user, mock_db)
+
+        with (
+            patch(
+                "routers.signals.apply_signal_quota",
+                AsyncMock(return_value=_make_quota_result(allowed=0, limit=5, remaining=0, views=5, exceeded=True)),
+            ),
+            patch("routers.signals.record_signal_views", AsyncMock()),
+        ):
+            with TestClient(app) as c:
+                res = c.get("/api/signals/")
+                assert res.status_code == 402
+                assert "quota" in res.json()["detail"].lower()
+
+    def test_free_user_quota_headers_present(self):
+        user = User(id=1, email="free@example.com", subscription_tier="free", subscription_status="inactive")
+        mock_db = self._mock_db([self._make_signal()])
+        app = self._setup_app(user, mock_db)
+
+        with (
+            patch(
+                "routers.signals.apply_signal_quota",
+                AsyncMock(return_value=_make_quota_result(allowed=5, limit=5, remaining=5, views=0, exceeded=False)),
+            ),
+            patch("routers.signals.record_signal_views", AsyncMock()),
+        ):
+            with TestClient(app) as c:
+                res = c.get("/api/signals/")
+                assert res.status_code == 200
+                assert res.headers["X-Signal-Quota-Limit"] == "5"
+                assert res.headers["X-Signal-Quota-Remaining"] == "5"
+                assert res.headers["X-Signal-Quota-Resets-At"]
+
+    def test_basic_user_quota_headers(self):
+        user = User(id=2, email="basic@example.com", subscription_tier="basic", subscription_status="active")
+        mock_db = self._mock_db([self._make_signal()])
+        app = self._setup_app(user, mock_db)
+
+        with (
+            patch(
+                "routers.signals.apply_signal_quota",
+                AsyncMock(
+                    return_value=_make_quota_result(allowed=100, limit=100, remaining=95, views=5, exceeded=False)
+                ),
+            ),
+            patch("routers.signals.record_signal_views", AsyncMock()),
+        ):
+            with TestClient(app) as c:
+                res = c.get("/api/signals/")
+                assert res.status_code == 200
+                assert res.headers["X-Signal-Quota-Limit"] == "100"
+                assert res.headers["X-Signal-Quota-Remaining"] == "95"
+
+    def test_pro_user_unlimited_headers(self):
+        user = User(id=3, email="pro@example.com", subscription_tier="pro", subscription_status="active")
+        mock_db = self._mock_db([self._make_signal()])
+        app = self._setup_app(user, mock_db)
+
+        with (
+            patch(
+                "routers.signals.apply_signal_quota",
+                AsyncMock(
+                    return_value=_make_quota_result(allowed=300, limit=None, remaining=None, views=0, exceeded=False)
+                ),
+            ),
+            patch("routers.signals.record_signal_views", AsyncMock()),
+        ):
+            with TestClient(app) as c:
+                res = c.get("/api/signals/")
+                assert res.status_code == 200
+                assert res.headers["X-Signal-Quota-Limit"] == "unlimited"
+                assert res.headers["X-Signal-Quota-Remaining"] == "unlimited"
+
+    def test_history_endpoint_respects_quota(self):
+        user = User(id=4, email="free@example.com", subscription_tier="free", subscription_status="inactive")
+        mock_db = self._mock_db([self._make_signal()])
+        app = self._setup_app(user, mock_db)
+
+        with (
+            patch(
+                "routers.signals.apply_signal_quota",
+                AsyncMock(return_value=_make_quota_result(allowed=0, limit=5, remaining=0, views=5, exceeded=True)),
+            ),
+            patch("routers.signals.record_signal_views", AsyncMock()),
+        ):
+            with TestClient(app) as c:
+                res = c.get("/api/signals/history")
+                assert res.status_code == 402
+
+    def test_quota_records_views_after_fetch(self):
+        user = User(id=5, email="free@example.com", subscription_tier="free", subscription_status="inactive")
+        signals = [self._make_signal("AAPL"), self._make_signal("TSLA")]
+        mock_db = self._mock_db(signals)
+        app = self._setup_app(user, mock_db)
+
+        quota_row = MagicMock()
+        quota_row.views_count = 0
+        result = _make_quota_result(allowed=5, limit=5, remaining=5, views=0, exceeded=False)
+        result["quota"] = quota_row
+
+        record_mock = AsyncMock()
+        with (
+            patch("routers.signals.apply_signal_quota", AsyncMock(return_value=result)),
+            patch("routers.signals.record_signal_views", record_mock),
+        ):
+            with TestClient(app) as c:
+                res = c.get("/api/signals/")
+                assert res.status_code == 200
+                record_mock.assert_awaited_once_with(mock_db, quota_row, 2)

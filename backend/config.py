@@ -226,3 +226,21 @@ def has_feature(tier: str, feature: str, is_owner: bool = False) -> bool:
 
 def tier_gte(tier: str, min_tier: str) -> bool:
     return TIERS.index(tier) >= TIERS.index(min_tier)
+
+
+# ── Signal view quotas ────────────────────────────────────────────────────────
+# Number of signals a user may view through /api/signals and /api/signals/history
+# in a UTC day.  None = unlimited.  Owners always bypass.
+
+SIGNAL_QUOTAS: dict[str, int | None] = {
+    "free": 5,
+    "basic": 100,
+    "pro": None,
+}
+
+
+def get_quota_for_tier(tier: str, is_owner: bool = False) -> int | None:
+    """Return the daily signal view limit for a tier, or None if unlimited."""
+    if is_owner:
+        return None
+    return SIGNAL_QUOTAS.get(tier, SIGNAL_QUOTAS["free"])

@@ -13,6 +13,7 @@ from database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from models import StripeEvent, User
 from services.auth_svc import get_current_user
+from services.signal_quota_svc import apply_signal_quota
 from services.email_svc import (
     send_payment_failed,
     send_subscription_canceled,
@@ -153,7 +154,10 @@ async def billing_portal(
 
 
 @router.get("/status")
-async def billing_status(user: User = Depends(get_current_user)):
+async def billing_status(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     from datetime import timedelta, timezone as _tz
 
     base = {
@@ -207,6 +211,14 @@ async def billing_status(user: User = Depends(get_current_user)):
     base["grace_period_end"] = grace_period_end
     base["cancellation_date"] = cancellation_date
     base["downgrade_date"] = downgrade_date
+
+    quota = await apply_signal_quota(db, user, 0)
+    base["signal_quota"] = {
+        "limit": quota["limit"],
+        "used": quota["quota"].views_count or 0,
+        "remaining": quota["remaining"],
+        "resets_at": quota["window_start"].isoformat() if quota["window_start"] else None,
+    }
     return base
 
 

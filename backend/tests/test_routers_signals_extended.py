@@ -96,6 +96,19 @@ def _mock_db_single(signal=None):
     return _get_db
 
 
+def _make_quota_result(allowed=500, limit=None, remaining=None, views=0, exceeded=False):
+    quota_row = MagicMock()
+    quota_row.views_count = views
+    return {
+        "quota": quota_row,
+        "limit": limit,
+        "remaining": remaining,
+        "allowed_count": allowed,
+        "window_start": datetime(2026, 1, 1),
+        "exceeded": exceeded,
+    }
+
+
 def test_history_endpoint():
     signals = [
         _make_signal(1, "AAPL", outcome_pct=2.0, is_sent=True, created_at=datetime(2026, 3, 1)),
@@ -105,14 +118,20 @@ def test_history_endpoint():
     result = MagicMock()
     result.scalars.return_value.all.return_value = signals
     mock_db.execute = AsyncMock(return_value=result)
+    mock_db.commit = AsyncMock()
+    mock_db.flush = AsyncMock()
 
     async def _get_db():
         yield mock_db
 
     app = _make_app()
     app.dependency_overrides[get_db] = _get_db
-    with TestClient(app) as client:
-        resp = client.get("/api/signals/history")
+    with (
+        patch("routers.signals.apply_signal_quota", AsyncMock(return_value=_make_quota_result(allowed=500))),
+        patch("routers.signals.record_signal_views", AsyncMock()),
+    ):
+        with TestClient(app) as client:
+            resp = client.get("/api/signals/history")
     assert resp.status_code == 200
 
 
