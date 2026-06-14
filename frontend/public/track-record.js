@@ -2,8 +2,8 @@
 // Fetches /api/public/track-record and renders aggregate signal performance.
 const fmt = (v, d=2) => v == null ? '—' : v.toFixed(d);
 const pctFmt = v => v == null ? '—' : (v >= 0 ? '+' : '') + fmt(v) + '%';
-const wrColor = v => v == null ? '#8b949e' : v >= 60 ? '#10b981' : v >= 45 ? '#f59e0b' : '#ef4444';
-const retColor = v => v == null ? '#8b949e' : v >= 0 ? '#10b981' : '#ef4444';
+const wrColor = v => v == null ? 'var(--dim)' : v >= 60 ? 'var(--up)' : v >= 45 ? 'var(--warn)' : 'var(--down)';
+const retColor = v => v == null ? 'var(--dim)' : v >= 0 ? 'var(--up)' : 'var(--down)';
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 function setMessage(text) {
@@ -37,8 +37,8 @@ function render(d) {
       <div class="grid grid-4">
         ${card('Win Rate', o.win_rate != null ? o.win_rate.toFixed(1)+'%' : '—', wrColor(o.win_rate), o.n ? o.n+' signals' : '')}
         ${card('Avg Return', pctFmt(o.avg_return), retColor(o.avg_return), 'per signal')}
-        ${card('Avg Win', pctFmt(o.avg_win), '#10b981', 'winning trades')}
-        ${card('Sharpe Ratio', o.sharpe != null ? fmt(o.sharpe) : '—', o.sharpe >= 1 ? '#10b981' : o.sharpe >= 0 ? '#f59e0b' : '#ef4444', 'annualised')}
+        ${card('Avg Win', pctFmt(o.avg_win), 'var(--up)', 'winning trades')}
+        ${card('Sharpe Ratio', o.sharpe != null ? fmt(o.sharpe) : '—', o.sharpe >= 1 ? 'var(--up)' : o.sharpe >= 0 ? 'var(--warn)' : 'var(--down)', 'annualised')}
       </div>
     </section>
 
@@ -59,7 +59,7 @@ function render(d) {
         </div>
         <div style="display:grid;grid-template-columns:repeat(${d.by_month.length},1fr);gap:6px;margin-top:12px">
           ${d.by_month.map(m => `
-            <div style="text-align:center;font-size:10px;font-family:monospace;color:${retColor(m.avg_return)}">${pctFmt(m.avg_return)}<br><span style="color:#8b949e">${m.n} sigs</span></div>
+            <div style="text-align:center;font-size:10px;font-family:monospace;color:${retColor(m.avg_return)}">${pctFmt(m.avg_return)}<br><span style="color:var(--dim)">${m.n} sigs</span></div>
           `).join('')}
         </div>
       </div>
@@ -77,8 +77,8 @@ function render(d) {
             <td style="text-align:right">${esc(a.n)}</td>
             <td style="text-align:right;color:${wrColor(a.win_rate)};font-weight:700">${a.win_rate != null ? a.win_rate.toFixed(1)+'%' : '—'}</td>
             <td style="text-align:right;color:${retColor(a.avg_return)}">${pctFmt(a.avg_return)}</td>
-            <td style="text-align:right;color:#10b981">${pctFmt(a.avg_win)}</td>
-            <td style="text-align:right;color:#ef4444">${pctFmt(a.avg_loss)}</td>
+            <td style="text-align:right;color:var(--up)">${pctFmt(a.avg_win)}</td>
+            <td style="text-align:right;color:var(--down)">${pctFmt(a.avg_loss)}</td>
           </tr>`).join('')}
         </table>
         </div>
@@ -97,7 +97,7 @@ function render(d) {
             <td style="text-align:right">${esc(t.n)}</td>
             <td style="text-align:right;color:${wrColor(t.win_rate)};font-weight:700">${t.win_rate != null ? t.win_rate.toFixed(1)+'%' : '—'}</td>
             <td style="text-align:right;color:${retColor(t.avg_return)}">${pctFmt(t.avg_return)}</td>
-            <td style="text-align:right;color:${t.sharpe >= 1 ? '#10b981' : t.sharpe >= 0 ? '#f59e0b' : '#8b949e'}">${t.sharpe != null ? fmt(t.sharpe) : '—'}</td>
+            <td style="text-align:right;color:${t.sharpe >= 1 ? 'var(--up)' : t.sharpe >= 0 ? 'var(--warn)' : 'var(--dim)'}">${t.sharpe != null ? fmt(t.sharpe) : '—'}</td>
           </tr>`).join('')}
         </table>
         </div>
@@ -116,7 +116,7 @@ function render(d) {
                 <span class="action-pill ${esc(s.action)}">${esc(s.action)}</span>
               </div>
               <div class="ret up">+${fmt(s.return_pct)}%</div>
-              <div style="font-size:11px;color:#8b949e">${esc(s.date)} · ${esc(s.confidence.toFixed(0))}% conf</div>
+              <div style="font-size:11px;color:var(--dim)">${esc(s.date)} · ${esc(s.confidence.toFixed(0))}% conf</div>
             </div>`).join('')}
         </div>
       </section>` : ''}
@@ -132,7 +132,7 @@ function render(d) {
                 <span class="action-pill ${esc(s.action)}">${esc(s.action)}</span>
               </div>
               <div class="ret down">${fmt(s.return_pct)}%</div>
-              <div style="font-size:11px;color:#8b949e">${esc(s.date)} · ${esc(s.confidence.toFixed(0))}% conf</div>
+              <div style="font-size:11px;color:var(--dim)">${esc(s.date)} · ${esc(s.confidence.toFixed(0))}% conf</div>
             </div>`).join('')}
         </div>
       </section>` : ''}
@@ -144,7 +144,7 @@ function render(d) {
 function card(label, value, color, sub) {
   return `<div class="card">
     <div class="card-label">${label}</div>
-    <div class="card-value" style="color:${color||'#e6edf3'}">${value}</div>
+    <div class="card-value" style="color:${color||'var(--text)'}">${value}</div>
     ${sub ? `<div class="card-sub">${sub}</div>` : ''}
   </div>`;
 }

@@ -3,47 +3,67 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#0a0f1a"/>
+<meta name="msapplication-TileColor" content="#0a0f1a"/>
 <link rel="icon" type="image/png" href="/favicon.png"/>
 <title>Privacy Policy — Signal.Trade</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;line-height:1.75;padding:0}
+:root{
+  --bg:#0a0f1a;--bg-0:#0a0f1a;--bg-1:#0e1420;--bg-2:#131a28;--bg1:#0e1420;--bg2:#131a28;
+  --line:#1f2a3d;--line2:#273348;--line-soft:rgba(255,255,255,0.04);
+  --text:#e6edf7;--dim:#8a97ad;--faint:#7f8d9e;
+  --up:#22d3ee;--down:#fb4d6d;--warn:#fbbf24;--accent:#22d3ee;--purple:#7c3aed;
+  --up-soft:rgba(34,211,238,.12);--down-soft:rgba(251,77,109,.12);--warn-soft:rgba(251,191,36,.12);
+  --panel:rgba(255,255,255,.025);--panel-2:rgba(255,255,255,.045);
+  --ease:cubic-bezier(0.22,1,0.36,1);
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Inter',-apple-system,sans-serif;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;padding:0}
 .wrap{max-width:760px;margin:0 auto;padding:60px 24px 100px}
 h1{font-size:32px;font-weight:800;letter-spacing:-0.03em;margin-bottom:8px}
-.meta{font-size:13px;color:#8b949e;margin-bottom:48px;font-family:monospace}
-h2{font-size:18px;font-weight:700;margin:40px 0 12px;color:#fff;border-left:3px solid #10b981;padding-left:14px}
-h3{font-size:15px;font-weight:600;margin:20px 0 8px;color:#c9d1d9}
-p{color:#8b949e;margin-bottom:14px;font-size:15px}
-ul{color:#8b949e;margin:0 0 14px 20px;font-size:15px}
+.meta{font-size:13px;color:var(--dim);margin-bottom:48px;font-family:monospace}
+h2{font-size:18px;font-weight:700;margin:40px 0 12px;color:#fff;border-left:3px solid var(--up);padding-left:14px}
+h3{font-size:15px;font-weight:600;margin:20px 0 8px;color:var(--text)}
+p{color:var(--dim);margin-bottom:14px;font-size:15px}
+ul{color:var(--dim);margin:0 0 14px 20px;font-size:15px}
 li{margin-bottom:6px}
-strong{color:#e6edf3}
-a{color:#10b981;text-decoration:none}
+strong{color:var(--text)}
+a{color:var(--up);text-decoration:none}
 a:hover{text-decoration:underline}
 .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:20px}
 table{width:100%;border-collapse:collapse;font-size:14px;min-width:600px}
-th{text-align:left;padding:10px 12px;color:#e6edf3;background:#161b22;border-bottom:2px solid #30363d}
-td{padding:10px 12px;color:#8b949e;border-bottom:1px solid #21262d;vertical-align:top}
+th{text-align:left;padding:10px 12px;color:var(--text);background:var(--bg1);border-bottom:2px solid var(--line2)}
+td{padding:10px 12px;color:var(--dim);border-bottom:1px solid var(--line);vertical-align:top}
 @media(max-width:600px){
   .table-wrap{overflow:visible}
   table,thead,tbody,th,td,tr{display:block;min-width:0}
   thead tr{display:none}
-  tr{margin-bottom:16px;border:1px solid #21262d;border-radius:8px;padding:10px;background:#161b22}
-  td{border:none;border-bottom:1px solid #21262d;padding:8px 12px;display:flex;justify-content:space-between;gap:12px;text-align:right}
+  tr{margin-bottom:16px;border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--bg1)}
+  td{border:none;border-bottom:1px solid var(--line);padding:8px 12px;display:flex;justify-content:space-between;gap:12px;text-align:right}
   td:last-child{border-bottom:none}
-  td::before{content:attr(data-label);font-weight:600;color:#e6edf3;flex:none;text-align:left}
+  td::before{content:attr(data-label);font-weight:600;color:var(--text);flex:none;text-align:left}
   td:nth-child(1)::before{content:"Category:"}
   td:nth-child(2)::before{content:"Data:"}
   td:nth-child(3)::before{content:"Why we collect it:"}
   td:nth-child(4)::before{content:"Retention:"}
 }
-nav{position:sticky;top:0;background:rgba(13,17,23,0.95);backdrop-filter:blur(8px);border-bottom:1px solid #21262d;padding:14px 24px;display:flex;align-items:center;gap:20px}
-nav a{font-size:13px;color:#8b949e}
+nav{position:sticky;top:0;background:var(--panel);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-bottom:1px solid var(--line-soft);padding:14px 24px;display:flex;align-items:center;gap:20px}
+nav a{font-size:13px;color:var(--dim)}
 nav .logo{margin-right:auto;display:inline-flex;align-items:center}
 nav .logo img{height:90px;width:auto;display:block}
-footer{text-align:center;padding:40px 0;font-size:12px;color:#484f58;border-top:1px solid #21262d;margin-top:60px}
+footer{text-align:center;padding:40px 0;font-size:12px;color:var(--faint);border-top:1px solid var(--line);margin-top:60px}
 .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:monospace}
 .badge.gdpr{background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb44}
 .badge.ccpa{background:#7c3aed22;color:#a78bfa;border:1px solid #7c3aed44}
+
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.glass{background:var(--panel);border:1px solid var(--line-soft);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:10px}
+.glass-hover{transition:transform .25s var(--ease),border-color .25s var(--ease),box-shadow .25s var(--ease),background .25s var(--ease)}
+.glass-hover:hover{transform:translateY(-2px);background:var(--panel-2);border-color:rgba(34,211,238,.22);box-shadow:0 0 0 1px rgba(34,211,238,.08),0 12px 32px -16px rgba(0,0,0,.8)}
+
 </style>
 </head>
 <body>

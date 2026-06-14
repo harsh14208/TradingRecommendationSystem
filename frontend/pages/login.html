@@ -4,6 +4,8 @@
 <meta charset="UTF-8"/>
 <link rel="icon" type="image/png" href="/favicon.png"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#0a0f1a"/>
+<meta name="msapplication-TileColor" content="#0a0f1a"/>
 <title>Sign In — Signal.Trade</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -11,10 +13,13 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0d1117;--bg1:#161b22;--bg2:#1c2128;
-  --line:#21262d;--line2:#30363d;
-  --text:#e6edf3;--dim:#8b949e;--faint:#7585a0;
-  --up:#10b981;--down:#ef4444;--warn:#f59e0b;
+  --bg:#0a0f1a;--bg-0:#0a0f1a;--bg-1:#0e1420;--bg-2:#131a28;--bg1:#0e1420;--bg2:#131a28;
+  --line:#1f2a3d;--line2:#273348;--line-soft:rgba(255,255,255,0.04);
+  --text:#e6edf7;--dim:#8a97ad;--faint:#7f8d9e;
+  --up:#22d3ee;--down:#fb4d6d;--warn:#fbbf24;--accent:#22d3ee;--purple:#7c3aed;
+  --up-soft:rgba(34,211,238,.12);--down-soft:rgba(251,77,109,.12);--warn-soft:rgba(251,191,36,.12);
+  --panel:rgba(255,255,255,.025);--panel-2:rgba(255,255,255,.045);
+  --ease:cubic-bezier(0.22,1,0.36,1);
   --mono:'JetBrains Mono',monospace;
   --sans:'Inter',-apple-system,sans-serif;
 }
@@ -24,7 +29,7 @@ main{display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
 
 /* ── Left panel ── */
 .left{background:var(--bg1);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:40px;position:relative;overflow:hidden}
-.left::before{content:"";position:absolute;top:-20%;left:-10%;width:70%;height:70%;border-radius:50%;background:radial-gradient(circle,rgba(16,185,129,.06) 0%,transparent 70%);pointer-events:none}
+.left::before{content:"";position:absolute;top:-20%;left:-10%;width:70%;height:70%;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.06) 0%,transparent 70%);pointer-events:none}
 @media(max-width:768px){.left{display:none}}
 .left-logo{margin-bottom:auto}
 .left-logo img{height:160px;width:auto;display:block}
@@ -36,8 +41,8 @@ main{display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
 .sig-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .sig-ticker{font-size:17px;font-weight:800;font-family:var(--mono)}
 .sig-pill{padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;font-family:var(--mono)}
-.buy{background:rgba(16,185,129,.15);color:var(--up);border:1px solid rgba(16,185,129,.3)}
-.sell{background:rgba(239,68,68,.15);color:var(--down);border:1px solid rgba(239,68,68,.3)}
+.buy{background:rgba(34,211,238,.15);color:var(--up);border:1px solid rgba(34,211,238,.3)}
+.sell{background:rgba(251,77,109,.15);color:var(--down);border:1px solid rgba(251,77,109,.3)}
 .sig-conf{font-size:11px;color:var(--dim);margin-bottom:8px}
 .conf-bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden}
 .conf-fill{height:100%;border-radius:2px;background:var(--up)}
@@ -67,10 +72,10 @@ input::placeholder{color:var(--faint)}
 .form-field{margin-bottom:4px}
 .forgot{display:block;text-align:right;font-size:12px;color:var(--dim);margin-bottom:20px;text-decoration:none}
 .forgot:hover{color:var(--up)}
-.submit-btn{width:100%;padding:13px;background:var(--up);color:#042116;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans);transition:background .15s}
-.submit-btn:hover{background:#059669}
+.submit-btn{width:100%;padding:13px;background:var(--up);color:#03121a;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans);transition:background .15s}
+.submit-btn:hover{background:#3ee0f8}
 .submit-btn:disabled{opacity:.6;cursor:not-allowed}
-.error-box{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:7px;padding:10px 14px;font-size:13px;color:#fca5a5;margin-bottom:16px;display:none}
+.error-box{background:rgba(251,77,109,.1);border:1px solid rgba(251,77,109,.3);border-radius:7px;padding:10px 14px;font-size:13px;color:var(--down);margin-bottom:16px;display:none}
 .divider{display:flex;align-items:center;gap:12px;margin:24px 0}
 .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
 .divider span{font-size:11px;color:var(--faint)}
@@ -85,6 +90,13 @@ input::placeholder{color:var(--faint)}
 .social-btn:hover{border-color:var(--line);background:var(--bg2)}
 .social-btn.google{background:#fff;color:#3c4043;border-color:#dadce0}
 .social-btn.google:hover{box-shadow:0 1px 6px rgba(0,0,0,.2)}
+
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.glass{background:var(--panel);border:1px solid var(--line-soft);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:10px}
+.glass-hover{transition:transform .25s var(--ease),border-color .25s var(--ease),box-shadow .25s var(--ease),background .25s var(--ease)}
+.glass-hover:hover{transform:translateY(-2px);background:var(--panel-2);border-color:rgba(34,211,238,.22);box-shadow:0 0 0 1px rgba(34,211,238,.08),0 12px 32px -16px rgba(0,0,0,.8)}
+
 </style>
 </head>
 <body>

@@ -13,7 +13,7 @@ function _setServerStatus(up) {
   statusDot.style.background  = up ? 'var(--up)' : 'var(--down)';
   statusDot.style.boxShadow   = up ? '0 0 5px var(--up)' : 'none';
   statusText.textContent       = up ? 'Server connected' : 'Server offline';
-  statusText.style.color       = up ? 'var(--dim)' : '#fca5a5';
+  statusText.style.color       = up ? 'var(--dim)' : 'var(--down)';
   document.getElementById('submit-btn').disabled = !up;
   const socialBtns = document.querySelectorAll('.social-btn');
   socialBtns.forEach(b => b.style.pointerEvents = up ? '' : 'none');
@@ -102,11 +102,11 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
         resendBtn.type = 'button';
         resendBtn.id = 'resend-btn';
         resendBtn.textContent = 'Resend verification email';
-        resendBtn.style.cssText = 'background:none;border:1px solid rgba(239,68,68,.4);color:#fca5a5;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;margin-top:2px;font-family:inherit';
+        resendBtn.style.cssText = 'background:none;border:1px solid rgba(251,77,109,.4);color:var(--down);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;margin-top:2px;font-family:inherit';
         resendBtn.addEventListener('click', () => resendVerification(email));
         const resendMsg = document.createElement('span');
         resendMsg.id = 'resend-msg';
-        resendMsg.style.cssText = 'display:none;font-size:12px;color:#10b981;margin-left:8px';
+        resendMsg.style.cssText = 'display:none;font-size:12px;color:var(--up);margin-left:8px';
         err.appendChild(resendBtn);
         err.appendChild(resendMsg);
       } else {

@@ -20,7 +20,7 @@
         'Babel CDN fallback is disabled in production for security (CSP).'
       );
       document.body.innerHTML =
-        '<div style="font-family:monospace;padding:2rem;color:#ef4444">' +
+        '<div style="font-family:monospace;padding:2rem;color:var(--down)">' +
         '<b>App bundle missing.</b> Run <code>node build.mjs</code> and redeploy.' +
         '</div>';
       return;

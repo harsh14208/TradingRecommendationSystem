@@ -4,6 +4,8 @@
 <meta charset="UTF-8"/>
 <link rel="icon" type="image/png" href="/favicon.png"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#0a0f1a"/>
+<meta name="msapplication-TileColor" content="#0a0f1a"/>
 <title>Create Account — Signal.Trade</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -11,10 +13,13 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0d1117;--bg1:#161b22;--bg2:#1c2128;
-  --line:#21262d;--line2:#30363d;
-  --text:#e6edf3;--dim:#8b949e;--faint:#484f58;
-  --up:#10b981;--down:#ef4444;--warn:#f59e0b;--purple:#7c3aed;
+  --bg:#0a0f1a;--bg-0:#0a0f1a;--bg-1:#0e1420;--bg-2:#131a28;--bg1:#0e1420;--bg2:#131a28;
+  --line:#1f2a3d;--line2:#273348;--line-soft:rgba(255,255,255,0.04);
+  --text:#e6edf7;--dim:#8a97ad;--faint:#7f8d9e;
+  --up:#22d3ee;--down:#fb4d6d;--warn:#fbbf24;--accent:#22d3ee;--purple:#7c3aed;
+  --up-soft:rgba(34,211,238,.12);--down-soft:rgba(251,77,109,.12);--warn-soft:rgba(251,191,36,.12);
+  --panel:rgba(255,255,255,.025);--panel-2:rgba(255,255,255,.045);
+  --ease:cubic-bezier(0.22,1,0.36,1);
   --mono:'JetBrains Mono',monospace;
   --sans:'Inter',-apple-system,sans-serif;
 }
@@ -47,9 +52,9 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .section-sub{font-size:14px;color:var(--dim);text-align:center;margin-bottom:32px}
 .plans-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:100%;max-width:800px;margin-bottom:32px}
 @media(max-width:700px){.plans-grid{grid-template-columns:1fr}}
-.plan-card{background:var(--bg1);border:2px solid var(--line);border-radius:12px;padding:22px;cursor:pointer;transition:all .2s;position:relative}
+.plan-card{background:var(--panel);border:2px solid var(--line-soft);border-radius:12px;padding:22px;cursor:pointer;transition:all .2s;position:relative;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
 .plan-card:hover{border-color:var(--line2)}
-.plan-card.selected{border-color:var(--up);background:rgba(16,185,129,.04)}
+.plan-card.selected{border-color:var(--up);background:rgba(34,211,238,.04)}
 .plan-card.selected-pro{border-color:var(--purple);background:rgba(124,58,237,.04)}
 .plan-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--up);color:#fff;font-size:9px;font-weight:700;padding:3px 12px;border-radius:20px;letter-spacing:.08em;white-space:nowrap}
 .plan-name{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:10px}
@@ -80,12 +85,12 @@ input::placeholder{color:var(--faint)}
 .plan-summary-price{font-family:var(--mono);color:var(--up);font-weight:700}
 .change-plan{font-size:11px;color:var(--dim);cursor:pointer;text-decoration:underline}
 .change-plan:hover{color:var(--text)}
-.error-box{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:7px;padding:10px 14px;font-size:13px;color:#fca5a5;margin-bottom:16px;display:none}
+.error-box{background:rgba(251,77,109,.1);border:1px solid rgba(251,77,109,.3);border-radius:7px;padding:10px 14px;font-size:13px;color:var(--down);margin-bottom:16px;display:none}
 .submit-btn{width:100%;padding:14px;border:none;border-radius:9px;font-size:16px;font-weight:700;cursor:pointer;font-family:var(--sans);transition:all .15s;display:flex;align-items:center;justify-content:center;gap:8px}
 .submit-btn.free{background:var(--bg2);border:1px solid var(--line2);color:var(--text)}
 .submit-btn.free:hover{border-color:var(--text)}
 .submit-btn.paid{background:var(--up);color:#fff}
-.submit-btn.paid:hover{background:#059669}
+.submit-btn.paid:hover{background:#3ee0f8}
 .submit-btn.pro-paid{background:linear-gradient(135deg,var(--purple) 0%,#6d28d9 100%);color:#fff}
 .submit-btn.pro-paid:hover{opacity:.9}
 .submit-btn:disabled{opacity:.5;cursor:not-allowed}
@@ -102,6 +107,13 @@ input::placeholder{color:var(--faint)}
 /* Screens */
 #step-plan{display:flex;flex-direction:column;align-items:center;width:100%}
 #step-account{display:none;width:100%;max-width:460px;flex-direction:column;align-items:center}
+
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.glass{background:var(--panel);border:1px solid var(--line-soft);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:10px}
+.glass-hover{transition:transform .25s var(--ease),border-color .25s var(--ease),box-shadow .25s var(--ease),background .25s var(--ease)}
+.glass-hover:hover{transform:translateY(-2px);background:var(--panel-2);border-color:rgba(34,211,238,.22);box-shadow:0 0 0 1px rgba(34,211,238,.08),0 12px 32px -16px rgba(0,0,0,.8)}
+
 </style>
 </head>
 <body>
@@ -224,7 +236,7 @@ input::placeholder{color:var(--faint)}
         </a>
       </div>
 
-      <div style="display:flex;align-items:center;gap:12px;margin:0 0 16px"><div style="flex:1;height:1px;background:#21262d"></div><span style="font-size:11px;color:#484f58">or sign up with email</span><div style="flex:1;height:1px;background:#21262d"></div></div>
+      <div style="display:flex;align-items:center;gap:12px;margin:0 0 16px"><div style="flex:1;height:1px;background:var(--line)"></div><span style="font-size:11px;color:var(--faint)">or sign up with email</span><div style="flex:1;height:1px;background:var(--line)"></div></div>
 
       <form id="signup-form">
         <div>

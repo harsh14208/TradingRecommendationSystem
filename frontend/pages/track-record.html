@@ -3,20 +3,33 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#0a0f1a"/>
+<meta name="msapplication-TileColor" content="#0a0f1a"/>
 <link rel="icon" type="image/png" href="/favicon.png"/>
 <title>Signal Track Record — Signal.Trade</title>
 <meta name="description" content="Verified signal performance record: win rate, average return, Sharpe ratio, and top signals from Signal.Trade's automated algorithm."/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh}
-nav{position:sticky;top:0;background:rgba(13,17,23,0.96);backdrop-filter:blur(8px);border-bottom:1px solid #21262d;padding:14px 24px;display:flex;align-items:center;gap:20px}
-nav a{font-size:13px;color:#8b949e}nav a:hover{color:#e6edf3}
+:root{
+  --bg:#0a0f1a;--bg-0:#0a0f1a;--bg-1:#0e1420;--bg-2:#131a28;--bg1:#0e1420;--bg2:#131a28;
+  --line:#1f2a3d;--line2:#273348;--line-soft:rgba(255,255,255,0.04);
+  --text:#e6edf7;--dim:#8a97ad;--faint:#7f8d9e;
+  --up:#22d3ee;--down:#fb4d6d;--warn:#fbbf24;--accent:#22d3ee;--purple:#7c3aed;
+  --up-soft:rgba(34,211,238,.12);--down-soft:rgba(251,77,109,.12);--warn-soft:rgba(251,191,36,.12);
+  --panel:rgba(255,255,255,.025);--panel-2:rgba(255,255,255,.045);
+  --ease:cubic-bezier(0.22,1,0.36,1);
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Inter',-apple-system,sans-serif;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+nav{position:sticky;top:0;background:var(--panel);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-bottom:1px solid var(--line-soft);padding:14px 24px;display:flex;align-items:center;gap:20px}
+nav a{font-size:13px;color:var(--dim)}nav a:hover{color:var(--text)}
 .logo{margin-right:auto;text-decoration:none;display:inline-flex;align-items:center}
 .logo img{height:90px;width:auto;display:block}
-.hero{text-align:center;padding:64px 24px 48px;border-bottom:1px solid #21262d}
+.hero{text-align:center;padding:64px 24px 48px;border-bottom:1px solid var(--line)}
 .hero h1{font-size:40px;font-weight:800;letter-spacing:-0.04em;margin-bottom:12px}
-.hero p{font-size:16px;color:#8b949e;max-width:520px;margin:0 auto 16px}
-.badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;font-family:monospace;background:rgba(16,185,129,0.1);color:#10b981;border:1px solid rgba(16,185,129,0.3)}
+.hero p{font-size:16px;color:var(--dim);max-width:520px;margin:0 auto 16px}
+.badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;font-family:monospace;background:rgba(34,211,238,0.1);color:var(--up);border:1px solid rgba(34,211,238,0.3)}
 .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
 .grid{display:grid;gap:16px;margin-bottom:32px}
 .grid-4{grid-template-columns:repeat(4,1fr)}
@@ -24,17 +37,17 @@ nav a{font-size:13px;color:#8b949e}nav a:hover{color:#e6edf3}
 .grid-2{grid-template-columns:repeat(2,1fr)}
 @media(max-width:700px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr 1fr}}
 @media(max-width:400px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}}
-.card{background:#161b22;border:1px solid #21262d;border-radius:12px;padding:20px}
-.card-label{font-size:10px;color:#8b949e;font-family:monospace;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
+.card{background:var(--panel);border:1px solid var(--line-soft);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:12px;padding:20px}
+.card-label{font-size:10px;color:var(--dim);font-family:monospace;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
 .card-value{font-size:28px;font-weight:800;font-family:monospace}
-.card-sub{font-size:11px;color:#8b949e;margin-top:4px}
-.up{color:#10b981}.down{color:#ef4444}.warn{color:#f59e0b}.dim{color:#8b949e}
+.card-sub{font-size:11px;color:var(--dim);margin-top:4px}
+.up{color:var(--up)}.down{color:var(--down)}.warn{color:var(--warn)}.dim{color:var(--dim)}
 section{margin-bottom:40px}
-.section-title{font-size:12px;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.1em;margin-bottom:16px;display:flex;align-items:center;gap:10px}
-.section-title::after{content:"";flex:1;height:1px;background:#21262d}
+.section-title{font-size:12px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.1em;margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.section-title::after{content:"";flex:1;height:1px;background:var(--line)}
 .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
 table{width:100%;border-collapse:collapse;font-size:13px;min-width:500px}
-th{text-align:right;padding:8px 12px;color:#8b949e;font-weight:500;font-family:monospace;font-size:11px;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid #21262d}
+th{text-align:right;padding:8px 12px;color:var(--dim);font-weight:500;font-family:monospace;font-size:11px;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--line)}
 th:first-child{text-align:left}
 td{padding:9px 12px;border-bottom:1px solid rgba(33,38,45,0.6);font-family:monospace}
 td:first-child{font-weight:700;font-size:14px;text-align:left}
@@ -43,28 +56,35 @@ td:first-child{font-weight:700;font-size:14px;text-align:left}
   th,td{padding:7px 8px}
 }
 tr:last-child td{border-bottom:none}
-.bar-wrap{height:4px;background:#21262d;border-radius:2px;overflow:hidden;margin-top:6px}
+.bar-wrap{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:6px}
 .bar-fill{height:100%;border-radius:2px;transition:width .6s ease}
-.signal-card{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:14px 16px}
+.signal-card{background:var(--panel);border:1px solid var(--line-soft);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:10px;padding:14px 16px}
 .signal-card .ticker{font-size:18px;font-weight:800;font-family:monospace}
 .signal-card .ret{font-size:22px;font-weight:800;font-family:monospace;margin:6px 0 4px}
 .action-pill{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;font-family:monospace}
-.action-pill.BUY{background:rgba(16,185,129,.15);color:#10b981;border:1px solid rgba(16,185,129,.3)}
-.action-pill.SELL{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
+.action-pill.BUY{background:rgba(34,211,238,.15);color:var(--up);border:1px solid rgba(34,211,238,.3)}
+.action-pill.SELL{background:rgba(251,77,109,.15);color:var(--down);border:1px solid rgba(251,77,109,.3)}
 .month-bar{display:flex;align-items:flex-end;gap:6px;height:80px}
 .month-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
 .month-col .pct{font-size:10px;font-weight:700;font-family:monospace}
 .month-col .rect{width:100%;border-radius:3px 3px 0 0;min-height:4px;transition:height .6s}
-.month-col .lbl{font-size:9px;color:#8b949e;font-family:monospace}
-.disclaimer{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:16px 20px;margin-bottom:32px}
-.disclaimer p{font-size:12px;color:#8b949e;line-height:1.6;margin:0}
-.cta{text-align:center;padding:48px 24px;border-top:1px solid #21262d;margin-top:48px}
+.month-col .lbl{font-size:9px;color:var(--dim);font-family:monospace}
+.disclaimer{background:var(--panel);border:1px solid var(--line-soft);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:10px;padding:16px 20px;margin-bottom:32px}
+.disclaimer p{font-size:12px;color:var(--dim);line-height:1.6;margin:0}
+.cta{text-align:center;padding:48px 24px;border-top:1px solid var(--line);margin-top:48px}
 .cta h2{font-size:24px;font-weight:800;margin-bottom:10px}
-.cta p{color:#8b949e;margin-bottom:24px}
-.btn{display:inline-block;padding:12px 28px;background:#10b981;color:#fff;border-radius:8px;font-weight:700;font-size:15px;text-decoration:none;transition:opacity .2s}
+.cta p{color:var(--dim);margin-bottom:24px}
+.btn{display:inline-block;padding:12px 28px;background:var(--up);color:#fff;border-radius:8px;font-weight:700;font-size:15px;text-decoration:none;transition:opacity .2s}
 .btn:hover{opacity:.85}
-.spinner{text-align:center;padding:60px;color:#8b949e;font-family:monospace}
-footer{text-align:center;padding:32px;font-size:12px;color:#484f58;border-top:1px solid #21262d}
+.spinner{text-align:center;padding:60px;color:var(--dim);font-family:monospace}
+footer{text-align:center;padding:32px;font-size:12px;color:var(--faint);border-top:1px solid var(--line)}
+
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.glass{background:var(--panel);border:1px solid var(--line-soft);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:10px}
+.glass-hover{transition:transform .25s var(--ease),border-color .25s var(--ease),box-shadow .25s var(--ease),background .25s var(--ease)}
+.glass-hover:hover{transform:translateY(-2px);background:var(--panel-2);border-color:rgba(34,211,238,.22);box-shadow:0 0 0 1px rgba(34,211,238,.08),0 12px 32px -16px rgba(0,0,0,.8)}
+
 </style>
 </head>
 <body>
@@ -73,7 +93,7 @@ footer{text-align:center;padding:32px;font-size:12px;color:#484f58;border-top:1p
   <a href="/" class="logo"><img src="/logo-full.png" alt="Signal.Trade"/></a>
   <a href="/tos">Terms</a>
   <a href="/privacy">Privacy</a>
-  <a href="/" style="margin-left:auto;background:#10b981;color:#fff;padding:6px 16px;border-radius:6px;font-weight:600;font-size:13px">Open App →</a>
+  <a href="/" style="margin-left:auto;background:var(--up);color:#fff;padding:6px 16px;border-radius:6px;font-weight:600;font-size:13px">Open App →</a>
 </nav>
 
 <div class="hero">
@@ -85,7 +105,7 @@ footer{text-align:center;padding:32px;font-size:12px;color:#484f58;border-top:1p
 <div class="wrap">
 
   <div class="disclaimer">
-    <p>⚠️ <strong style="color:#e6edf3">Not financial advice.</strong> Past performance does not guarantee future results. These statistics reflect algorithmic signal output — not real money trades. All trading involves substantial risk of loss. Signal.Trade is not a registered investment adviser.</p>
+    <p>⚠️ <strong style="color:var(--text)">Not financial advice.</strong> Past performance does not guarantee future results. These statistics reflect algorithmic signal output — not real money trades. All trading involves substantial risk of loss. Signal.Trade is not a registered investment adviser.</p>
   </div>
 
   <div id="content"><div class="spinner">Loading track record…</div></div>
@@ -96,11 +116,11 @@ footer{text-align:center;padding:32px;font-size:12px;color:#484f58;border-top:1p
   <h2>Get these signals in your Telegram</h2>
   <p>Sign up for Signal.Trade and receive real-time alerts when high-confidence signals fire.</p>
   <a href="/" class="btn">Start Free →</a>
-  <div style="margin-top:14px;font-size:11px;color:#484f58">No card required for Free plan · Cancel anytime</div>
+  <div style="margin-top:14px;font-size:11px;color:var(--faint)">No card required for Free plan · Cancel anytime</div>
 </div>
 
 <footer>
-  Signal.Trade &nbsp;·&nbsp; <a href="/tos" style="color:#484f58">Terms of Service</a> &nbsp;·&nbsp; <a href="/privacy" style="color:#484f58">Privacy Policy</a> &nbsp;·&nbsp; Not financial advice
+  Signal.Trade &nbsp;·&nbsp; <a href="/tos" style="color:var(--faint)">Terms of Service</a> &nbsp;·&nbsp; <a href="/privacy" style="color:var(--faint)">Privacy Policy</a> &nbsp;·&nbsp; Not financial advice
 </footer>
 
 <script src="/track-record.js"></script>
