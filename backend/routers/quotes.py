@@ -46,6 +46,21 @@ _quotes_fetch_lock = asyncio.Lock()
 
 SECTOR_ETFS = ["XLK", "XLF", "XLY", "XLC", "XLV", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU"]
 
+# Approximate S&P 500 sector weights and canonical names for UI heatmaps.
+_SECTOR_META = {
+    "XLK": {"name": "Technology", "weight": 29.4},
+    "XLV": {"name": "Health Care", "weight": 13.1},
+    "XLF": {"name": "Financials", "weight": 12.9},
+    "XLC": {"name": "Communication", "weight": 8.7},
+    "XLY": {"name": "Consumer Discret.", "weight": 9.1},
+    "XLI": {"name": "Industrials", "weight": 8.5},
+    "XLP": {"name": "Consumer Staples", "weight": 6.0},
+    "XLE": {"name": "Energy", "weight": 4.2},
+    "XLB": {"name": "Materials", "weight": 2.4},
+    "XLRE": {"name": "Real Estate", "weight": 2.4},
+    "XLU": {"name": "Utilities", "weight": 2.4},
+}
+
 
 @router.get("/quotes")
 async def ticker_tape():
@@ -394,23 +409,29 @@ async def sector_heatmap():
     out = []
     for etf in SECTOR_ETFS:
         df = histories.get(etf)
+        meta = _SECTOR_META.get(etf, {"name": etf, "weight": 2.0})
         if df is None or df.empty:
+            out.append({"etf": etf, "name": meta["name"], "weight": meta["weight"], "flow_1w": 0})
             continue
         closes = df["Close"].astype(float)
         if len(closes) < 2:
+            out.append({"etf": etf, "name": meta["name"], "weight": meta["weight"], "flow_1w": 0})
             continue
         out.append(
             {
                 "etf": etf,
+                "name": meta["name"],
+                "weight": meta["weight"],
                 "ret_1d": _ret(closes, 1),
                 "ret_1w": _ret(closes, 5),
                 "ret_1m": _ret(closes, 21),
                 "ret_3m": _ret(closes, 63),
                 "ret_ytd": _ytd_ret(df),
+                "flow_1w": 0,
             }
         )
 
-    out.sort(key=lambda x: x["ret_1m"] or 0, reverse=True)
+    out.sort(key=lambda x: x.get("ret_1m") or 0, reverse=True)
     _sector_cache["data"] = out
     _sector_cache["ts"] = now
     return out
@@ -531,6 +552,8 @@ async def economic_calendar():
             "color": "#ef4444",
             "time": "2:00 PM ET",
             "impact": "HIGH",
+            "forecast": None,
+            "previous": None,
             "desc": "Federal Open Market Committee announces the federal funds rate target. "
             "Market-moving for ALL asset classes. Press conference at 2:30 PM ET. "
             "Dot plot + Summary of Economic Projections released at quarterly meetings.",
@@ -569,6 +592,8 @@ async def economic_calendar():
                                                 "color": meta["color"],
                                                 "time": meta["time"],
                                                 "impact": meta["impact"],
+                                                "forecast": None,
+                                                "previous": None,
                                                 "desc": meta["desc"],
                                             }
                                         )

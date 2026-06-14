@@ -1,6 +1,14 @@
-/* global React */
+/* global React, apiFetch */
 // SIGNAL.TRADE cinematic — Market Context page.
-// Wired to /api/market/context, /api/sources and /api/delivery/log.
+// Wired to /api/market/context, /api/sources, /api/delivery/log,
+// /api/market/sectors and /api/market/calendar.
+
+const { useState: mUseState, useEffect: mUseEffect } = React;
+
+function toNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
 
 function Gauge({ score, label }) {
   // semicircle 0..100 → 180°..0°
@@ -57,7 +65,8 @@ function ContextCard({ c }) {
 }
 
 function SectorBar({ s }) {
-  const ret = s.ret_1m;
+  const ret = toNum(s.ret_1m, 0);
+  const flow = toNum(s.flow_1w, 0);
   const col = ret >= 0 ? "var(--bull)" : "var(--bear)";
   const w = Math.min(100, Math.abs(ret) * 8);
   return (
@@ -70,7 +79,7 @@ function SectorBar({ s }) {
         <div style={{ width: `${w}%`, borderRadius: 2, background: col, opacity: 0.7 }}></div>
       </div>
       <span className={`mono ${ret >= 0 ? "bull" : "bear"}`} style={{ fontSize: 11.5, textAlign: "right" }}>{ret >= 0 ? "+" : ""}{ret.toFixed(1)}%</span>
-      <span className={`mono ${s.flow_1w >= 0 ? "bull" : "bear"}`} style={{ fontSize: 11, textAlign: "right" }}>{s.flow_1w >= 0 ? "+" : ""}{s.flow_1w.toFixed(0)}M</span>
+      <span className={`mono ${flow >= 0 ? "bull" : "bear"}`} style={{ fontSize: 11, textAlign: "right" }}>{flow >= 0 ? "+" : ""}{flow.toFixed(0)}M</span>
     </div>
   );
 }
@@ -79,6 +88,7 @@ function CalendarRow({ e }) {
   const col = e.impact === "HIGH" ? "var(--bear)" : e.impact === "MEDIUM" ? "var(--neutral)" : "var(--text-faint)";
   const d = new Date(e.date + "T00:00");
   const ds = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const hasFcst = e.forecast != null && e.previous != null;
   return (
     <div style={{ display: "grid", gridTemplateColumns: "62px 1fr auto", gap: 12, alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--line-soft)" }}>
       <div>
@@ -87,7 +97,7 @@ function CalendarRow({ e }) {
       </div>
       <div>
         <div style={{ fontSize: 12.5, fontWeight: 500 }}>{e.name}</div>
-        <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 1 }}>Fcst <span className="mono">{e.forecast}</span> · Prev <span className="mono">{e.previous}</span></div>
+        {hasFcst && <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 1 }}>Fcst <span className="mono">{e.forecast}</span> · Prev <span className="mono">{e.previous}</span></div>}
       </div>
       <span className="mono" style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", color: col, border: `1px solid ${col}`, borderRadius: 4, padding: "2px 6px" }}>{e.impact}</span>
     </div>
@@ -203,6 +213,14 @@ function marketContextCards(m) {
 }
 
 function PageMarket({ marketCtx, sources, log }) {
+  const [sectors, setSectors] = mUseState(null);
+  const [calendar, setCalendar] = mUseState(null);
+
+  mUseEffect(() => {
+    apiFetch("/api/market/sectors").then((d) => { if (Array.isArray(d)) setSectors(d); });
+    apiFetch("/api/market/calendar").then((d) => { if (Array.isArray(d)) setCalendar(d); });
+  }, []);
+
   const fg = marketCtx?.fear_greed || M_FEAR_GREED;
   const macro = marketCtx?.macro || M_MACRO;
   const breadth = marketCtx?.breadth || M_BREADTH;
@@ -213,6 +231,10 @@ function PageMarket({ marketCtx, sources, log }) {
   const ycSpread = macro?.yc_spread != null ? macro.yc_spread : (macro?.t10y != null && macro?.t2y != null ? macro.t10y - macro.t2y : M_MACRO.yc_spread);
   const ycTone = ycSpread >= 0 ? "up" : "down";
   const vixTone = macro?.vix != null && macro.vix < 20 ? "up" : "neutral";
+  const sectorList = sectors && sectors.length ? sectors : M_SECTORS;
+  const calendarList = calendar && calendar.length ? calendar : M_CALENDAR;
+  const loadingSectors = sectors === null;
+  const loadingCalendar = calendar === null;
   return (
     <div className="page wrap" style={{ paddingTop: 24, paddingBottom: 56 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
@@ -273,7 +295,7 @@ function PageMarket({ marketCtx, sources, log }) {
             <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)" }}>{rotation.label.toUpperCase()}</span>
           </div>
           <Defer ms={600} skeleton={<div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>{[0, 1, 2, 3, 4, 5].map((i) => <SkelBlock key={i} h={24}></SkelBlock>)}</div>}>
-            <div style={{ marginTop: 8 }}>{M_SECTORS.map((s) => <SectorBar key={s.etf} s={s}></SectorBar>)}</div>
+            <div style={{ marginTop: 8 }}>{sectorList.map((s) => <SectorBar key={s.etf} s={s}></SectorBar>)}</div>
           </Defer>
           <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: "var(--bull-soft)", border: "1px solid rgba(34,211,238,0.16)", fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>
             Rotation read: <span className="bull" style={{ fontWeight: 600 }}>{rotation.note}</span> — leaders {rotation.etfs.join(", ")}.
@@ -283,7 +305,7 @@ function PageMarket({ marketCtx, sources, log }) {
         <div className="glass" style={{ padding: 20, alignSelf: "start" }}>
           <div className="kicker" style={{ marginBottom: 6 }}>ECONOMIC CALENDAR</div>
           <Defer ms={650} skeleton={<div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>{[0, 1, 2, 3, 4].map((i) => <SkelBlock key={i} h={32}></SkelBlock>)}</div>}>
-            <div style={{ marginTop: 4 }}>{M_CALENDAR.slice(0, 9).map((e, i) => <CalendarRow key={i} e={e}></CalendarRow>)}</div>
+            <div style={{ marginTop: 4 }}>{calendarList.slice(0, 9).map((e, i) => <CalendarRow key={i} e={e}></CalendarRow>)}</div>
           </Defer>
         </div>
       </div>
