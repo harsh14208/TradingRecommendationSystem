@@ -41,6 +41,14 @@ const ESBUILD_OPTS = {
 const APP_FILES = [
   'app.auth.jsx',          // auth/session helpers (getToken, apiFetch, …)
   'app.constants.jsx',     // TIERS, helpers, glossary
+  // Legacy shared components + modals — kept so advanced tools (watchlist,
+  // alerts, screener, paper trading, broker, admin) remain reachable.
+  'app.ui.jsx',            // Icon, Chart, Sparkline, Tip, etc.
+  'app.signal.jsx',        // SignalCard, SignalDetail
+  'app.views.jsx',         // SourcesView, RulesView, BacktestView, etc.
+  'app.modals.jsx',        // AccountModal, WatchlistView, AlertsView, ScreenerView, PricingView
+  'app.analysis.jsx',      // PaperView, MarketOverviewView, SectorView, CalendarView, etc.
+  // Cinematic reference UI
   'cin.ui.jsx',            // cinematic shared primitives
   'cin.data.jsx',          // mock signal + market data (overridden by API later)
   'cin.market-data.jsx',   // mock market context
@@ -50,6 +58,7 @@ const APP_FILES = [
   'cin.backtest.jsx',      // Backtest Lab
   'cin.track.jsx',         // Track Record
   'cin.settings.jsx',      // Settings
+  'cin.tools.jsx',         // Tools hub (legacy modals)
   'cin.app.jsx',           // root shell + routing
 ];
 

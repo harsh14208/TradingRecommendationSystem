@@ -1,6 +1,6 @@
 /* global React */
 // SIGNAL.TRADE cinematic — Market Context page.
-const { useState: mUseState } = React;
+// Wired to /api/market/context, /api/sources and /api/delivery/log.
 
 function Gauge({ score, label }) {
   // semicircle 0..100 → 180°..0°
@@ -111,7 +111,8 @@ function SourcePill({ s }) {
   );
 }
 
-function DeliveryLog() {
+function DeliveryLog({ log }) {
+  const rows = Array.isArray(log) && log.length ? log : M_LOG;
   return (
     <div className="glass" style={{ padding: 16, alignSelf: "start" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
@@ -119,12 +120,13 @@ function DeliveryLog() {
         <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> LIVE</span>
       </div>
       <div className="mono" style={{ fontSize: 11, display: "flex", flexDirection: "column", gap: 7 }}>
-        {M_LOG.map((l, i) => {
-          const col = l.s === "sent" ? "var(--bull)" : l.s === "fail" ? "var(--bear)" : "var(--neutral)";
+        {rows.map((l, i) => {
+          const status = l.s || l.status || "sent";
+          const col = status === "sent" ? "var(--bull)" : status === "fail" ? "var(--bear)" : "var(--neutral)";
           return (
             <div key={i} style={{ display: "flex", gap: 10 }}>
-              <span style={{ color: "var(--text-ghost)" }}>{l.t}</span>
-              <span style={{ color: col, flex: 1, textWrap: "pretty" }}>{l.m}</span>
+              <span style={{ color: "var(--text-ghost)" }}>{l.t || l.time}</span>
+              <span style={{ color: col, flex: 1, textWrap: "pretty" }}>{l.m || l.message}</span>
             </div>
           );
         })}
@@ -133,7 +135,84 @@ function DeliveryLog() {
   );
 }
 
-function PageMarket() {
+function _first(...vals) {
+  for (const v of vals) if (v != null) return v;
+  return vals[vals.length - 1];
+}
+
+function marketSources(sources) {
+  if (!Array.isArray(sources) || !sources.length) return M_SOURCES;
+  const abbrFor = (s) => s.abbr || (typeof srcAbbr === "function" ? srcAbbr(s.name) : (s.name || "").slice(0, 4).toUpperCase());
+  return sources.map((s) => ({
+    id: s.id,
+    name: s.name,
+    abbr: abbrFor(s),
+    desc: s.description || s.desc || "",
+    on: s.is_on,
+    reqs: _first(s.requests_24h, s.reqs, 0),
+    latency: _first(s.latency_ms, s.latency, 0),
+    feed: s.feed || (s.is_on ? "Live" : "Disabled"),
+  }));
+}
+
+const ROTATION_MAP = { early: "early_bull", mid: "early_bull", late: "early_bear", recession: "late_bear" };
+function marketRotation(macro) {
+  const stage = macro?.sector_rotation?.stage || macro?.sector_rotation || M_MACRO.sector_rotation;
+  const mapped = ROTATION_MAP[stage] || stage;
+  return M_ROTATION.find((r) => r.id === mapped) || M_ROTATION[0];
+}
+
+function marketContextCards(m) {
+  if (!m) return M_CONTEXT_SIGNALS;
+  const fg = m.fear_greed, macro = m.macro, breadth = m.breadth, pc = m.put_call, aaii = m.aaii, cot = m.cot;
+  const cards = [];
+  if (fg?.score != null) {
+    const sent = fg.score < 25 ? "bullish" : fg.score > 75 ? "bearish" : "neutral";
+    cards.push({ src: "F&G", head: `Fear & Greed at ${fg.score.toFixed(1)} — ${fg.label || sent}`, body: `CNN Fear & Greed reads ${fg.score.toFixed(1)}. Extremes are contrarian: fear supports dips, greed warns of complacency.`, sentiment: sent });
+  }
+  if (macro?.vix != null) {
+    const sent = macro.vix < 16 ? "bullish" : macro.vix > 25 ? "bearish" : "neutral";
+    cards.push({ src: "VIX", head: `VIX at ${macro.vix.toFixed(2)}`, body: `VIX is ${macro.vix.toFixed(2)}. Low realized vol supports upside; elevated readings flag fear and mean-reversion opportunity.`, sentiment: sent });
+  }
+  const yc = macro?.yc_spread != null ? macro.yc_spread : (macro?.t10y != null && macro?.t2y != null ? macro.t10y - macro.t2y : (macro?.t10y != null && macro?.t3m != null ? macro.t10y - macro.t3m : null));
+  if (yc != null) {
+    const sent = yc > 0 ? "bullish" : "bearish";
+    cards.push({ src: "Yield", head: `Yield curve ${yc >= 0 ? "+" : ""}${yc.toFixed(2)}%`, body: `10Y minus short-term spread is ${yc >= 0 ? "+" : ""}${yc.toFixed(2)}%. Inversion is a recession warning, but lead times vary.`, sentiment: sent });
+  }
+  if (breadth?.pct_above_200d != null) {
+    const sent = breadth.pct_above_200d >= 60 ? "bullish" : breadth.pct_above_200d <= 40 ? "bearish" : "neutral";
+    cards.push({ src: "Breadth", head: `${breadth.pct_above_200d.toFixed(1)}% of S&P 500 > 200d`, body: `Breadth is ${breadth.pct_above_200d.toFixed(1)}% — ${sent === "bullish" ? "broad participation" : sent === "bearish" ? "deterioration" : "mixed"} across the index.`, sentiment: sent });
+  }
+  if (cot?.net_pct != null) {
+    const sent = cot.net_pct < -20 ? "bullish" : cot.net_pct > 20 ? "bearish" : "neutral";
+    cards.push({ src: "COT", head: `Leveraged funds net ${cot.net_pct.toFixed(1)}%`, body: `COT positioning is ${cot.net_pct.toFixed(1)}% net. Crowded positioning is contrarian when extreme.`, sentiment: sent });
+  }
+  if (aaii?.spread != null) {
+    const sent = aaii.spread > 20 ? "bearish" : aaii.spread < -10 ? "bullish" : "neutral";
+    cards.push({ src: "AAII", head: `AAII bull-bear spread ${aaii.spread > 0 ? "+" : ""}${aaii.spread.toFixed(1)}%`, body: `Active investors are ${aaii.spread > 0 ? "net bullish" : "net bearish"}. Extremes are contrarian reads.`, sentiment: sent });
+  }
+  if (pc?.ratio != null) {
+    const sent = pc.ratio > 1.1 ? "bullish" : pc.ratio < 0.7 ? "bearish" : "neutral";
+    cards.push({ src: "P/C", head: `Put/Call ratio ${pc.ratio.toFixed(2)}`, body: `Equity put/call at ${pc.ratio.toFixed(2)} — ${sent === "bullish" ? "fearful" : sent === "bearish" ? "complacent" : "neutral"} options flow.`, sentiment: sent });
+  }
+  if (macro?.dxy_1m != null) {
+    const sent = macro.dxy_1m > 2 ? "bearish" : macro.dxy_1m < -2 ? "bullish" : "neutral";
+    cards.push({ src: "DXY", head: `Dollar ${macro.dxy_1m >= 0 ? "+" : ""}${macro.dxy_1m.toFixed(1)}% 1m`, body: `DXY moved ${macro.dxy_1m >= 0 ? "+" : ""}${macro.dxy_1m.toFixed(1)}% over the trailing month. A rising dollar tightens financial conditions.`, sentiment: sent });
+  }
+  return cards.length ? cards : M_CONTEXT_SIGNALS;
+}
+
+function PageMarket({ marketCtx, sources, log }) {
+  const fg = marketCtx?.fear_greed || M_FEAR_GREED;
+  const macro = marketCtx?.macro || M_MACRO;
+  const breadth = marketCtx?.breadth || M_BREADTH;
+  const hmm = marketCtx?.hmm_regime || M_HMM;
+  const contextSignals = marketContextCards(marketCtx);
+  const srcList = marketSources(sources);
+  const rotation = marketRotation(macro);
+  const ycSpread = macro?.yc_spread != null ? macro.yc_spread : (macro?.t10y != null && macro?.t2y != null ? macro.t10y - macro.t2y : M_MACRO.yc_spread);
+  const ycTone = ycSpread >= 0 ? "up" : "down";
+  const vixTone = macro?.vix != null && macro.vix < 20 ? "up" : "neutral";
   return (
     <div className="page wrap" style={{ paddingTop: 24, paddingBottom: 56 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
@@ -146,44 +225,44 @@ function PageMarket() {
         <div className="glass" style={{ padding: 20 }}>
           <div className="kicker" style={{ marginBottom: 10 }}>FEAR & GREED</div>
           <Defer ms={500} skeleton={<SkelBlock h={120}></SkelBlock>}>
-            <Gauge score={M_FEAR_GREED.score} label={M_FEAR_GREED.label}></Gauge>
+            <Gauge score={fg.score} label={fg.label}></Gauge>
           </Defer>
           <div className="mono" style={{ fontSize: 11, color: "var(--text-faint)", textAlign: "center", marginTop: 6 }}>
-            1w ago {M_FEAR_GREED.prev_1w} · 1m ago {M_FEAR_GREED.prev_1m}
+            1w ago {fg.prev_1w ?? fg.prev_close ?? "—"} · 1m ago {fg.prev_1m ?? "—"}
           </div>
         </div>
 
         <div className="glass" style={{ padding: 20 }}>
           <div className="kicker" style={{ marginBottom: 12 }}>REGIME · HIDDEN MARKOV MODEL</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-            <span className="mono" style={{ fontSize: 22, fontWeight: 700, color: "var(--bull)", textTransform: "capitalize" }}>{M_HMM.regime}</span>
-            <span className="kicker" style={{ color: "var(--bull)" }}>{(M_HMM.bull_prob * 100).toFixed(0)}% PROBABILITY</span>
+            <span className="mono" style={{ fontSize: 22, fontWeight: 700, color: "var(--bull)", textTransform: "capitalize" }}>{hmm.regime}</span>
+            <span className="kicker" style={{ color: "var(--bull)" }}>{((hmm.bull_prob || 0) * 100).toFixed(0)}% PROBABILITY</span>
           </div>
           <div style={{ height: 8, borderRadius: 4, overflow: "hidden", display: "flex", marginBottom: 12 }}>
-            <div style={{ width: `${M_HMM.bull_prob * 100}%`, background: "var(--bull)" }}></div>
-            <div style={{ width: `${M_HMM.bear_prob * 100}%`, background: "var(--bear)", opacity: 0.6 }}></div>
+            <div style={{ width: `${(hmm.bull_prob || 0) * 100}%`, background: "var(--bull)" }}></div>
+            <div style={{ width: `${(hmm.bear_prob || 0) * 100}%`, background: "var(--bear)", opacity: 0.6 }}></div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <MacroStat label="Transition risk" value={`${(M_HMM.transition_risk * 100).toFixed(0)}%`} tone="neutral"></MacroStat>
-            <MacroStat label="VIX z-score" value={M_HMM.vix_z.toFixed(1)} tone="up"></MacroStat>
+            <MacroStat label="Transition risk" value={`${((hmm.transition_risk || 0) * 100).toFixed(0)}%`} tone="neutral"></MacroStat>
+            <MacroStat label="VIX z-score" value={(hmm.vix_z || 0).toFixed(1)} tone="up"></MacroStat>
           </div>
         </div>
 
         <div className="glass" style={{ padding: 20 }}>
           <div className="kicker" style={{ marginBottom: 12 }}>MACRO DASHBOARD</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <MacroStat label="VIX" value={M_MACRO.vix} sub="Below 1-yr mean" tone="up"></MacroStat>
-            <MacroStat label="10Y − 2Y" value={`${M_MACRO.yc_spread}%`} sub="Inverted" tone="down"></MacroStat>
-            <MacroStat label="Breadth >200d" value={`${M_BREADTH.pct_above_200d}%`} sub="Healthy" tone="up"></MacroStat>
-            <MacroStat label="CPI YoY" value={`${M_MACRO.cpi}%`} sub="Cooling" tone="neutral"></MacroStat>
+            <MacroStat label="VIX" value={macro?.vix != null ? macro.vix.toFixed(2) : M_MACRO.vix} sub="Fear gauge" tone={vixTone}></MacroStat>
+            <MacroStat label="10Y − 2Y" value={`${ycSpread >= 0 ? "+" : ""}${ycSpread.toFixed(2)}%`} sub={ycSpread < 0 ? "Inverted" : "Positive"} tone={ycTone}></MacroStat>
+            <MacroStat label="Breadth >200d" value={`${breadth?.pct_above_200d != null ? breadth.pct_above_200d.toFixed(1) : M_BREADTH.pct_above_200d}%`} sub={breadth?.pct_above_200d >= 60 ? "Healthy" : "Mixed"} tone={breadth?.pct_above_200d >= 60 ? "up" : "neutral"}></MacroStat>
+            <MacroStat label="CPI YoY" value={`${macro?.cpi != null ? macro.cpi.toFixed(1) : M_MACRO.cpi}%`} sub="Headline inflation" tone="neutral"></MacroStat>
           </div>
         </div>
       </div>
 
       {/* Context narrative */}
-      <div className="kicker" style={{ margin: "26px 0 12px" }}>WHAT THE TAPE IS SAYING · {M_CONTEXT_SIGNALS.length} SIGNALS</div>
+      <div className="kicker" style={{ margin: "26px 0 12px" }}>WHAT THE TAPE IS SAYING · {contextSignals.length} SIGNALS</div>
       <div className="mkt-context" style={{ marginBottom: 8 }}>
-        {M_CONTEXT_SIGNALS.map((c, i) => <ContextCard key={i} c={c}></ContextCard>)}
+        {contextSignals.map((c, i) => <ContextCard key={i} c={c}></ContextCard>)}
       </div>
 
       {/* Sectors + calendar */}
@@ -191,13 +270,13 @@ function PageMarket() {
         <div className="glass" style={{ padding: 20, alignSelf: "start" }}>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
             <span className="kicker">SECTOR PERFORMANCE · 1M RETURN + 1W FLOW</span>
-            <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)" }}>{M_ROTATION.find((r) => r.id === M_MACRO.sector_rotation).label.toUpperCase()}</span>
+            <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)" }}>{rotation.label.toUpperCase()}</span>
           </div>
           <Defer ms={600} skeleton={<div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>{[0, 1, 2, 3, 4, 5].map((i) => <SkelBlock key={i} h={24}></SkelBlock>)}</div>}>
             <div style={{ marginTop: 8 }}>{M_SECTORS.map((s) => <SectorBar key={s.etf} s={s}></SectorBar>)}</div>
           </Defer>
           <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: "var(--bull-soft)", border: "1px solid rgba(34,211,238,0.16)", fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>
-            Rotation read: <span className="bull" style={{ fontWeight: 600 }}>{M_ROTATION.find((r) => r.id === M_MACRO.sector_rotation).note}</span> — leaders {M_ROTATION.find((r) => r.id === M_MACRO.sector_rotation).etfs.join(", ")}.
+            Rotation read: <span className="bull" style={{ fontWeight: 600 }}>{rotation.note}</span> — leaders {rotation.etfs.join(", ")}.
           </div>
         </div>
 
@@ -212,10 +291,10 @@ function PageMarket() {
       {/* Sources + log */}
       <div className="mkt-two" style={{ marginTop: 26 }}>
         <div>
-          <div className="kicker" style={{ marginBottom: 12 }}>DATA SOURCES · {M_SOURCES.filter((s) => s.on).length}/{M_SOURCES.length} ONLINE</div>
-          <div className="mkt-sources">{M_SOURCES.map((s) => <SourcePill key={s.id} s={s}></SourcePill>)}</div>
+          <div className="kicker" style={{ marginBottom: 12 }}>DATA SOURCES · {srcList.filter((s) => s.on).length}/{srcList.length} ONLINE</div>
+          <div className="mkt-sources">{srcList.map((s) => <SourcePill key={s.id} s={s}></SourcePill>)}</div>
         </div>
-        <DeliveryLog></DeliveryLog>
+        <DeliveryLog log={log}></DeliveryLog>
       </div>
     </div>
   );

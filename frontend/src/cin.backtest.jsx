@@ -1,6 +1,8 @@
 /* global React */
 // SIGNAL.TRADE cinematic — Backtest Lab.
-const { useState: bUseState, useMemo: bUseMemo } = React;
+// Fetches real /api/signals/backtest, /api/signals/backtest/horizons and
+// /api/signals/track-record, while keeping the toy equity-curve simulator.
+const { useState: bUseState, useEffect: bUseEffect, useMemo: bUseMemo } = React;
 
 function EquityChart({ result, compare }) {
   const w = 760, h = 300;
@@ -85,6 +87,71 @@ function MetricCard({ label, value, dp, suffix, good }) {
   );
 }
 
+function RealMetricCard({ label, value, sub, good }) {
+  return (
+    <div className="glass glass-hover" style={{ padding: "16px 18px" }}>
+      <div className="kicker" style={{ marginBottom: 8 }}>{label}</div>
+      <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: good ? "var(--bull)" : "var(--bear)" }}>{value}</div>
+      {sub && <div style={{ fontSize: 10.5, color: "var(--text-faint)", marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function HorizonCard({ h }) {
+  const has = h.n > 0 && h.win_rate != null;
+  return (
+    <div className="glass" style={{ padding: "14px 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{h.horizon}</span>
+        <span className="kicker" style={{ marginLeft: "auto" }}>{h.n} signals</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <RealMetricCard label="Win rate" value={has ? `${h.win_rate.toFixed(1)}%` : "—"} good={has && h.win_rate > 50}></RealMetricCard>
+        <RealMetricCard label="Avg return" value={h.avg_return != null ? `${h.avg_return >= 0 ? "+" : ""}${h.avg_return.toFixed(2)}%` : "—"} good={h.avg_return > 0}></RealMetricCard>
+        <RealMetricCard label="Sharpe" value={h.sharpe != null ? h.sharpe.toFixed(2) : "—"} good={h.sharpe > 1}></RealMetricCard>
+        <RealMetricCard label="Avg win" value={h.avg_win != null ? `+${h.avg_win.toFixed(2)}%` : "—"} good></RealMetricCard>
+      </div>
+    </div>
+  );
+}
+
+function TrackTable({ rows }) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  return (
+    <div className="glass" style={{ padding: "18px 20px", marginTop: 14 }}>
+      <div className="kicker" style={{ marginBottom: 12 }}>PER-TICKER TRACK RECORD</div>
+      <div style={{ overflowX: "auto" }}>
+        <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ textAlign: "right", color: "var(--text-faint)" }}>
+              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500 }}>Ticker</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>Signals</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>Win %</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>Avg ret</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>Sharpe</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>Best</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>Worst</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 12).map((r, i) => (
+              <tr key={i} style={{ borderTop: "1px solid var(--line-soft)", textAlign: "right" }}>
+                <td style={{ textAlign: "left", padding: "8px", fontWeight: 700 }}>{r.ticker}</td>
+                <td style={{ padding: "8px", color: "var(--text-dim)" }}>{r.signals}</td>
+                <td style={{ padding: "8px", color: r.win_rate >= 60 ? "var(--bull)" : "var(--text)" }}>{r.win_rate.toFixed(1)}%</td>
+                <td style={{ padding: "8px", color: r.avg_return >= 0 ? "var(--bull)" : "var(--bear)" }}>{r.avg_return >= 0 ? "+" : ""}{r.avg_return.toFixed(2)}%</td>
+                <td style={{ padding: "8px" }}>{r.sharpe != null ? r.sharpe.toFixed(2) : "—"}</td>
+                <td style={{ padding: "8px", color: "var(--bull)" }}>+{r.best.toFixed(2)}%</td>
+                <td style={{ padding: "8px", color: "var(--bear)" }}>{r.worst.toFixed(2)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 const BT_PRESET_B = { confMin: 55, holdDays: 3, stopPct: 8, sources: { tech: true, flow: false, options: true, macro: false } };
 
 function PageBacktest() {
@@ -93,11 +160,53 @@ function PageBacktest() {
   const [stopPct, setStopPct] = bUseState(5);
   const [sources, setSources] = bUseState({ tech: true, flow: true, options: true, macro: true });
   const [compare, setCompare] = bUseState(false);
+
+  const [btSummary, setBtSummary] = bUseState(null);
+  const [horizons, setHorizons] = bUseState([]);
+  const [trackRecord, setTrackRecord] = bUseState([]);
+  const [btLoading, setBtLoading] = bUseState(true);
+
+  bUseEffect(() => {
+    let alive = true;
+    setBtLoading(true);
+    Promise.all([
+      apiFetch("/api/signals/backtest"),
+      apiFetch("/api/signals/backtest/horizons"),
+      apiFetch("/api/signals/track-record"),
+    ]).then(([sum, hrs, trk]) => {
+      if (!alive) return;
+      if (sum && typeof sum === "object") setBtSummary(sum);
+      if (Array.isArray(hrs)) setHorizons(hrs);
+      if (Array.isArray(trk)) setTrackRecord(trk);
+    }).catch(() => {}).finally(() => { if (alive) setBtLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
   const result = bUseMemo(() => runBacktest({ confMin, holdDays, stopPct, sources }), [confMin, holdDays, stopPct, sources]);
   const cmpResult = bUseMemo(() => (compare ? runBacktest(BT_PRESET_B) : null), [compare]);
   const m = result.metrics;
   const cm = cmpResult ? cmpResult.metrics : null;
   const setSource = (k, v) => setSources((s) => ({ ...s, [k]: v }));
+
+  const realCards = btSummary && btSummary.resolved > 0 ? (
+    <div className="glass" style={{ padding: "18px 20px", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <span className="kicker">LIVE BACKTEST · {btSummary.resolved} RESOLVED SIGNALS</span>
+        <span className="kicker" style={{ marginLeft: "auto", color: "var(--text-faint)" }}>Primary horizon {btSummary.primary_horizon || "7d"}</span>
+      </div>
+      <div className="bt-metrics" style={{ marginBottom: 14 }}>
+        <RealMetricCard label="WIN RATE" value={`${btSummary.win_rate.toFixed(1)}%`} good={btSummary.win_rate > 50}></RealMetricCard>
+        <RealMetricCard label="AVG RETURN" value={`${btSummary.avg_return >= 0 ? "+" : ""}${btSummary.avg_return.toFixed(2)}%`} good={btSummary.avg_return > 0}></RealMetricCard>
+        <RealMetricCard label="SHARPE" value={btSummary.sharpe != null ? btSummary.sharpe.toFixed(2) : "—"} good={btSummary.sharpe > 1}></RealMetricCard>
+        <RealMetricCard label="MAX DD" value={btSummary.max_drawdown != null ? `${btSummary.max_drawdown.toFixed(1)}%` : "—"} good={btSummary.max_drawdown > -10}></RealMetricCard>
+      </div>
+      <div className="kicker" style={{ marginBottom: 10 }}>BY HORIZON</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+        {horizons.map((h) => <HorizonCard key={h.horizon} h={h}></HorizonCard>)}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="page wrap" style={{ paddingTop: 24, paddingBottom: 56 }}>
       <div className="bt-grid">
@@ -126,6 +235,17 @@ function PageBacktest() {
 
         {/* Results */}
         <main style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          {btLoading ? (
+            <div className="glass" style={{ padding: 20 }}>
+              <SkelBlock h={160}></SkelBlock>
+              <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                {[0, 1, 2, 3].map((i) => <SkelBlock key={i} h={80}></SkelBlock>)}
+              </div>
+            </div>
+          ) : realCards}
+
+          <TrackTable rows={trackRecord}></TrackTable>
+
           <div className="glass" style={{ padding: "18px 20px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
               <span className="kicker">EQUITY CURVE · $100K START · 20Y SIMULATION</span>

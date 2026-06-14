@@ -116,6 +116,7 @@ const NAV = [
   ["market", "Market"],
   ["backtest", "Backtest"],
   ["track", "Track Record"],
+  ["tools", "Tools"],
   ["settings", "Settings"],
 ];
 
@@ -126,6 +127,7 @@ const NAV_ICONS = {
   track: <path d="M5 21V5m14 16V11M12 21V3" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"></path>,
   backtest: <path d="M4 17l5-6 4 3 7-9M4 21h16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"></path>,
   settings: <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8-3a8 8 0 0 1-.2 1.8l2 1.5-2 3.4-2.3-1a8 8 0 0 1-3 1.8L14 22h-4l-.4-2.5a8 8 0 0 1-3-1.8l-2.4 1-2-3.4 2-1.5A8 8 0 0 1 4 12c0-.6.1-1.2.2-1.8l-2-1.5 2-3.4 2.3 1a8 8 0 0 1 3-1.8L10 2h4l.4 2.5a8 8 0 0 1 3 1.8l2.4-1 2 3.4-2 1.5c.1.6.2 1.2.2 1.8z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"></path>,
+  tools: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.6-3.6a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0l-3.6 3.6zM2 17.2V21h3.8l11-11.1L13 6.1 2 17.2z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"></path>,
 };
 
 function TopNav({ page, go, currentUser, onLogout }) {
@@ -483,6 +485,11 @@ function App() {
   /* Page props bundle */
   const common = { currentUser, setTweak, tweakState, hasTierAccess };
 
+  /* Legacy tool modals */
+  const [modals, setModals] = useState({ account: false, watchlist: false, alerts: false, screener: false, paper: false, market: false, sector: false, calendar: false, pricing: false });
+  const openModal = (k) => () => setModals((m) => ({ ...m, [k]: true }));
+  const closeModal = (k) => () => setModals((m) => ({ ...m, [k]: false }));
+
   if (!authReady) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg-0)", color: "var(--text-faint)", fontFamily: "var(--font-mono)", fontSize: 13 }}>Loading…</div>
   );
@@ -518,8 +525,24 @@ function App() {
         {page === "backtest" && <PageBacktest key="bt" {...common} />}
         {page === "track" && <PageTrack key="trk" histSignals={histSignals} {...common} />}
         {page === "settings" && <PageSettings key="set" currentUser={currentUser} settings={tweakState} setSettings={setTweak} {...common} />}
+        {page === "tools" && <PageTools key="tools" currentUser={currentUser}
+          openAccount={openModal("account")} openWatchlist={openModal("watchlist")}
+          openAlerts={openModal("alerts")} openScreener={openModal("screener")}
+          openPaper={openModal("paper")} openMarket={openModal("market")}
+          openSector={openModal("sector")} openCalendar={openModal("calendar")} />}
         <Footer />
         <BottomNav page={page} go={go} />
+
+        {/* Legacy feature modals/overlays */}
+        <AccountModal open={modals.account} onClose={closeModal("account")} user={currentUser} setUser={setCurrentUser} onUpgrade={openModal("pricing")} />
+        <WatchlistView open={modals.watchlist} onClose={closeModal("watchlist")} quotes={tickerTape} histSignals={histSignals} />
+        <AlertsView open={modals.alerts} onClose={closeModal("alerts")} />
+        <ScreenerView open={modals.screener} onClose={closeModal("screener")} />
+        <PaperView open={modals.paper} onClose={closeModal("paper")} online={online} />
+        <MarketOverviewView open={modals.market} onClose={closeModal("market")} online={online} />
+        <SectorView open={modals.sector} onClose={closeModal("sector")} online={online} />
+        <CalendarView open={modals.calendar} onClose={closeModal("calendar")} />
+        <PricingView open={modals.pricing} onClose={closeModal("pricing")} user={currentUser} />
       </div>
     </ErrorBoundary>
   );

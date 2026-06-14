@@ -1,6 +1,7 @@
 /* global React */
 // SIGNAL.TRADE cinematic — Settings.
-const { useState: sUseState } = React;
+// Wired to currentUser and persisted settings via setSettings.
+const { useState: sUseState, useEffect: sUseEffect } = React;
 
 function SettingRow({ label, sub, control }) {
   return (
@@ -19,20 +20,52 @@ function Tgl({ on, onChange }) {
 }
 
 const MY_DATA = [
-  { what: "Tickers you tap and how long you read each signal", why: "Ranks your watchlist and surfaces similar setups first", kind: "Behavioral" },
-  { what: "Signal outcomes you acted on vs. ignored", why: "Calibrates the confidence threshold for your alerts", kind: "Behavioral" },
-  { what: "Delivery windows and quiet hours", why: "Times pushes so they never wake you", kind: "Preference" },
-  { what: "Paper-trade history", why: "Trains the position-sizing suggestions", kind: "Simulation" },
-  { what: "Telegram chat ID and timezone", why: "Routes alerts to the right device, in your local time", kind: "Account" },
+  { what: "Tickers you tap and how long you read each signal", why: "Ranks your watchlist and surfaces similar setups first", kind: "Behavioral", key: "behavioral_data" },
+  { what: "Signal outcomes you acted on vs. ignored", why: "Calibrates the confidence threshold for your alerts", kind: "Behavioral", key: "outcome_data" },
+  { what: "Delivery windows and quiet hours", why: "Times pushes so they never wake you", kind: "Preference", key: "quiet_hours" },
+  { what: "Paper-trade history", why: "Trains the position-sizing suggestions", kind: "Simulation", key: "papertrade_data" },
+  { what: "Telegram chat ID and timezone", why: "Routes alerts to the right device, in your local time", kind: "Account", key: null },
 ];
 
-function PageSettings() {
+function planPrice(tier) {
+  const t = (tier || "").toString().toLowerCase();
+  if (t === "pro") return "$19.99/mo";
+  if (t === "basic") return "$9.99/mo";
+  return "$0/mo";
+}
+
+function PageSettings({ currentUser, settings, setSettings }) {
   const [tab, setTab] = sUseState("data");
   const [s, setS] = sUseState({
     push: true, quiet: true, digest: false, conf: true,
     behav: true, outcomes: true, papertrades: true,
   });
-  const set = (k) => (v) => setS((x) => ({ ...x, [k]: v }));
+
+  sUseEffect(() => {
+    if (!settings) return;
+    setS((prev) => ({
+      ...prev,
+      push: settings.telegram_alerts ?? settings.push ?? prev.push,
+      quiet: settings.quiet_hours ?? settings.quiet ?? prev.quiet,
+      digest: settings.daily_digest ?? settings.digest ?? prev.digest,
+      conf: settings.confidence_filter ?? settings.conf ?? prev.conf,
+      behav: settings.behavioral_data ?? settings.behav ?? prev.behav,
+      outcomes: settings.outcome_data ?? settings.outcomes ?? prev.outcomes,
+      papertrades: settings.papertrade_data ?? settings.papertrades ?? prev.papertrades,
+    }));
+  }, [settings]);
+
+  const set = (k, settingsKey) => (v) => {
+    setS((x) => ({ ...x, [k]: v }));
+    if (setSettings && settingsKey) setSettings({ [settingsKey]: v });
+  };
+
+  const email = currentUser?.email || currentUser?.name || "—";
+  const telegram = settings?.telegram_handle || settings?.telegram_chat_id || currentUser?.telegram_chat_id || "Not connected";
+  const timezone = settings?.timezone || "America/New_York";
+  const tier = currentUser?.subscription_tier || settings?.plan || "Free";
+  const isConnected = telegram && telegram !== "Not connected";
+
   const tabs = [
     ["data", "My Data"],
     ["alerts", "Alerts"],
@@ -73,8 +106,10 @@ function PageSettings() {
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span className="kicker" style={{ border: "1px solid var(--line)", borderRadius: 4, padding: "2px 7px" }}>{d.kind}</span>
-                {i < 2 ? <Tgl on={i === 0 ? s.behav : s.outcomes} onChange={set(i === 0 ? "behav" : "outcomes")}></Tgl>
-                  : i === 3 ? <Tgl on={s.papertrades} onChange={set("papertrades")}></Tgl>
+                {i === 0 ? <Tgl on={s.behav} onChange={set("behav", d.key)}></Tgl>
+                  : i === 1 ? <Tgl on={s.outcomes} onChange={set("outcomes", d.key)}></Tgl>
+                  : i === 2 ? <Tgl on={s.quiet} onChange={set("quiet", d.key)}></Tgl>
+                  : i === 3 ? <Tgl on={s.papertrades} onChange={set("papertrades", d.key)}></Tgl>
                   : <span className="kicker" style={{ color: "var(--text-ghost)" }}>REQUIRED</span>}
               </div>
             </div>
@@ -85,27 +120,27 @@ function PageSettings() {
 
       {tab === "alerts" && (
         <div className="glass page" style={{ padding: "6px 24px 20px" }}>
-          <SettingRow label="Telegram push" sub="Instant delivery the moment a signal fires" control={<Tgl on={s.push} onChange={set("push")}></Tgl>}></SettingRow>
-          <SettingRow label="Quiet hours" sub="No pushes 22:00–07:00 local — signals queue silently" control={<Tgl on={s.quiet} onChange={set("quiet")}></Tgl>}></SettingRow>
-          <SettingRow label="Confidence filter" sub="Only alert above your 70% threshold — suppresses noise" control={<Tgl on={s.conf} onChange={set("conf")}></Tgl>}></SettingRow>
-          <SettingRow label="Daily digest" sub="One summary at 08:00 ET instead of real-time pushes" control={<Tgl on={s.digest} onChange={set("digest")}></Tgl>}></SettingRow>
+          <SettingRow label="Telegram push" sub="Instant delivery the moment a signal fires" control={<Tgl on={s.push} onChange={set("push", "telegram_alerts")}></Tgl>}></SettingRow>
+          <SettingRow label="Quiet hours" sub="No pushes 22:00–07:00 local — signals queue silently" control={<Tgl on={s.quiet} onChange={set("quiet", "quiet_hours")}></Tgl>}></SettingRow>
+          <SettingRow label="Confidence filter" sub="Only alert above your 70% threshold — suppresses noise" control={<Tgl on={s.conf} onChange={set("conf", "confidence_filter")}></Tgl>}></SettingRow>
+          <SettingRow label="Daily digest" sub="One summary at 08:00 ET instead of real-time pushes" control={<Tgl on={s.digest} onChange={set("digest", "daily_digest")}></Tgl>}></SettingRow>
         </div>
       )}
 
       {tab === "account" && (
         <div className="glass page" style={{ padding: "6px 24px 20px" }}>
-          <SettingRow label="Email" control={<span className="mono dim" style={{ fontSize: 12.5 }}>trader@example.com</span>}></SettingRow>
-          <SettingRow label="Telegram" control={<span className="mono dim" style={{ fontSize: 12.5 }}>@quietquant · connected</span>}></SettingRow>
-          <SettingRow label="Timezone" control={<span className="mono dim" style={{ fontSize: 12.5 }}>America/New_York</span>}></SettingRow>
+          <SettingRow label="Email" control={<span className="mono dim" style={{ fontSize: 12.5 }}>{email}</span>}></SettingRow>
+          <SettingRow label="Telegram" control={<span className="mono dim" style={{ fontSize: 12.5 }}>{telegram} {isConnected ? "· connected" : ""}</span>}></SettingRow>
+          <SettingRow label="Timezone" control={<span className="mono dim" style={{ fontSize: 12.5 }}>{timezone}</span>}></SettingRow>
           <SettingRow label="Two-factor authentication" sub="TOTP app enabled" control={<span className="kicker" style={{ color: "var(--bull)" }}>ON</span>}></SettingRow>
         </div>
       )}
 
       {tab === "billing" && (
         <div className="glass page" style={{ padding: "6px 24px 20px" }}>
-          <SettingRow label="Plan" sub="Pro · unlimited signals, backtests, paper trading" control={<span className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--bull)" }}>$49/mo</span>}></SettingRow>
-          <SettingRow label="Next invoice" control={<span className="mono dim" style={{ fontSize: 12.5 }}>Jul 1, 2026</span>}></SettingRow>
-          <SettingRow label="Payment method" control={<span className="mono dim" style={{ fontSize: 12.5 }}>•••• 4242</span>}></SettingRow>
+          <SettingRow label="Plan" sub={`${tier.charAt(0).toUpperCase() + tier.slice(1).toLowerCase()} · ${tier.toLowerCase() === "pro" ? "unlimited signals, backtests, paper trading" : tier.toLowerCase() === "basic" ? "alerts + backtests" : "read-only access"}`} control={<span className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--bull)" }}>{planPrice(tier)}</span>}></SettingRow>
+          <SettingRow label="Next invoice" control={<span className="mono dim" style={{ fontSize: 12.5 }}>{settings?.next_invoice || "—"}</span>}></SettingRow>
+          <SettingRow label="Payment method" control={<span className="mono dim" style={{ fontSize: 12.5 }}>{settings?.payment_method || "•••• —"}</span>}></SettingRow>
           <SettingRow label="Cancel anytime" sub="One click via Stripe portal — no questions, runs to period end" control={<button className="btn sm">Manage</button>}></SettingRow>
         </div>
       )}
