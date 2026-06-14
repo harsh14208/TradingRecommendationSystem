@@ -376,9 +376,9 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
           </div>
         </main>
 
-        {/* Telegram delivery — right rail */}
+        {/* Delivery log — right rail */}
         <aside style={{ alignSelf: "start" }}>
-          <TelegramPreview log={propLog}></TelegramPreview>
+          <DeliveryLog log={propLog}></DeliveryLog>
         </aside>
       </div>
     </div>

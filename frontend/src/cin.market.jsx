@@ -310,13 +310,10 @@ function PageMarket({ marketCtx, sources, log }) {
         </div>
       </div>
 
-      {/* Sources + log */}
-      <div className="mkt-two" style={{ marginTop: 26 }}>
-        <div>
-          <div className="kicker" style={{ marginBottom: 12 }}>DATA SOURCES · {srcList.filter((s) => s.on).length}/{srcList.length} ONLINE</div>
-          <div className="mkt-sources">{srcList.map((s) => <SourcePill key={s.id} s={s}></SourcePill>)}</div>
-        </div>
-        <DeliveryLog log={log}></DeliveryLog>
+      {/* Sources */}
+      <div style={{ marginTop: 26 }}>
+        <div className="kicker" style={{ marginBottom: 12 }}>DATA SOURCES · {srcList.filter((s) => s.on).length}/{srcList.length} ONLINE</div>
+        <div className="mkt-sources">{srcList.map((s) => <SourcePill key={s.id} s={s}></SourcePill>)}</div>
       </div>
     </div>
   );
