@@ -253,12 +253,13 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   const inp = { background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:6, padding:"8px 12px", fontSize:12, color:"var(--text)", outline:"none", fontFamily:"var(--font-mono)", width:"100%", boxSizing:"border-box" };
 
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9998, background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }} onClick={onClose}>
-      <div className="account-drawer" style={{ width:"min(380px, 92vw)", height:"100vh", background:"var(--bg-1)", borderLeft:"1px solid var(--line)", padding:"24px 28px", overflowY:"auto", display:"flex", flexDirection:"column", gap:0 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:24 }}>
-          <BackButton onClick={onClose}></BackButton>
-          <div style={{ fontWeight:700, fontSize:16 }}>Account</div>
-        </div>
+    <div className="overlay open">
+      <div className="overlay-head">
+        <BackButton onClick={onClose}></BackButton>
+        <div><div className="crumb">TOOLS / ACCOUNT</div><h2>Account</h2></div>
+      </div>
+      <div style={{ padding:"0 28px 48px", overflowY:"auto" }}>
+        <div style={{ maxWidth:760, margin:"0 auto", display:"flex", flexDirection:"column" }}>
 
         {/* Profile */}
         <div style={{ marginBottom:24 }}>
@@ -696,6 +697,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
             Sign Out
           </button>
         </div>
+        </div>
       </div>
     </div>
   );
@@ -1073,9 +1075,15 @@ function TweaksPanel({ open, onClose, state, set }) {
     ["#22d3ee","cyan"],["#60a5fa","azure"],["#fbbf24","amber"],
     ["#fb4d6d","crimson"],["#a78bfa","violet"],["#e6edf7","mono"],
   ];
+  if (!open) return null;
   return (
-    <div className={`tweaks ${open?"open":""}`}>
-      <h2 style={{ display:"flex", alignItems:"center" }}>Tweaks <BackButton onClick={onClose} style={{ marginLeft:"auto" }}></BackButton></h2>
+    <div className="overlay open">
+      <div className="overlay-head">
+        <BackButton onClick={onClose}></BackButton>
+        <div><div className="crumb">TOOLS / TWEAKS</div><h2>Tweaks</h2></div>
+      </div>
+      <div style={{ padding:"0 28px 48px", overflowY:"auto" }}>
+        <div style={{ maxWidth:760, margin:"0 auto" }}>
       <div className="tweak-row">
         <span className="l">Theme</span>
         <div className="seg">
@@ -1210,6 +1218,8 @@ function TweaksPanel({ open, onClose, state, set }) {
       <div style={{ fontSize:10, fontFamily:"var(--font-mono)", color:"var(--text-faint)", marginTop:14, paddingTop:10, borderTop:"1px solid var(--line)" }}>
         All settings apply immediately. Rules are local — they filter your feed view only.
       </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1300,8 +1310,8 @@ function AlertsView({ open, onClose }) {
   const selS = { ...inputS };
 
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose}>
-      <div style={{ maxWidth:640, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()}>
+    <div className="overlay open">
+      <div style={{ maxWidth:760, margin:"0 auto", padding:"8px 28px 48px", width:"100%" }}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
           <BackButton onClick={onClose}></BackButton>
           <h2 style={{ fontSize:18, fontWeight:700, margin:0 }}>Per-Ticker Alert Rules</h2>
@@ -1524,8 +1534,8 @@ function ScreenerView({ open, onClose }) {
     fontSize:12, color:"var(--text)", outline:"none", fontFamily:"var(--font-mono)" };
 
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose}>
-      <div style={{ maxWidth:740, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()}>
+    <div className="overlay open">
+      <div style={{ maxWidth:980, margin:"0 auto", padding:"8px 28px 48px", width:"100%" }}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
           <BackButton onClick={onClose}></BackButton>
           <h2 style={{ fontSize:18, fontWeight:700, margin:0 }}>Custom Screener</h2>
