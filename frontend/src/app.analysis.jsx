@@ -122,7 +122,7 @@ function SimilarSignals({ signal, allSignals }) {
                 <span style={{ fontFamily:"var(--font-mono)", fontSize:9, padding:"1px 5px",
                   borderRadius:3, letterSpacing:"0.1em",
                   color: s.action === "BUY" ? "var(--up)" : "var(--down)",
-                  background: s.action === "BUY" ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)" }}>
+                  background: s.action === "BUY" ? "var(--up-soft)" : "var(--down-soft)" }}>
                   {s.action}
                 </span>
                 <span style={{ marginLeft:"auto", fontFamily:"var(--font-mono)", fontSize:11,
@@ -228,7 +228,7 @@ function PositionCalc({ signal, onPaperTrade }) {
             style={{ flex:"1 1 80px", minWidth:90, padding:"8px 12px", borderRadius:6, cursor:"pointer",
               fontFamily:"var(--font-mono)", fontSize:11, fontWeight:700, letterSpacing:"0.05em",
               border: paperDone ? "1px solid var(--up)" : "1px solid var(--accent)",
-              background: paperDone ? "rgba(16,185,129,0.15)" : "rgba(99,102,241,0.15)",
+              background: paperDone ? "color-mix(in oklch, var(--up) 15%, transparent)" : "color-mix(in oklch, var(--accent) 15%, transparent)",
               color: paperDone ? "var(--up)" : "var(--accent)",
               transition:"all 0.2s" }}>
             {paperDone ? "✓ PLACED" : "PAPER TRADE"}
@@ -721,14 +721,14 @@ function MarketOverviewView({ open, onClose, online }) {
     const θ = (180 - (s / 100) * 180) * Math.PI / 180;
     const nx = 100 + 66 * Math.cos(θ);
     const ny = 100 - 66 * Math.sin(θ);
-    const getC = v => v <= 25 ? "#ef4444" : v <= 45 ? "#f97316" : v <= 55 ? "#f59e0b" : v <= 75 ? "#84cc16" : "#10b981";
+    const getC = v => v <= 25 ? "var(--down)" : v <= 45 ? "var(--warn)" : v <= 55 ? "var(--warn)" : v <= 75 ? "var(--up)" : "var(--up)";
     const color = getC(s);
     const pts = [0, 25, 45, 55, 75, 100].map(v => {
       const a = (180 - (v / 100) * 180) * Math.PI / 180;
       return { x: 100 + 80 * Math.cos(a), y: 100 - 80 * Math.sin(a) };
     });
     const arc = (p1, p2) => `M ${p1.x} ${p1.y} A 80 80 0 0 1 ${p2.x} ${p2.y}`;
-    const segColors = ["#ef4444", "#f97316", "#f59e0b", "#84cc16", "#10b981"];
+    const segColors = ["var(--down)", "var(--warn)", "var(--warn)", "var(--up)", "var(--up)"];
     return (
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
         <svg aria-hidden="true" viewBox="0 0 200 110" width="160" height="88" style={{ overflow:"visible" }}>
@@ -1273,7 +1273,7 @@ function SectorView({ open, onClose, online }) {
                   <button key={k} onClick={() => setTf(k)}
                     style={{ padding:"5px 10px", fontFamily:"var(--font-mono)", fontSize:11,
                       background: tf===k ? "var(--accent)" : "transparent",
-                      color: tf===k ? "#042116" : "var(--text-dim)", border:"none", cursor:"pointer", fontWeight: tf===k ? 700 : 400 }}>
+                      color: tf===k ? "#052418" : "var(--text-dim)", border:"none", cursor:"pointer", fontWeight: tf===k ? 700 : 400 }}>
                     {l}
                   </button>
                 ))}
@@ -1470,9 +1470,9 @@ function CalendarView({ open, onClose }) {
   };
 
   const impactStyle = imp => {
-    if (imp === "HIGH")   return { dot:"#ef4444", label:"HIGH" };
-    if (imp === "MEDIUM") return { dot:"#f59e0b", label:"MED"  };
-    return { dot:"#5a6070", label:"LOW" };
+    if (imp === "HIGH")   return { dot:"var(--down)", label:"HIGH" };
+    if (imp === "MEDIUM") return { dot:"var(--warn)", label:"MED"  };
+    return { dot:"var(--text-faint)", label:"LOW" };
   };
 
   // Next 7 days strip
@@ -1570,15 +1570,15 @@ function CalendarView({ open, onClose }) {
                       {isToday && <div style={{ fontFamily:"var(--font-mono)", fontSize:8, color:"var(--accent)", marginTop:2 }}>TODAY</div>}
                       {dayEvents.length > 0 && (
                         <div style={{ fontFamily:"var(--font-mono)", fontSize:9, fontWeight:700, marginTop:4,
-                          color: highImpact ? "#ef4444" : "var(--text-faint)" }}>
+                          color: highImpact ? "var(--down)" : "var(--text-faint)" }}>
                           {dayEvents.length} event{dayEvents.length !== 1 ? "s" : ""}
                         </div>
                       )}
                       <div style={{ marginTop:4, display:"flex", flexDirection:"column", gap:2, alignItems:"center" }}>
                         {dayEvents.slice(0,3).map((e,i) => (
                           <span key={i} style={{ fontFamily:"var(--font-mono)", fontSize:8, padding:"1px 5px", borderRadius:3,
-                            background: e.impact === "HIGH" ? "color-mix(in oklch,#ef4444 18%,transparent)" : e.impact === "MEDIUM" ? "color-mix(in oklch,#f59e0b 18%,transparent)" : "var(--bg-3)",
-                            color: e.impact === "HIGH" ? "#ef4444" : e.impact === "MEDIUM" ? "#f59e0b" : "var(--text-faint)",
+                            background: e.impact === "HIGH" ? "color-mix(in oklch, var(--down) 18%, transparent)" : e.impact === "MEDIUM" ? "color-mix(in oklch, var(--warn) 18%, transparent)" : "var(--bg-3)",
+                            color: e.impact === "HIGH" ? "var(--down)" : e.impact === "MEDIUM" ? "var(--warn)" : "var(--text-faint)",
                             maxWidth:72, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                             {e.label || e.name}
                           </span>
@@ -1601,13 +1601,13 @@ function CalendarView({ open, onClose }) {
                     style={{ fontFamily:"var(--font-mono)", fontSize:11, padding:"5px 12px", borderRadius:99,
                       cursor:"pointer", border:"1px solid var(--line)",
                       background: active ? "var(--accent)" : "transparent",
-                      color: active ? "#042116" : "var(--text-dim)", fontWeight: active ? 700 : 400 }}>
+                      color: active ? "#052418" : "var(--text-dim)", fontWeight: active ? 700 : 400 }}>
                     {c} {count > 0 && <span style={{ opacity:0.7 }}>({count})</span>}
                   </button>
                 );
               })}
               <div style={{ marginLeft:"auto", display:"flex", gap:12, fontFamily:"var(--font-mono)", fontSize:10 }}>
-                {[["#ef4444","HIGH"],["#f59e0b","MED"],["var(--text-faint)","LOW"]].map(([c,l]) => (
+                {[["var(--down)","HIGH"],["var(--warn)","MED"],["var(--text-faint)","LOW"]].map(([c,l]) => (
                   <span key={l} style={{ display:"flex", alignItems:"center", gap:4, color:"var(--text-faint)" }}>
                     <span style={{ width:7, height:7, borderRadius:"50%", background:c }}/>
                     {l}
@@ -1667,7 +1667,7 @@ function CalendarView({ open, onClose }) {
                           const improving = !isNaN(fcastNum) && !isNaN(prevNum) && fcastNum < prevNum;
 
                           return (
-                            <div key={i} style={{ background:"var(--bg-1)", border:`1px solid ${isImm && e.impact==="HIGH" ? "color-mix(in oklch,#ef4444 35%,var(--line))" : "var(--line)"}`,
+                            <div key={i} style={{ background:"var(--bg-1)", border:`1px solid ${isImm && e.impact==="HIGH" ? "color-mix(in oklch, var(--down) 35%, var(--line))" : "var(--line)"}`,
                               borderRadius:8, padding:"14px 16px", marginBottom:8,
                               boxShadow: du2 === 0 ? "0 0 0 2px color-mix(in oklch,var(--accent) 30%,transparent)" : "none" }}>
                               {/* Top row */}

@@ -543,7 +543,7 @@ button, a { touch-action: manipulation; -webkit-tap-highlight-color: transparent
 
 /* style badges */
 .style-badge { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--line); color: var(--text-faint); background: var(--bg); font-weight: 600; }
-.style-badge.intraday { border-color: color-mix(in oklch, #f59e0b 40%, var(--line)); color: #f59e0b; background: color-mix(in oklch, #f59e0b 8%, var(--bg)); }
+.style-badge.intraday { border-color: color-mix(in oklch, var(--warn) 40%, var(--line)); color: var(--warn); background: color-mix(in oklch, var(--warn) 8%, var(--bg)); }
 .style-badge.swing    { border-color: color-mix(in oklch, #60a5fa 40%, var(--line)); color: #60a5fa; background: color-mix(in oklch, #60a5fa 8%, var(--bg)); }
 .style-badge.position { border-color: color-mix(in oklch, #a78bfa 40%, var(--line)); color: #a78bfa; background: color-mix(in oklch, #a78bfa 8%, var(--bg)); }
 

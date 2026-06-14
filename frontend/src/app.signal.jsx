@@ -27,8 +27,8 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
             {s.daysToEarnings != null && s.daysToEarnings <= 5 && s.daysToEarnings >= 0 && (
               <span title={`Earnings in ${s.daysToEarnings}d${s.nextEarningsDate ? ` (${s.nextEarningsDate})` : ""}`}
                 style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700,
-                  color:"var(--warn)", background:"rgba(255,165,0,0.12)",
-                  border:"1px solid rgba(255,165,0,0.35)", borderRadius:3,
+                  color:"var(--warn)", background:"var(--warn-soft)",
+                  border:"1px solid color-mix(in oklch, var(--warn) 35%, transparent)", borderRadius:3,
                   padding:"1px 4px", whiteSpace:"nowrap", letterSpacing:"0.04em" }}>
                 ⚠ {s.daysToEarnings}d ERN
               </span>
@@ -40,8 +40,8 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
                 return (
                   <span title={`Signal expires at ${s.expiresAt}`}
                     style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700,
-                      color:"var(--down)", background:"rgba(239,68,68,0.1)",
-                      border:"1px solid rgba(239,68,68,0.3)", borderRadius:3,
+                      color:"var(--down)", background:"color-mix(in oklch, var(--down) 10%, transparent)",
+                      border:"1px solid color-mix(in oklch, var(--down) 30%, transparent)", borderRadius:3,
                       padding:"1px 4px", whiteSpace:"nowrap", letterSpacing:"0.04em" }}>
                     ⏱ {label}
                   </span>
@@ -53,8 +53,8 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
               <span title={s.session === "pre" ? "Generated during pre-market session" : "Generated after market close"}
                 style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700,
                   color: s.session === "pre" ? "var(--accent)" : "var(--text-dim)",
-                  background: s.session === "pre" ? "rgba(99,102,241,0.12)" : "rgba(100,100,100,0.12)",
-                  border: `1px solid ${s.session === "pre" ? "rgba(99,102,241,0.3)" : "rgba(100,100,100,0.25)"}`,
+                  background: s.session === "pre" ? "var(--accent-soft)" : "rgba(100,100,100,0.12)",
+                  border: `1px solid ${s.session === "pre" ? "color-mix(in oklch, var(--accent) 30%, transparent)" : "rgba(100,100,100,0.25)"}`,
                   borderRadius:3, padding:"1px 4px", whiteSpace:"nowrap", letterSpacing:"0.06em" }}>
                 {s.session === "pre" ? "PRE" : "AH"}
               </span>
@@ -70,12 +70,12 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
                 E <strong style={{ color:"var(--text)" }}>${fmt(s.entry)}</strong>
               </span>
               {s.stop && <span style={{ fontFamily:"var(--font-mono)", fontSize:9,
-                padding:"1px 5px", background:"rgba(239,68,68,0.1)", borderRadius:3,
+                padding:"1px 5px", background:"color-mix(in oklch, var(--down) 10%, transparent)", borderRadius:3,
                 color:"var(--down)", letterSpacing:"0.04em" }}>
                 S ${fmt(s.stop)}
               </span>}
               {s.target && <span style={{ fontFamily:"var(--font-mono)", fontSize:9,
-                padding:"1px 5px", background:"rgba(16,185,129,0.1)", borderRadius:3,
+                padding:"1px 5px", background:"color-mix(in oklch, var(--up) 10%, transparent)", borderRadius:3,
                 color:"var(--up)", letterSpacing:"0.04em" }}>
                 T ${fmt(s.target)}
               </span>}
@@ -102,9 +102,9 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
             <span
               title="Confidence Divergence: signal confidence significantly exceeds its historical win rate. Review conflicting signals before acting."
               style={{ fontSize:9, fontWeight:700, color:"var(--warn)", fontFamily:"var(--font-mono)",
-                       letterSpacing:"0.04em", background:"rgba(255,165,0,0.12)",
+                       letterSpacing:"0.04em", background:"var(--warn-soft)",
                        padding:"1px 4px", borderRadius:3,
-                       border:"1px solid rgba(255,165,0,0.4)", marginLeft:2,
+                       border:"1px solid color-mix(in oklch, var(--warn) 40%, transparent)", marginLeft:2,
                        whiteSpace:"nowrap" }}>⚠ CALIB</span>
           )}
           {/* Mini confidence sparkline — 5-point trend from same-ticker signals in memory */}
