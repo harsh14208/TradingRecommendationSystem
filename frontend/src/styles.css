@@ -540,9 +540,17 @@ input, select, textarea { font: inherit; color: inherit; }
   position: fixed; bottom: 36px; right: 16px; width: 280px;
   background: var(--bg-1); border: 1px solid var(--line-2); border-radius: var(--radius-lg);
   box-shadow: 0 20px 40px rgba(0,0,0,0.5); z-index: 50; padding: 14px; display: none;
+  max-height: calc(100vh - 60px); overflow-y: auto;
 }
 .tweaks.open { display: block; }
-.tweaks h2 { margin: 0 0 12px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-faint); display: flex; align-items: center; }
+.tweaks h2 {
+  margin: -14px -14px 12px; padding: 14px 14px 10px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.15em;
+  text-transform: uppercase; color: var(--text-faint);
+  display: flex; align-items: center;
+  position: sticky; top: 0; background: var(--bg-1);
+  border-bottom: 1px solid var(--line-2); z-index: 1;
+}
 .tweaks h2 .cl { margin-left: auto; cursor: pointer; color: var(--text-faint); }
 .tweak-row { margin-bottom: 12px; }
 .tweak-row > .l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); font-family: var(--font-mono); margin-bottom: 6px; display: block; }
