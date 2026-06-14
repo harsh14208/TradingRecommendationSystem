@@ -166,10 +166,12 @@ const NAV_ICONS = {
   tools: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.6-3.6a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0l-3.6 3.6zM2 17.2V21h3.8l11-11.1L13 6.1 2 17.2z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"></path>,
 };
 
-function TopNav({ page, go, onBack, currentUser, onLogout }) {
+function TopNav({ page, go, onBack, currentUser, onLogout, hideBack }) {
   const tier = currentUser?.subscription_tier || "free";
   const isOwner = currentUser?.is_owner;
-  const showBack = page !== "home";
+  // Hide the global page-back while a tool overlay is open — the overlay has
+  // its own Back, and two stacked "Back" buttons are confusing.
+  const showBack = page !== "home" && !hideBack;
   return (
     <header className="topnav">
       {showBack && (
@@ -609,7 +611,7 @@ function App() {
   return (
     <ErrorBoundary>
       <div data-screen-label={NAV.find(([id]) => id === page)[1]}>
-        <TopNav page={page} go={go} onBack={goBack} currentUser={currentUser} onLogout={handleLogout} />
+        <TopNav page={page} go={go} onBack={goBack} currentUser={currentUser} onLogout={handleLogout} hideBack={Object.values(modals).some(Boolean)} />
         {/* Kill switch — only on the dashboard, and only while auto-trading is enabled. */}
         {page === "dashboard" && currentUser?.auto_execute && (
           <div style={{ position: "fixed", top: 58, right: 12, zIndex: 60 }}>
