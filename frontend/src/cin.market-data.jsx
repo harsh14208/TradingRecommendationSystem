@@ -76,16 +76,16 @@ const M_SOURCES = [
 ];
 
 const M_LOG = [
-  { t: "09:31:24", s: "sent",  m: "→ BUY NVDA @ 1248.32 (Conf 87%)" },
-  { t: "09:14:09", s: "sent",  m: "→ SELL TSLA @ 164.82 (Conf 72%)" },
-  { t: "09:02:56", s: "sent",  m: "→ HOLD AAPL — earnings wait" },
-  { t: "08:58:44", s: "sent",  m: "→ BUY AMD @ 162.44 (Conf 69%)" },
-  { t: "08:42:11", s: "sent",  m: "→ BUY META @ 512.88 (Conf 64%)" },
-  { t: "08:31:28", s: "sent",  m: "→ SELL SMCI @ 892.11 (Conf 81%)" },
-  { t: "08:12:04", s: "queue", m: "~ HOLD MSFT suppressed (below threshold)" },
-  { t: "07:58:20", s: "sent",  m: "→ BUY PLTR @ 23.88 (Conf 61%)" },
-  { t: "07:41:11", s: "fail",  m: "✗ Telegram rate limit — retry 30s" },
-  { t: "07:30:00", s: "sent",  m: "→ Pre-market scan: 2,847 tickers" },
+  { t: "Jun 13 · 09:31", s: "sent",  m: "→ BUY NVDA @ 1248.32 (Conf 87%)" },
+  { t: "Jun 13 · 09:14", s: "sent",  m: "→ SELL TSLA @ 164.82 (Conf 72%)" },
+  { t: "Jun 13 · 09:02", s: "sent",  m: "→ HOLD AAPL — earnings wait" },
+  { t: "Jun 13 · 08:58", s: "sent",  m: "→ BUY AMD @ 162.44 (Conf 69%)" },
+  { t: "Jun 13 · 08:42", s: "sent",  m: "→ BUY META @ 512.88 (Conf 64%)" },
+  { t: "Jun 13 · 08:31", s: "sent",  m: "→ SELL SMCI @ 892.11 (Conf 81%)" },
+  { t: "Jun 13 · 08:12", s: "queue", m: "~ HOLD MSFT suppressed (below threshold)" },
+  { t: "Jun 13 · 07:58", s: "sent",  m: "→ BUY PLTR @ 23.88 (Conf 61%)" },
+  { t: "Jun 13 · 07:41", s: "fail",  m: "✗ Telegram rate limit — retry 30s" },
+  { t: "Jun 13 · 07:30", s: "sent",  m: "→ Pre-market scan: 2,847 tickers" },
 ];
 
 const M_FAQS = [

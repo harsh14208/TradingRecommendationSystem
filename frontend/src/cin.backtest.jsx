@@ -244,17 +244,7 @@ function PageBacktest() {
 
         {/* Results */}
         <main style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-          {btLoading ? (
-            <div className="glass" style={{ padding: 20 }}>
-              <SkelBlock h={160}></SkelBlock>
-              <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-                {[0, 1, 2, 3].map((i) => <SkelBlock key={i} h={80}></SkelBlock>)}
-              </div>
-            </div>
-          ) : realCards}
-
-          <TrackTable rows={trackRecord}></TrackTable>
-
+          {/* Equity curve — graph first, then metrics */}
           <div className="glass" style={{ padding: "18px 20px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
               <span className="kicker">EQUITY CURVE · $100K START · 20Y SIMULATION</span>
@@ -279,6 +269,18 @@ function PageBacktest() {
             <MetricCard label="WIN RATE" value={m.winRate} dp={1} suffix="%" good={m.winRate > 55}></MetricCard>
             <MetricCard label="MAX DRAWDOWN" value={-m.maxDD} dp={1} suffix="%" good={m.maxDD < 12}></MetricCard>
           </div>
+
+          {/* Live backtest (resolved signals) + per-horizon + per-ticker */}
+          {btLoading ? (
+            <div className="glass" style={{ padding: 20 }}>
+              <SkelBlock h={160}></SkelBlock>
+              <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                {[0, 1, 2, 3].map((i) => <SkelBlock key={i} h={80}></SkelBlock>)}
+              </div>
+            </div>
+          ) : realCards}
+
+          <TrackTable rows={trackRecord}></TrackTable>
 
           {compare && cm && (
             <div className="glass" style={{ padding: "16px 20px" }}>

@@ -124,11 +124,25 @@ function toCinTicker(t) {
   };
 }
 
+/* Delivery-log timestamp: "Jun 12 · 15:31" (ET) from created_at, else the
+   raw preformatted time. Keeps date+time consistent across dashboard + market. */
+function fmtLogStamp(l) {
+  if (l && l.created_at) {
+    try {
+      return new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York", month: "short", day: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }).format(new Date(l.created_at)).replace(", ", " · ");
+    } catch {}
+  }
+  return (l && (l.time || l.t)) || "—";
+}
+
 function toCinLog(l) {
   const status = (l.status || l.s || "sent").toLowerCase();
   const msg = l.message || l.m || "";
   const col = status === "sent" ? "var(--bull)" : status === "fail" ? "var(--bear)" : "var(--neutral)";
-  return { t: l.time || l.t || fmtTime(l.created_at), s: status, m: msg, col };
+  return { t: fmtLogStamp(l), s: status, m: msg, col };
 }
 
 /* ─── Navigation ───────────────────────────────────────────────────────────── */
@@ -571,9 +585,12 @@ function App() {
     <ErrorBoundary>
       <div data-screen-label={NAV.find(([id]) => id === page)[1]}>
         <TopNav page={page} go={go} onBack={goBack} currentUser={currentUser} onLogout={handleLogout} />
-        <div style={{ position: "fixed", top: 58, right: 12, zIndex: 60 }}>
-          <KillSwitch currentUser={currentUser} />
-        </div>
+        {/* Kill switch — only on the dashboard, and only while auto-trading is enabled. */}
+        {page === "dashboard" && currentUser?.auto_execute && (
+          <div style={{ position: "fixed", top: 58, right: 12, zIndex: 60 }}>
+            <KillSwitch currentUser={currentUser} />
+          </div>
+        )}
         {page === "home" && <PageHome key="home" go={go} t={tweakState} {...common} />}
         {page === "dashboard" && <PageDashboard key="dash" signals={cinSignals} tickerTape={cinTickerTape} log={cinLog} loading={loading} onSend={sendToTelegram} onSkip={skipSignal} onReview={reviewSignal} onNote={saveNote} onPriceAlert={openPriceAlert} {...common} />}
         {page === "market" && <PageMarket key="mkt" marketCtx={marketCtx} sources={sources} log={cinLog} {...common} />}

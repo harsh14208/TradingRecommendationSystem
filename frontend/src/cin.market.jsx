@@ -121,29 +121,61 @@ function SourcePill({ s }) {
   );
 }
 
+// Parse a free-text delivery message ("→ BUY NVDA @ 1248.32 (Conf 87%)") into
+// its structured pieces so each log entry can render as a signal card.
+function _parseDeliveryMsg(m) {
+  const s = m || "";
+  const vm = s.match(/\b(BUY|SELL|HOLD)\b/);
+  const verb = vm ? vm[1] : null;
+  const tkm = verb ? s.match(new RegExp(verb + "\\s+([A-Z][A-Z.]{0,6})")) : null;
+  const pxm = s.match(/@\s*\$?([\d,]+(?:\.\d+)?)/);
+  const cm = s.match(/Conf\s*(\d+)\s*%/i);
+  return { verb, tk: tkm ? tkm[1] : null, px: pxm ? pxm[1] : null, conf: cm ? cm[1] : null };
+}
+
+function DeliveryRow({ l, last }) {
+  const msg = l.m || l.message || "";
+  const status = l.s || l.status || "sent";
+  const time = l.t || l.time;
+  const { verb, tk, px, conf } = _parseDeliveryMsg(msg);
+  const col = verb === "SELL" ? "var(--bear)" : verb === "BUY" ? "var(--bull)" : verb === "HOLD" ? "var(--neutral)"
+    : status === "fail" ? "var(--bear)" : "var(--text-faint)";
+  const frame = { borderLeft: `2px solid ${col}`, borderBottom: last ? "none" : "1px solid var(--line-soft)" };
+  if (verb && tk) {
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, padding: "11px 14px", ...frame }}>
+        <SignalBadge signal={verb}></SignalBadge>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span className="mono" style={{ fontWeight: 700, fontSize: 13, color: "var(--text)" }}>{tk}</span>
+            {px && <span className="mono dim" style={{ fontSize: 11.5 }}>${px}</span>}
+            <span className="kicker" style={{ marginLeft: "auto", color: "var(--text-ghost)", whiteSpace: "nowrap" }}>{time}</span>
+          </div>
+          <div className="kicker" style={{ marginTop: 3, color: "var(--text-faint)" }}>{conf ? `${conf}% CONF` : "DELIVERED"}</div>
+        </div>
+      </div>
+    );
+  }
+  // system / non-trade message (rate limit, scan, suppressed HOLD…)
+  return (
+    <div style={{ padding: "11px 14px", ...frame }}>
+      <div className="mono" style={{ fontSize: 11.5, color: status === "fail" ? "var(--bear)" : "var(--text-dim)", lineHeight: 1.5, textWrap: "pretty" }}>
+        {msg.replace(/^[→~✗✓●]\s*/, "")}
+      </div>
+      <div className="kicker" style={{ marginTop: 3, color: "var(--text-ghost)" }}>{time}</div>
+    </div>
+  );
+}
+
 function DeliveryLog({ log }) {
   const rows = Array.isArray(log) && log.length ? log : M_LOG;
   return (
-    <div className="glass" style={{ padding: 16, alignSelf: "start" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+    <div className="glass" style={{ padding: 0, overflow: "hidden", alignSelf: "start" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 14px", borderBottom: "1px solid var(--line)" }}>
         <span className="kicker">DELIVERY LOG</span>
         <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> LIVE</span>
       </div>
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        {rows.map((l, i) => {
-          const status = l.s || l.status || "sent";
-          const col = status === "sent" ? "var(--bull)" : status === "fail" ? "var(--bear)" : "var(--neutral)";
-          return (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, padding: "9px 0", borderBottom: i < rows.length - 1 ? "1px solid var(--line-soft)" : "none" }}>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: col, marginTop: 5, flex: "none", boxShadow: `0 0 6px ${col}` }}></span>
-              <div style={{ minWidth: 0 }}>
-                <div className="mono" style={{ fontSize: 11.5, color: "var(--text)", lineHeight: 1.5, textWrap: "pretty" }}>{l.m || l.message}</div>
-                <div className="kicker" style={{ marginTop: 3, color: "var(--text-ghost)" }}>{l.t || l.time} ET</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <div>{rows.map((l, i) => <DeliveryRow key={i} l={l} last={i === rows.length - 1}></DeliveryRow>)}</div>
     </div>
   );
 }

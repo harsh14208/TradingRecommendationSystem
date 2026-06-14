@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 _DEFAULTS = {
     "theme": "dark",
-    "accent": "#10b981",
+    "accent": "#22d3ee",
     "density": "comfortable",
     "chartStyle": "area",
     "aggressiveness": "balanced",
