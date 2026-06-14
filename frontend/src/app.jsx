@@ -40,8 +40,8 @@ function KillSwitch({ currentUser }) {
       disabled={loading}
       title={paused ? "Auto-execution is paused — click to resume" : "Immediately pause all auto-execution"}
       style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", height:28,
-        background: paused ? "rgba(16,185,129,0.10)" : "rgba(239,68,68,0.10)",
-        border: `1px solid ${paused ? "rgba(16,185,129,0.35)" : "rgba(239,68,68,0.35)"}`,
+        background: paused ? "var(--up-soft)" : "var(--down-soft)",
+        border: `1px solid ${paused ? "color-mix(in oklch, var(--up) 35%, transparent)" : "color-mix(in oklch, var(--down) 35%, transparent)"}`,
         borderRadius:5, color: paused ? "var(--up)" : "var(--down)", fontFamily:"var(--font-mono)", fontSize:10,
         fontWeight:600, letterSpacing:"0.06em", cursor:"pointer", whiteSpace:"nowrap", opacity: loading ? 0.5 : 1 }}>
       <span style={{ width:7, height:7, borderRadius:"50%", background: paused ? "var(--up)" : "var(--down)", boxShadow: `0 0 6px ${paused ? "var(--up)" : "var(--down)"}` }}/>
@@ -63,8 +63,8 @@ function SignalQuotaBanner({ quota, user }) {
   return (
     <div style={{
       margin:"0 14px 10px", padding:"10px 14px", borderRadius:8,
-      background: exhausted ? "rgba(239,68,68,0.08)" : low ? "rgba(245,158,11,0.08)" : "var(--bg-2)",
-      border:`1px solid ${exhausted ? "rgba(239,68,68,0.35)" : low ? "rgba(245,158,11,0.35)" : "var(--line)"}`,
+      background: exhausted ? "var(--down-soft)" : low ? "var(--warn-soft)" : "var(--bg-2)",
+      border:`1px solid ${exhausted ? "color-mix(in oklch, var(--down) 35%, transparent)" : low ? "color-mix(in oklch, var(--warn) 35%, transparent)" : "var(--line)"}`,
     }}>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, fontSize:12 }}>
         <div style={{ color: exhausted ? "var(--down)" : low ? "var(--warn)" : "var(--text-dim)" }}>
@@ -859,7 +859,7 @@ function App() {
             onClick={handleLogout}
             title="Sign out"
             style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", height:28,
-              background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.25)",
+              background:"var(--down-soft)", border:"1px solid color-mix(in oklch, var(--down) 25%, transparent)",
               borderRadius:5, color:"var(--down)", fontFamily:"var(--font-mono)", fontSize:10,
               fontWeight:600, letterSpacing:"0.06em", cursor:"pointer", whiteSpace:"nowrap" }}>
             <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -1368,8 +1368,8 @@ function App() {
                     </span>
                     <span style={{ display:"flex", gap:10, alignItems:"center", fontSize:9, fontFamily:"var(--font-mono)", color:"var(--text-faint)" }}>
                       {active.entry  && <span style={{ color:"var(--text-dim)" }}>— ENTRY</span>}
-                      {active.stop   && <span style={{ color:"#ef4444" }}>— STOP</span>}
-                      {active.target && <span style={{ color:"#10b981" }}>— TARGET</span>}
+                      {active.stop   && <span style={{ color:"var(--down)" }}>— STOP</span>}
+                      {active.target && <span style={{ color:"var(--up)" }}>— TARGET</span>}
                     </span>
                     <div className="tabs" style={{ marginLeft:"auto" }}>
                       {["1D","5D","1M","3M","1Y"].map(t => (
@@ -1538,10 +1538,10 @@ function App() {
                   </span>
                   {/* Legend */}
                   <span style={{ display:"flex", gap:10, alignItems:"center", fontSize:9, fontFamily:"var(--font-mono)", color:"var(--text-faint)" }}>
-                    <span style={{ color:"#6366f1" }}>— SMA</span>
+                    <span style={{ color:"var(--accent)" }}>— SMA</span>
                     {active.entry && <span style={{ color:"var(--text-dim)" }}>- - ENTRY</span>}
-                    {active.stop   && <span style={{ color:"#ef4444" }}>- - STOP</span>}
-                    {active.target && <span style={{ color:"#10b981" }}>- - TARGET</span>}
+                    {active.stop   && <span style={{ color:"var(--down)" }}>- - STOP</span>}
+                    {active.target && <span style={{ color:"var(--up)" }}>- - TARGET</span>}
                   </span>
                   <div className="tabs" style={{ marginLeft:"auto" }}>
                     {["1D","5D","1M","3M","1Y"].map(t => (
@@ -1842,19 +1842,19 @@ class ErrorBoundary extends React.Component {
         <div style={{
           display:"flex", flexDirection:"column", alignItems:"center",
           justifyContent:"center", minHeight:"100vh", gap:"1rem",
-          background:"#0f172a", color:"#f1f5f9", fontFamily:"monospace",
+          background:"var(--bg-0)", color:"var(--text)", fontFamily:"monospace",
           padding:"2rem", textAlign:"center",
         }}>
           <div style={{fontSize:"2rem"}}>⚠</div>
           <div style={{fontSize:"1.2rem", fontWeight:600}}>Something went wrong</div>
-          <div style={{color:"#94a3b8", maxWidth:"480px", fontSize:"0.875rem"}}>
+          <div style={{color:"var(--text-dim)", maxWidth:"480px", fontSize:"0.875rem"}}>
             {this.state.error?.message || "An unexpected error occurred."}
           </div>
           <button
             onClick={() => { this.setState({ hasError:false, error:null }); window.location.reload(); }}
             style={{
               marginTop:"1rem", padding:"0.5rem 1.5rem",
-              background:"#10b981", color:"#fff", border:"none",
+              background:"var(--accent)", color:"#000", border:"none",
               borderRadius:"6px", cursor:"pointer", fontSize:"0.9rem",
             }}
           >Reload</button>
