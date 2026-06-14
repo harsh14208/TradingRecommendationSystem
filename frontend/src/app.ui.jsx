@@ -106,7 +106,7 @@ function Tip({ term, children, iconOnly = false }) {
       boxShadow:"0 8px 32px rgba(0,0,0,0.6)",
       whiteSpace:"normal", wordBreak:"break-word",
     }}>
-      <strong style={{ color:"#10b981", display:"block", marginBottom:4,
+      <strong style={{ color:"var(--accent)", display:"block", marginBottom:4,
         textTransform:"uppercase", letterSpacing:"0.08em", fontSize:9 }}>
         {term}
       </strong>
@@ -166,12 +166,12 @@ function InfoPop({ title, children }) {
         top:       pos.above ? undefined : pos.y,
         bottom:    pos.above ? (window.innerHeight - pos.y + 6) : undefined,
         width: POP_W,
-        background:"#1c2333", border:"1px solid rgba(16,185,129,0.4)",
+        background:"#1c2333", border:"1px solid color-mix(in oklch, var(--accent) 40%, transparent)",
         borderRadius:10, padding:"14px 18px", fontSize:12,
         color:"#e2e8f0", lineHeight:1.7, zIndex:99998,
         boxShadow:"0 12px 48px rgba(0,0,0,0.7)",
       }} onClick={e => e.stopPropagation()}>
-        <strong style={{ color:"#10b981", display:"block", marginBottom:8,
+        <strong style={{ color:"var(--accent)", display:"block", marginBottom:8,
           textTransform:"uppercase", letterSpacing:"0.08em", fontSize:10 }}>
           {title}
         </strong>
@@ -258,9 +258,9 @@ function Chart({ signal, style, period = "3M" }) {
       faint:   resolve("--text-faint") || "#555",
       dim:     resolve("--text-dim")   || "#888",
       text:    resolve("--text")       || "#e5e5e5",
-      up:      "#10b981",
-      down:    "#ef4444",
-      accent:  "#6366f1",
+      up:      resolve("--up")     || "#22d3ee",
+      down:    resolve("--down")   || "#fb4d6d",
+      accent:  resolve("--accent") || "#22d3ee",
     };
 
     if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
@@ -548,8 +548,8 @@ function CompareChart({ ticker, versus, period = "3M" }) {
       bg:     resolve("--bg")         || "#0d0d0d",
       line:   resolve("--line")       || "#222",
       faint:  resolve("--text-faint") || "#555",
-      accent: "#6366f1",
-      bench:  "#f59e0b",
+      accent: resolve("--accent") || "#22d3ee",
+      bench:  resolve("--warn")   || "#fbbf24",
     };
 
     const chart = LC.createChart(containerRef.current, {
@@ -587,8 +587,8 @@ function CompareChart({ ticker, versus, period = "3M" }) {
           % Return vs {BENCH_LABELS[versus] || versus} · {period}
         </span>
         <span style={{ display:"flex", gap:8, fontSize:9, fontFamily:"var(--font-mono)" }}>
-          <span style={{ color:"#6366f1" }}>— {ticker}</span>
-          <span style={{ color:"#f59e0b" }}>— {versus}</span>
+          <span style={{ color:"var(--accent)" }}>— {ticker}</span>
+          <span style={{ color:"var(--warn)" }}>— {versus}</span>
         </span>
       </div>
       <div style={{ position:"relative" }}>

@@ -103,7 +103,7 @@ function RulesView({ open, onClose, aggr, style, days, startTime, endTime, setTw
         <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.14em", color:"var(--text-faint)", fontFamily:"var(--font-mono)", marginBottom:10 }}>Trading style</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
           {["intraday","swing","position"].map(s => (
-            <div key={s} className="src-card" onClick={() => setTweak({ style:s })} style={{ cursor:"pointer", borderColor:style===s?"var(--accent)":"var(--line)", background:style===s?"rgba(16,185,129,0.08)":"var(--bg-card)" }} role="button" tabIndex={0}>
+            <div key={s} className="src-card" onClick={() => setTweak({ style:s })} style={{ cursor:"pointer", borderColor:style===s?"var(--accent)":"var(--line)", background:style===s?"var(--accent-soft)":"var(--bg-card)" }} role="button" tabIndex={0}>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                 <span className={`style-badge ${s}`}>{s}</span>
                 {style === s && <span style={{ marginLeft:"auto", fontSize:10, color:"var(--accent)", fontFamily:"var(--font-mono)" }}>✓ ACTIVE</span>}
@@ -627,7 +627,7 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
 
       <div style={{ padding:"0 28px 28px", overflowY:"auto", maxHeight:"calc(100vh - 160px)" }}>
         {backfillResult && (
-          <div style={{ margin:"12px 0", padding:"10px 16px", borderRadius:8, background:"rgba(16,185,129,0.1)", border:"1px solid var(--accent)", fontSize:12, display:"flex", justifyContent:"space-between" }}>
+          <div style={{ margin:"12px 0", padding:"10px 16px", borderRadius:8, background:"var(--up-soft)", border:"1px solid var(--accent)", fontSize:12, display:"flex", justifyContent:"space-between" }}>
             <span style={{ color:"var(--accent)" }}>{backfillResult.message}</span>
             <button onClick={() => setBackfillResult(null)} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--text-faint)", fontSize:16 }}>×</button>
           </div>
@@ -872,7 +872,7 @@ function MLModelTab({ online }) {
                 title={f.feature}>{f.feature}</div>
               <div style={{ flex:1, height:8, background:"var(--bg-2)", borderRadius:4, overflow:"hidden" }}>
                 <div style={{ height:"100%", width:`${((f.importance || 0) / maxImp) * 100}%`,
-                  background: i < 5 ? "var(--accent)" : i < 10 ? "rgba(16,185,129,0.5)" : "var(--bg-card)",
+                  background: i < 5 ? "var(--accent)" : i < 10 ? "color-mix(in oklch, var(--up) 45%, transparent)" : "var(--bg-card)",
                   borderRadius:4, transition:"width 0.3s" }}/>
               </div>
               <div style={{ fontSize:10, fontFamily:"var(--font-mono)", color:"var(--text-faint)", width:50, textAlign:"right" }}>

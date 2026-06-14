@@ -459,8 +459,8 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
             </div>
             {/* Kill switch */}
             <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", borderRadius:6, marginBottom:8,
-              background: killSwitch ? "rgba(239,68,68,0.1)" : "rgba(16,185,129,0.08)",
-              border: `1px solid ${killSwitch ? "rgba(239,68,68,0.3)" : "rgba(16,185,129,0.2)"}` }}>
+              background: killSwitch ? "var(--down-soft)" : "var(--up-soft)",
+              border: `1px solid ${killSwitch ? "color-mix(in oklch, var(--down) 30%, transparent)" : "color-mix(in oklch, var(--up) 25%, transparent)"}` }}>
               <span style={{ fontSize:11, fontFamily:"var(--font-mono)", flex:1, color: killSwitch ? "var(--down)" : "var(--up)" }}>
                 {killSwitch ? "⚠ Auto-execution PAUSED" : "● Auto-execution ACTIVE"}
               </span>
@@ -473,9 +473,9 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
                 } catch { /* ignore */ } finally { setKillSwitching(false); }
               }} disabled={killSwitching}
               style={{ fontSize:11, padding:"4px 10px", borderRadius:5, border:"1px solid", cursor:"pointer", fontWeight:600,
-                background: killSwitch ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.12)",
+                background: killSwitch ? "var(--up-soft)" : "var(--down-soft)",
                 color: killSwitch ? "var(--up)" : "var(--down)",
-                borderColor: killSwitch ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.25)" }}>
+                borderColor: killSwitch ? "color-mix(in oklch, var(--up) 30%, transparent)" : "color-mix(in oklch, var(--down) 25%, transparent)" }}>
                 {killSwitching ? "…" : killSwitch ? "Resume" : "Pause"}
               </button>
             </div>
@@ -572,7 +572,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
                         <div>Buying power: ${Number(brokerStatus.account.buying_power || 0).toLocaleString(undefined, {maximumFractionDigits:2})}</div>
                       </div>
                     )}
-                    <button onClick={disconnectBroker} style={{ fontSize:11, padding:"5px 14px", background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.25)", borderRadius:6, color:"var(--down)", cursor:"pointer" }}>
+                    <button onClick={disconnectBroker} style={{ fontSize:11, padding:"5px 14px", background:"var(--down-soft)", border:"1px solid color-mix(in oklch, var(--down) 25%, transparent)", borderRadius:6, color:"var(--down)", cursor:"pointer" }}>
                       Disconnect
                     </button>
                   </div>
@@ -589,7 +589,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
                       ))}
                     </div>
                     {brokerAcctType === "live" && (
-                      <div style={{ fontSize:10, color:"var(--warn)", fontFamily:"var(--font-mono)", padding:"6px 10px", background:"rgba(245,158,11,0.08)", borderRadius:6 }}>
+                      <div style={{ fontSize:10, color:"var(--warn)", fontFamily:"var(--font-mono)", padding:"6px 10px", background:"var(--warn-soft)", borderRadius:6 }}>
                         Live mode places real orders with real money. Use paper mode to test first.
                       </div>
                     )}
@@ -692,7 +692,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
               <a key={l} href={h} target="_blank" style={{ fontSize:10, color:"var(--text-faint)" }}>{l}</a>
             ))}
           </div>
-          <button onClick={logout} style={{ width:"100%", padding:"10px 0", background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.3)", borderRadius:8, color:"var(--down)", fontSize:13, fontWeight:600, cursor:"pointer" }}>
+          <button onClick={logout} style={{ width:"100%", padding:"10px 0", background:"var(--down-soft)", border:"1px solid color-mix(in oklch, var(--down) 30%, transparent)", borderRadius:8, color:"var(--down)", fontSize:13, fontWeight:600, cursor:"pointer" }}>
             Sign Out
           </button>
         </div>
@@ -1070,8 +1070,8 @@ function PricingView({ open, onClose, user }) {
 /* ─── Tweaks panel ─────────────────────────────────────────────────────────── */
 function TweaksPanel({ open, onClose, state, set }) {
   const accents = [
-    ["#10b981","emerald"],["#60a5fa","azure"],["#f59e0b","amber"],
-    ["#ef4444","red"],["#a78bfa","violet"],["#e6edf7","mono"],
+    ["#22d3ee","cyan"],["#60a5fa","azure"],["#fbbf24","amber"],
+    ["#fb4d6d","crimson"],["#a78bfa","violet"],["#e6edf7","mono"],
   ];
   return (
     <div className={`tweaks ${open?"open":""}`}>

@@ -1,7 +1,7 @@
 /* ─── App defaults (used by App + TweaksPanel) ──────────────────────────────── */
 /* ─── Tweaks panel ─────────────────────────────────────────────────────────── */
 const DEFAULTS = {
-  theme: "dark", accent: "#10b981", density: "comfortable",
+  theme: "dark", accent: "#22d3ee", density: "comfortable",
   chartStyle: "area", aggressiveness: "balanced",
   style: "swing", days: ["Mon","Tue","Wed","Thu","Fri"],
   startTime: "09:30", endTime: "16:00",
