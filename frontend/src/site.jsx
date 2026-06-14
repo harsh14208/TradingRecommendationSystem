@@ -642,7 +642,7 @@ function LegalPage({ kind, go }) {
             <p>{s[1]}</p>
           </section>
         ))}
-        <div style={{ marginTop:32, padding:"16px 20px", background:"rgba(245,158,11,0.1)", border:"1px solid rgba(245,158,11,0.3)", borderRadius:8, fontSize:13, color:"var(--warn)", lineHeight:1.6 }}>
+        <div style={{ marginTop:32, padding:"16px 20px", background:"color-mix(in oklch, var(--warn) 10%, transparent)", border:"1px solid color-mix(in oklch, var(--warn) 30%, transparent)", borderRadius:8, fontSize:13, color:"var(--warn)", lineHeight:1.6 }}>
           ⚠️ <strong>NOT FINANCIAL ADVICE</strong> — SIGNAL.TRADE provides educational signals only. Consult a licensed financial professional before making any trading decision.
         </div>
       </div>
