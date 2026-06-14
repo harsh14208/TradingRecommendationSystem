@@ -220,12 +220,40 @@ function TelegramPreview({ log }) {
   );
 }
 
-function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading, onSend, onSkip, onReview, onNote }) {
+function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading, onSend, onSkip, onReview, onNote, onPriceAlert }) {
   const signalList = propSignals && propSignals.length ? propSignals : (typeof SIGNALS !== "undefined" ? SIGNALS : []);
   const [tk, setTk] = dUseState(() => signalList[0]?.tk || "NVDA");
-  dUseEffect(() => { if (signalList.length && !signalList.find((x) => x.tk === tk)) setTk(signalList[0].tk); }, [signalList]);
-  const s = signalList.find((x) => x.tk === tk);
+  const [query, setQuery] = dUseState("");
+  const [actionFilter, setActionFilter] = dUseState("ALL");
+  const [styleFilter, setStyleFilter] = dUseState("ALL");
+  const [minConf, setMinConf] = dUseState(0);
+  const [note, setNote] = dUseState("");
+
+  const q = query.trim().toLowerCase();
+  const filtered = signalList.filter((s) => {
+    if (q && !s.tk.toLowerCase().includes(q) && !(s.name || "").toLowerCase().includes(q)) return false;
+    if (actionFilter !== "ALL" && s.signal !== actionFilter) return false;
+    if (styleFilter !== "ALL" && s.style !== styleFilter) return false;
+    if (s.conf < minConf) return false;
+    return true;
+  });
+
+  dUseEffect(() => { if (filtered.length && !filtered.find((x) => x.tk === tk)) setTk(filtered[0].tk); }, [filtered]);
+  dUseEffect(() => { const found = signalList.find((x) => x.tk === tk); if (found) setNote(found.notes || ""); }, [tk, signalList]);
+
+  const s = filtered.find((x) => x.tk === tk) || filtered[0];
   const winSpark = s ? winSparkForSignal(s) : [];
+  const clearFilters = () => { setQuery(""); setActionFilter("ALL"); setStyleFilter("ALL"); setMinConf(0); };
+  if (!s) {
+    return (
+      <div className="page wrap" style={{ paddingTop: 24, paddingBottom: 56 }}>
+        <div className="glass" style={{ padding: 40, textAlign: "center", maxWidth: 480, margin: "0 auto" }}>
+          <div className="kicker" style={{ color: "var(--text-faint)", marginBottom: 16 }}>NO SIGNALS MATCH FILTERS</div>
+          <button className="btn" onClick={clearFilters}>Clear filters</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="page wrap" style={{ paddingTop: 24, paddingBottom: 56 }}>
       <div className="dash-grid">
@@ -233,12 +261,28 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
         <aside className="glass" style={{ padding: 0, overflow: "hidden", alignSelf: "start" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 14px", borderBottom: "1px solid var(--line)" }}>
             <span className="kicker">SIGNAL FEED</span>
-            <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> {signalList.length} LIVE</span>
+            <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> {filtered.length} LIVE</span>
+          </div>
+          <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, borderBottom: "1px solid var(--line-soft)" }}>
+            <input type="text" placeholder="Search ticker or name…" value={query} onChange={(e) => setQuery(e.target.value)}
+              style={{ width: "100%", background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 6, padding: "7px 10px", color: "var(--text)", fontSize: 12 }} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[["ALL","All"],["BUY","Buy"],["SELL","Sell"],["HOLD","Hold"]].map(([k,l]) => (
+                <button key={k} className={`btn xs ${actionFilter === k ? "primary" : "ghost"}`} onClick={() => setActionFilter(k)} style={{ fontSize: 11, padding: "4px 8px" }}>{l}</button>
+              ))}
+              <select value={styleFilter} onChange={(e) => setStyleFilter(e.target.value)}
+                style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 6, color: "var(--text)", fontSize: 11, padding: "4px 8px" }}>
+                <option value="ALL">All styles</option><option value="intraday">Intraday</option><option value="swing">Swing</option><option value="position">Position</option>
+              </select>
+              <select value={minConf} onChange={(e) => setMinConf(Number(e.target.value))}
+                style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 6, color: "var(--text)", fontSize: 11, padding: "4px 8px" }}>
+                <option value={0}>Any conf</option><option value={60}>≥60%</option><option value={70}>≥70%</option><option value={80}>≥80%</option>
+              </select>
+            </div>
           </div>
           <Defer ms={500} skeleton={<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>{[0, 1, 2, 3, 4, 5].map((i) => <SkelBlock key={i} h={40}></SkelBlock>)}</div>}>
-            <div>{signalList.map((x) => <WatchRow key={x.tk} s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>)}</div>
+            <div>{filtered.map((x) => <WatchRow key={x.tk} s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>)}</div>
           </Defer>
-          <TelegramPreview log={propLog}></TelegramPreview>
         </aside>
 
         {/* Main */}
@@ -259,6 +303,13 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
               <span style={{ fontSize: 30, fontWeight: 700 }}><Num value={s.px} dp={2} prefix="$"></Num></span>
               <span className={`mono ${s.chgPct >= 0 ? "bull" : "bear"}`} style={{ fontSize: 14, fontWeight: 600 }}>{s.chgPct >= 0 ? "+" : ""}{s.chgPct.toFixed(2)}% today</span>
               <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>{s.sources.map((src) => <SourceChip key={src} s={src}></SourceChip>)}</div>
+            </div>
+            {/* Signal actions */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+              <button className="btn sm" onClick={() => onSend(s.id)} title="Shift+S">📡 Send</button>
+              <button className="btn sm" onClick={() => onSkip(s.id)}>⏭ Skip</button>
+              <button className="btn sm" onClick={() => onReview(s.id)}>✓ Reviewed</button>
+              <button className="btn sm" onClick={() => onPriceAlert(s)}>🚨 Alert</button>
             </div>
             <Defer ms={700} skeleton={<SkelBlock h={260}></SkelBlock>}><BigChart s={s}></BigChart></Defer>
             {/* Trade plan */}
@@ -294,28 +345,40 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
             </div>
             <PaperTrade s={s}></PaperTrade>
           </div>
+
+          {/* AI Insight — under the center panel */}
+          <div className="glass" style={{ padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <span className="kicker" style={{ color: "var(--bull)" }}>AI INSIGHT</span>
+              <span className="kicker" style={{ marginLeft: "auto" }}>WHY THIS FIRED</span>
+            </div>
+            <Defer ms={850} skeleton={<div style={{ display: "flex", flexDirection: "column", gap: 10 }}><SkelBlock h={20}></SkelBlock><SkelBlock h={70}></SkelBlock><SkelBlock h={140}></SkelBlock></div>}>
+              <div>
+                <div style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.45, marginBottom: 10, textWrap: "balance" }}>{s.headline}</div>
+                <p style={{ fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.6, margin: "0 0 16px", textWrap: "pretty" }}>{s.narrative}</p>
+                <div className="kicker" style={{ marginBottom: 4 }}>EVIDENCE · {s.sources.length} SOURCES AGREED</div>
+                {s.rationale.map((r, i) => <RationaleItem key={tk + i} r={r}></RationaleItem>)}
+                <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 8, background: "var(--bull-soft)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                  <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--text)" }}>
+                    {s.tk} signals have closed <span className="bull" style={{ fontWeight: 700 }}>{s.win}% green</span> on the 14-day horizon historically, with risk-reward of {s.rr.toFixed(1)} on this setup.
+                  </div>
+                </div>
+                {/* Journal note */}
+                <div style={{ marginTop: 14 }}>
+                  <div className="kicker" style={{ marginBottom: 6 }}>JOURNAL NOTE</div>
+                  <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why are you taking this signal?"
+                    style={{ width: "100%", minHeight: 56, background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 6, padding: "8px 10px", color: "var(--text)", fontSize: 12, resize: "vertical" }} />
+                  <button className="btn sm" style={{ marginTop: 6 }} onClick={() => onNote(s.id, note)}>Save note</button>
+                </div>
+                <div style={{ fontSize: 10.5, color: "var(--text-ghost)", marginTop: 12, lineHeight: 1.5 }}>Educational only — not financial advice. Past performance does not predict future results.</div>
+              </div>
+            </Defer>
+          </div>
         </main>
 
-        {/* AI Insight */}
-        <aside className="glass" style={{ padding: 20, alignSelf: "start" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-            <span className="kicker" style={{ color: "var(--bull)" }}>AI INSIGHT</span>
-            <span className="kicker" style={{ marginLeft: "auto" }}>WHY THIS FIRED</span>
-          </div>
-          <Defer ms={850} skeleton={<div style={{ display: "flex", flexDirection: "column", gap: 10 }}><SkelBlock h={20}></SkelBlock><SkelBlock h={70}></SkelBlock><SkelBlock h={140}></SkelBlock></div>}>
-            <div>
-              <div style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.45, marginBottom: 10, textWrap: "balance" }}>{s.headline}</div>
-              <p style={{ fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.6, margin: "0 0 16px", textWrap: "pretty" }}>{s.narrative}</p>
-              <div className="kicker" style={{ marginBottom: 4 }}>EVIDENCE · {s.sources.length} SOURCES AGREED</div>
-              {s.rationale.map((r, i) => <RationaleItem key={tk + i} r={r}></RationaleItem>)}
-              <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 8, background: "var(--bull-soft)", border: "1px solid rgba(34,211,238,0.18)" }}>
-                <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--text)" }}>
-                  {s.tk} signals have closed <span className="bull" style={{ fontWeight: 700 }}>{s.win}% green</span> on the 14-day horizon historically, with risk-reward of {s.rr.toFixed(1)} on this setup.
-                </div>
-              </div>
-              <div style={{ fontSize: 10.5, color: "var(--text-ghost)", marginTop: 12, lineHeight: 1.5 }}>Educational only — not financial advice. Past performance does not predict future results.</div>
-            </div>
-          </Defer>
+        {/* Telegram delivery — right rail */}
+        <aside style={{ alignSelf: "start" }}>
+          <TelegramPreview log={propLog}></TelegramPreview>
         </aside>
       </div>
     </div>

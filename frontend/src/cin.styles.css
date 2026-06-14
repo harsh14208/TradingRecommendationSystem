@@ -52,6 +52,8 @@ html, body {
   line-height: 1.5;
   letter-spacing: -0.008em;
   -webkit-font-smoothing: antialiased;
+  overflow-y: auto;
+  height: auto;
 }
 button { font-family: inherit; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 input { font-family: inherit; }

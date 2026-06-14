@@ -1,4 +1,4 @@
-/* global React */
+/* global React, apiFetch */
 // SIGNAL.TRADE cinematic — Settings.
 // Wired to currentUser and persisted settings via setSettings.
 const { useState: sUseState, useEffect: sUseEffect } = React;
@@ -114,7 +114,13 @@ function PageSettings({ currentUser, settings, setSettings }) {
               </div>
             </div>
           ))}
-          <button className="btn sm" style={{ marginTop: 8 }}>Download everything we have on you (.json)</button>
+          <button className="btn sm" style={{ marginTop: 8 }} onClick={() => {
+            const payload = { user: currentUser, settings, exportedAt: new Date().toISOString() };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a"); a.href = url; a.download = "signal-trade-data.json"; a.click();
+            URL.revokeObjectURL(url);
+          }}>Download everything we have on you (.json)</button>
         </div>
       )}
 
@@ -141,7 +147,12 @@ function PageSettings({ currentUser, settings, setSettings }) {
           <SettingRow label="Plan" sub={`${tier.charAt(0).toUpperCase() + tier.slice(1).toLowerCase()} · ${tier.toLowerCase() === "pro" ? "unlimited signals, backtests, paper trading" : tier.toLowerCase() === "basic" ? "alerts + backtests" : "read-only access"}`} control={<span className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--bull)" }}>{planPrice(tier)}</span>}></SettingRow>
           <SettingRow label="Next invoice" control={<span className="mono dim" style={{ fontSize: 12.5 }}>{settings?.next_invoice || "—"}</span>}></SettingRow>
           <SettingRow label="Payment method" control={<span className="mono dim" style={{ fontSize: 12.5 }}>{settings?.payment_method || "•••• —"}</span>}></SettingRow>
-          <SettingRow label="Cancel anytime" sub="One click via Stripe portal — no questions, runs to period end" control={<button className="btn sm">Manage</button>}></SettingRow>
+          <SettingRow label="Cancel anytime" sub="One click via Stripe portal — no questions, runs to period end" control={
+            <button className="btn sm" onClick={async () => {
+              const d = await apiFetch("/api/billing/portal", { method: "POST" });
+              if (d?.portal_url) window.location.href = d.portal_url;
+            }}>Manage</button>
+          }></SettingRow>
         </div>
       )}
     </div>

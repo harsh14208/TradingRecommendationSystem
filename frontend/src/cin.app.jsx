@@ -532,9 +532,18 @@ function App() {
   const common = { currentUser, setTweak, tweakState, hasTierAccess };
 
   /* Legacy tool modals */
-  const [modals, setModals] = useState({ account: false, watchlist: false, alerts: false, screener: false, paper: false, market: false, sector: false, calendar: false, pricing: false });
+  const [modals, setModals] = useState({ account: false, watchlist: false, alerts: false, screener: false, paper: false, market: false, sector: false, calendar: false, pricing: false, history: false, rules: false, sources: false, performance: false, tweaks: false, alert: false });
   const openModal = (k) => () => setModals((m) => ({ ...m, [k]: true }));
   const closeModal = (k) => () => setModals((m) => ({ ...m, [k]: false }));
+
+  const [alertSignal, setAlertSignal] = useState(null);
+  const openPriceAlert = useCallback((s) => { setAlertSignal(s); setModals((m) => ({ ...m, alert: true })); }, []);
+  const closePriceAlert = useCallback(() => { setAlertSignal(null); setModals((m) => ({ ...m, alert: false })); }, []);
+
+  const toggleSource = useCallback(async (id) => {
+    const res = await apiFetch(`/api/sources/${id}`, { method: "PATCH" });
+    if (res) setSources((prev) => prev.map((s) => (s.id === id ? { ...s, is_on: res.is_on } : s)));
+  }, []);
 
   if (!authReady) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg-0)", color: "var(--text-faint)", fontFamily: "var(--font-mono)", fontSize: 13 }}>Loading…</div>
@@ -566,7 +575,7 @@ function App() {
           <KillSwitch currentUser={currentUser} />
         </div>
         {page === "home" && <PageHome key="home" go={go} t={tweakState} {...common} />}
-        {page === "dashboard" && <PageDashboard key="dash" signals={cinSignals} tickerTape={cinTickerTape} log={cinLog} loading={loading} onSend={sendToTelegram} onSkip={skipSignal} onReview={reviewSignal} onNote={saveNote} {...common} />}
+        {page === "dashboard" && <PageDashboard key="dash" signals={cinSignals} tickerTape={cinTickerTape} log={cinLog} loading={loading} onSend={sendToTelegram} onSkip={skipSignal} onReview={reviewSignal} onNote={saveNote} onPriceAlert={openPriceAlert} {...common} />}
         {page === "market" && <PageMarket key="mkt" marketCtx={marketCtx} sources={sources} log={cinLog} {...common} />}
         {page === "backtest" && <PageBacktest key="bt" {...common} />}
         {page === "track" && <PageTrack key="trk" histSignals={histSignals} {...common} />}
@@ -575,7 +584,10 @@ function App() {
           openAccount={openModal("account")} openWatchlist={openModal("watchlist")}
           openAlerts={openModal("alerts")} openScreener={openModal("screener")}
           openPaper={openModal("paper")} openMarket={openModal("market")}
-          openSector={openModal("sector")} openCalendar={openModal("calendar")} />}
+          openSector={openModal("sector")} openCalendar={openModal("calendar")}
+          openHistory={openModal("history")} openRules={openModal("rules")}
+          openSources={openModal("sources")} openPerformance={openModal("performance")}
+          openPricing={openModal("pricing")} openTweaks={openModal("tweaks")} />}
         <Footer />
         <BottomNav page={page} go={go} />
 
@@ -589,6 +601,15 @@ function App() {
         <SectorView open={modals.sector} onClose={closeModal("sector")} online={online} />
         <CalendarView open={modals.calendar} onClose={closeModal("calendar")} />
         <PricingView open={modals.pricing} onClose={closeModal("pricing")} user={currentUser} />
+        <HistoryView open={modals.history} onClose={closeModal("history")} online={online} />
+        <RulesView open={modals.rules} onClose={closeModal("rules")}
+          aggr={tweakState.aggressiveness} style={tweakState.style} days={tweakState.days}
+          startTime={tweakState.startTime} endTime={tweakState.endTime}
+          setTweak={setTweak} customConf={tweakState.customConf} />
+        <SourcesView open={modals.sources} onClose={closeModal("sources")} sources={sources} toggle={toggleSource} />
+        <MyPerformanceView open={modals.performance} onClose={closeModal("performance")} />
+        <TweaksPanel open={modals.tweaks} onClose={closeModal("tweaks")} state={tweakState} set={setTweak} />
+        <PriceAlertModal open={modals.alert} onClose={closePriceAlert} ticker={alertSignal?.tk} currentPrice={alertSignal?.px} />
       </div>
     </ErrorBoundary>
   );
