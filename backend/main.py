@@ -278,7 +278,7 @@ async def _periodic_scan():
             log.info("[scanner] next fixed-slot scan: %s ET (%.0fs)", fire_at.strftime("%a %H:%M"), wait_s)
             await asyncio.sleep(max(0, wait_s))
             try:
-                await run_scan(broadcast_fn=manager.broadcast)
+                await run_scan(broadcast_fn=manager.broadcast, broadcast_signal_fn=manager.broadcast_signal)
                 _scan_fail_streak = 0
             except asyncio.CancelledError:
                 raise
@@ -326,7 +326,7 @@ async def _periodic_scan():
         # Fire scan
         log.info("[scanner] firing continuous scan at %s ET", now.strftime("%H:%M:%S"))
         try:
-            await run_scan(broadcast_fn=manager.broadcast)
+            await run_scan(broadcast_fn=manager.broadcast, broadcast_signal_fn=manager.broadcast_signal)
             _scan_fail_streak = 0
         except asyncio.CancelledError:
             raise
@@ -344,7 +344,7 @@ async def _periodic_scan():
             if now_after < post_close:
                 await asyncio.sleep((post_close - now_after).total_seconds())
                 try:
-                    await run_scan(broadcast_fn=manager.broadcast)
+                    await run_scan(broadcast_fn=manager.broadcast, broadcast_signal_fn=manager.broadcast_signal)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -1644,7 +1644,7 @@ async def lifespan(app: FastAPI):
         log.warning(f"[startup] Failed to initialize policy/registry: {e}")
     await _ensure_owner_account()
     await _ensure_default_watchlist()
-    asyncio.create_task(run_scan(broadcast_fn=manager.broadcast))
+    asyncio.create_task(run_scan(broadcast_fn=manager.broadcast, broadcast_signal_fn=manager.broadcast_signal))
     global _scan_task
     _scan_task = asyncio.create_task(_periodic_scan())
     asyncio.create_task(_scan_watchdog())

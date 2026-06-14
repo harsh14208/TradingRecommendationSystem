@@ -1365,7 +1365,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
     return market_ctx
 
 
-async def run_scan(broadcast_fn=None):
+async def run_scan(broadcast_fn=None, broadcast_signal_fn=None):
     """Single-flight scan wrapper with status tracking and Redis-aware lock."""
     if _scan_lock.locked():
         _scan_status["skipped_overlaps"] += 1
@@ -1440,7 +1440,7 @@ async def run_scan(broadcast_fn=None):
         _scan_status["runs"] += 1
         _mark_scan_stage("start")
         try:
-            result = await _run_scan_impl(broadcast_fn=broadcast_fn)
+            result = await _run_scan_impl(broadcast_fn=broadcast_fn, broadcast_signal_fn=broadcast_signal_fn)
             _scan_status["successes"] += 1
             _scan_status["last_success_at"] = _utc_iso()
             _scan_status["state"] = "success"
@@ -2033,7 +2033,7 @@ async def eod_batch_send() -> None:
     log.info("[eod_batch] done — %d/%d signals delivered", sent_count, len(rows))
 
 
-async def _run_scan_impl(broadcast_fn=None):
+async def _run_scan_impl(broadcast_fn=None, broadcast_signal_fn=None):
     """
     Full scan cycle:
       1. Fetch market-wide context (F&G + Macro) once.
@@ -2363,10 +2363,12 @@ async def _run_scan_impl(broadcast_fn=None):
 
     # ── Step 10: broadcast ───────────────────────────────────────────────
     _mark_scan_stage("broadcast")
-    if broadcast_fn:
+    signal_fn = broadcast_signal_fn or broadcast_fn
+    if signal_fn:
         for sig, _, _force in new_signals:
-            await broadcast_fn({"type": "new_signal", "signal": sig})
+            await signal_fn({"type": "new_signal", "signal": sig})
 
+    if broadcast_fn:
         prices = {q["t"]: {"price": q["p"], "change": q["c"]} for q in quotes}
         await broadcast_fn({"type": "price_update", "quotes": quotes, "prices": prices})
 

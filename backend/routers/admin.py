@@ -10,7 +10,7 @@ from config import TIER_PRICES_CENTS, get_settings
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
-from models import AppSettings, PerformanceSnapshot, ResearchExperiment, Signal, SignalDelivery, User
+from models import AppSettings, PerformanceSnapshot, ResearchExperiment, Signal, SignalDelivery, User, UserSignalQuota
 from services.auth_svc import get_current_user
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -456,6 +456,70 @@ async def admin_stats(
             "deliveries_30d": deliveries_30d,
         },
     }
+
+
+@router.get("/quota-analytics")
+async def quota_analytics(
+    db: AsyncSession = Depends(get_db),
+    owner: User = Depends(_require_owner),
+):
+    """PROD-5: Daily signal quota consumption by effective tier.
+
+    Groups active users by their effective tier (paid inactive users count as
+    free) and reports how many have hit their daily signal view limit.
+    """
+    from services.signal_quota_svc import _utc_midnight, get_user_quota_limit
+
+    today = _utc_midnight()
+    users = (await db.execute(select(User).where(User.is_active == True))).scalars().all()
+
+    # Group users by effective tier.
+    tiers: dict[str, list[User]] = {"free": [], "basic": [], "pro": []}
+    for u in users:
+        limit = get_user_quota_limit(u)
+        if limit == 100:
+            bucket = "basic"
+        elif limit is None:
+            bucket = "pro"
+        else:
+            bucket = "free"
+        tiers[bucket].append(u)
+
+    user_ids = [u.id for u in users]
+    quotas = {}
+    if user_ids:
+        rows = (
+            (
+                await db.execute(
+                    select(UserSignalQuota).where(
+                        UserSignalQuota.user_id.in_(user_ids),
+                        UserSignalQuota.window_start == today,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        quotas = {q.user_id: q for q in rows}
+
+    result = {}
+    for tier, members in tiers.items():
+        limit = {"free": 5, "basic": 100, "pro": None}[tier]
+        used_counts = []
+        exceeded = 0
+        for u in members:
+            q = quotas.get(u.id)
+            used = q.views_count if q else 0
+            used_counts.append(used)
+            if limit is not None and used >= limit:
+                exceeded += 1
+        result[tier] = {
+            "users": len(members),
+            "limit": limit,
+            "avg_used_today": round(sum(used_counts) / len(used_counts), 1) if used_counts else 0.0,
+            "exceeded_count": exceeded,
+        }
+    return result
 
 
 from pydantic import BaseModel as _BaseModel

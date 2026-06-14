@@ -50,6 +50,42 @@ function KillSwitch({ currentUser }) {
   );
 }
 
+/* ─── Signal quota banner ────────────────────────────────────────────────────── */
+function SignalQuotaBanner({ quota, user }) {
+  if (!quota || quota.limit === null) return null;
+  if (user?.is_owner) return null;
+  const { limit, remaining } = quota;
+  const used = limit - remaining;
+  const pct = Math.min(100, Math.max(0, (used / limit) * 100));
+  const low = remaining <= 2 && remaining > 0;
+  const exhausted = remaining <= 0;
+
+  return (
+    <div style={{
+      margin:"0 14px 10px", padding:"10px 14px", borderRadius:8,
+      background: exhausted ? "rgba(239,68,68,0.08)" : low ? "rgba(245,158,11,0.08)" : "var(--bg-2)",
+      border:`1px solid ${exhausted ? "rgba(239,68,68,0.35)" : low ? "rgba(245,158,11,0.35)" : "var(--line)"}`,
+    }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, fontSize:12 }}>
+        <div style={{ color: exhausted ? "var(--down)" : low ? "var(--warn)" : "var(--text-dim)" }}>
+          {exhausted
+            ? <>You’ve viewed all <strong>{limit}</strong> free signals today.</>
+            : <>Signal quota: <strong>{used}</strong> / {limit} used today</>}
+        </div>
+        {exhausted && (
+          <button className="btn primary" style={{ fontSize:11, padding:"5px 12px" }}
+            onClick={() => window.location.href="/app#pricing"}>
+            Upgrade
+          </button>
+        )}
+      </div>
+      <div style={{ height:4, borderRadius:2, background:"var(--bg-1)", marginTop:8, overflow:"hidden" }}>
+        <div style={{ width:`${pct}%`, height:"100%", background: exhausted ? "var(--down)" : low ? "var(--warn)" : "var(--accent)", transition:"width 0.2s" }}/>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Disclaimer ─────────────────────────────────────────────────────────────── */
 const DISCLAIMER_KEY = "signal_trade_disclaimer_v1";
 const TOUR_KEY = "st_tour_seen_v1";
@@ -78,6 +114,7 @@ function App() {
   const [log,         setLog]         = useState([]);
   const [tickerTape,  setTickerTape]  = useState(typeof TICKER_TAPE !== "undefined" ? TICKER_TAPE : []);
   const [marketCtx,   setMarketCtx]   = useState(null);
+  const [signalQuota, setSignalQuota] = useState(null);
   const [online,      setOnline]      = useState(false);
   const [lastRefresh, setLastRefresh] = useState(null);  // TSYS-11b: stale-data tracking
   const [loading,     setLoading]     = useState(true);
@@ -530,20 +567,34 @@ function App() {
   const [refreshing,   setRefreshing]   = useState(false);
   const [countdown,    setCountdown]    = useState(30);
 
+  const _parseQuotaHeaders = (headers) => {
+    const limit = headers.get("X-Signal-Quota-Limit");
+    const remaining = headers.get("X-Signal-Quota-Remaining");
+    const resetsAt = headers.get("X-Signal-Quota-Resets-At");
+    if (!limit || !remaining) return null;
+    return {
+      limit: limit === "unlimited" ? null : parseInt(limit, 10),
+      remaining: remaining === "unlimited" ? null : parseInt(remaining, 10),
+      resetsAt: resetsAt || null,
+    };
+  };
+
   const loadData = useCallback(async (showSpinner = false, opts = {}) => {
     if (showSpinner) setRefreshing(true);
     const signal = opts.signal;
 
     // ── Tier 1: fast DB-only reads — clears loading immediately ──────────────
     try {
-      const [sigs, srcs] = await Promise.all([
-        apiFetch("/api/signals", { signal }),
+      const [sigsRaw, srcs] = await Promise.all([
+        apiFetchRaw("/api/signals", { signal }),
         apiFetch("/api/sources", { signal }),
       ]);
+      const sigs = sigsRaw.json;
       if (Array.isArray(sigs)) {
         setSignals(sigs);
         try { localStorage.setItem("st_signals_cache", JSON.stringify(sigs)); } catch {}
       }
+      if (sigsRaw.ok) setSignalQuota(_parseQuotaHeaders(sigsRaw.headers));
       if (Array.isArray(srcs)) setSources(srcs);
       setOnline(true);
       setLastRefresh(new Date());  // TSYS-11b
@@ -1027,6 +1078,7 @@ function App() {
         <div className="pane">
           {/* Slim ad banner for free-tier users — above the feed header */}
           <AdSlot user={currentUser} slim={true}/>
+          <SignalQuotaBanner quota={signalQuota} user={currentUser}/>
           <div className="pane-head">
             <span className="title">Signal feed</span>
             <span className="sep"/>

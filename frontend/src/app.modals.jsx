@@ -18,6 +18,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   const [refCopied,     setRefCopied]     = useState(false);
   const [codeCopied,    setCodeCopied]    = useState(false);
   const [billingStatus, setBillingStatus] = useState(null);
+  const [quotaAnalytics, setQuotaAnalytics] = useState(null);
   const [digestSending, setDigestSending] = useState(false);
   const [digestMsg,     setDigestMsg]     = useState("");
   const [digestStatus,  setDigestStatus]  = useState(null);
@@ -69,6 +70,9 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
       }
       apiFetch("/api/auth/referral", { signal }).then(d => { if (d) setReferral(d); }).catch(() => {});
       apiFetch("/api/billing/status", { signal }).then(d => { if (d) setBillingStatus(d); }).catch(() => {});
+      if (user.is_owner) {
+        apiFetch("/api/admin/quota-analytics", { signal }).then(d => { if (d) setQuotaAnalytics(d); }).catch(() => {});
+      }
       return () => ctrl.abort();
     }
   }, [open, user]);
@@ -296,6 +300,13 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
               )}
             </div>
           )}
+          {billingStatus?.signal_quota && !user.is_owner && (
+            <div style={{ fontSize:11, color:"var(--text-dim)", marginBottom:10, padding:"8px 10px", background:"var(--bg-2)", borderRadius:6 }}>
+              Signal quota: <strong>{billingStatus.signal_quota.used}</strong> / {billingStatus.signal_quota.limit} used today
+              {billingStatus.signal_quota.remaining === 0 && <span style={{ color:"var(--down)", marginLeft:6 }}>· quota exhausted</span>}
+              <div style={{ fontSize:10, color:"var(--text-faint)", marginTop:3 }}>Resets {new Date(billingStatus.signal_quota.resets_at).toLocaleString()}</div>
+            </div>
+          )}
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             {(tier === "free" || user.subscription_status !== "active") && !user.is_owner && (
               <button className="btn primary" style={{ fontSize:11 }} onClick={onUpgrade}>Upgrade Plan</button>
@@ -397,6 +408,25 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
                 {setupStatus.all_critical_ok ? "✓ Ready" : "⚠ Action needed"}
               </span>}
             </div>
+            {quotaAnalytics && (
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:10, fontWeight:600, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"var(--font-mono)", marginBottom:8 }}>Quota usage today</div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+                  {["free","basic","pro"].map(tier => {
+                    const q = quotaAnalytics[tier];
+                    return (
+                      <div key={tier} style={{ background:"var(--bg-2)", borderRadius:6, padding:"8px 10px" }}>
+                        <div style={{ fontSize:9, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:3 }}>{tier}</div>
+                        <div style={{ fontSize:13, fontWeight:700, fontFamily:"var(--font-mono)", color:"var(--text)" }}>{q.users}</div>
+                        <div style={{ fontSize:10, color:q.exceeded_count > 0 ? "var(--down)" : "var(--text-faint)", marginTop:2 }}>
+                          {q.limit != null ? `${q.avg_used_today} / ${q.limit} avg · ${q.exceeded_count} hit` : "unlimited"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {adminStats && (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:12 }}>
                 {[

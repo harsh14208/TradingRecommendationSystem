@@ -1,9 +1,12 @@
 import json
 import math
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from database import get_db
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer
-from services.auth_svc import decode_access_token
+from models import User
+from services.auth_svc import _get_user_from_token, decode_access_token
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 _bearer = HTTPBearer(auto_error=False)
@@ -45,27 +48,75 @@ def _json_default(obj):
     return str(obj)
 
 
+def _user_can_receive_signals(user: User | None) -> bool:
+    """Return True if the user is allowed to receive real-time new_signal pushes.
+
+    Free users and inactive paid users must use the REST endpoints, where the
+    daily signal quota is enforced.  Owners and active Basic/Pro users get live
+    WebSocket signals.
+    """
+    if not user or not user.is_active:
+        return False
+    if user.is_owner:
+        return True
+    if user.subscription_status != "active":
+        return False
+    return user.subscription_tier in ("basic", "pro")
+
+
+class _Connection:
+    """Metadata for a single WebSocket connection."""
+
+    def __init__(self, ws: WebSocket, user_id: int | None, eligible_for_signals: bool):
+        self.ws = ws
+        self.user_id = user_id
+        self.eligible_for_signals = eligible_for_signals
+
+
 class ConnectionManager:
     def __init__(self):
-        self._connections: list[WebSocket] = []
+        self._connections: list[_Connection] = []
 
-    async def connect(self, ws: WebSocket, subprotocol: str | None = None):
+    async def connect(
+        self,
+        ws: WebSocket,
+        user: User | None,
+        subprotocol: str | None = None,
+    ):
         await ws.accept(subprotocol=subprotocol)
-        self._connections.append(ws)
+        eligible = _user_can_receive_signals(user)
+        self._connections.append(_Connection(ws, user.id if user else None, eligible))
 
     def disconnect(self, ws: WebSocket):
-        self._connections = [c for c in self._connections if c is not ws]
+        self._connections = [c for c in self._connections if c.ws is not ws]
 
     async def broadcast(self, data: dict):
+        """Broadcast a non-signal message to every connected client."""
         if not self._connections:
             return
         text = json.dumps(data, default=_json_default)
         dead = []
-        for ws in self._connections:
+        for conn in self._connections:
             try:
-                await ws.send_text(text)
+                await conn.ws.send_text(text)
             except Exception:
-                dead.append(ws)
+                dead.append(conn.ws)
+        for ws in dead:
+            self.disconnect(ws)
+
+    async def broadcast_signal(self, data: dict):
+        """Broadcast a new_signal only to clients eligible for live signals."""
+        if not self._connections:
+            return
+        text = json.dumps(data, default=_json_default)
+        dead = []
+        for conn in self._connections:
+            if not conn.eligible_for_signals:
+                continue
+            try:
+                await conn.ws.send_text(text)
+            except Exception:
+                dead.append(conn.ws)
         for ws in dead:
             self.disconnect(ws)
 
@@ -74,14 +125,24 @@ manager = ConnectionManager()
 
 
 @router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    db: AsyncSession = Depends(get_db),
+):
     token, used_subprotocol = _extract_ws_token(websocket)
     payload = decode_access_token(token) if token else None
     if not payload:
         await websocket.close(code=1008, reason="Invalid or missing token")
         return
+
+    # Load the live user row so we respect is_active, subscription_status, and tier.
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    user = await _get_user_from_token(creds, db)
+
     # Return the subprotocol so the browser handshake succeeds.
-    await manager.connect(websocket, subprotocol="token" if used_subprotocol else None)
+    await manager.connect(websocket, user, subprotocol="token" if used_subprotocol else None)
     try:
         while True:
             await websocket.receive_text()

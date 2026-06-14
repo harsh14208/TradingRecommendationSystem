@@ -60,3 +60,14 @@ async function apiFetch(path, opts = {}) {
     return res.json();
   } catch { return null; }
 }
+
+async function apiFetchRaw(path, opts = {}) {
+  // Like apiFetch but returns the raw response so callers can read headers.
+  try {
+    const res = await authFetch(path, opts);
+    const json = res.ok ? await res.json() : null;
+    return { ok: res.ok, status: res.status, json, headers: res.headers };
+  } catch {
+    return { ok: false, status: 0, json: null, headers: new Headers() };
+  }
+}

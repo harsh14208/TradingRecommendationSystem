@@ -141,6 +141,15 @@ session.  Quota state is returned in `X-Signal-Quota-*` headers and inside the
 Paid users whose `subscription_status` is not `active` are downgraded to the
 free quota until billing is resolved.
 
+### WebSocket eligibility
+
+`routers/websocket_router.py` accepts connections from any authenticated user
+but tags each connection with `eligible_for_signals`. Only owners and active
+Basic/Pro users receive `new_signal` broadcasts; free and inactive paid users
+receive only `price_update`, `market_context`, and `tick` messages. This keeps
+the WebSocket path consistent with the REST quota model without adding a
+per-message counting layer to the broadcast loop.
+
 ## Testing Standards
 
 - Use the `override_deps(app, ...)` context manager from

@@ -349,3 +349,74 @@ def test_post_kill_switch_requires_owner():
     with TestClient(app) as client:
         resp = client.post("/api/admin/execution-kill-switch")
     assert resp.status_code in (401, 403)
+
+
+def test_quota_analytics_endpoint():
+    from models import UserSignalQuota
+    from services.signal_quota_svc import _utc_midnight
+
+    today = _utc_midnight()
+
+    users = []
+    for i, (tier, status) in enumerate([
+        ("free", "inactive"),
+        ("free", "inactive"),
+        ("basic", "active"),
+        ("pro", "active"),
+        ("basic", "past_due"),  # downgraded to free
+    ]):
+        u = MagicMock(spec=User)
+        u.id = i + 1
+        u.subscription_tier = tier
+        u.subscription_status = status
+        u.is_owner = False
+        u.is_active = True
+        users.append(u)
+
+    quotas = [
+        UserSignalQuota(user_id=1, window_start=today, views_count=5),   # free at limit
+        UserSignalQuota(user_id=2, window_start=today, views_count=2),   # free under limit
+        UserSignalQuota(user_id=3, window_start=today, views_count=50),  # basic
+        # user 4 pro has no quota row (unlimited)
+        UserSignalQuota(user_id=5, window_start=today, views_count=4),   # inactive basic -> free bucket
+    ]
+
+    user_result = MagicMock()
+    user_result.scalars.return_value.all.return_value = users
+    quota_result = MagicMock()
+    quota_result.scalars.return_value.all.return_value = quotas
+
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock(side_effect=[user_result, quota_result])
+
+    async def _get_db():
+        yield mock_db
+
+    app = _make_app()
+    app.dependency_overrides[get_db] = _get_db
+    with TestClient(app) as client:
+        resp = client.get("/api/admin/quota-analytics")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # free bucket: 3 users (2 free + 1 inactive basic), 2 free quota rows (1+2), 1 at limit
+    assert data["free"]["users"] == 3
+    assert data["free"]["limit"] == 5
+    assert data["free"]["exceeded_count"] == 1
+
+    # basic bucket: 1 active basic user, 1 quota row with 50 used
+    assert data["basic"]["users"] == 1
+    assert data["basic"]["limit"] == 100
+    assert data["basic"]["avg_used_today"] == 50.0
+
+    # pro bucket: 1 pro user, unlimited
+    assert data["pro"]["users"] == 1
+    assert data["pro"]["limit"] is None
+
+
+def test_quota_analytics_non_owner():
+    app = _make_app(is_owner=False)
+    app.dependency_overrides[get_db] = _mock_db()
+    with TestClient(app) as client:
+        resp = client.get("/api/admin/quota-analytics")
+    assert resp.status_code == 403

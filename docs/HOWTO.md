@@ -680,6 +680,13 @@ If a free user exhausts their quota, the API returns **402 Payment Required**
 with the message *"Daily signal quota exceeded. Upgrade to Basic or Pro for
 more signals."*
 
+### Live WebSocket signals
+
+Real-time `new_signal` pushes over `/ws` are a paid-tier benefit. Free users
+still receive `price_update`, `market_context`, and price `tick` messages, but
+they must use the REST endpoints (above) to view actual signals, where the
+daily quota is enforced.
+
 ### Stripe setup (for owner)
 
 ```bash

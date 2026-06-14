@@ -687,7 +687,7 @@ async def manual_scan(_user: User = Depends(get_current_user)):
 
     from routers.websocket_router import manager
 
-    asyncio.create_task(run_scan(broadcast_fn=manager.broadcast))
+    asyncio.create_task(run_scan(broadcast_fn=manager.broadcast, broadcast_signal_fn=manager.broadcast_signal))
     return {"success": True, "message": "Scan triggered"}
 
 
