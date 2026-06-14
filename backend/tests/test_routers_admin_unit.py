@@ -358,13 +358,15 @@ def test_quota_analytics_endpoint():
     today = _utc_midnight()
 
     users = []
-    for i, (tier, status) in enumerate([
-        ("free", "inactive"),
-        ("free", "inactive"),
-        ("basic", "active"),
-        ("pro", "active"),
-        ("basic", "past_due"),  # downgraded to free
-    ]):
+    for i, (tier, status) in enumerate(
+        [
+            ("free", "inactive"),
+            ("free", "inactive"),
+            ("basic", "active"),
+            ("pro", "active"),
+            ("basic", "past_due"),  # downgraded to free
+        ]
+    ):
         u = MagicMock(spec=User)
         u.id = i + 1
         u.subscription_tier = tier
@@ -374,11 +376,11 @@ def test_quota_analytics_endpoint():
         users.append(u)
 
     quotas = [
-        UserSignalQuota(user_id=1, window_start=today, views_count=5),   # free at limit
-        UserSignalQuota(user_id=2, window_start=today, views_count=2),   # free under limit
+        UserSignalQuota(user_id=1, window_start=today, views_count=5),  # free at limit
+        UserSignalQuota(user_id=2, window_start=today, views_count=2),  # free under limit
         UserSignalQuota(user_id=3, window_start=today, views_count=50),  # basic
         # user 4 pro has no quota row (unlimited)
-        UserSignalQuota(user_id=5, window_start=today, views_count=4),   # inactive basic -> free bucket
+        UserSignalQuota(user_id=5, window_start=today, views_count=4),  # inactive basic -> free bucket
     ]
 
     user_result = MagicMock()
