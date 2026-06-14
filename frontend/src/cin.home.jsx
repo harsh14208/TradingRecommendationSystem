@@ -175,7 +175,10 @@ function StoryStrip({ go }) {
   );
 }
 
-function PageHome({ go, t }) {
+function PageHome({ go, t, currentUser }) {
+  // Paid members don't need the upsell — only show pricing to free / signed-out visitors.
+  const tier = currentUser?.subscription_tier || "free";
+  const showPricing = tier === "free";
   return (
     <div className="page">
       <HomeHero go={go} t={t}></HomeHero>
@@ -183,7 +186,7 @@ function PageHome({ go, t }) {
       <StatStrip></StatStrip>
       <FeatureCards></FeatureCards>
       <StoryStrip go={go}></StoryStrip>
-      <Pricing go={go}></Pricing>
+      {showPricing && <Pricing go={go}></Pricing>}
     </div>
   );
 }

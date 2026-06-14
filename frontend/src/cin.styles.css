@@ -328,3 +328,15 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 .track-two { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; align-items: start; }
 @media (max-width: 860px) { .track-stats { grid-template-columns: repeat(2, 1fr); } .track-two { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { .track-stats { grid-template-columns: 1fr 1fr; } }
+
+/* ---------- Legacy Tools overlays (full-page views opened from Tools) ----------
+   These reuse the older `.overlay` (position:absolute; inset:0; z-index:20),
+   which sits *below* the sticky cinematic topnav (z-index:50). Without this the
+   topnav floats over the overlay's title bar and clips it. Pad the top so the
+   view's header clears the 58px topnav, keeping the shell consistent. */
+.overlay { padding-top: 58px; }
+@media (max-width: 760px) {
+  /* topnav is hidden on mobile (bottomnav instead) — no clearance needed,
+     and leave room for the fixed bottom nav. */
+  .overlay { padding-top: 0; padding-bottom: 76px; }
+}

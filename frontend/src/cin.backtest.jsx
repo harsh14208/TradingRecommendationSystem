@@ -97,19 +97,28 @@ function RealMetricCard({ label, value, sub, good }) {
   );
 }
 
+function HorizonMetric({ label, value, color }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div className="kicker" style={{ marginBottom: 3 }}>{label}</div>
+      <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: color || "var(--text)", whiteSpace: "nowrap" }}>{value}</div>
+    </div>
+  );
+}
+
 function HorizonCard({ h }) {
   const has = h.n > 0 && h.win_rate != null;
   return (
     <div className="glass" style={{ padding: "14px 16px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{h.horizon}</span>
         <span className="kicker" style={{ marginLeft: "auto" }}>{h.n} signals</span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <RealMetricCard label="Win rate" value={has ? `${h.win_rate.toFixed(1)}%` : "—"} good={has && h.win_rate > 50}></RealMetricCard>
-        <RealMetricCard label="Avg return" value={h.avg_return != null ? `${h.avg_return >= 0 ? "+" : ""}${h.avg_return.toFixed(2)}%` : "—"} good={h.avg_return > 0}></RealMetricCard>
-        <RealMetricCard label="Sharpe" value={h.sharpe != null ? h.sharpe.toFixed(2) : "—"} good={h.sharpe > 1}></RealMetricCard>
-        <RealMetricCard label="Avg win" value={h.avg_win != null ? `+${h.avg_win.toFixed(2)}%` : "—"} good></RealMetricCard>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px 12px" }}>
+        <HorizonMetric label="Win rate" value={has ? `${h.win_rate.toFixed(1)}%` : "—"} color={has && h.win_rate > 50 ? "var(--bull)" : "var(--text)"}></HorizonMetric>
+        <HorizonMetric label="Avg return" value={h.avg_return != null ? `${h.avg_return >= 0 ? "+" : ""}${h.avg_return.toFixed(2)}%` : "—"} color={h.avg_return >= 0 ? "var(--bull)" : "var(--bear)"}></HorizonMetric>
+        <HorizonMetric label="Sharpe" value={h.sharpe != null ? h.sharpe.toFixed(2) : "—"} color={h.sharpe > 1 ? "var(--bull)" : "var(--text)"}></HorizonMetric>
+        <HorizonMetric label="Avg win" value={h.avg_win != null ? `+${h.avg_win.toFixed(2)}%` : "—"} color="var(--bull)"></HorizonMetric>
       </div>
     </div>
   );

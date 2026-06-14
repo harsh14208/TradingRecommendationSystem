@@ -125,18 +125,21 @@ function DeliveryLog({ log }) {
   const rows = Array.isArray(log) && log.length ? log : M_LOG;
   return (
     <div className="glass" style={{ padding: 16, alignSelf: "start" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <span className="kicker">DELIVERY LOG</span>
         <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> LIVE</span>
       </div>
-      <div className="mono" style={{ fontSize: 11, display: "flex", flexDirection: "column", gap: 7 }}>
+      <div style={{ display: "flex", flexDirection: "column" }}>
         {rows.map((l, i) => {
           const status = l.s || l.status || "sent";
           const col = status === "sent" ? "var(--bull)" : status === "fail" ? "var(--bear)" : "var(--neutral)";
           return (
-            <div key={i} style={{ display: "flex", gap: 10 }}>
-              <span style={{ color: "var(--text-ghost)" }}>{l.t || l.time}</span>
-              <span style={{ color: col, flex: 1, textWrap: "pretty" }}>{l.m || l.message}</span>
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, padding: "9px 0", borderBottom: i < rows.length - 1 ? "1px solid var(--line-soft)" : "none" }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: col, marginTop: 5, flex: "none", boxShadow: `0 0 6px ${col}` }}></span>
+              <div style={{ minWidth: 0 }}>
+                <div className="mono" style={{ fontSize: 11.5, color: "var(--text)", lineHeight: 1.5, textWrap: "pretty" }}>{l.m || l.message}</div>
+                <div className="kicker" style={{ marginTop: 3, color: "var(--text-ghost)" }}>{l.t || l.time} ET</div>
+              </div>
             </div>
           );
         })}
