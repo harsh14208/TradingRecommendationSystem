@@ -3,12 +3,10 @@ function SourcesView({ open, onClose, sources, toggle }) {
   return (
     <div className={`overlay ${open?"open":""}`}>
       <div className="overlay-head">
+        <BackButton onClick={onClose}></BackButton>
         <div>
           <div className="crumb">SOURCES / INTEGRATIONS</div>
           <h2>Data feeds &amp; signal sources</h2>
-        </div>
-        <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-          <BackButton onClick={onClose}></BackButton>
         </div>
       </div>
       <div className="src-grid">

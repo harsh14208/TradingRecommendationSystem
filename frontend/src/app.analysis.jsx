@@ -1684,7 +1684,7 @@ function CalendarView({ open, onClose }) {
                                 <span style={{ fontSize:13, fontWeight:600, color:"var(--text)" }}>{e.name || e.label}</span>
                                 {e.time && (
                                   <span style={{ marginLeft:"auto", fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-faint)", flexShrink:0 }}>
-                                    {e.time} ET
+                                    {String(e.time).replace(/\s*ET\s*$/i, "")} ET
                                   </span>
                                 )}
                               </div>
