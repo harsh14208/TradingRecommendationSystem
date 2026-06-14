@@ -8,7 +8,7 @@ function SourcesView({ open, onClose, sources, toggle }) {
           <h2>Data feeds &amp; signal sources</h2>
         </div>
         <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-          <button className="btn ghost" onClick={onClose}><Icon name="x" size={14}/> Close</button>
+          <button className="btn ghost" onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
         </div>
       </div>
       <div className="src-grid">
@@ -96,7 +96,7 @@ function RulesView({ open, onClose, aggr, style, days, startTime, endTime, setTw
           <div className="crumb">RULES / SIGNAL FILTER</div>
           <h2>When to fire a signal</h2>
         </div>
-        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="x" size={14}/> Close</button>
+        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
       </div>
 
       <div style={{ padding:"0 28px 16px" }}>
@@ -342,7 +342,7 @@ function HistoryView({ open, onClose, online }) {
               ↓ Export CSV
             </button>
           )}
-          <button className="btn ghost" onClick={onClose}><Icon name="x" size={14}/> Close</button>
+          <button className="btn ghost" onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
         </div>
       </div>
       <div style={{ padding:"0 28px 28px", overflowY:"auto", maxHeight:"calc(100vh - 120px)" }}>
@@ -429,7 +429,7 @@ function MyPerformanceView({ open, onClose }) {
           <div className="crumb">ACCOUNT / PERFORMANCE</div>
           <h2>My signal performance</h2>
         </div>
-        <button className="close-btn" onClick={onClose}>×</button>
+        <BackButton onClick={onClose} style={{ marginLeft:"auto" }}></BackButton>
       </div>
 
       <div style={{ padding:"20px 24px", overflowY:"auto", flex:1 }}>
@@ -613,7 +613,7 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
           <button className="btn ghost" style={{ fontSize:11 }} onClick={runBackfill} disabled={backfilling || !online}>
             {backfilling ? "Backfilling…" : "Backfill Outcomes"}
           </button>
-          <button className="btn ghost" onClick={onClose}><Icon name="x" size={14}/> Close</button>
+          <button className="btn ghost" onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
         </div>
       </div>
       <div style={{ display:"flex", gap:0, borderBottom:"1px solid var(--line)", padding:"0 28px", background:"var(--bg-1)" }}>

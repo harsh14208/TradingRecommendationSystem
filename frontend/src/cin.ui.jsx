@@ -107,12 +107,42 @@ function ConfMeter({ conf, color }) {
 
 function LiveDot({ color = "" }) { return <span className={`live-dot ${color}`}></span>; }
 
+// Brand mark — stylized "S" with an up-right trend arrow, drawn in the live
+// theme accent (--bull). Wordmark dot is also accent. See BRAND/LOGO v4.
+function BrandMark({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true"
+      stroke="var(--bull)" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round"
+      style={{ display: "block", flex: "none" }}>
+      {/* S curve */}
+      <path d="M21.4 11.2c0-3.4-4.1-4.8-7.7-3.5-3.3 1.2-3.5 5-.2 6.4l3.6 1.5c3.3 1.4 3.1 5.2-.2 6.5-3.6 1.3-7.7-.1-7.7-3.6"></path>
+      {/* up-right arrow at the top terminal */}
+      <path d="M18.6 13.4 25.3 6.7"></path>
+      <path d="M20.4 6.4 25.6 6.4 25.6 11.6"></path>
+    </svg>
+  );
+}
+
 function Logo({ go, 'aria-label': ariaLabel = "SIGNAL.TRADE home" }) {
   return (
     <button onClick={() => go && go("home")} aria-label={ariaLabel} style={{ background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", gap: 9 }}>
-      <LiveDot></LiveDot>
-      <span className="mono" style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text)" }}>SIGNAL.TRADE</span>
+      <BrandMark size={22}></BrandMark>
+      <span className="mono" style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text)" }}>
+        SIGNAL<span style={{ color: "var(--bull)" }}>.</span>TRADE
+      </span>
       <span className="mono" style={{ fontSize: 10, color: "var(--text-faint)", border: "1px solid var(--line)", borderRadius: 4, padding: "1px 5px" }}>v4</span>
+    </button>
+  );
+}
+
+// Shared back affordance for legacy full-page views / drawers (replaces the
+// old "× Close" buttons so every page dismisses with a consistent Back).
+function BackButton({ onClick, style }) {
+  return (
+    <button className="btn ghost" onClick={onClick} aria-label="Back"
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, ...style }}>
+      <Icon name="arrow-left" size={14}></Icon>
+      <span style={{ fontSize: 12 }}>Back</span>
     </button>
   );
 }
@@ -126,4 +156,4 @@ function Defer({ ms = 600, skeleton, children }) {
 
 function SkelBlock({ h = 80, style }) { return <div className="skel" style={{ height: h, ...style }}></div>; }
 
-Object.assign(window, { useCountUp, Num, Spark, MiniBars, SignalBadge, ConfMeter, LiveDot, Logo, Defer, SkelBlock, colorVar });
+Object.assign(window, { useCountUp, Num, Spark, MiniBars, SignalBadge, ConfMeter, LiveDot, Logo, BrandMark, BackButton, Defer, SkelBlock, colorVar });

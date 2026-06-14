@@ -257,7 +257,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
       <div className="account-drawer" style={{ width:"min(380px, 92vw)", height:"100vh", background:"var(--bg-1)", borderLeft:"1px solid var(--line)", padding:"24px 28px", overflowY:"auto", display:"flex", flexDirection:"column", gap:0 }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:24 }}>
           <div style={{ fontWeight:700, fontSize:16 }}>Account</div>
-          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--text-faint)", fontSize:20 }}>×</button>
+          <BackButton onClick={onClose}></BackButton>
         </div>
 
         {/* Profile */}
@@ -904,7 +904,7 @@ function WatchlistView({ open, onClose, quotes, histSignals }) {
           <div className="crumb">WORKSPACE / WATCHLIST</div>
           <h2>Stocks to monitor</h2>
         </div>
-        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="x" size={14}/> Close</button>
+        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
       </div>
       <div style={{ padding:"0 28px 28px", maxWidth:640 }}>
         <div style={{ fontSize:12, color:"var(--text-faint)", marginBottom:20, lineHeight:1.6 }}>
@@ -1026,7 +1026,7 @@ function PricingView({ open, onClose, user }) {
     <div className={`overlay open`}>
       <div className="overlay-head">
         <div><div className="crumb">ACCOUNT / PRICING</div><h2>Choose your plan</h2></div>
-        <button className="btn ghost" onClick={onClose} style={{ marginLeft:"auto" }}><Icon name="x" size={14}/> Close</button>
+        <button className="btn ghost" onClick={onClose} style={{ marginLeft:"auto" }}><Icon name="arrow-left" size={14}/> Back</button>
       </div>
       <div style={{ padding:"20px 28px 40px", overflowY:"auto", maxHeight:"calc(100vh - 120px)" }}>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:16, maxWidth:860, margin:"0 auto" }}>
@@ -1075,7 +1075,7 @@ function TweaksPanel({ open, onClose, state, set }) {
   ];
   return (
     <div className={`tweaks ${open?"open":""}`}>
-      <h2>Tweaks <span className="cl" onClick={onClose}><Icon name="x" size={14}/></span></h2>
+      <h2 style={{ display:"flex", alignItems:"center" }}>Tweaks <BackButton onClick={onClose} style={{ marginLeft:"auto" }}></BackButton></h2>
       <div className="tweak-row">
         <span className="l">Theme</span>
         <div className="seg">
@@ -1303,7 +1303,7 @@ function AlertsView({ open, onClose }) {
     <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose}>
       <div style={{ maxWidth:640, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
-          <button onClick={onClose} style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:20, lineHeight:1, padding:0 }}>←</button>
+          <BackButton onClick={onClose}></BackButton>
           <h2 style={{ fontSize:18, fontWeight:700, margin:0 }}>Per-Ticker Alert Rules</h2>
         </div>
         <p style={{ fontSize:12, color:"var(--text-faint)", marginBottom:24, lineHeight:1.6 }}>
@@ -1527,7 +1527,7 @@ function ScreenerView({ open, onClose }) {
     <div style={{ position:"fixed", inset:0, zIndex:900, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"auto" }} onClick={onClose}>
       <div style={{ maxWidth:740, margin:"0 auto", padding:"60px 24px 40px", width:"100%" }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
-          <button onClick={onClose} style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:20, lineHeight:1, padding:0 }}>←</button>
+          <BackButton onClick={onClose}></BackButton>
           <h2 style={{ fontSize:18, fontWeight:700, margin:0 }}>Custom Screener</h2>
         </div>
 
