@@ -340,3 +340,10 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
      and leave room for the fixed bottom nav. */
   .overlay { padding-top: 0; padding-bottom: 76px; }
 }
+/* Back affordance lives top-LEFT of every overlay header (was a right-aligned
+   "× Close"). order:-1 moves it ahead of the title; override the inline auto margin. */
+.overlay-head { align-items: center; }
+.overlay-head button[aria-label="Back"] { order: -1; margin-left: 0 !important; margin-right: 14px; }
+/* Harmonize the older solid-fill panels used inside Tools overlays to the
+   cinematic translucent glass look (legacy cards read var(--bg-1)/--bg-card). */
+.overlay { --bg-1: rgba(255, 255, 255, 0.03); --bg-card: rgba(255, 255, 255, 0.03); }

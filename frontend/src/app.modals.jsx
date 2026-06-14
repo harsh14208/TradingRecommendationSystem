@@ -255,9 +255,9 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   return (
     <div style={{ position:"fixed", inset:0, zIndex:9998, background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }} onClick={onClose}>
       <div className="account-drawer" style={{ width:"min(380px, 92vw)", height:"100vh", background:"var(--bg-1)", borderLeft:"1px solid var(--line)", padding:"24px 28px", overflowY:"auto", display:"flex", flexDirection:"column", gap:0 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:24 }}>
-          <div style={{ fontWeight:700, fontSize:16 }}>Account</div>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:24 }}>
           <BackButton onClick={onClose}></BackButton>
+          <div style={{ fontWeight:700, fontSize:16 }}>Account</div>
         </div>
 
         {/* Profile */}
@@ -904,7 +904,7 @@ function WatchlistView({ open, onClose, quotes, histSignals }) {
           <div className="crumb">WORKSPACE / WATCHLIST</div>
           <h2>Stocks to monitor</h2>
         </div>
-        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
+        <BackButton onClick={onClose}></BackButton>
       </div>
       <div style={{ padding:"0 28px 28px", maxWidth:640 }}>
         <div style={{ fontSize:12, color:"var(--text-faint)", marginBottom:20, lineHeight:1.6 }}>
@@ -1026,7 +1026,7 @@ function PricingView({ open, onClose, user }) {
     <div className={`overlay open`}>
       <div className="overlay-head">
         <div><div className="crumb">ACCOUNT / PRICING</div><h2>Choose your plan</h2></div>
-        <button className="btn ghost" onClick={onClose} style={{ marginLeft:"auto" }}><Icon name="arrow-left" size={14}/> Back</button>
+        <BackButton onClick={onClose}></BackButton>
       </div>
       <div style={{ padding:"20px 28px 40px", overflowY:"auto", maxHeight:"calc(100vh - 120px)" }}>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:16, maxWidth:860, margin:"0 auto" }}>

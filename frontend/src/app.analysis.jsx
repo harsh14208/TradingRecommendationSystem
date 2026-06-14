@@ -511,7 +511,7 @@ function PaperView({ open, onClose, online }) {
     <div className={`overlay ${open ? "open" : ""}`}>
       <div className="overlay-head">
         <div><div className="crumb">PAPER PORTFOLIO</div><h2>Simulated trading account</h2></div>
-        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
+        <BackButton onClick={onClose}></BackButton>
       </div>
       <div style={{ padding:"20px 28px", overflowY:"auto", maxHeight:"calc(100vh - 100px)", display:"flex", flexDirection:"column", gap:20 }}>
         {err === "upgrade"  && <UpgradePrompt feature="Paper Portfolio" minTier="pro"/>}
@@ -816,7 +816,7 @@ function MarketOverviewView({ open, onClose, online }) {
           <div className="crumb">MARKET / OVERVIEW</div>
           <h2>Market dashboard</h2>
         </div>
-        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
+        <BackButton onClick={onClose}></BackButton>
       </div>
 
       <div style={{ overflowY:"auto", maxHeight:"calc(100vh - 88px)", padding:"0 0 40px" }}>
@@ -1292,7 +1292,7 @@ function SectorView({ open, onClose, online }) {
             </>
           )}
           {activeEtf && <button className="btn ghost" style={{ fontSize:11 }} onClick={() => setActiveEtf(null)}>← Back</button>}
-          <button className="btn ghost" onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
+          <BackButton onClick={onClose}></BackButton>
         </div>
       </div>
 
@@ -1538,7 +1538,7 @@ function CalendarView({ open, onClose }) {
           <div className="crumb">MARKET / ECONOMIC CALENDAR</div>
           <h2>Upcoming macro events</h2>
         </div>
-        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
+        <BackButton onClick={onClose}></BackButton>
       </div>
 
       <div style={{ overflowY:"auto", maxHeight:"calc(100vh - 88px)" }}>

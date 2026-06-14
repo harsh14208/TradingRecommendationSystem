@@ -45,6 +45,35 @@ async def _fred(series_id: str, api_key: str) -> Optional[float]:
         return None
 
 
+async def _fred_yoy(series_id: str, api_key: str) -> Optional[float]:
+    """Year-over-year % change for a monthly FRED series (e.g. CPIAUCSL).
+
+    Fetches the latest 13 monthly observations and returns
+    (latest / value_12_months_ago - 1) * 100. Returns None on any gap.
+    """
+    url = (
+        f"https://api.stlouisfed.org/fred/series/observations"
+        f"?series_id={series_id}&api_key={api_key}"
+        f"&limit=13&sort_order=desc&file_type=json"
+    )
+    try:
+        connector = aiohttp.TCPConnector(ssl=_ssl_ctx)
+        async with aiohttp.ClientSession(connector=connector) as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status != 200:
+                    return None
+                obs = (await r.json(content_type=None)).get("observations", [])
+                if len(obs) < 13:
+                    return None
+                latest = float(obs[0]["value"])
+                year_ago = float(obs[12]["value"])
+                if year_ago == 0:
+                    return None
+                return (latest / year_ago - 1.0) * 100.0
+    except Exception:
+        return None
+
+
 def _sector_rotation_stage(
     vix: float | None, yc_spread: float | None, hyg_1m: float | None, sp500_trend: str | None
 ) -> dict:
@@ -253,7 +282,7 @@ async def get_macro_context() -> dict:
         if key:
             fed_rate, cpi, hy_spread, ig_spread, stlfsi, icsa, umcsent, t10y3m, nfci, baa10y = await asyncio.gather(
                 _fred("FEDFUNDS", key),
-                _fred("CPIAUCSL", key),
+                _fred_yoy("CPIAUCSL", key),  # CPI as YoY % (not the raw index level)
                 _fred("BAMLH0A0HYM2", key),  # ICE BofA US HY OAS spread (%)
                 _fred("BAMLC0A0CM", key),  # ICE BofA US IG OAS spread (%)
                 _fred("STLFSI4", key),  # St. Louis Financial Stress Index

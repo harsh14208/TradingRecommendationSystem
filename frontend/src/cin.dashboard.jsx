@@ -124,6 +124,38 @@ function RationaleItem({ r }) {
   );
 }
 
+function Chevron({ open }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+      style={{ color: "var(--text-faint)", transition: "transform 0.2s var(--ease)", transform: open ? "rotate(180deg)" : "none", flex: "none" }}>
+      <path d="m6 9 6 6 6-6"></path>
+    </svg>
+  );
+}
+
+// Panel that collapses on mobile (≤860px) via a tappable header; always open on
+// desktop. Lets the dashboard keep the main chart panel visible while the
+// secondary panels fold away on small screens.
+function CollapsiblePanel({ label, labelColor, right, defaultOpen = true, hover = false, pad = 18, children }) {
+  const mobile = useIsMobile();
+  const [open, setOpen] = dUseState(defaultOpen);
+  const isOpen = mobile ? open : true;
+  return (
+    <div className={`glass ${hover ? "glass-hover" : ""}`} style={{ overflow: "hidden", alignSelf: "start" }}>
+      <button type="button" onClick={() => mobile && setOpen((o) => !o)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: `${pad}px ${pad}px ${isOpen ? 12 : pad}px`,
+          background: "none", border: "none", textAlign: "left", cursor: mobile ? "pointer" : "default" }}>
+        <span className="kicker" style={{ color: labelColor }}>{label}</span>
+        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 10 }}>
+          {right}
+          {mobile && <Chevron open={open}></Chevron>}
+        </span>
+      </button>
+      {isOpen && <div style={{ padding: `0 ${pad}px ${pad}px` }}>{children}</div>}
+    </div>
+  );
+}
+
 function PaperTrade({ s }) {
   const [pos, setPos] = dUseState(null);
   const [mark, setMark] = dUseState(s.px);
@@ -142,12 +174,10 @@ function PaperTrade({ s }) {
   const disabled = s.signal === "HOLD";
   const pnl = pos ? (dir === "LONG" ? mark - pos.entry : pos.entry - mark) * pos.qty : 0;
   const pnlPct = pos ? (pnl / (pos.entry * pos.qty)) * 100 : 0;
+  const right = pos ? <span className="kicker" style={{ color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> SIMULATING</span> : null;
   return (
-    <div className="glass glass-hover" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span className="kicker">PAPER TRADE</span>
-        {pos && <span className="kicker" style={{ color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> SIMULATING</span>}
-      </div>
+    <CollapsiblePanel label="PAPER TRADE" right={right} hover defaultOpen={false}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {disabled ? (
         <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-faint)", lineHeight: 1.55 }}>
           No trade on a HOLD. The engine sees no exploitable edge — capital is better deployed elsewhere.
@@ -175,7 +205,8 @@ function PaperTrade({ s }) {
           <button className="btn sm" onClick={() => setPos(null)}>Close position</button>
         </React.Fragment>
       )}
-    </div>
+      </div>
+    </CollapsiblePanel>
   );
 }
 
@@ -335,23 +366,18 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
           </div>
 
           <div className="dash-sub">
-            <div className="glass glass-hover" style={{ padding: 18 }}>
-              <div className="kicker" style={{ marginBottom: 10 }}>WIN RATE · {s.tk} HISTORY</div>
+            <CollapsiblePanel label={`WIN RATE · ${s.tk} HISTORY`} hover defaultOpen={false}>
               <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
                 <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: s.win >= 65 ? "var(--bull)" : "var(--neutral)" }}><Num value={s.win} dp={0}></Num>%</span>
                 <Spark data={winSpark} w={130} h={40} color={s.win >= 65 ? "bull" : "neutral"}></Spark>
               </div>
               <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>14-day horizon · Bayesian-smoothed</div>
-            </div>
+            </CollapsiblePanel>
             <PaperTrade s={s}></PaperTrade>
           </div>
 
           {/* AI Insight — under the center panel */}
-          <div className="glass" style={{ padding: 20 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <span className="kicker" style={{ color: "var(--bull)" }}>AI INSIGHT</span>
-              <span className="kicker" style={{ marginLeft: "auto" }}>WHY THIS FIRED</span>
-            </div>
+          <CollapsiblePanel label="AI INSIGHT" labelColor="var(--bull)" right={<span className="kicker">WHY THIS FIRED</span>} defaultOpen={false} pad={20}>
             <Defer ms={850} skeleton={<div style={{ display: "flex", flexDirection: "column", gap: 10 }}><SkelBlock h={20}></SkelBlock><SkelBlock h={70}></SkelBlock><SkelBlock h={140}></SkelBlock></div>}>
               <div>
                 <div style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.45, marginBottom: 10, textWrap: "balance" }}>{s.headline}</div>
@@ -373,7 +399,7 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
                 <div style={{ fontSize: 10.5, color: "var(--text-ghost)", marginTop: 12, lineHeight: 1.5 }}>Educational only — not financial advice. Past performance does not predict future results.</div>
               </div>
             </Defer>
-          </div>
+          </CollapsiblePanel>
         </main>
 
         {/* Delivery log — right rail */}

@@ -123,16 +123,28 @@ function BrandMark({ size = 22 }) {
   );
 }
 
-function Logo({ go, 'aria-label': ariaLabel = "SIGNAL.TRADE home" }) {
+function Logo({ go, 'aria-label': ariaLabel = "SIGNAL.TRADE dashboard" }) {
   return (
-    <button onClick={() => go && go("home")} aria-label={ariaLabel} style={{ background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", gap: 9 }}>
+    <button onClick={() => go && go("dashboard")} aria-label={ariaLabel} style={{ background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", gap: 9, cursor: "pointer" }}>
       <BrandMark size={22}></BrandMark>
       <span className="mono" style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text)" }}>
         SIGNAL<span style={{ color: "var(--bull)" }}>.</span>TRADE
       </span>
-      <span className="mono" style={{ fontSize: 10, color: "var(--text-faint)", border: "1px solid var(--line)", borderRadius: 4, padding: "1px 5px" }}>v4</span>
     </button>
   );
+}
+
+// Shared viewport hook — true below `bp`px. Used for mobile-only behaviours.
+function useIsMobile(bp = 860) {
+  const [m, setM] = useState(() => typeof window !== "undefined" && window.matchMedia(`(max-width:${bp}px)`).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width:${bp}px)`);
+    const fn = (e) => setM(e.matches);
+    mq.addEventListener("change", fn);
+    setM(mq.matches);
+    return () => mq.removeEventListener("change", fn);
+  }, [bp]);
+  return m;
 }
 
 // Shared back affordance for legacy full-page views / drawers (replaces the
@@ -156,4 +168,4 @@ function Defer({ ms = 600, skeleton, children }) {
 
 function SkelBlock({ h = 80, style }) { return <div className="skel" style={{ height: h, ...style }}></div>; }
 
-Object.assign(window, { useCountUp, Num, Spark, MiniBars, SignalBadge, ConfMeter, LiveDot, Logo, BrandMark, BackButton, Defer, SkelBlock, colorVar });
+Object.assign(window, { useCountUp, Num, Spark, MiniBars, SignalBadge, ConfMeter, LiveDot, Logo, BrandMark, BackButton, useIsMobile, Defer, SkelBlock, colorVar });

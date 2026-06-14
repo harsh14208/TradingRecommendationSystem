@@ -173,7 +173,14 @@ function FeedScreen({ signals, onSelect }) {
     <>
       <MStatusBar/>
       <div className="m-top">
-        <span className="brand"><img src="/logo-full.png" alt="Signal.Trade" style={{ height: 65, width: "auto" }}/></span>
+        <span className="brand" style={{ display:"inline-flex", alignItems:"center", gap:8 }}>
+          <svg width="22" height="22" viewBox="0 0 32 32" fill="none" stroke="var(--accent)" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex:"none" }}>
+            <path d="M21.4 11.2c0-3.4-4.1-4.8-7.7-3.5-3.3 1.2-3.5 5-.2 6.4l3.6 1.5c3.3 1.4 3.1 5.2-.2 6.5-3.6 1.3-7.7-.1-7.7-3.6"/>
+            <path d="M18.6 13.4 25.3 6.7"/>
+            <path d="M20.4 6.4 25.6 6.4 25.6 11.6"/>
+          </svg>
+          <span style={{ fontFamily:"var(--mono, monospace)", fontWeight:700, fontSize:14, letterSpacing:"0.06em", color:"var(--text, #e6edf7)" }}>SIGNAL<span style={{ color:"var(--accent)" }}>.</span>TRADE</span>
+        </span>
         <span className="live">LIVE · {signals.length}</span>
         <span className="ico"><MIcon name="filter" size={18}/></span>
       </div>

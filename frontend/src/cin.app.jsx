@@ -188,18 +188,17 @@ function TopNav({ page, go, onBack, currentUser, onLogout }) {
           <button key={id} className={page === id ? "on" : ""} onClick={() => go(id)} aria-current={page === id ? "page" : undefined}>{label}</button>
         ))}
       </nav>
-      <div className="nav-right" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
-        <span className="kicker" style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
-          <LiveDot></LiveDot> MARKET OPEN · <ETClock />
-        </span>
+      <div className="nav-right" style={{ marginLeft: "auto", minWidth: 0, display: "flex", alignItems: "center", gap: 14 }}>
+        <MarketBadge />
         {currentUser && (
-          <span className="kicker" style={{ textTransform: "uppercase" }}>
+          <span className="kicker" title={currentUser.email || currentUser.name || tier}
+            style={{ textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 170, minWidth: 0 }}>
             {currentUser.email || currentUser.name || tier}
             {isOwner && <span style={{ color: "var(--bull)", marginLeft: 6 }}>OWNER</span>}
           </span>
         )}
         {currentUser && (
-          <button className="btn sm" onClick={onLogout}>Log out</button>
+          <button className="btn sm" style={{ flexShrink: 0 }} onClick={onLogout}>Log out</button>
         )}
       </div>
     </header>
@@ -240,6 +239,32 @@ function ETClock() {
   try {
     return <span>{new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(now)} ET</span>;
   } catch { return <span>— ET</span>; }
+}
+
+/* Live US-equity session status from the ET wall clock (regular hours only;
+   holidays not modelled). Drives the topnav badge + dot colour. */
+function marketStatus(d = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(d);
+    const wd = parts.find((p) => p.type === "weekday").value;
+    const mins = Number(parts.find((p) => p.type === "hour").value) * 60 + Number(parts.find((p) => p.type === "minute").value);
+    const weekday = !["Sat", "Sun"].includes(wd);
+    if (weekday && mins >= 570 && mins < 960) return { label: "MARKET OPEN", cls: "" };
+    if (weekday && mins >= 240 && mins < 570) return { label: "PRE-MARKET", cls: "amber" };
+    if (weekday && mins >= 960 && mins < 1200) return { label: "AFTER HOURS", cls: "amber" };
+    return { label: "MARKET CLOSED", cls: "red" };
+  } catch { return { label: "MARKET", cls: "" }; }
+}
+
+function MarketBadge() {
+  const [, tick] = useState(0);
+  useEffect(() => { const id = setInterval(() => tick((t) => t + 1), 30000); return () => clearInterval(id); }, []);
+  const st = marketStatus();
+  return (
+    <span className="kicker" style={{ display: "inline-flex", alignItems: "center", gap: 7, flexShrink: 0, whiteSpace: "nowrap" }}>
+      <LiveDot color={st.cls}></LiveDot> {st.label} · <ETClock />
+    </span>
+  );
 }
 
 class ErrorBoundary extends React.Component {

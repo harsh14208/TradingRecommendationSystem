@@ -8,7 +8,7 @@ function SourcesView({ open, onClose, sources, toggle }) {
           <h2>Data feeds &amp; signal sources</h2>
         </div>
         <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-          <button className="btn ghost" onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
+          <BackButton onClick={onClose}></BackButton>
         </div>
       </div>
       <div className="src-grid">
@@ -96,7 +96,7 @@ function RulesView({ open, onClose, aggr, style, days, startTime, endTime, setTw
           <div className="crumb">RULES / SIGNAL FILTER</div>
           <h2>When to fire a signal</h2>
         </div>
-        <button className="btn ghost" style={{ marginLeft:"auto" }} onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
+        <BackButton onClick={onClose}></BackButton>
       </div>
 
       <div style={{ padding:"0 28px 16px" }}>
@@ -308,6 +308,7 @@ function HistoryView({ open, onClose, online }) {
   return (
     <div className={`overlay ${open?"open":""}`}>
       <div className="overlay-head" style={{ flexWrap:"wrap", rowGap:8 }}>
+        <BackButton onClick={onClose}></BackButton>
         <div>
           <div className="crumb">ARCHIVE / HISTORY</div>
           <h2>Signal history</h2>
@@ -336,14 +337,13 @@ function HistoryView({ open, onClose, online }) {
             <button className="btn ghost" style={{ fontSize:11 }} onClick={clearFilters}>Clear</button>
           )}
         </div>
-        <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-          {rows.length > 0 && (
+        {rows.length > 0 && (
+          <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
             <button className="btn ghost" style={{ fontSize:11 }} onClick={exportCSV}>
               ↓ Export CSV
             </button>
-          )}
-          <button className="btn ghost" onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
-        </div>
+          </div>
+        )}
       </div>
       <div style={{ padding:"0 28px 28px", overflowY:"auto", maxHeight:"calc(100vh - 120px)" }}>
         {loading && <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>Loading…</div>}
@@ -613,7 +613,7 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
           <button className="btn ghost" style={{ fontSize:11 }} onClick={runBackfill} disabled={backfilling || !online}>
             {backfilling ? "Backfilling…" : "Backfill Outcomes"}
           </button>
-          <button className="btn ghost" onClick={onClose}><Icon name="arrow-left" size={14}/> Back</button>
+          <BackButton onClick={onClose}></BackButton>
         </div>
       </div>
       <div style={{ display:"flex", gap:0, borderBottom:"1px solid var(--line)", padding:"0 28px", background:"var(--bg-1)" }}>
