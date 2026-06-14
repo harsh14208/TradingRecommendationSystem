@@ -39,14 +39,18 @@ const ESBUILD_OPTS = {
 // Load order must match <script type="text/babel"> order in the HTML.
 // Earlier files define globals consumed by later files.
 const APP_FILES = [
-  'app.auth.jsx',       // defines React hook globals (useState, useEffect, …)
-  'app.constants.jsx',  // TIERS, COLORS, API helpers
-  'app.ui.jsx',         // shared UI components
-  'app.signal.jsx',     // SignalCard, SignalDetail
-  'app.views.jsx',      // tab views (Dashboard, Backtest, …)
-  'app.modals.jsx',     // modal components
-  'app.analysis.jsx',   // AnalysisView (optional heavy tab)
-  'app.jsx',            // root <App/> + ReactDOM.createRoot render
+  'app.auth.jsx',          // auth/session helpers (getToken, apiFetch, …)
+  'app.constants.jsx',     // TIERS, helpers, glossary
+  'cin.ui.jsx',            // cinematic shared primitives
+  'cin.data.jsx',          // mock signal + market data (overridden by API later)
+  'cin.market-data.jsx',   // mock market context
+  'cin.home.jsx',          // Home page
+  'cin.dashboard.jsx',     // Signal Dashboard
+  'cin.market.jsx',        // Market Context
+  'cin.backtest.jsx',      // Backtest Lab
+  'cin.track.jsx',         // Track Record
+  'cin.settings.jsx',      // Settings
+  'cin.app.jsx',           // root shell + routing
 ];
 
 // Landing page — standalone single-file build.

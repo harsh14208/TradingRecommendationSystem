@@ -1,0 +1,325 @@
+/* global React */
+// SIGNAL.TRADE cinematic — Signal Dashboard (real signals + rationale + Telegram preview).
+const { useState: dUseState, useEffect: dUseEffect, useRef: dUseRef } = React;
+
+function sigColor(signal) {
+  return signal === "SELL" ? "var(--bear)" : signal === "HOLD" ? "var(--neutral)" : "var(--bull)";
+}
+function sigRaw(signal) {
+  return signal === "SELL" ? "251,77,109" : signal === "HOLD" ? "251,191,36" : "34,211,238";
+}
+
+function seriesFor(s, n = 90) {
+  const raw = genSeries((s.seed || 1) * 97 + 5, n, 100, s.drift || 0, s.volatility || 0.02);
+  const k = s.px / raw[raw.length - 1];
+  return raw.map((v) => v * k);
+}
+function sparkForSignal(s) { return seriesFor(s, 30).slice(-30); }
+function winSparkForSignal(s) {
+  const rnd = mulberry32((s.seed || 1) * 31 + 7);
+  const out = [];
+  for (let i = 0; i < 12; i++) out.push((s.win || 60) + (rnd() - 0.5) * 14);
+  out[11] = s.win || 60;
+  return out;
+}
+
+function BigChart({ s }) {
+  const data = seriesFor(s, 90);
+  const w = 720, h = 280;
+  const min = Math.min(...data), max = Math.max(...data);
+  const rng = max - min || 1;
+  const pts = data.map((v, i) => [(i / (data.length - 1)) * w, h - 16 - ((v - min) / rng) * (h - 40)]);
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const col = sigColor(s.signal), colRaw = sigRaw(s.signal);
+  const mi = data.length - 12;
+  const marker = pts[mi];
+  const last = pts[pts.length - 1];
+  const gridY = [0.25, 0.5, 0.75].map((f) => 16 + (h - 40) * f);
+  // entry / stop / target horizontal guides (map price → y)
+  const yFor = (price) => h - 16 - ((price - min) / rng) * (h - 40);
+  const guides = s.entry ? [
+    { p: s.target, c: "var(--bull)", t: "TP" },
+    { p: s.entry, c: "var(--text-dim)", t: "ENTRY" },
+    { p: s.stop, c: "var(--bear)", t: "STOP" },
+  ].filter((g) => g.p >= min && g.p <= max) : [];
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", height: "auto", display: "block" }}>
+      <defs>
+        <linearGradient id="bigfill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={`rgb(${colRaw})`} stopOpacity="0.18"></stop>
+          <stop offset="100%" stopColor={`rgb(${colRaw})`} stopOpacity="0"></stop>
+        </linearGradient>
+      </defs>
+      {gridY.map((y, i) => (
+        <g key={i}>
+          <line x1="0" x2={w} y1={y} y2={y} stroke="rgba(255,255,255,0.045)" strokeDasharray="2 5"></line>
+          <text x={w - 4} y={y - 5} textAnchor="end" fontSize="9.5" fill="var(--text-faint)" fontFamily="var(--font-mono)">${(max - rng * ((y - 16) / (h - 40))).toFixed(0)}</text>
+        </g>
+      ))}
+      {guides.map((g, i) => (
+        <g key={"g" + i}>
+          <line x1="0" x2={w} y1={yFor(g.p)} y2={yFor(g.p)} stroke={g.c} strokeWidth="1" strokeDasharray="1 4" opacity="0.55"></line>
+          <text x="4" y={yFor(g.p) - 4} fontSize="8.5" fill={g.c} fontFamily="var(--font-mono)" letterSpacing="0.08em">{g.t} {g.p}</text>
+        </g>
+      ))}
+      <path d={`${d} L${w},${h} L0,${h} Z`} fill="url(#bigfill)"></path>
+      <path d={d} fill="none" stroke={col} strokeWidth="1.8" strokeLinejoin="round"></path>
+      <line x1={marker[0]} x2={marker[0]} y1={12} y2={h - 14} stroke={`rgba(${colRaw},0.3)`} strokeDasharray="3 4"></line>
+      <circle cx={marker[0]} cy={marker[1]} r="4.5" fill={col} stroke="#0A0E17" strokeWidth="2"></circle>
+      <g transform={`translate(${Math.min(marker[0] + 8, w - 130)}, ${Math.max(14, marker[1] - 34)})`}>
+        <rect width="118" height="24" rx="5" fill="rgba(10,14,23,0.85)" stroke={`rgba(${colRaw},0.4)`}></rect>
+        <text x="9" y="16" fontSize="10" fontWeight="700" fill={col} fontFamily="var(--font-mono)" letterSpacing="0.06em">{s.signal} · {s.conf}% CONF</text>
+      </g>
+      <circle cx={last[0]} cy={last[1]} r="3.4" fill={col}></circle>
+    </svg>
+  );
+}
+
+function WatchRow({ s, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      display: "grid", gridTemplateColumns: "1fr auto", gap: "2px 10px", alignItems: "center",
+      width: "100%", textAlign: "left", padding: "11px 14px",
+      background: active ? "var(--panel-2)" : "transparent",
+      border: "none", borderLeft: active ? `2px solid ${sigColor(s.signal)}` : "2px solid transparent",
+      borderBottom: "1px solid var(--line-soft)", transition: "background 0.18s var(--ease)", cursor: "pointer",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span className="mono" style={{ fontWeight: 700, fontSize: 13, color: "var(--text)" }}>{s.tk}</span>
+        <SignalBadge signal={s.signal}></SignalBadge>
+      </div>
+      <Spark data={sparkForSignal(s)} w={62} h={22} color={s.chgPct >= 0 ? "bull" : "bear"} fill={false} sw={1.2}></Spark>
+      <span className="mono dim" style={{ fontSize: 11.5 }}>${s.px.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+      <span className={`mono ${s.chgPct >= 0 ? "bull" : "bear"}`} style={{ fontSize: 11.5, textAlign: "right" }}>
+        {s.chgPct >= 0 ? "+" : ""}{s.chgPct.toFixed(2)}%
+      </span>
+    </button>
+  );
+}
+
+function PlanStat({ label, value, color }) {
+  return (
+    <div style={{ flex: 1, minWidth: 64 }}>
+      <div className="kicker" style={{ marginBottom: 4 }}>{label}</div>
+      <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: color || "var(--text)" }}>{value}</span>
+    </div>
+  );
+}
+
+function SourceChip({ s }) {
+  return <span className="mono" style={{ fontSize: 9.5, letterSpacing: "0.08em", color: "var(--text-dim)", border: "1px solid var(--line)", borderRadius: 4, padding: "2px 6px" }}>{s}</span>;
+}
+
+function RationaleItem({ r }) {
+  const col = r.sentiment === "pos" ? "var(--bull)" : r.sentiment === "neg" ? "var(--bear)" : "var(--neutral)";
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--line-soft)" }}>
+      <span className="mono" style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", color: col, alignSelf: "start", marginTop: 2, border: `1px solid ${col}`, borderRadius: 4, padding: "2px 5px", height: "fit-content" }}>{r.src}</span>
+      <div>
+        <div style={{ fontSize: 12.5, fontWeight: 500, lineHeight: 1.4, color: "var(--text)" }}>{r.head}</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.5, marginTop: 3, textWrap: "pretty" }}>{r.body}</div>
+        <div className="kicker" style={{ marginTop: 4, color: "var(--text-ghost)" }}>{r.meta}</div>
+      </div>
+    </div>
+  );
+}
+
+function PaperTrade({ s }) {
+  const [pos, setPos] = dUseState(null);
+  const [mark, setMark] = dUseState(s.px);
+  const rndRef = dUseRef(null);
+  dUseEffect(() => { setPos(null); setMark(s.px); rndRef.current = mulberry32(s.seed * 777); }, [s.tk]);
+  dUseEffect(() => {
+    if (!pos) return;
+    const id = setInterval(() => {
+      const rnd = rndRef.current || Math.random;
+      const driftSign = s.signal === "SELL" ? -1 : 1;
+      setMark((m) => m * (1 + driftSign * 0.0004 + (rnd() - 0.5) * 0.0024));
+    }, 900);
+    return () => clearInterval(id);
+  }, [pos, s]);
+  const dir = s.signal === "SELL" ? "SHORT" : "LONG";
+  const disabled = s.signal === "HOLD";
+  const pnl = pos ? (dir === "LONG" ? mark - pos.entry : pos.entry - mark) * pos.qty : 0;
+  const pnlPct = pos ? (pnl / (pos.entry * pos.qty)) * 100 : 0;
+  return (
+    <div className="glass glass-hover" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span className="kicker">PAPER TRADE</span>
+        {pos && <span className="kicker" style={{ color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> SIMULATING</span>}
+      </div>
+      {disabled ? (
+        <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-faint)", lineHeight: 1.55 }}>
+          No trade on a HOLD. The engine sees no exploitable edge — capital is better deployed elsewhere.
+        </p>
+      ) : !pos ? (
+        <React.Fragment>
+          <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.55 }}>
+            Test this signal with zero risk. One click opens a simulated {dir.toLowerCase()} at the live mark, sized to ~$10k.
+          </p>
+          <button className="btn primary" onClick={() => setPos({ entry: s.px, qty: Math.max(1, Math.round(10000 / s.px)) })}>
+            Paper trade {s.tk} · {dir}
+          </button>
+        </React.Fragment>
+      ) : (
+        <React.Fragment>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div><div className="kicker" style={{ marginBottom: 3 }}>ENTRY</div><span className="mono" style={{ fontSize: 13 }}>${pos.entry.toFixed(2)}</span></div>
+            <div><div className="kicker" style={{ marginBottom: 3 }}>MARK</div><Num value={mark} dp={2} prefix="$"></Num></div>
+            <div><div className="kicker" style={{ marginBottom: 3 }}>SIZE</div><span className="mono" style={{ fontSize: 13 }}>{pos.qty} sh</span></div>
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <span className={`mono ${pnl >= 0 ? "bull" : "bear"}`} style={{ fontSize: 22, fontWeight: 700 }}>{pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)}</span>
+            <span className={`mono ${pnl >= 0 ? "bull" : "bear"}`} style={{ fontSize: 12 }}>{pnl >= 0 ? "+" : "−"}{Math.abs(pnlPct).toFixed(2)}%</span>
+          </div>
+          <button className="btn sm" onClick={() => setPos(null)}>Close position</button>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+function TelegramPreview({ log }) {
+  return (
+    <div className="glass" style={{ padding: 16, alignSelf: "start" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <span className="kicker">TELEGRAM DELIVERY</span>
+        <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> @signaltradebot</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {(log || TELEGRAM_FEED || []).map((m, i) => {
+          const out = m.dir === "out";
+          const col = m.verb === "SELL" ? "var(--bear)" : m.verb === "BUY" ? "var(--bull)" : "var(--neutral)";
+          return (
+            <div key={i} style={{ alignSelf: out ? "flex-start" : "flex-end", maxWidth: "92%" }}>
+              <div style={{
+                background: out ? "rgba(255,255,255,0.04)" : "var(--bull-soft)",
+                border: `1px solid ${out ? "var(--line)" : "rgba(34,211,238,0.2)"}`,
+                borderRadius: out ? "4px 10px 10px 10px" : "10px 10px 4px 10px",
+                padding: "9px 12px",
+              }}>
+                {out ? (
+                  <React.Fragment>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5 }}>
+                      <span className="mono" style={{ fontSize: 10, fontWeight: 700, color: col, letterSpacing: "0.06em" }}>{m.verb}</span>
+                      <span className="mono" style={{ fontSize: 11.5, fontWeight: 700 }}>{m.tk}</span>
+                      <span className="mono dim" style={{ fontSize: 11 }}>${m.px}</span>
+                    </div>
+                    <div className="mono" style={{ fontSize: 10.5, color: "var(--text-dim)", lineHeight: 1.55, whiteSpace: "pre-line" }}>{m.body}</div>
+                  </React.Fragment>
+                ) : (
+                  <div style={{ fontSize: 12, color: "var(--text)" }}>{m.body}</div>
+                )}
+              </div>
+              <div className="kicker" style={{ marginTop: 3, textAlign: out ? "left" : "right", color: "var(--text-ghost)" }}>{m.time} ET</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading, onSend, onSkip, onReview, onNote }) {
+  const signalList = propSignals && propSignals.length ? propSignals : (typeof SIGNALS !== "undefined" ? SIGNALS : []);
+  const [tk, setTk] = dUseState(() => signalList[0]?.tk || "NVDA");
+  dUseEffect(() => { if (signalList.length && !signalList.find((x) => x.tk === tk)) setTk(signalList[0].tk); }, [signalList]);
+  const s = signalList.find((x) => x.tk === tk);
+  const winSpark = s ? winSparkForSignal(s) : [];
+  return (
+    <div className="page wrap" style={{ paddingTop: 24, paddingBottom: 56 }}>
+      <div className="dash-grid">
+        {/* Signal feed */}
+        <aside className="glass" style={{ padding: 0, overflow: "hidden", alignSelf: "start" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 14px", borderBottom: "1px solid var(--line)" }}>
+            <span className="kicker">SIGNAL FEED</span>
+            <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> {signalList.length} LIVE</span>
+          </div>
+          <Defer ms={500} skeleton={<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>{[0, 1, 2, 3, 4, 5].map((i) => <SkelBlock key={i} h={40}></SkelBlock>)}</div>}>
+            <div>{signalList.map((x) => <WatchRow key={x.tk} s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>)}</div>
+          </Defer>
+          <TelegramPreview log={propLog}></TelegramPreview>
+        </aside>
+
+        {/* Main */}
+        <main style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          <div className="glass" style={{ padding: "18px 20px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 8 }}>
+              <span className="mono" style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.01em" }}>{s.tk}</span>
+              <span className="dim" style={{ fontSize: 13 }}>{s.name}</span>
+              <SignalBadge signal={s.signal} size="lg"></SignalBadge>
+              <span className="kicker" style={{ border: "1px solid var(--line)", borderRadius: 4, padding: "2px 7px" }}>{s.style.toUpperCase()}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+                <span className="kicker">CONFIDENCE</span>
+                <ConfMeter conf={s.conf}></ConfMeter>
+                <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: s.conf >= 70 ? "var(--bull)" : "var(--neutral)" }}>{s.conf}%</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 30, fontWeight: 700 }}><Num value={s.px} dp={2} prefix="$"></Num></span>
+              <span className={`mono ${s.chgPct >= 0 ? "bull" : "bear"}`} style={{ fontSize: 14, fontWeight: 600 }}>{s.chgPct >= 0 ? "+" : ""}{s.chgPct.toFixed(2)}% today</span>
+              <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>{s.sources.map((src) => <SourceChip key={src} s={src}></SourceChip>)}</div>
+            </div>
+            <Defer ms={700} skeleton={<SkelBlock h={260}></SkelBlock>}><BigChart s={s}></BigChart></Defer>
+            {/* Trade plan */}
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line-soft)" }}>
+              {s.entry ? (
+                <React.Fragment>
+                  <PlanStat label="R : R" value={s.rr.toFixed(1)} color="var(--bull)"></PlanStat>
+                  <PlanStat label="ENTRY" value={`$${s.entry}`}></PlanStat>
+                  <PlanStat label="STOP" value={`$${s.stop}`} color="var(--bear)"></PlanStat>
+                  <PlanStat label="TARGET" value={`$${s.target}`} color="var(--bull)"></PlanStat>
+                  <PlanStat label="MKT CAP" value={s.mcap}></PlanStat>
+                  <PlanStat label="P/E" value={s.pe}></PlanStat>
+                </React.Fragment>
+              ) : (
+                <React.Fragment>
+                  <PlanStat label="STATUS" value="No trade" color="var(--neutral)"></PlanStat>
+                  <PlanStat label="MKT CAP" value={s.mcap}></PlanStat>
+                  <PlanStat label="VOLUME" value={s.vol}></PlanStat>
+                  <PlanStat label="P/E" value={s.pe}></PlanStat>
+                </React.Fragment>
+              )}
+            </div>
+          </div>
+
+          <div className="dash-sub">
+            <div className="glass glass-hover" style={{ padding: 18 }}>
+              <div className="kicker" style={{ marginBottom: 10 }}>WIN RATE · {s.tk} HISTORY</div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
+                <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: s.win >= 65 ? "var(--bull)" : "var(--neutral)" }}><Num value={s.win} dp={0}></Num>%</span>
+                <Spark data={winSpark} w={130} h={40} color={s.win >= 65 ? "bull" : "neutral"}></Spark>
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>14-day horizon · Bayesian-smoothed</div>
+            </div>
+            <PaperTrade s={s}></PaperTrade>
+          </div>
+        </main>
+
+        {/* AI Insight */}
+        <aside className="glass" style={{ padding: 20, alignSelf: "start" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+            <span className="kicker" style={{ color: "var(--bull)" }}>AI INSIGHT</span>
+            <span className="kicker" style={{ marginLeft: "auto" }}>WHY THIS FIRED</span>
+          </div>
+          <Defer ms={850} skeleton={<div style={{ display: "flex", flexDirection: "column", gap: 10 }}><SkelBlock h={20}></SkelBlock><SkelBlock h={70}></SkelBlock><SkelBlock h={140}></SkelBlock></div>}>
+            <div>
+              <div style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.45, marginBottom: 10, textWrap: "balance" }}>{s.headline}</div>
+              <p style={{ fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.6, margin: "0 0 16px", textWrap: "pretty" }}>{s.narrative}</p>
+              <div className="kicker" style={{ marginBottom: 4 }}>EVIDENCE · {s.sources.length} SOURCES AGREED</div>
+              {s.rationale.map((r, i) => <RationaleItem key={tk + i} r={r}></RationaleItem>)}
+              <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 8, background: "var(--bull-soft)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--text)" }}>
+                  {s.tk} signals have closed <span className="bull" style={{ fontWeight: 700 }}>{s.win}% green</span> on the 14-day horizon historically, with risk-reward of {s.rr.toFixed(1)} on this setup.
+                </div>
+              </div>
+              <div style={{ fontSize: 10.5, color: "var(--text-ghost)", marginTop: 12, lineHeight: 1.5 }}>Educational only — not financial advice. Past performance does not predict future results.</div>
+            </div>
+          </Defer>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { PageDashboard });

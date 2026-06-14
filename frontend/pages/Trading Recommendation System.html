@@ -15,8 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<link rel="stylesheet" href="/src/styles.css?v=4"/>
-<link rel="stylesheet" href="/src/styles-desktop.css?v=1"/>
+<link rel="stylesheet" href="/src/cin.styles.css?v=1"/>
 </head>
 <body>
 <main id="root"></main>
@@ -33,9 +32,6 @@
 
 <!-- CDN: lightweight-charts (global window.LightweightCharts) -->
 <script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous"></script>
-
-<!-- Static data (sector ETFs, ticker metadata — loaded synchronously before app) -->
-<script src="/data.js"></script>
 
 <!--
   App loading — production bundle (A8 migration complete 2026-05-31):
@@ -56,13 +52,17 @@
   When Path A (bundle) succeeds, Babel is never loaded so these are ignored
   by the browser (unknown type="text/babel" is a no-op without Babel).
 -->
-<script type="text/babel" src="/src/app.auth.jsx?v=20260528"></script>
-<script type="text/babel" src="/src/app.constants.jsx?v=20260528"></script>
-<script type="text/babel" src="/src/app.ui.jsx?v=20260528"></script>
-<script type="text/babel" src="/src/app.signal.jsx?v=20260528"></script>
-<script type="text/babel" src="/src/app.views.jsx?v=20260528"></script>
-<script type="text/babel" src="/src/app.modals.jsx?v=20260528"></script>
-<script type="text/babel" src="/src/app.analysis.jsx?v=20260528"></script>
-<script type="text/babel" src="/src/app.jsx?v=20260528"></script>
+<script type="text/babel" src="/src/app.auth.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/app.constants.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.ui.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.data.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.market-data.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.home.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.dashboard.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.market.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.backtest.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.track.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.settings.jsx?v=20260614"></script>
+<script type="text/babel" src="/src/cin.app.jsx?v=20260614"></script>
 </body>
 </html>
