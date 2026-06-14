@@ -40,18 +40,40 @@ function fmtTime(iso) {
   } catch { return "—"; }
 }
 
+function toNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/* Parse R:R strings from the backend (e.g. "1:2.0", "2.5", "—") into a number. */
+function parseRR(v) {
+  if (v == null || v === "—" || v === "") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const s = String(v).trim();
+  if (s.includes(":")) {
+    const [risk, reward] = s.split(":");
+    const r = toNum(risk, 0), rw = toNum(reward, 0);
+    if (r > 0 && rw > 0) return rw / r;
+    return null;
+  }
+  const n = toNum(s, null);
+  return n != null && n > 0 ? n : null;
+}
+
 /* Map a backend signal into the cinematic shape. Missing narrative fields fall
    back to the matching mock signal so the UI never looks empty. */
 function toCinSignal(s) {
   const mock = (typeof SIGNALS !== "undefined" ? SIGNALS : []).find((m) => m.tk === (s.ticker || s.tk));
   const tk = s.ticker || s.tk || "???";
   const signal = (s.action || s.signal || "HOLD").toUpperCase();
-  const px = s.price || s.px || 0;
-  const chg = s.change != null ? s.change : (s.chgPct || 0);
-  const entry = s.entry || mock?.entry || null;
-  const stop = s.stop || mock?.stop || null;
-  const target = s.target || mock?.target || null;
-  const rr = s.rr || (entry && stop && target ? Math.abs((target - entry) / (entry - stop)) : mock?.rr || 0);
+  const px = toNum(s.price ?? s.px, 0);
+  const chg = toNum(s.change ?? s.chgPct, 0);
+  const entry = s.entry != null ? toNum(s.entry, null) : (mock?.entry ?? null);
+  const stop = s.stop != null ? toNum(s.stop, null) : (mock?.stop ?? null);
+  const target = s.target != null ? toNum(s.target, null) : (mock?.target ?? null);
+  const computedRR = entry != null && stop != null && target != null && Math.abs(entry - stop) > 1e-9
+    ? Math.abs((target - entry) / (entry - stop)) : null;
+  const rr = parseRR(s.rr) ?? computedRR ?? parseRR(mock?.rr) ?? 0;
   const rationale = (s.rationale || []).map((r) => ({
     src: r.src || r.source || "SRC",
     head: r.head || r.headline || r.title || "",
@@ -64,7 +86,7 @@ function toCinSignal(s) {
     tk,
     name: s.company || s.name || mock?.name || tk,
     signal,
-    conf: s.confidence || s.conf || 50,
+    conf: toNum(s.confidence ?? s.conf, 50),
     px,
     chgPct: chg,
     rr,
@@ -76,14 +98,14 @@ function toCinSignal(s) {
     pe: s.pe || mock?.pe || "—",
     ts: s.ts || fmtTime(s.created_at) || (mock?.ts || "—"),
     style: s.style || mock?.style || "swing",
-    win: s.win || mock?.win || 60,
+    win: toNum(s.win, mock?.win ?? 60),
     sources: (s.sources || mock?.sources || []).map((x) => (typeof x === "string" ? x : x.name || x.abbr || "SRC")),
     headline: s.headline || s.reason || s.title || mock?.headline || `${signal} setup on ${tk}`,
     narrative: s.narrative || s.summary || s.explanation || mock?.narrative || "",
     rationale: rationale.length ? rationale : (mock?.rationale || []),
     seed: s.seed || mock?.seed || hashSeed(tk),
-    drift: s.drift || mock?.drift || 0,
-    volatility: s.volatility || s.vol || mock?.vol || 0.02,
+    drift: toNum(s.drift, mock?.drift ?? 0),
+    volatility: toNum(s.volatility ?? s.vol, mock?.vol ?? 0.02),
   };
 }
 
