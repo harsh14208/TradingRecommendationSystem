@@ -152,11 +152,22 @@ const NAV_ICONS = {
   tools: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.6-3.6a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0l-3.6 3.6zM2 17.2V21h3.8l11-11.1L13 6.1 2 17.2z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"></path>,
 };
 
-function TopNav({ page, go, currentUser, onLogout }) {
+function TopNav({ page, go, onBack, currentUser, onLogout }) {
   const tier = currentUser?.subscription_tier || "free";
   const isOwner = currentUser?.is_owner;
+  const showBack = page !== "home";
   return (
     <header className="topnav">
+      {showBack && (
+        <button className="btn ghost" onClick={onBack} aria-label="Back"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginRight: 8, padding: "6px 10px" }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5"></path>
+            <path d="M12 19l-7-7 7-7"></path>
+          </svg>
+          <span style={{ fontSize: 12 }}>Back</span>
+        </button>
+      )}
       <Logo go={go} aria-label="SIGNAL.TRADE home"></Logo>
       <nav className="links" style={{ marginLeft: 8 }} aria-label="Primary">
         {NAV.map(([id, label]) => (
@@ -330,6 +341,9 @@ function App() {
 
   /* UI / settings */
   const [page, setPage] = useState(() => { try { return localStorage.getItem("st_cin_page") || "dashboard"; } catch { return "dashboard"; } });
+  const pageHistoryRef = useRef([page]);
+  useEffect(() => { pageHistoryRef.current = [page]; }, []);
+
   const [tweakState, setTweakState] = useState(() => {
     try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("st_tweaks") || "{}") }; }
     catch { return DEFAULTS; }
@@ -366,11 +380,21 @@ function App() {
     }).catch(() => {});
   }, [authReady, currentUser]);
 
-  const go = (p) => {
+  const go = useCallback((p) => {
     setPage(p);
+    const last = pageHistoryRef.current[pageHistoryRef.current.length - 1];
+    if (last !== p) pageHistoryRef.current = [...pageHistoryRef.current, p];
     try { localStorage.setItem("st_cin_page", p); } catch {}
     try { window.scrollTo({ top: 0 }); } catch {}
-  };
+  }, []);
+
+  const goBack = useCallback(() => {
+    if (pageHistoryRef.current.length <= 1) { go("home"); return; }
+    const next = pageHistoryRef.current.slice(0, -1);
+    pageHistoryRef.current = next;
+    setPage(next[next.length - 1]);
+    try { window.scrollTo({ top: 0 }); } catch {}
+  }, [go]);
 
   /* Theme / density */
   useEffect(() => {
@@ -537,7 +561,7 @@ function App() {
   return (
     <ErrorBoundary>
       <div data-screen-label={NAV.find(([id]) => id === page)[1]}>
-        <TopNav page={page} go={go} currentUser={currentUser} onLogout={handleLogout} />
+        <TopNav page={page} go={go} onBack={goBack} currentUser={currentUser} onLogout={handleLogout} />
         <div style={{ position: "fixed", top: 58, right: 12, zIndex: 60 }}>
           <KillSwitch currentUser={currentUser} />
         </div>
