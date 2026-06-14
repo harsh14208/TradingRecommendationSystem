@@ -331,7 +331,7 @@ function PortfolioScreen({ positions }) {
                 <div className="m-pos-shares">{Math.abs(sh)} sh · avg ${Number(avg).toFixed(2)}</div>
                 <div className="m-pos-px">${Number(last).toFixed(2)}</div>
               </div>
-              <Sparkline data={spark} color={pnl >= 0 ? "#10b981" : "#ef4444"}/>
+              <Sparkline data={spark} color={pnl >= 0 ? "var(--up)" : "var(--down)"}/>
               <div className={`m-pos-pnl ${pnl >= 0 ? "up" : "down"}`}>
                 <div className="v">{pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(0)}</div>
                 <div className="pct">{pnl >= 0 ? "+" : "−"}{Math.abs(pct).toFixed(2)}%</div>
@@ -463,7 +463,7 @@ function AccountScreen({ user }) {
           </div>
         </div>
         <div style={{ padding:"20px 16px 30px", textAlign:"center" }}>
-          <button className="m-btn" style={{ width:"100%", color:"var(--down)", borderColor:"rgba(239,68,68,0.3)" }}
+          <button className="m-btn" style={{ width:"100%", color:"var(--down)", borderColor:"var(--down-soft)" }}
             onClick={() => { clearToken(); window.location.href = "/login"; }}>
             Sign out
           </button>
