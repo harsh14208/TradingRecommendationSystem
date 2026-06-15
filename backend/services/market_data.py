@@ -365,6 +365,100 @@ COMPANY_NAMES = {
     "COPX": "Global X Copper Miners ETF",
 }
 
+# ETFs / funds have no company fundamentals — yfinance's quoteSummary returns a
+# hard 404 ("No fundamentals data found for symbol: …") every time, which floods
+# the error tracker and wastes rate-limited calls. Skip _fetch_info for these.
+_ETF_TICKERS: frozenset[str] = frozenset(
+    {
+        # Index / broad-market
+        "SPY",
+        "QQQ",
+        "IWM",
+        "DIA",
+        "VOO",
+        "VTI",
+        # Sector SPDRs
+        "XLK",
+        "XLF",
+        "XLE",
+        "XLP",
+        "XLB",
+        "XLU",
+        "XLY",
+        "XLC",
+        "XLI",
+        "XLV",
+        "XLRE",
+        # Bond
+        "TLT",
+        "HYG",
+        "LQD",
+        "AGG",
+        "IEF",
+        "SHY",
+        # Commodity / metals / miners
+        "GLD",
+        "SLV",
+        "GDX",
+        "GDXJ",
+        "COPX",
+        "SIL",
+        "USO",
+        "UNG",
+        # Leveraged / inverse (bull)
+        "TQQQ",
+        "UPRO",
+        "SPXL",
+        "SOXL",
+        "TECL",
+        "FAS",
+        "TNA",
+        "LABU",
+        "WEBL",
+        "FNGU",
+        "NAIL",
+        "DPST",
+        "YINN",
+        "DRN",
+        "TMF",
+        "HIBL",
+        "MIDU",
+        "GUSH",
+        "NUGT",
+        "JNUG",
+        "UCO",
+        "SSO",
+        "QLD",
+        "ROM",
+        "UWM",
+        # Leveraged / inverse (bear)
+        "SQQQ",
+        "SPXS",
+        "SPXU",
+        "SOXS",
+        "TECS",
+        "FAZ",
+        "TZA",
+        "LABD",
+        "FNGD",
+        "YANG",
+        "DRV",
+        "TMV",
+        "HIBS",
+        "SRTY",
+        "DRIP",
+        "DUST",
+        "JDST",
+        "SCO",
+        "SDS",
+        "QID",
+        "REW",
+        "TWM",
+        "VXX",
+        "UVXY",
+    }
+)
+
 
 def _retry(fn, *args, retries: int = 4, base_delay: float = 2.0, **kwargs):
     """Exponential back-off with ±30% jitter. Detects 429, trips the circuit breaker."""
@@ -509,6 +603,11 @@ def _get_premarket_price(ticker: str) -> Optional[float]:
 
 
 def _fetch_info(ticker: str) -> dict:
+    # ETFs/funds have no company fundamentals — yfinance quoteSummary 404s every
+    # time. Skip the call entirely (returns the name; downstream treats the rest
+    # as unavailable, same as the prior except-branch fallback).
+    if ticker.upper() in _ETF_TICKERS:
+        return {"company": COMPANY_NAMES.get(ticker.upper(), ticker)}
     try:
         info = _retry(lambda: yf.Ticker(ticker, session=_session).info)
         sfloat = info.get("shortPercentOfFloat")

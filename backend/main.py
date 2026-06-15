@@ -54,6 +54,19 @@ if _sentry_dsn:
         release=os.environ.get("GIT_SHA", "unknown"),
     )
 
+    # yfinance logs expected/transient conditions at ERROR level — ETF
+    # fundamentals 404s (ETFs have no quoteSummary) and intermittent
+    # "possibly delisted; no price data" on perfectly valid tickers — all of
+    # which the app already handles via Polygon/cache fallbacks. Don't forward
+    # them to Sentry; they're non-actionable noise that drowns real errors.
+    from sentry_sdk.integrations.logging import ignore_logger
+
+    ignore_logger("yfinance")
+
+# Also quiet the yfinance logger itself so the same noise doesn't flood local
+# logs (independent of Sentry being configured).
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
 # Raise the per-process open-file limit early so long-running scan cycles
 # (which accumulate sockets + SQLite WAL handles) don't hit the OS default
 # (256 on macOS, 1024 on Linux).  We request 65536; cap at the hard limit.
