@@ -1071,9 +1071,11 @@ function PricingView({ open, onClose, user }) {
 
 /* ─── Tweaks panel ─────────────────────────────────────────────────────────── */
 function TweaksPanel({ open, onClose, state, set }) {
+  // Saturated accents only — a near-white accent makes --bull/--accent text
+  // invisible (mono removed). Accent drives links, highlights and primary buttons.
   const accents = [
-    ["#22d3ee","cyan"],["#60a5fa","azure"],["#fbbf24","amber"],
-    ["#fb4d6d","crimson"],["#a78bfa","violet"],["#e6edf7","mono"],
+    ["#22d3ee","cyan"],["#60a5fa","azure"],["#34d399","emerald"],
+    ["#fbbf24","amber"],["#fb4d6d","crimson"],["#a78bfa","violet"],
   ];
   if (!open) return null;
   return (
@@ -1084,13 +1086,6 @@ function TweaksPanel({ open, onClose, state, set }) {
       </div>
       <div style={{ padding:"0 28px 48px", overflowY:"auto" }}>
         <div style={{ maxWidth:760, margin:"0 auto" }}>
-      <div className="tweak-row">
-        <span className="l">Theme</span>
-        <div className="seg">
-          <button className={state.theme==="dark"?"on":""} onClick={() => set({ theme:"dark" })}>Dark</button>
-          <button className={state.theme==="light"?"on":""} onClick={() => set({ theme:"light" })}>Light</button>
-        </div>
-      </div>
       <div className="tweak-row">
         <span className="l">Accent</span>
         <div className="swatches">

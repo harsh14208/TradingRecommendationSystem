@@ -439,13 +439,20 @@ function App() {
 
   /* Theme / density */
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", tweakState.theme);
+    // The cinematic UI is dark-only by design (mesh/glass/glow). Force dark so a
+    // stale/legacy "light" preference can't half-apply and hide text.
+    document.documentElement.setAttribute("data-theme", "dark");
     document.documentElement.setAttribute("data-density", tweakState.density);
-    document.documentElement.style.setProperty("--accent", tweakState.accent);
-    document.documentElement.style.setProperty("--up", tweakState.accent);
-    document.documentElement.style.setProperty("--bull", tweakState.accent);
-    const hex = tweakState.accent.replace("#", "");
-    const n = parseInt(hex, 16);
+    // Guard against a near-white accent (it would make --bull/--accent text
+    // invisible). Fall back to cyan above a high-luminance threshold.
+    const hex = (tweakState.accent || "#22d3ee").replace("#", "");
+    const n0 = parseInt(hex, 16);
+    const lum = (0.2126 * ((n0 >> 16) & 255) + 0.7152 * ((n0 >> 8) & 255) + 0.0722 * (n0 & 255)) / 255;
+    const accent = lum > 0.72 ? "#22d3ee" : (tweakState.accent || "#22d3ee");
+    document.documentElement.style.setProperty("--accent", accent);
+    document.documentElement.style.setProperty("--up", accent);
+    document.documentElement.style.setProperty("--bull", accent);
+    const n = parseInt(accent.replace("#", ""), 16);
     const rgb = `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
     document.documentElement.style.setProperty("--up-soft", `rgba(${rgb}, 0.12)`);
     document.documentElement.style.setProperty("--up-glow", `rgba(${rgb}, 0.35)`);
