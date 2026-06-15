@@ -334,7 +334,7 @@ async def run_calibration() -> dict:
         for s in samples:
             regime_counts[s["regime"]] += 1
 
-        cal_map["_meta"] = {
+        meta = {
             "n_total": n_total,
             "n_train": len(train),
             "n_valid": len(valid),
@@ -347,6 +347,27 @@ async def run_calibration() -> dict:
             "conf_floor": _CONF_FLOOR,
             "conf_ceil": _CONF_CEIL,
         }
+
+        # Self-gate: only deploy a calibration that demonstrably beats the naive
+        # 50% baseline. A no-skill / over-pessimistic map (Brier ≥ naive) flattens
+        # confidence toward the base win-rate, which can fall below the delivery
+        # floor and silently zero out ALL signal delivery (observed 2026-06-15:
+        # isotonic collapsed to a flat 42.8%, below the 46% swing floor → 0 sends).
+        # When that happens we persist a no-op map (only _meta) so apply_calibration
+        # passes raw confidence through instead of suppressing every signal.
+        skilled = isinstance(brier, float) and brier == brier and bool(valid) and brier < brier_naive
+        if not skilled:
+            meta["applied"] = False
+            meta["reason"] = (
+                f"no skill (Brier {brier:.4f} ≥ naive {brier_naive:.4f}) — raw confidence passed through"
+                if (isinstance(brier, float) and brier == brier and valid)
+                else "insufficient validation data — raw confidence passed through"
+            )
+            cal_map = {"_meta": meta}
+            log.warning(f"[calibration] NOT deployed: {meta['reason']}")
+        else:
+            meta["applied"] = True
+            cal_map["_meta"] = meta
 
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         _CAL_FILE.write_text(json.dumps(cal_map, indent=2))
