@@ -573,6 +573,18 @@ HELD_OUT_TICKERS = [
 # flagged so the clean OOS metric is not contaminated by delivery_gates-blocked names.
 _OOS_BLOCKED_TICKERS: frozenset[str] = frozenset({"AMAT", "KLAC", "STT", "MTB", "HBAN", "ZION", "CFG"})
 
+# ── Curated universe-expansion cohort — locked 2026-06-15 for FORWARD validation ──
+# 9 large-caps added to the live watchlist after the §86 universe-expansion sweep
+# (scripts/screen_universe_expansion.py; pooled IS N=43, WR 67%, +1.22%/trade, Sh 0.40).
+# These were SELECTED on positive IS MR edge, so they are NOT a blind OOS set and are
+# deliberately kept OUT of HELD_OUT_TICKERS (re-running IS on them would just re-confirm
+# the selection). The honest test is their FORWARD live performance from the lock date,
+# pre-registered here so the bar can't move later.
+# PASS criterion: clean live WR ≥ 55% AND avg net/trade > 0 over ≥30 resolved BUYs by
+# ~2026-09-15 → keep; else prune from the watchlist. Check via /api/admin/live-wr-stats
+# filtered to these tickers, or gate_contribution_analysis.py.
+_EXPANSION_COHORT_20260615: frozenset[str] = frozenset({"CBRE", "NXPI", "EL", "TRV", "IP", "MCK", "ROK", "CMI", "MET"})
+
 # ── Sector map: ticker → GICS sector ETF ─────────────────────────────────────
 # Used for delivery-gates-aligned sector filter (§10).
 # Blocked sectors in live engine: XLI, XLV, XLE, XLRE, XLU.

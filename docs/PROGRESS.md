@@ -105,7 +105,7 @@
   - `tests/test_worker_bus.py`: added autouse fixture forcing the asyncio.Queue backend regardless of env.
   - `tests/test_config.py`: corrected duplicate `APP_URL` in `backend/.env` (left only `http://localhost:8000`) so the JWT dev-fallback test passes.
 - Full backend non-E2E suite: **2547 passed, 18 skipped**.
-- `shap` already installed in `.venv311` (0.49.1); live audit remains pending ≥50 post-A19 resolved signals.
+- `shap` already installed in `.venv311` (0.49.1); live audit remains pending ≥200 post-§82 (≥2026-05-29) resolved signals.
 - **DNS / public HTTPS** — Cloudflare authoritative NS and `1.1.1.1` now resolve `signaltrade.org` and `app.signaltrade.org`. The tunnel connector is healthy. `APP_URL` updated to `https://signaltrade.org`, backend reloaded, and `curl --resolve` confirms `GET /api/health/uptime` returns 200 from the public URL. Some local resolvers (e.g., Tailscale `100.64.0.2`) still cache NXDOMAIN; full propagation will finish shortly.
 - **QENG-3d execution-policy simulator** — added `services/execution_policy_simulator.py`, `scripts/run_execution_policy_simulation.py`, and `tests/test_execution_policy_simulator.py`. Evaluates market / limit / midpoint / next-open / next-close / delayed-1d on cost-adjusted expected value from a trades CSV and can register a `ResearchExperiment` row.
 - **ACT-9 / SP1-4 CI/CD** — pushed v8.8.4 to GitHub `main`. CI run passed: ruff, pytest, 25% coverage floor, gitleaks, pip-audit, npm audit. Added `npm install && npm run build` to `.github/workflows/ci.yml` so `dist/app-bundle.js` exists for `test_static_js_file`.

@@ -168,14 +168,28 @@ function DeliveryRow({ l, last }) {
 }
 
 function DeliveryLog({ log }) {
-  const rows = Array.isArray(log) && log.length ? log : M_LOG;
+  // Only the real delivery feed is "LIVE". When it's empty (e.g. no sends yet
+  // today — common on heavily-gated days), show an honest empty state rather
+  // than the demo M_LOG entries labelled as live. The mock is used only as a
+  // pre-load placeholder when `log` hasn't arrived at all (undefined/null).
+  const isLoading = log == null;
+  const hasReal = Array.isArray(log) && log.length > 0;
+  const rows = hasReal ? log : isLoading ? M_LOG : [];
   return (
     <div className="glass" style={{ padding: 0, overflow: "hidden", alignSelf: "start" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 14px", borderBottom: "1px solid var(--line)" }}>
         <span className="kicker">DELIVERY LOG</span>
-        <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> LIVE</span>
+        <span className="kicker" style={{ marginLeft: "auto", color: hasReal ? "var(--bull)" : "var(--text-faint)", display: "inline-flex", gap: 6, alignItems: "center" }}>
+          {hasReal ? <><LiveDot></LiveDot> LIVE</> : isLoading ? "LOADING…" : "IDLE"}
+        </span>
       </div>
-      <div>{rows.map((l, i) => <DeliveryRow key={i} l={l} last={i === rows.length - 1}></DeliveryRow>)}</div>
+      {rows.length ? (
+        <div>{rows.map((l, i) => <DeliveryRow key={i} l={l} last={i === rows.length - 1}></DeliveryRow>)}</div>
+      ) : (
+        <div style={{ padding: "22px 14px", textAlign: "center", color: "var(--text-faint)", fontSize: 12.5 }}>
+          No signals delivered yet today.
+        </div>
+      )}
     </div>
   );
 }

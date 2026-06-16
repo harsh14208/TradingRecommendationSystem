@@ -150,7 +150,7 @@ These require elapsed time and resolved signals. Do not proceed to Phase 4 until
   - Current post-fix read: 57.8% net WR, +2.06%/trade, but sample size must reach ≥100.
 
 - [ ] **4.3. Calibration check — Brier ≤0.30 and confidence gap ≤10pp.**
-  - Run `python scripts/backfill_confidence.py --validate` once ≥50 post-A19 resolved signals exist.
+  - Run `python scripts/backfill_confidence.py --validate` once ≥200 post-§82 (≥2026-05-29) resolved signals exist.
   - If Brier is high, do **not** increase size until `CAL-1` is run.
 
 - [ ] **4.4. Drawdown simulation <10% at intended live size.**

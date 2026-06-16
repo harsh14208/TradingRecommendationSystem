@@ -89,7 +89,7 @@ Items marked [~] are partially wired but not yet proven/deployed.
 ## ⚙️ Operational, Deployment & Testing TODOs
 
 - [ ] **ACT-7. Validate bracket stop in Alpaca paper account** — Enable auto-execution for owner account on paper, trigger a manual signal delivery, and verify Alpaca dashboard shows bracket order legs correctly.
-- [~] **ACT-8. Install shap for ML-5 live audit** — `shap` installed in `.venv311` (0.49.1). Re-run live audit remains gated on ≥50 post-A19 resolved signals.
+- [~] **ACT-8. Install shap for ML-5 live audit** — `shap` installed in `.venv311` (0.49.1). Re-run live audit remains gated on ≥200 post-§82 (≥2026-05-29) resolved signals.
 - [x] **OPS-2. Frontend accessibility pass** — axe-core audit of `/app` reports 0 violations across the default dashboard, expanded signal rows, and the Tweaks/settings panel. Color-contrast tokens now meet WCAG AA in both dark and light themes, modal backdrops no longer create nested-interactive controls, chart canvases have accessible names, and form inputs in Tweaks are labeled.
 - [x] **OPS-4. Watchdog self-heal for unloaded LaunchAgents (2026-06-13)** — `scripts/watchdog.sh` now auto-reloads (`launchctl bootstrap`) any critical agent found UNLOADED (`com.signal.trade`, `keepawake`, `cloudflared`) — the state `KeepAlive` cannot recover from. Waits up to 60s for backend warm-up before judging health; a loaded-but-hung backend stays alert-only (never auto-kills a busy process); self-heals are logged as `OK (self-healed: …)`. Validated end-to-end by booting out `keepawake` and confirming restore. Triggered by the 2026-06-13 ~25-min outage (commit `51dae3f`).
 - [ ] **OPS-5. Root-cause the 2026-06-13 10:16 PT backend unload** — `com.signal.trade` shut down *cleanly* (graceful `Application shutdown complete`, not a crash) and was then booted out of launchd, so `KeepAlive` couldn't restart it; recovered manually via `launchctl bootstrap`. Source of the `bootout` is unknown (manual `launchctl`, logout/login, OS/update event, or a script). If it recurs, check `log show --predicate 'process == "launchd"' --last 1h` around the unload timestamp and Console for system events. OPS-4 now auto-recovers it regardless, but the trigger should be identified.
@@ -102,7 +102,7 @@ Items marked [~] are partially wired but not yet proven/deployed.
 - [ ] **OOS-1. Accumulate ≥30 live trades in OOS v7 tickers** — SYK, RMD, IDXX, ZBH, RL, DECK, POOL, NDAQ, CBOE, BR. Run `python scripts/backtest_technicals.py --oos`. If OOS v7 CLEAN Sharpe ≥ 0.10, promote to IS.
 - [ ] **OOS-2. Accumulate ≥30 live trades in OOS v8 tickers** — LNC, AMG, PAYC, SIG, AEO. Cautiously evaluate the 0.2% Russell 2000 pass rate.
 - [ ] **§85-2b. MD&A sentiment live monitoring (2026-06-09)** — tag signals that receive `mda_delta != 0` and compute ΔWR after N≥50 such signals accumulate.
-- [ ] **CAL-1 / A25. Calibration v5** — Run `python scripts/backfill_confidence.py --force --apply` when ≥50 post-A19 resolved signals are available.
+- [ ] **CAL-1 / A25. Calibration v5** — Run `python scripts/backfill_confidence.py --force --apply` when ≥200 post-§82 (≥2026-05-29) resolved signals are available.
 - [ ] **ML-2 / A15. Sector-specific XGBoost models** — Retrain sub-models for concentrated sectors when sector-specific resolved signals reach ≥200.
 - [ ] **RISK-3. Position sizing live audit** — After N≥50 auto-executed trades, compare realized notional vs theoretical scaling.
 - [ ] **ACT-3. Sector-conditional calibration (CAL-V5)** — Run `backfill_confidence.py --force --apply` with sector grouping.
@@ -120,7 +120,7 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 - [ ] **R10-3: Live Alpha Quality (7.0 → 10)** ⏳gated — run §85-1 audit (≥200 resolved) and prove causally positive treatment effect via REF-4 cohort dashboard.
 - [ ] **R10-4: Gate Stack §47–§83 (8.8 → 10)** ⏳gated — wire §62 VRP per-stock, options-flow, and GEX confirmation gates (all need paid options data).
 - [~] **R10-5: Backtest Infrastructure (7.8 → 10)** — ~~zero PIT feature-store persist errors~~ **DONE (2026-06-13): hot-scalar extraction in `feature_store.save_feature_snapshot()` now routes all 7 indexed columns through `_safe_float()` (coerces to a finite float or None), so a malformed provider value ("N/A", wrong type, non-finite) nulls the column instead of raising `ValueError`/`TypeError` and aborting the snapshot — closes the persist-error class that `_json_safe` only covered for the JSON column. Also fixed `atr_pct`/`quality_score` falsy-`0.0` fallthrough (was `a or b`). Regression tests added in `tests/test_r10_hardening.py`.** **REF-2 audit + wiring DONE (2026-06-13): audit found the archive overstated it — `scripts/drift_detector.py` existed but was a manual script only (no scheduler, no launchd plist, no test; the `drift` hits in `main.py` were all provider-schema/ML-feature drift, a different feature). Refactored `detect_drift()` to return a structured result dict (no more `sys.exit` in the core path; CLI `main()` keeps the exit code), wired a supervised weekly job `_weekly_drift_detection` in `main.py` (Sun 11:30am ET, after ML retrain; non-zero drift → `log.error` so it surfaces in Sentry), and added a controlled regression test in `tests/test_qeng_features.py`.** Remaining: fold §84 point-in-time data (⏳gated).
-- [ ] **R10-6: Confidence Calibration (7.6 → 10)** ⏳gated — CAL-1 Calibration v5 on ≥50 post-A19 signals + ACT-3 per-sector isotonic curves.
+- [ ] **R10-6: Confidence Calibration (7.6 → 10)** ⏳gated — CAL-1 Calibration v5 on ≥200 post-§82 (≥2026-05-29) signals + ACT-3 per-sector isotonic curves.
 
 ### Risk & Execution
 - [ ] **R10-9: Sector Concentration (7.6 → 10)** — make limits dynamic/correlation-aware via REF-5 HRP-in-scanner; unblock XLF/XLP/XLU/XLI via ML-2 sector XGBoost models.
@@ -141,7 +141,7 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 ## 👁️ Known Issues
 
 - **XLF/XLP/XLU/XLI blocked** — Hard blocks remain in place due to negative contribution. Sector-specific unblocking is now gated by an explicit QENG-1c promotion record (§117 infrastructure complete); training/promotion requires ≥100 resolved backtest trades per sector.
-- **Calibration recalibration post-A19** — Calibration v4 used pre-A19 data only. Needs recalibration once post-A19 resolved signals accrue.
+- **Calibration recalibration post-§82** — Calibration v4 used pre-A19 data only. Needs recalibration once post-§82 resolved signals accrue.
 
 ---
 

@@ -72,6 +72,42 @@ STYLE_CONF_FLOORS: dict[str, float] = {
     "position": 0.0,  # no additional floor — driven by global min_confidence (40%)
 }
 
+# ── Intraday safety rail (auto-disable) ──────────────────────────────────────
+# Intraday was re-enabled 2026-06-15 despite poor historical stats. This is the
+# self-correcting guard: once enough intraday BUYs have resolved, if live win
+# rate stays below the floor, intraday delivery auto-blocks (and auto-recovers
+# if WR climbs back). No human intervention or scheduled job required.
+_INTRADAY_SAFETY_MIN_N = 30  # need N≥30 resolved before judging (avoid noise)
+_INTRADAY_SAFETY_MIN_WR = 0.40  # block intraday delivery if live WR < 40%
+
+
+async def _intraday_safety_blocked(db) -> tuple[bool, float, int]:
+    """Return (blocked, wr, n) for recent resolved intraday BUYs. blocked=True
+    when N≥_INTRADAY_SAFETY_MIN_N and WR<_INTRADAY_SAFETY_MIN_WR."""
+    from models import Signal
+
+    rows = (
+        (
+            await db.execute(
+                select(Signal.outcome_pct)
+                .where(Signal.style == "intraday")
+                .where(Signal.action == "BUY")
+                .where(Signal.is_sent == True)
+                .where(Signal.outcome_pct.isnot(None))
+                .order_by(Signal.sent_at.desc())
+                .limit(100)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    n = len(rows)
+    if n < _INTRADAY_SAFETY_MIN_N:
+        return False, 0.0, n
+    wr = sum(1 for o in rows if o > 0) / n
+    return wr < _INTRADAY_SAFETY_MIN_WR, wr, n
+
+
 # Sectors with empirical PF < 0.40x blocked until per-sector models retrained.
 # XLF 0.32x, XLP 0.35x, XLU insufficient data.
 # ACT-1 (2026-06-06): XLI added — live WR 36.1% (N=36, N≥30 with WR<50%) per
@@ -377,6 +413,19 @@ async def check_delivery_gates(
             f"{style} style disabled/floored — conf {conf:.0f}% < {style_floor:.0f}%",
             sig_dict,
         )
+
+    # ── Intraday safety rail (auto-disable on sustained poor WR) ──────────────
+    if style == "intraday" and action == "BUY":
+        try:
+            _blocked, _wr, _n = await _intraday_safety_blocked(db)
+            if _blocked:
+                return (
+                    f"intraday auto-disabled — live WR {_wr * 100:.0f}% < "
+                    f"{_INTRADAY_SAFETY_MIN_WR * 100:.0f}% over last {_n} resolved (safety rail)",
+                    sig_dict,
+                )
+        except Exception:
+            log.warning("intraday safety-rail check failed", exc_info=True)  # pragma: no mutate
 
     # ── Ticker block (no 10-day MR behavior) ─────────────────────────────────
     # Only block tickers with structural reasons AND N≥30 confirmed live/OOS

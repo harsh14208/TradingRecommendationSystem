@@ -203,6 +203,36 @@ async def test_gate_blocks_swing_below_46():
     assert reason is not None
 
 
+def _db_returning_outcomes(outcomes):
+    """Mock DB whose .scalars().all() returns the given outcome_pct list."""
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value = MagicMock(all=MagicMock(return_value=outcomes))
+    db.execute = AsyncMock(return_value=result)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_intraday_safety_rail_auto_disables_on_low_wr():
+    """N≥30 resolved intraday BUYs with WR<40% → safety rail flags blocked."""
+    from services.delivery_gates import _intraday_safety_blocked
+
+    db = _db_returning_outcomes([1.0] * 10 + [-1.0] * 20)  # 30 resolved, 33% WR
+    blocked, wr, n = await _intraday_safety_blocked(db)
+    assert n == 30 and blocked is True and round(wr, 2) == 0.33
+
+
+@pytest.mark.asyncio
+async def test_intraday_safety_rail_passes_below_min_n_or_good_wr():
+    """Below N=30, or with WR≥40%, the safety rail does NOT block."""
+    from services.delivery_gates import _intraday_safety_blocked
+
+    blocked, _wr, n = await _intraday_safety_blocked(_db_returning_outcomes([1.0] * 5))
+    assert n == 5 and blocked is False  # too few to judge
+    blocked, wr, n = await _intraday_safety_blocked(_db_returning_outcomes([1.0] * 20 + [-1.0] * 20))
+    assert n == 40 and round(wr, 2) == 0.50 and blocked is False  # WR ok
+
+
 @pytest.mark.asyncio
 async def test_gate_allows_swing_at_46():
     """Swing signals at ≥46% pass the style floor."""

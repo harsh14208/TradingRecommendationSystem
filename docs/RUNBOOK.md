@@ -250,7 +250,7 @@ npm audit --audit-level=high
 cd backend && python scripts/gate_contribution_analysis.py --after 2026-06-01
 ```
 
-### 6.3 Calibration recalibration (at N≥50 post-A19 resolved signals)
+### 6.3 Calibration recalibration (at N≥200 post-§82 (≥2026-05-29) resolved signals)
 
 ```bash
 cd backend
