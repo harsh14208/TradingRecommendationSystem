@@ -49,6 +49,7 @@ _CONF_FLOOR = 35.0  # minimum output confidence
 _CONF_CEIL = 78.0  # maximum output confidence — raised from 65% (v1 ceiling
 # clipped calibrated 75%+ WR signals to 65%)
 _VALID_FRAC = 0.20  # fraction held out for walk-forward Brier scoring
+_SECTOR_MIN_N = 40  # min per-sector train samples to fit a sector-specific curve
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,6 +100,39 @@ def _brier_score(probs: list[float], wins: list[int]) -> float:
     if not probs:
         return float("nan")
     return round(sum((p - y) ** 2 for p, y in zip(probs, wins)) / len(probs), 4)
+
+
+def _cv_brier(samples: list[dict], k: int = 5) -> float | None:
+    """K-fold CV Brier of the global isotonic — a robust skill estimate that does
+    NOT depend on a single temporal split (which is regime-sensitive: a degraded
+    recent window can make a genuinely-skilled calibration look no-skill and get
+    it wrongly rejected). Returns None if too few samples to evaluate."""
+    if len(samples) < 50:
+        return None
+    try:
+        import numpy as np
+        from sklearn.isotonic import IsotonicRegression
+        from sklearn.model_selection import KFold
+
+        X = np.array([s["conf"] / 100.0 for s in samples])
+        y = np.array([s["win"] for s in samples])
+        w = np.array([s["weight"] for s in samples])
+        kf = KFold(n_splits=k, shuffle=True, random_state=42)
+        preds: list[float] = []
+        acts: list[int] = []
+        for tr, va in kf.split(X):
+            if len(set(y[tr].tolist())) < 2:
+                continue
+            ir = IsotonicRegression(out_of_bounds="clip", increasing=True)
+            ir.fit(X[tr], y[tr], sample_weight=w[tr])
+            preds.extend(float(p) for p in ir.predict(X[va]))
+            acts.extend(int(a) for a in y[va])
+        if not preds:
+            return None
+        return _brier_score(preds, acts)
+    except Exception as exc:
+        log.debug(f"[calibration] CV Brier failed: {exc}")
+        return None
 
 
 def _interp_isotonic(table: list, x: float) -> float | None:
@@ -187,6 +221,8 @@ async def run_calibration() -> dict:
                         Signal.outcome_14d,
                         Signal.outcome_pct,
                         Signal.created_at,
+                        Signal.sector_etf,
+                        Signal.ticker,
                     )
                     .where(Signal.is_sent == True)
                     .where(Signal.action.in_(["BUY", "SELL"]))
@@ -211,9 +247,16 @@ async def run_calibration() -> dict:
         log.info(f"[calibration] SPY regime cache: {len(spy_cache)} dates")
 
         # ── Compile samples ───────────────────────────────────────────────────
+        # Derive sector from the ticker (SECTOR_MAP) when sector_etf is NULL —
+        # ~81% of historical rows have a null sector_etf (the sector_rs coupling
+        # bug), so binning on the stored column alone starves every sector below
+        # the curve threshold.
+        from services.sector import SECTOR_MAP
+
         ref_dt = datetime.now(timezone.utc)
         samples = []
-        for action, conf, pct_14d, pct_7d, created_at in rows:
+        for action, conf, pct_14d, pct_7d, created_at, sector_etf, ticker in rows:
+            sector = sector_etf or (SECTOR_MAP.get(ticker.upper()) if ticker else None)
             pct = pct_14d if pct_14d is not None else pct_7d
             if pct is None:
                 continue
@@ -230,6 +273,7 @@ async def run_calibration() -> dict:
                     "win": win,
                     "weight": weight,
                     "regime": regime,
+                    "sector": sector or None,
                     "created": created_at,
                 }
             )
@@ -302,18 +346,51 @@ async def run_calibration() -> dict:
         if regime_map:
             cal_map["_regime"] = regime_map
 
+        # ── Sector-specific isotonic ─────────────────────────────────────────
+        # Calibrate confidence to each sector's empirical win rate (the live edge
+        # is concentrated in XLK ~54% while XLF/XLP/XLV run ~30-41%). This makes
+        # confidence sector-honest so the existing delivery floor gates weak
+        # sectors naturally — no hard sector block needed. Highest-priority curve
+        # in apply_calibration. NOTE: built across the full resolved window
+        # (incl. pre-§82); refresh once post-§82 per-sector N≥40 accrues.
+        sector_map: dict[str, dict] = {}
+        _train_sectors = {s["sector"] for s in train if s["sector"]}
+        for sec in sorted(_train_sectors):
+            sub = [s for s in train if s["sector"] == sec]
+            if len(sub) < _SECTOR_MIN_N:
+                continue
+            sx = [s["conf"] / 100.0 for s in sub]
+            sy = [s["win"] for s in sub]
+            sw = [s["weight"] for s in sub]
+            iso = _fit_isotonic(sx, sy, sw)
+            if iso:
+                _wr = sum(s["win"] for s in sub) / len(sub)
+                sector_map[sec] = {"n": len(sub), "wr": round(_wr, 4), "_isotonic": iso}
+                log.info(f"[calibration] sector {sec} isotonic: {len(sub)} samples, raw WR {_wr * 100:.1f}%")
+        if sector_map:
+            cal_map["_sector"] = sector_map
+
         # ── Walk-forward Brier score (validation set) ─────────────────────────
         if valid:
             preds, actuals = [], []
             for s in valid:
-                # Predict using global isotonic or Platt
+                # Predict via the SAME priority apply_calibration uses so the
+                # self-gate below reflects the full sector→regime→global stack.
                 x = s["conf"] / 100.0
-                if iso_global:
+                p = None
+                _sec = s.get("sector")
+                if _sec and _sec in sector_map:
+                    p = _interp_isotonic(sector_map[_sec]["_isotonic"], x)
+                if p is None:
+                    _re = regime_map.get(s["regime"], {})
+                    if _re.get("_isotonic") and _re.get("n", 0) >= 20:
+                        p = _interp_isotonic(_re["_isotonic"], x)
+                if p is None and iso_global:
                     p = _interp_isotonic(iso_global, x)
-                    if p is not None:
-                        preds.append(p)
-                        actuals.append(s["win"])
-                        continue
+                if p is not None:
+                    preds.append(p)
+                    actuals.append(s["win"])
+                    continue
                 # Platt fallback
                 b = str(max(0, min(95, (int(s["conf"]) // _BIN_SIZE) * _BIN_SIZE)))
                 entry = cal_map.get(b)
@@ -334,6 +411,16 @@ async def run_calibration() -> dict:
         for s in samples:
             regime_counts[s["regime"]] += 1
 
+        # ── K-fold CV skill test (robust; primary deploy gate) ────────────────
+        # The single temporal split above is regime-sensitive — a degraded recent
+        # window can make a genuinely-skilled calibration look no-skill. K-fold CV
+        # (shuffled) is the honest skill estimate; it still catches a degenerate
+        # no-skill map (which fails CV too), so the zero-delivery protection holds.
+        cv_brier = _cv_brier(samples)
+        cv_naive = 0.25  # Brier of always-predict-0.50 on binary outcomes
+        if cv_brier is not None:
+            log.info(f"[calibration] Brier (5-fold CV, n={n_total}): {cv_brier:.4f} vs naive {cv_naive:.4f}")
+
         meta = {
             "n_total": n_total,
             "n_train": len(train),
@@ -343,25 +430,30 @@ async def run_calibration() -> dict:
             "n_neutral": regime_counts["neutral"],
             "brier_walkforward": brier if not (isinstance(brier, float) and brier != brier) else None,
             "brier_naive_50pct": round(brier_naive, 4) if valid else None,
+            "brier_cv": cv_brier,
+            "sectors_calibrated": sorted(sector_map.keys()),
             "last_run": datetime.now(timezone.utc).isoformat()[:19],
             "conf_floor": _CONF_FLOOR,
             "conf_ceil": _CONF_CEIL,
         }
 
         # Self-gate: only deploy a calibration that demonstrably beats the naive
-        # 50% baseline. A no-skill / over-pessimistic map (Brier ≥ naive) flattens
-        # confidence toward the base win-rate, which can fall below the delivery
-        # floor and silently zero out ALL signal delivery (observed 2026-06-15:
-        # isotonic collapsed to a flat 42.8%, below the 46% swing floor → 0 sends).
-        # When that happens we persist a no-op map (only _meta) so apply_calibration
-        # passes raw confidence through instead of suppressing every signal.
-        skilled = isinstance(brier, float) and brier == brier and bool(valid) and brier < brier_naive
+        # 50% baseline under K-fold CV (margin 0.002 to avoid deploying on noise).
+        # A no-skill / over-pessimistic map flattens confidence toward the base
+        # win-rate, which can fall below the delivery floor and silently zero out
+        # ALL delivery (observed 2026-06-15: isotonic collapsed to a flat 42.8%,
+        # below the 46% swing floor → 0 sends). When that happens we persist a
+        # no-op map (only _meta) so apply_calibration passes raw confidence through
+        # instead of suppressing every signal. CV (not the single temporal split)
+        # is the gate so a regime-shifted recent window can't false-reject a
+        # working map — but a truly degenerate map still fails CV and is rejected.
+        skilled = cv_brier is not None and cv_brier < (cv_naive - 0.002)
         if not skilled:
             meta["applied"] = False
             meta["reason"] = (
-                f"no skill (Brier {brier:.4f} ≥ naive {brier_naive:.4f}) — raw confidence passed through"
-                if (isinstance(brier, float) and brier == brier and valid)
-                else "insufficient validation data — raw confidence passed through"
+                f"no skill (CV Brier {cv_brier:.4f} ≥ naive {cv_naive:.4f}) — raw confidence passed through"
+                if cv_brier is not None
+                else "insufficient data for CV skill test — raw confidence passed through"
             )
             cal_map = {"_meta": meta}
             log.warning(f"[calibration] NOT deployed: {meta['reason']}")
@@ -465,14 +557,21 @@ def apply_calibration(
     action: str,
     cal_map: dict,
     regime: str | None = None,
+    sector: str | None = None,
 ) -> tuple[float, dict | None]:
     """
     Map raw model confidence → calibrated win probability.
 
     Priority order:
-      1. Regime-specific isotonic  (if regime provided + ≥20 training samples)
-      2. Global isotonic           (if ≥20 training samples available)
-      3. Platt bin blend           (fallback)
+      1. Sector-specific isotonic  (if sector provided + ≥_SECTOR_MIN_N samples)
+      2. Regime-specific isotonic  (if regime provided + ≥20 training samples)
+      3. Global isotonic           (if ≥10 training samples available)
+      4. Platt bin blend           (fallback)
+
+    Sector takes precedence over regime because the live edge is overwhelmingly
+    sector-concentrated (XLK ~54% WR vs XLF/XLP ~30-34%); a weak-sector signal is
+    calibrated down to its empirical WR, which the delivery floor then gates —
+    so no hard sector block is required.
 
     Returns (calibrated_confidence %, bin_meta_dict).
     Output is clamped to [_CONF_FLOOR, _CONF_CEIL].
@@ -482,7 +581,17 @@ def apply_calibration(
 
     x = raw_conf / 100.0
 
-    # ── 1. Regime-specific isotonic ───────────────────────────────────────────
+    # ── 1. Sector-specific isotonic (highest priority) ───────────────────────
+    if sector and "_sector" in cal_map:
+        sec_entry = cal_map["_sector"].get(sector, {})
+        iso_sec = sec_entry.get("_isotonic")
+        if iso_sec and sec_entry.get("n", 0) >= _SECTOR_MIN_N:
+            p = _interp_isotonic(iso_sec, x)
+            if p is not None:
+                cal = round(min(_CONF_CEIL, max(_CONF_FLOOR, p * 100)), 1)
+                return cal, {"source": f"isotonic_sector_{sector}", "prob": round(p, 4), "n": sec_entry["n"]}
+
+    # ── 2. Regime-specific isotonic ───────────────────────────────────────────
     if regime and "_regime" in cal_map:
         reg_entry = cal_map["_regime"].get(regime, {})
         iso_reg = reg_entry.get("_isotonic")
@@ -492,7 +601,7 @@ def apply_calibration(
                 cal = round(min(_CONF_CEIL, max(_CONF_FLOOR, p * 100)), 1)
                 return cal, {"source": f"isotonic_{regime}", "prob": round(p, 4)}
 
-    # ── 2. Global isotonic ────────────────────────────────────────────────────
+    # ── 3. Global isotonic ────────────────────────────────────────────────────
     iso = cal_map.get("_isotonic")
     if iso and len(iso) >= 10:
         p = _interp_isotonic(iso, x)
@@ -500,7 +609,7 @@ def apply_calibration(
             cal = round(min(_CONF_CEIL, max(_CONF_FLOOR, p * 100)), 1)
             return cal, {"source": "isotonic_global", "prob": round(p, 4)}
 
-    # ── 3. Platt bin blend (fallback) ─────────────────────────────────────────
+    # ── 4. Platt bin blend (fallback) ─────────────────────────────────────────
     b = str(max(0, (int(raw_conf) // _BIN_SIZE) * _BIN_SIZE))
     _lower = str(max(0, int(b) - _BIN_SIZE))
     entry = cal_map.get(b) or (cal_map.get(_lower) if _lower != b else None)

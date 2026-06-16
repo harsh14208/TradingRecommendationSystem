@@ -1294,7 +1294,8 @@ def _assemble_signal(
             pre_cal = confidence
             _sp500_trend = macro.get("sp500_trend") if macro else None
             _cal_regime = "bull" if _sp500_trend == "up" else "bear" if _sp500_trend == "down" else "neutral"
-            confidence, _bin = apply_calibration(confidence, action, cal_map, regime=_cal_regime)
+            _cal_sector = (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper())
+            confidence, _bin = apply_calibration(confidence, action, cal_map, regime=_cal_regime, sector=_cal_sector)
             if _bin and abs(confidence - pre_cal) >= 2:
                 _source = _bin.get("source", "platt")
                 _emp_wr = round((_bin.get("win_rate") or _bin.get("prob", pre_cal / 100)) * 100, 1)

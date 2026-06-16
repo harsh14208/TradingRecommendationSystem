@@ -19,7 +19,11 @@ import pandas as pd
 import pytest
 
 # SQLAlchemy Row-compatible mock for calibration queries
-_CalRow = namedtuple("_CalRow", ["action", "confidence", "outcome_14d", "outcome_pct", "created_at"])
+_CalRow = namedtuple(
+    "_CalRow",
+    ["action", "confidence", "outcome_14d", "outcome_pct", "created_at", "sector_etf", "ticker"],
+    defaults=[None, None],  # sector_etf, ticker — added for sector-specific calibration
+)
 
 # Ensure backend is on path
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -432,14 +436,41 @@ async def test_run_calibration_sell_logic_and_brier():
     prices = np.linspace(100, 110, 150)
     spy_df = pd.DataFrame({"Close": prices}, index=dates)
 
-    with patch("database.AsyncSessionLocal", session_mock):
-        with patch("yfinance.download", return_value=spy_df):
-            result = await run_calibration()
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as _td:
+        with patch("database.AsyncSessionLocal", session_mock):
+            with patch("yfinance.download", return_value=spy_df):
+                with patch("services.calibration._CAL_FILE", Path(_td) / "calibration.json"):
+                    result = await run_calibration()
 
     assert "_meta" in result
     assert result["_meta"]["n_total"] == 30
     # Brier should be computed because validation set exists
     assert "brier_walkforward" in result["_meta"]
+
+
+def test_apply_calibration_sector_priority():
+    """Sector-specific isotonic takes priority over regime/global; falls through
+    when the sector is unmapped or below the per-sector min-N."""
+    from services.calibration import _SECTOR_MIN_N, apply_calibration
+
+    cal = {
+        "_isotonic": [[0.35, 0.50], [0.78, 0.50]],  # global flat 50%
+        "_regime": {"neutral": {"n": 50, "_isotonic": [[0.35, 0.60], [0.78, 0.60]]}},  # regime 60%
+        "_sector": {"XLF": {"n": _SECTOR_MIN_N, "_isotonic": [[0.35, 0.42], [0.78, 0.42]]}},  # XLF 42%
+    }
+    # XLF signal → sector curve (42%) wins over regime (60%) and global (50%)
+    c, b = apply_calibration(60.0, "BUY", cal, regime="neutral", sector="XLF")
+    assert b["source"] == "isotonic_sector_XLF" and c == 42.0
+    # Unmapped sector → falls back to regime
+    _c2, b2 = apply_calibration(60.0, "BUY", cal, regime="neutral", sector="XLY")
+    assert b2["source"] == "isotonic_neutral"
+    # Sector below min-N → falls back to regime
+    cal["_sector"]["XLF"]["n"] = _SECTOR_MIN_N - 1
+    _c3, b3 = apply_calibration(60.0, "BUY", cal, regime="neutral", sector="XLF")
+    assert b3["source"] == "isotonic_neutral"
 
 
 @pytest.mark.asyncio
