@@ -2,6 +2,20 @@
 // SIGNAL.TRADE cinematic — Signal Dashboard (real signals + rationale + Telegram preview).
 const { useState: dUseState, useEffect: dUseEffect, useRef: dUseRef } = React;
 
+// Human, non-alarming label for why a signal isn't delivered. Most non-delivered
+// rows are simply below the confidence bar; lead with that framing rather than a
+// blunt "not sent". `short` returns a compact uppercase chip.
+function deliveryLabel(status, short) {
+  const s = (status || "").toLowerCase();
+  if (s.includes("mean-reversion setup") || s.includes("oversold")) return short ? "NO MR SETUP" : "No mean-reversion setup";
+  if (s.includes("floor") || s.includes("confidence")) return short ? "BELOW THRESHOLD" : "Below confidence threshold";
+  if (s.includes("intraday") || s.includes("style")) return short ? "STYLE OFF" : "Intraday style — not delivered";
+  if (s.includes("sector")) return short ? "SECTOR PAUSED" : "Sector temporarily paused";
+  if (s.includes("regime") || s.includes("long-only")) return short ? "NOT BUY" : "Not a buy signal";
+  if (s.includes("blocked") || s.includes("edge")) return short ? "PAUSED" : "Ticker paused — no mean-reversion edge";
+  return short ? "BELOW THRESHOLD" : "Below delivery threshold";
+}
+
 function sigColor(signal) {
   return signal === "SELL" ? "var(--bear)" : signal === "HOLD" ? "var(--neutral)" : "var(--bull)";
 }
@@ -15,6 +29,26 @@ function seriesFor(s, n = 90) {
   return raw.map((v) => v * k);
 }
 function sparkForSignal(s) { return seriesFor(s, 30).slice(-30); }
+
+// Real mini-sparkline data (last ~30 daily closes) from /api/signals/{tk}/spark,
+// cached per ticker. Falls back to the synthetic series only while loading or if
+// the fetch fails — the card graph should reflect real price action.
+const _sparkCache = {};
+function useRealSpark(ticker) {
+  const [prices, setPrices] = dUseState(() => _sparkCache[ticker] || null);
+  dUseEffect(() => {
+    if (!ticker || _sparkCache[ticker]) { if (_sparkCache[ticker]) setPrices(_sparkCache[ticker]); return; }
+    let live = true;
+    apiFetch(`/api/signals/${encodeURIComponent(ticker)}/spark`)
+      .then((d) => {
+        const p = d && Array.isArray(d.prices) ? d.prices : null;
+        if (p && p.length > 1) { _sparkCache[ticker] = p; if (live) setPrices(p); }
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [ticker]);
+  return prices;
+}
 function winSparkForSignal(s) {
   const rnd = mulberry32((s.seed || 1) * 31 + 7);
   const out = [];
@@ -75,20 +109,61 @@ function BigChart({ s }) {
   );
 }
 
+// Real OHLCV price chart for the dashboard — reuses the shared <Chart>
+// (LightweightCharts, /api/chart, entry/stop/target guides) with a date-range
+// selector. Replaces the synthetic BigChart so the dashboard shows real prices.
+function DashChart({ s }) {
+  const [period, setPeriod] = dUseState("1M");
+  const sig = { ticker: s.tk, entry: s.entry, stop: s.stop, target: s.target, action: s.signal };
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 4, marginBottom: 8 }}>
+        {["1D", "1W", "1M", "YTD", "ALL"].map((p) => (
+          <button key={p} onClick={() => setPeriod(p)} className="mono"
+            style={{ fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 5, cursor: "pointer",
+              border: "1px solid var(--line)",
+              background: period === p ? "var(--accent)" : "transparent",
+              color: period === p ? "#052418" : "var(--text-dim)" }}>{p}</button>
+        ))}
+      </div>
+      <Chart signal={sig} style="area" period={period}></Chart>
+    </div>
+  );
+}
+
 function WatchRow({ s, active, onClick }) {
+  const undeliverable = s.deliverable === false;
+  const realSpark = useRealSpark(s.tk);
+  const sparkData = realSpark && realSpark.length > 1 ? realSpark : sparkForSignal(s);
   return (
     <button onClick={onClick} style={{
       display: "grid", gridTemplateColumns: "1fr auto", gap: "2px 10px", alignItems: "center",
       width: "100%", textAlign: "left", padding: "11px 14px",
-      background: active ? "var(--panel-2)" : "transparent",
-      border: "none", borderLeft: active ? `2px solid ${sigColor(s.signal)}` : "2px solid transparent",
+      background: active ? "var(--panel-2)"
+        : undeliverable ? "repeating-linear-gradient(135deg, rgba(120,120,120,0.05) 0 8px, transparent 8px 16px)"
+        : "transparent",
+      border: "none",
+      borderLeft: active ? `2px solid ${sigColor(s.signal)}`
+        : undeliverable ? "2px solid rgba(120,120,120,0.4)" : "2px solid transparent",
       borderBottom: "1px solid var(--line-soft)", transition: "background 0.18s var(--ease)", cursor: "pointer",
+      opacity: undeliverable && !active ? 0.7 : 1,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span className="mono" style={{ fontWeight: 700, fontSize: 13, color: "var(--text)" }}>{s.tk}</span>
         <SignalBadge signal={s.signal}></SignalBadge>
+        <span className="mono" title={`Confidence ${Math.round(s.conf || 0)}%`}
+          style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
+            color: (s.conf || 0) >= 70 ? "var(--bull)" : (s.conf || 0) >= 50 ? "var(--neutral)" : "var(--text-dim)" }}>
+          {Math.round(s.conf || 0)}%
+        </span>
+        {s.deliverable === false && (
+          <span title={s.deliveryStatus ? deliveryLabel(s.deliveryStatus) + " — " + s.deliveryStatus : deliveryLabel(s.deliveryStatus)}
+            className="mono" style={{ fontSize: 9, fontWeight: 700, color: "var(--text-dim)",
+              background: "rgba(120,120,120,0.14)", border: "1px solid rgba(120,120,120,0.30)",
+              borderRadius: 3, padding: "0 4px", letterSpacing: "0.04em" }}>{deliveryLabel(s.deliveryStatus, true)}</span>
+        )}
       </div>
-      <Spark data={sparkForSignal(s)} w={62} h={22} color={s.chgPct >= 0 ? "bull" : "bear"} fill={false} sw={1.2}></Spark>
+      <Spark data={sparkData} w={62} h={22} color={(sparkData[sparkData.length - 1] - sparkData[0]) >= 0 ? "bull" : "bear"} fill={false} sw={1.2}></Spark>
       <span className="mono dim" style={{ fontSize: 11.5 }}>${s.px.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
       <span className={`mono ${s.chgPct >= 0 ? "bull" : "bear"}`} style={{ fontSize: 11.5, textAlign: "right" }}>
         {s.chgPct >= 0 ? "+" : ""}{s.chgPct.toFixed(2)}%
@@ -312,7 +387,20 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
             </div>
           </div>
           <Defer ms={500} skeleton={<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>{[0, 1, 2, 3, 4, 5].map((i) => <SkelBlock key={i} h={40}></SkelBlock>)}</div>}>
-            <div>{filtered.map((x) => <WatchRow key={x.tk} s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>)}</div>
+            <div>{filtered.map((x, i) => (
+              <React.Fragment key={x.tk}>
+                {x.deliverable === false && (i === 0 || filtered[i - 1].deliverable !== false) && (
+                  <div className="kicker" style={{ display: "flex", alignItems: "center", gap: 8,
+                    padding: "8px 14px", color: "var(--text-faint)",
+                    borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)",
+                    background: "var(--panel-2)" }}>
+                    <span style={{ flex: "none" }}>BELOW DELIVERY THRESHOLD</span>
+                    <span style={{ flex: 1, height: 1, background: "var(--line)" }}></span>
+                  </div>
+                )}
+                <WatchRow s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
+              </React.Fragment>
+            ))}</div>
           </Defer>
         </aside>
 
@@ -335,6 +423,17 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
               <span className={`mono ${s.chgPct >= 0 ? "bull" : "bear"}`} style={{ fontSize: 14, fontWeight: 600 }}>{s.chgPct >= 0 ? "+" : ""}{s.chgPct.toFixed(2)}% today</span>
               <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>{s.sources.map((src) => <SourceChip key={src} s={src}></SourceChip>)}</div>
             </div>
+            {s.deliverable === false && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, lineHeight: 1.4,
+                color: "var(--text-dim)", background: "rgba(120,120,120,0.10)",
+                border: "1px solid rgba(120,120,120,0.25)", borderRadius: 6,
+                padding: "7px 11px", marginBottom: 12 }}>
+                <span style={{ fontWeight: 700 }}>{deliveryLabel(s.deliveryStatus)}</span>
+                <span className="dim">
+                  {s.deliveryStatus || "below the delivery threshold"} — shown for context; no Telegram / EOD alert is sent.
+                </span>
+              </div>
+            )}
             {/* Signal actions */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
               <button className="btn sm" onClick={() => onSend(s.id)} title="Shift+S">📡 Send</button>
@@ -342,7 +441,7 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
               <button className="btn sm" onClick={() => onReview(s.id)}>✓ Reviewed</button>
               <button className="btn sm" onClick={() => onPriceAlert(s)}>🚨 Alert</button>
             </div>
-            <Defer ms={700} skeleton={<SkelBlock h={260}></SkelBlock>}><BigChart s={s}></BigChart></Defer>
+            <Defer ms={700} skeleton={<SkelBlock h={260}></SkelBlock>}><DashChart s={s}></DashChart></Defer>
             {/* Trade plan */}
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line-soft)" }}>
               {s.entry ? (

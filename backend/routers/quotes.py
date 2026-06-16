@@ -90,7 +90,7 @@ async def chart_data(
     if response:
         response.headers["X-Data-License"] = _DATA_LICENSE_HEADER
 
-    valid_periods = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y"}
+    valid_periods = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "ytd", "max"}
     period = period if period in valid_periods else "3mo"
     interval = "5m" if period == "1d" else "1h" if period == "5d" else "1d"
 
@@ -124,7 +124,7 @@ async def relative_chart(
     if response:
         response.headers["X-Data-License"] = _DATA_LICENSE_HEADER
 
-    valid_periods = {"1mo", "3mo", "6mo", "1y", "2y"}
+    valid_periods = {"1mo", "3mo", "6mo", "1y", "2y", "ytd", "max"}
     period = period if period in valid_periods else "3mo"
 
     ticker_df, bench_df = await asyncio.gather(

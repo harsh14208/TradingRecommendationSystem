@@ -203,7 +203,7 @@ function InfoPop({ title, children }) {
 }
 
 /* ─── Interactive OHLCV Chart (LightweightCharts v4) ────────────────────────── */
-const PERIOD_API = { "1D": "1d", "5D": "5d", "1M": "1mo", "3M": "3mo", "1Y": "1y" };
+const PERIOD_API = { "1D": "1d", "1W": "5d", "5D": "5d", "1M": "1mo", "3M": "3mo", "1Y": "1y", "YTD": "ytd", "ALL": "max" };
 
 // ── Drawing tools helpers ─────────────────────────────────────────────────────
 const _DRAW_KEY = ticker => `chart_drawings_v1_${ticker}`;
@@ -267,7 +267,7 @@ function Chart({ signal, style, period = "3M" }) {
     if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
 
     const el      = containerRef.current;
-    const isIntra = period === "1D" || period === "5D";
+    const isIntra = period === "1D" || period === "5D" || period === "1W";
 
     const chart = LC.createChart(el, {
       width:  el.clientWidth,

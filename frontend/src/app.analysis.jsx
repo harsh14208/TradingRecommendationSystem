@@ -800,8 +800,11 @@ function MarketOverviewView({ open, onClose, online }) {
   const aaiiExposure = aaii.bull_pct ?? 50;
   const aaiiColor = aaiiExposure > 70 ? "var(--down)" : aaiiExposure < 30 ? "var(--up)" : "var(--warn)";
 
-  // Regime banner — hmm.regime is "bull" or "bear"; fall back to sp500_trend
-  const regimeBull = hmm.regime === "bull" || (!hmm.regime && macro.sp500_trend === "up");
+  // Regime banner — hmm.regime is "bull"/"bear"/"transition". When the model is
+  // degraded it returns "unknown" (bull=bear=0.5); treat that as "no regime" and
+  // fall back to sp500_trend rather than painting a misleading BEAR banner.
+  const hasRegime = hmm.regime && hmm.regime !== "unknown";
+  const regimeBull = hasRegime ? hmm.regime === "bull" : macro.sp500_trend === "up";
   const transRisk  = hmm.transition_risk ?? 0;
   const bullProb   = hmm.bull_prob ?? (regimeBull ? 0.7 : 0.3);
   const bearProb   = hmm.bear_prob ?? (1 - bullProb);

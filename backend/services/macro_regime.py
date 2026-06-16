@@ -32,6 +32,15 @@ import numpy as np
 
 log = logging.getLogger("signal.trade.macro_regime")
 
+
+def _to_tz_naive(index):
+    """Strip tz from a DatetimeIndex so Polygon (tz-aware) and yfinance (tz-naive)
+    histories can be aligned. A no-op on already-naive indexes."""
+    if getattr(index, "tz", None) is not None:
+        return index.tz_localize(None)
+    return index
+
+
 # ── Cache ────────────────────────────────────────────────────────────────────
 _cache: dict = {"result": None, "ts": 0.0}
 _CACHE_TTL = 3600  # re-fit once per hour (data moves slowly)
@@ -111,6 +120,12 @@ async def _build_feature_matrix() -> Optional[np.ndarray]:
     closes_spy = spy["Close"].astype(float)
     closes_vix = vix["Close"].astype(float)
 
+    # Drop timezone before aligning: SPY history is tz-aware (Polygon, America/New_York)
+    # while ^VIX is tz-naive (yfinance), so a raw index.intersection() comes back empty
+    # even on identical calendar dates — which silently forces the HMM into fallback.
+    closes_spy.index = _to_tz_naive(closes_spy.index)
+    closes_vix.index = _to_tz_naive(closes_vix.index)
+
     # Align on common index
     idx = closes_spy.index.intersection(closes_vix.index)
     if len(idx) < 30:
@@ -127,8 +142,12 @@ async def _build_feature_matrix() -> Optional[np.ndarray]:
 
     # Feature 2: yield curve slope (10Y - 3M)
     if tnx is not None and irx is not None and not tnx.empty and not irx.empty:
-        tnx_c = tnx["Close"].astype(float).reindex(idx).ffill().bfill()
-        irx_c = irx["Close"].astype(float).reindex(idx).ffill().bfill()
+        tnx_c = tnx["Close"].astype(float)
+        irx_c = irx["Close"].astype(float)
+        tnx_c.index = _to_tz_naive(tnx_c.index)
+        irx_c.index = _to_tz_naive(irx_c.index)
+        tnx_c = tnx_c.reindex(idx).ffill().bfill()
+        irx_c = irx_c.reindex(idx).ffill().bfill()
         f_curve = (tnx_c - irx_c).values
     else:
         f_curve = np.zeros(len(idx))

@@ -78,6 +78,10 @@ async def get_polygon_history(ticker: str, period: str = "3mo", interval: str = 
         start_dt = end_dt - timedelta(days=365)
     elif period == "2y":
         start_dt = end_dt - timedelta(days=730)
+    elif period == "ytd":
+        start_dt = end_dt.replace(month=1, day=1)
+    elif period == "max":
+        start_dt = end_dt - timedelta(days=365 * 20)  # ~20y; Polygon caps at plan history
     else:
         start_dt = end_dt - timedelta(days=90)
 

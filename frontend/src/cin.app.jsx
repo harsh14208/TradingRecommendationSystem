@@ -67,7 +67,9 @@ function toCinSignal(s) {
   const tk = s.ticker || s.tk || "???";
   const signal = (s.action || s.signal || "HOLD").toUpperCase();
   const px = toNum(s.price ?? s.px, 0);
-  const chg = toNum(s.change ?? s.chgPct, 0);
+  // chgPct must be the PERCENT move (API `changePct`), not the dollar `change`
+  // — using s.change here printed the $ move with a % sign (e.g. ASML -35.93%).
+  const chg = toNum(s.changePct ?? s.chgPct, 0);
   const entry = s.entry != null ? toNum(s.entry, null) : (mock?.entry ?? null);
   const stop = s.stop != null ? toNum(s.stop, null) : (mock?.stop ?? null);
   const target = s.target != null ? toNum(s.target, null) : (mock?.target ?? null);
@@ -106,6 +108,10 @@ function toCinSignal(s) {
     seed: s.seed || mock?.seed || hashSeed(tk),
     drift: toNum(s.drift, mock?.drift ?? 0),
     volatility: toNum(s.volatility ?? s.vol, mock?.vol ?? 0.02),
+    // Deliverability: whether the delivery pipeline would actually send this.
+    // Default true so mock/legacy payloads (no field) aren't all flagged.
+    deliverable: s.deliverable !== false,
+    deliveryStatus: s.deliveryStatus || null,
   };
 }
 

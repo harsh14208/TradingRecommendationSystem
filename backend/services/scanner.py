@@ -2068,9 +2068,14 @@ async def _run_scan_impl(broadcast_fn=None, broadcast_signal_fn=None):
     market_ctx = await fetch_market_context(tickers, settings)
 
     # ── Step 2: batch history ────────────────────────────────────────────
+    # 2y (not 1y): the §86 cross-sectional shadow scorer needs ≥253 daily bars
+    # for its 12-1 momentum feature (close.shift(252)); 1y ≈ 251 bars left it
+    # one short, so score_batch silently returned {} every scan and the §92
+    # shadow accrued ZERO forward signals since 2026-06-09. All other indicators
+    # use ≤200-bar rolling windows, so the extra history is inert for them.
     _mark_scan_stage("history_batch")
     try:
-        histories = await get_histories_batch(tickers, period="1y", interval="1d")
+        histories = await get_histories_batch(tickers, period="2y", interval="1d")
         log.info(f" history batch: {len(histories)}/{len(tickers)} tickers loaded")
     except Exception as e:
         log.info(f" history batch failed: {e}")

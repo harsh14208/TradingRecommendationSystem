@@ -4,9 +4,23 @@ Tests for services/delivery_gates.py.
 Each gate is tested in isolation via a minimal sig_dict and a mock DB + settings.
 """
 
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+@contextmanager
+def _no_calendar_haircuts():
+    """Neutralize the date-dependent gate haircuts (FOMC proximity, pre-long-weekend)
+    so confidence-floor *boundary* tests don't flake when run near those calendar
+    dates (e.g. the day before an FOMC decision or a holiday long weekend)."""
+    with (
+        patch("services.delivery_gates._days_to_nearest_fomc", return_value=999),
+        patch("services.market_calendar.is_pre_long_weekend", return_value=(False, None)),
+    ):
+        yield
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -158,25 +172,25 @@ async def test_gate_blocks_low_global_confidence():
 
 @pytest.mark.asyncio
 async def test_gate_blocks_intraday_below_floor():
-    """Intraday is disabled (floor=999) — all intraday signals blocked."""
+    """Intraday re-enabled 2026-06-15 at the 40% floor — below-floor still blocked."""
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="intraday", confidence=65.0), db, _Settings())
+    reason, _ = await check_delivery_gates(_sig(style="intraday", confidence=35.0), db, _Settings())
     assert reason is not None
-    assert "floored" in reason or "disabled" in reason
+    assert "floor" in reason or "40%" in reason
 
 
 @pytest.mark.asyncio
-async def test_gate_blocks_intraday_above_old_floor():
-    """Intraday disabled at floor=999 — even high confidence signals are blocked.
-    Live data: 34.8% WR, Sharpe -1.88 (May 2026). Disabled pending re-calibration."""
+async def test_gate_allows_intraday_above_floor_without_mr():
+    """Intraday re-enabled (2026-06-15, owner request): a momentum/breakout signal
+    above the 40% floor delivers even without an MR setup (hasMr=False) — intraday
+    is exempt from the MR-setup gate."""
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="intraday", confidence=70.0), db, _Settings())
-    assert reason is not None
-    assert "floored" in reason or "disabled" in reason
+    reason, _ = await check_delivery_gates(_sig(style="intraday", confidence=70.0, hasMr=False), db, _Settings())
+    assert reason is None
 
 
 @pytest.mark.asyncio
@@ -195,7 +209,8 @@ async def test_gate_allows_swing_at_46():
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(style="swing", confidence=46.0), db, _Settings())
+    with _no_calendar_haircuts():
+        reason, _ = await check_delivery_gates(_sig(style="swing", confidence=46.0), db, _Settings())
     assert reason is None
 
 
@@ -604,11 +619,12 @@ async def test_ticker_adaptive_high_wr_lowers_floor():
     db.execute = AsyncMock(side_effect=[app_result, sector_result, sector_result, sector_result])
 
     # With floor lowered to 52, a conf=53 signal should pass global floor
-    reason, _ = await check_delivery_gates(
-        _sig(ticker="AAPL", confidence=53.0),
-        db,
-        _Settings(),
-    )
+    with _no_calendar_haircuts():
+        reason, _ = await check_delivery_gates(
+            _sig(ticker="AAPL", confidence=53.0),
+            db,
+            _Settings(),
+        )
     # May pass or fail other gates but NOT the global conf floor
     if reason:
         assert "52" not in reason and "global floor" not in reason

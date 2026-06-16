@@ -1,6 +1,19 @@
 /* global React */
 const { useState, useEffect } = React;
 
+// Human, non-alarming label for why a signal isn't delivered (most are simply
+// below the confidence bar). `short` returns a compact uppercase chip.
+function deliveryLabel(status, short) {
+  const s = (status || "").toLowerCase();
+  if (s.includes("mean-reversion setup") || s.includes("oversold")) return short ? "NO MR SETUP" : "No mean-reversion setup";
+  if (s.includes("floor") || s.includes("confidence")) return short ? "BELOW THRESHOLD" : "Below confidence threshold";
+  if (s.includes("intraday") || s.includes("style")) return short ? "STYLE OFF" : "Intraday style — not delivered";
+  if (s.includes("sector")) return short ? "SECTOR PAUSED" : "Sector temporarily paused";
+  if (s.includes("regime") || s.includes("long-only")) return short ? "NOT BUY" : "Not a buy signal";
+  if (s.includes("blocked") || s.includes("edge")) return short ? "PAUSED" : "Ticker paused — no MR edge";
+  return short ? "BELOW THRESHOLD" : "Below delivery threshold";
+}
+
 // ── Static mock data (replaced by real API when online) ─────────────────────
 const MOBILE_SIGNALS_MOCK = [
   { tk:"NVDA", action:"BUY",  style:"POSITION", conf:87, head:"Breakout above 200-DMA + CUDA license rumor", entry:1245, stop:1188, target:1385, time:"09:31", co:"NVIDIA Corp",            price:1248.40, ch:32.10,  chPct:2.64  },
@@ -166,6 +179,8 @@ function FeedScreen({ signals, onSelect }) {
     price:  s.price,
     ch:     s.change || s.ch || 0,
     chPct:  s.changePct || s.chPct || 0,
+    deliverable:    s.deliverable !== false,
+    deliveryStatus: s.deliveryStatus || null,
     raw:    s,
   });
 
@@ -192,12 +207,30 @@ function FeedScreen({ signals, onSelect }) {
       <div className="m-feed">
         {items.map((s, i) => {
           const c = toCard(s);
+          const undeliv = c.deliverable === false;
+          const showDivider = undeliv && (i === 0 || (items[i - 1] && items[i - 1].deliverable !== false));
           return (
-            <div key={i} className={`m-card ${c.action}`} onClick={() => onSelect && onSelect(c)} role="button" tabIndex={0}>
+            <React.Fragment key={i}>
+            {showDivider && (
+              <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 16px 4px",
+                fontSize:10, fontWeight:700, color:"var(--text-faint)", letterSpacing:"0.1em" }}>
+                <span style={{ flex:"none" }}>BELOW DELIVERY THRESHOLD</span>
+                <span style={{ flex:1, height:1, background:"var(--line)" }}/>
+              </div>
+            )}
+            <div className={`m-card ${c.action}`} onClick={() => onSelect && onSelect(c)} role="button" tabIndex={0}
+              style={undeliv ? { opacity:0.7, borderLeft:"2px solid rgba(120,120,120,0.45)",
+                background:"repeating-linear-gradient(135deg, rgba(120,120,120,0.05) 0 8px, transparent 8px 16px)" } : undefined}>
               <div className="m-card-top">
                 <span className={`m-verb ${c.action}`}>{c.action}</span>
                 <span className="m-tk">{c.tk}</span>
                 <span className={`m-style-badge ${c.style.toLowerCase()}`}>{c.style}</span>
+                {c.deliverable === false && (
+                  <span title={c.deliveryStatus || "Below delivery threshold"}
+                    style={{ fontSize:9, fontWeight:700, color:"var(--text-dim)",
+                      background:"rgba(120,120,120,0.16)", border:"1px solid rgba(120,120,120,0.3)",
+                      borderRadius:3, padding:"1px 4px", letterSpacing:"0.04em" }}>{deliveryLabel(c.deliveryStatus, true)}</span>
+                )}
                 <span className="m-conf">{c.conf}%</span>
               </div>
               <div className="m-card-head">{c.head}</div>
@@ -214,6 +247,7 @@ function FeedScreen({ signals, onSelect }) {
                 <span className="m-time">{c.time}</span>
               </div>
             </div>
+            </React.Fragment>
           );
         })}
         {items.length === 0 && (
@@ -258,6 +292,14 @@ function DetailScreen({ signal, onBack, onSend }) {
             <div className="m-meta"><span className="l">SENTIMENT</span><span className="v" style={{ color:"var(--up)" }}>{s.raw?.sentiment != null ? `${s.raw.sentiment >= 0 ? "+" : ""}${Number(s.raw.sentiment).toFixed(2)}` : "—"}</span></div>
             <div className="m-meta" style={{ marginLeft:"auto" }}><span className="l">STYLE</span><span className="v">{s.style}</span></div>
           </div>
+          {s.deliverable === false && (
+            <div style={{ display:"flex", gap:6, alignItems:"baseline", fontSize:12, lineHeight:1.4,
+              color:"var(--text-dim)", background:"rgba(120,120,120,0.12)",
+              border:"1px solid rgba(120,120,120,0.25)", borderRadius:6, padding:"7px 10px", marginTop:10 }}>
+              <strong style={{ whiteSpace:"nowrap" }}>{deliveryLabel(s.deliveryStatus)}</strong>
+              <span>{s.deliveryStatus || "below the delivery threshold"} — shown for context; no alert is sent.</span>
+            </div>
+          )}
         </div>
 
         <div className="m-plain">

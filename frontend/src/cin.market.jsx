@@ -259,11 +259,19 @@ function PageMarket({ marketCtx, sources, log }) {
   const fg = marketCtx?.fear_greed || M_FEAR_GREED;
   const macro = marketCtx?.macro || M_MACRO;
   const breadth = marketCtx?.breadth || M_BREADTH;
-  // Fall back to the mock regime when the model degrades (returns "unknown"),
-  // consistent with the other macro panels' mock fallbacks.
-  const hmm = (marketCtx?.hmm_regime && marketCtx.hmm_regime.regime && marketCtx.hmm_regime.regime !== "unknown")
-    ? marketCtx.hmm_regime : M_HMM;
-  const regimeCol = hmm.regime === "bear" ? "var(--bear)" : hmm.regime === "transition" ? "var(--neutral)" : "var(--bull)";
+  // Regime panel. Use the demo mock ONLY while the page is still loading
+  // (marketCtx === null, e.g. the unauthenticated teaser). Once real context
+  // has loaded but the HMM degraded (regime "unknown" — no/insufficient data),
+  // show an honest "Unavailable" state. Never paint a fabricated BULL 73% over
+  // a degraded model on the authed dashboard — every signal is gated by this tape.
+  const hmmLive = marketCtx?.hmm_regime;
+  const regimeUnavailable = !!marketCtx && (!hmmLive || !hmmLive.regime || hmmLive.regime === "unknown");
+  const hmm = regimeUnavailable
+    ? { regime: "unknown", bull_prob: 0, bear_prob: 0, transition_risk: 0, vix_z: 0 }
+    : (marketCtx ? hmmLive : M_HMM);
+  const regimeCol = regimeUnavailable
+    ? "var(--text-faint)"
+    : hmm.regime === "bear" ? "var(--bear)" : hmm.regime === "transition" ? "var(--neutral)" : "var(--bull)";
   const contextSignals = marketContextCards(marketCtx);
   const srcList = marketSources(sources);
   const rotation = marketRotation(macro);
@@ -296,8 +304,8 @@ function PageMarket({ marketCtx, sources, log }) {
         <div className="glass" style={{ padding: 20 }}>
           <div className="kicker" style={{ marginBottom: 12 }}>REGIME · HIDDEN MARKOV MODEL</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-            <span className="mono" style={{ fontSize: 22, fontWeight: 700, color: regimeCol, textTransform: "capitalize" }}>{hmm.regime}</span>
-            <span className="kicker" style={{ color: regimeCol }}>{((hmm.bull_prob || 0) * 100).toFixed(0)}% PROBABILITY</span>
+            <span className="mono" style={{ fontSize: 22, fontWeight: 700, color: regimeCol, textTransform: "capitalize" }}>{regimeUnavailable ? "Unavailable" : hmm.regime}</span>
+            <span className="kicker" style={{ color: regimeCol }}>{regimeUnavailable ? "MODEL DEGRADED — NO DATA" : `${((hmm.bull_prob || 0) * 100).toFixed(0)}% PROBABILITY`}</span>
           </div>
           <div style={{ height: 8, borderRadius: 4, overflow: "hidden", display: "flex", marginBottom: 12 }}>
             <div style={{ width: `${(hmm.bull_prob || 0) * 100}%`, background: "var(--bull)" }}></div>

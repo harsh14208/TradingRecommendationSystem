@@ -58,7 +58,13 @@ def _utcnow_naive() -> datetime:
 # Swing floor raised 62→65 (2026-05-26), then 65→70 (2026-05-30): persistent
 # negative alpha (−1.028%/trade) — only near-ceiling setups worth trading.
 STYLE_CONF_FLOORS: dict[str, float] = {
-    "intraday": 999.0,  # DISABLED — alpha −0.321%/trade, WR 30.4% (May 2026 live data)
+    # RE-ENABLED 2026-06-15 (owner request) at the global floor. Intraday was
+    # disabled for cause — live alpha −0.321%/trade, WR 30.4% (May 2026) — and is
+    # a momentum/breakout strategy, so it also bypasses the MR-setup gate below
+    # (intraday signals are structurally non-mean-reverting). EXPECT this to
+    # surface more, lower-quality signals and drag WR/Sharpe; monitor and dial the
+    # floor back up (or restore 999.0) if live stats stay negative.
+    "intraday": 40.0,
     "swing": 46.0,  # recalibrated 70→46 post phantom-win correction (2026-05-31).
     # Old 70% = top ~15% of phantom-inflated distribution (−1.028%/trade alpha, WR 41.2%).
     # On honest 40-50% confidence scale, 46% selects the upper half of the distribution.
@@ -100,6 +106,122 @@ TICKER_ALIASES: dict[str, str] = {
 }
 
 
+def effective_conf_floor(
+    style: str,
+    ticker: str,
+    min_confidence: float,
+    ticker_win_rates: dict | None = None,
+) -> float:
+    """Effective confidence floor a BUY must clear to be deliverable.
+
+    Mirrors the floor logic inside check_delivery_gates: the global
+    min_confidence, raised by the ticker-adaptive override (low-WR tickers
+    must clear a stricter bar, high-WR tickers get a relaxed one) and the
+    per-style floor (STYLE_CONF_FLOORS — intraday is effectively disabled).
+    """
+    floor = float(min_confidence)
+    twr = (ticker_win_rates or {}).get(ticker)
+    if isinstance(twr, (int, float)) and not isinstance(twr, bool):
+        if twr < 0.45:
+            floor = max(floor, 68.0)
+        elif twr >= 0.75:
+            floor = max(floor, 52.0)
+    return max(floor, STYLE_CONF_FLOORS.get(style, 70.0))
+
+
+def structural_delivery_status(
+    *,
+    action: str,
+    ticker: str,
+    sector_etf: str | None,
+    style: str,
+    confidence: float,
+    min_confidence: float,
+    has_mr: bool = True,
+    ticker_win_rates: dict | None = None,
+    promoted_sectors: frozenset[str] | set[str] = frozenset(),
+) -> tuple[bool, str | None]:
+    """Pure, cheap subset of check_delivery_gates: the *structural* eligibility
+    gates that don't depend on transient state (no DB/network/clock).
+
+    Returns ``(deliverable, reason)`` — ``reason`` is ``None`` when deliverable,
+    otherwise a short human-readable label for why this signal would NOT be sent.
+
+    Covers exactly the gates that decide whether a signal can ever be
+    delivered, independent of timing: SELL-disabled/long-only regime (HOLD and
+    SELL are never delivered), the mean-reversion setup requirement (BUYs need
+    ≥2 oversold conditions — a property of the signal, not the clock), the
+    confidence floor (global + style + ticker-adaptive), and the blocked-ticker /
+    blocked-sector lists (honoring QENG-1c sector promotions).
+
+    Deliberately excludes the *transient* gates (pre-earnings/ex-div blackouts,
+    VIX<15 suspension, FOMC proximity, sector-concentration cap, market-hours,
+    cooldown, holiday/Thursday haircuts) — those flip with the calendar/clock
+    and are evaluated only at actual send time.
+
+    ``has_mr`` mirrors the live MR-setup hard block: a BUY without ≥2 oversold
+    mean-reversion conditions is never delivered. Defaults True for callers/rows
+    that don't carry the flag (older signals predating the field).
+    """
+    # Long-only regime: only BUY is deliverable (HOLD/SELL never are).
+    if action != "BUY":
+        return False, f"{action} not delivered — long-only regime"
+
+    # MR-setup hard block — BUY needs ≥2 oversold conditions (RSI/BB%B/IBS/VWAP%).
+    # Mirrors check_delivery_gates; this is intrinsic to the signal, not transient.
+    # Intraday is a momentum/breakout strategy (structurally non-mean-reverting),
+    # so it is exempt — it is gated by its own style floor instead.
+    if style != "intraday" and not has_mr:
+        return False, "no mean-reversion setup — needs 2+ oversold conditions"
+
+    # Blocked tickers (no confirmed 10-day MR edge, N≥30).
+    if ticker in BLOCKED_TICKERS:
+        return False, f"{ticker} blocked — no confirmed 10-day MR edge"
+
+    # Blocked sectors — check both the signal's sector ETF and the ticker
+    # itself (sector ETFs carry sector_etf=None because they ARE the sector).
+    # QENG-1c-promoted sectors are allowed through.
+    blocked_key = sector_etf if (sector_etf and sector_etf in BLOCKED_SECTORS) else ticker
+    if blocked_key in BLOCKED_SECTORS and blocked_key not in promoted_sectors:
+        return False, f"sector {blocked_key} blocked — low profit factor"
+
+    # Confidence floor (global + style + ticker-adaptive).
+    floor = effective_conf_floor(style, ticker, min_confidence, ticker_win_rates)
+    if confidence < floor:
+        if STYLE_CONF_FLOORS.get(style, 70.0) >= 999.0:
+            return False, f"{style} style disabled"
+        return False, f"confidence {confidence:.0f}% < {floor:.0f}% floor"
+
+    return True, None
+
+
+def passes_structural_delivery_gates(
+    *,
+    action: str,
+    ticker: str,
+    sector_etf: str | None,
+    style: str,
+    confidence: float,
+    min_confidence: float,
+    has_mr: bool = True,
+    ticker_win_rates: dict | None = None,
+    promoted_sectors: frozenset[str] | set[str] = frozenset(),
+) -> bool:
+    """Boolean convenience wrapper over :func:`structural_delivery_status`."""
+    ok, _ = structural_delivery_status(
+        action=action,
+        ticker=ticker,
+        sector_etf=sector_etf,
+        style=style,
+        confidence=confidence,
+        min_confidence=min_confidence,
+        has_mr=has_mr,
+        ticker_win_rates=ticker_win_rates,
+        promoted_sectors=promoted_sectors,
+    )
+    return ok
+
+
 async def check_delivery_gates(
     sig_dict: dict,
     db,
@@ -118,6 +240,7 @@ async def check_delivery_gates(
     ticker = sig_dict["ticker"]
     action = sig_dict.get("action", "")
     conf = sig_dict.get("confidence", 0)
+    style = sig_dict.get("style", "swing")
 
     # ── Action guard ─────────────────────────────────────────────────────────
     if action not in ("BUY", "SELL"):
@@ -135,7 +258,9 @@ async def check_delivery_gates(
     # weak single-condition setups (especially IBS-only) without materially
     # reducing trade count. Validated conditions: RSI<42, BB%B<0.22, IBS<0.15,
     # VWAP%<-0.75%. Signals on uptrending stocks have no backtest validation.
-    if action == "BUY" and not sig_dict.get("hasMr", False):
+    # Intraday is a momentum/breakout strategy (re-enabled 2026-06-15) and is
+    # exempt — it never carries an MR setup and is gated by its own style floor.
+    if action == "BUY" and style != "intraday" and not sig_dict.get("hasMr", False):
         return "no MR setup — ≥2 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
 
     # ── Ticker-adaptive confidence floor (checked before global floor) ─────────
@@ -246,7 +371,6 @@ async def check_delivery_gates(
         )
 
     # ── Style gate ────────────────────────────────────────────────────────────
-    style = sig_dict.get("style", "swing")
     style_floor = STYLE_CONF_FLOORS.get(style, 70.0)
     if conf < style_floor:
         return (

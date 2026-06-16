@@ -174,7 +174,7 @@ function App() {
   const [searchQuery,    setSearchQuery]    = useState("");
   const [fullDetailOpen, setFullDetailOpen] = useState(false);  // kept for keyboard compat
   const [detailTab,      setDetailTab]      = useState("why"); // why | position | simulate | similar
-  const [chartPeriod,    setChartPeriod]    = useState("3M");
+  const [chartPeriod,    setChartPeriod]    = useState("1M");
   const [compareVs,      setCompareVs]      = useState(null);
   const btCacheRef = useRef(null);  // BacktestView 10-min result cache
   const onBtCache = useCallback(d => { btCacheRef.current = d; }, []);
@@ -1166,6 +1166,19 @@ function App() {
             )}
             {visibleSignals.map((s, idx) => (
               <React.Fragment key={s.id}>
+                {s.deliverable === false && (idx === 0 || visibleSignals[idx - 1].deliverable !== false) && (
+                  <div style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 14px",
+                    fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-faint)",
+                    textTransform:"uppercase", letterSpacing:"0.1em",
+                    borderTop:"1px solid var(--line)", borderBottom:"1px solid var(--line)",
+                    background:"var(--bg-1)" }}>
+                    <span style={{ flex:"none" }}>⊘ Not delivered</span>
+                    <span style={{ flex:1, height:1, background:"var(--line)" }}/>
+                    <span style={{ flex:"none", color:"var(--text-faint)", textTransform:"none", letterSpacing:0 }}>
+                      shown for context · no alert sent
+                    </span>
+                  </div>
+                )}
                 <SignalRow s={s}
                   active={s.id === activeId}
                   expanded={s.id === expandedId}
@@ -1372,7 +1385,7 @@ function App() {
                       {active.target && <span style={{ color:"var(--up)" }}>— TARGET</span>}
                     </span>
                     <div className="tabs" style={{ marginLeft:"auto" }}>
-                      {["1D","5D","1M","3M","1Y"].map(t => (
+                      {["1D","1W","1M","YTD","ALL"].map(t => (
                         <span key={t} className={`tab ${t===chartPeriod?"active":""}`}
                           onClick={() => setChartPeriod(t)} style={{ cursor:"pointer" }} role="button" tabIndex={0}>{t}</span>
                       ))}
@@ -1544,7 +1557,7 @@ function App() {
                     {active.target && <span style={{ color:"var(--up)" }}>- - TARGET</span>}
                   </span>
                   <div className="tabs" style={{ marginLeft:"auto" }}>
-                    {["1D","5D","1M","3M","1Y"].map(t => (
+                    {["1D","1W","1M","YTD","ALL"].map(t => (
                       <span key={t} className={`tab ${t===chartPeriod?"active":""}`} onClick={() => setChartPeriod(t)} style={{ cursor:"pointer" }} role="button" tabIndex={0}>{t}</span>
                     ))}
                   </div>

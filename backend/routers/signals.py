@@ -12,7 +12,7 @@ from models import SendLog, Signal, SignalDelivery, User
 from services.auth_svc import get_current_user
 from services.signal_quota_svc import apply_signal_quota, record_signal_views
 from services.telegram_svc import format_signal
-from sqlalchemy import case, desc, or_, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
@@ -122,25 +122,84 @@ async def list_signals(
             detail="Daily signal quota exceeded. Upgrade to Basic or Pro for more signals.",
         )
 
-    action_priority = case(
-        (Signal.action == "BUY", 0),
-        (Signal.action == "SELL", 1),
-        else_=2,
-    )
+    # The feed shows the full BUY book, each row tagged with whether the delivery
+    # pipeline (Telegram / EOD batch) would actually send it. A signal is
+    # "deliverable" iff it clears the *structural* delivery gates: SELL-disabled
+    # long-only regime (BUY only), the confidence floor (global + per-style +
+    # ticker-adaptive), and the blocked-ticker / blocked-sector lists. Signals
+    # that fail are still listed (deliverable=False + a human reason) so the feed
+    # stays informative without misrepresenting what gets sent. The transient
+    # gates (earnings / ex-div blackouts, VIX<15, FOMC, concentration,
+    # market-hours, cooldown) flip with the clock and are NOT evaluated here.
+    from services.delivery_gates import structural_delivery_status
+    from services.sector_ml_promotion import get_promoted_sectors_cached
+
+    settings = get_settings()
+    min_conf = settings.min_confidence
+
+    # Fetch the adaptive context once (not per-row): ticker win-rates feed the
+    # ticker-adaptive floor; promoted sectors unblock QENG-1c-approved sectors.
+    ticker_win_rates: dict = {}
+    try:
+        from models import AppSettings
+
+        _srow = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+        ticker_win_rates = ((_srow.data or {}) if _srow else {}).get("adaptive_weights", {}).get("ticker_win_rates", {})
+    except Exception:
+        ticker_win_rates = {}
+    try:
+        promoted_sectors = await get_promoted_sectors_cached(db)
+    except Exception:
+        promoted_sectors = frozenset()  # fail closed — keep blocked sectors blocked
+
+    # Full active BUY book (long-only regime → HOLD/SELL are never deliverable
+    # and are not surfaced in the actionable feed).
     rows = (
         (
             await db.execute(
                 select(Signal)
-                .where(Signal.is_active == True)
-                .order_by(action_priority, desc(Signal.confidence), desc(Signal.created_at))
-                .limit(quota["allowed_count"])
+                .where(Signal.is_active == True, Signal.action == "BUY")
+                .order_by(desc(Signal.confidence), desc(Signal.created_at))
             )
         )
         .scalars()
         .all()
     )
-    result = [_to_dict(r) for r in rows]
-    await record_signal_views(db, quota["quota"], len(result))
+
+    # Tag each with deliverability + reason, then order deliverable-first so the
+    # actionable signals stay at the top, undeliverable context below.
+    tagged: list[tuple[Signal, bool, str | None]] = []
+    for r in rows:
+        # hasMr (≥2 oversold MR conditions) is persisted in extra_data at creation;
+        # missing → treat as present so older pre-field rows aren't all flagged
+        # (matches the EOD path's conservative restore but errs toward visibility).
+        _has_mr = bool((r.extra_data or {}).get("hasMr", True))
+        ok, reason = structural_delivery_status(
+            action=r.action,
+            ticker=r.ticker,
+            sector_etf=r.sector_etf,
+            style=r.style or "swing",
+            confidence=r.confidence or 0,
+            min_confidence=min_conf,
+            has_mr=_has_mr,
+            ticker_win_rates=ticker_win_rates,
+            promoted_sectors=promoted_sectors,
+        )
+        tagged.append((r, ok, reason))
+    tagged.sort(key=lambda t: (not t[1], -(t[0].confidence or 0)))
+    tagged = tagged[: quota["allowed_count"]]
+
+    result = []
+    for r, ok, reason in tagged:
+        d = _to_dict(r)
+        d["deliverable"] = ok
+        d["deliveryStatus"] = reason  # None when deliverable
+        result.append(d)
+
+    # Quota counts only the deliverable (actionable) signals — undeliverable rows
+    # are informational context and shouldn't burn a user's daily allowance.
+    deliverable_count = sum(1 for _, ok, _ in tagged if ok)
+    await record_signal_views(db, quota["quota"], deliverable_count)
     await db.commit()
     _add_quota_headers(response, quota)
     return result

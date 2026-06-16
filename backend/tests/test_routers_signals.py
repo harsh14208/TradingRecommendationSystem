@@ -111,6 +111,117 @@ def test_signals_list_success():
         assert body[0]["action"] == "BUY"
 
 
+def _make_feed_signal(sid, ticker, action, confidence, style="swing", sector_etf=None, has_mr=True):
+    """Minimal Signal mock with the fields _to_dict / feed gating touch."""
+    s = MagicMock(spec=Signal)
+    s.id = sid
+    s.ticker = ticker
+    s.company = ticker
+    s.action = action
+    s.confidence = confidence
+    s.extra_data = {"hasMr": has_mr}
+    s.confidence_warning = False
+    s.price = 100.0
+    s.change = 0
+    s.change_pct = 0
+    s.entry = 99.0
+    s.stop = 95.0
+    s.target = 105.0
+    s.rr = "2.0"
+    s.headline = "h"
+    s.sentiment = 0
+    s.style = style
+    s.sources = []
+    s.rationale = []
+    s.created_at = datetime(2024, 1, 1)
+    s.is_sent = False
+    s.is_skipped = False
+    s.reviewed = None
+    s.notes = ""
+    s.plain_english = "p"
+    s.session = "regular"
+    s.days_to_earnings = None
+    s.next_earnings_date = None
+    s.sector_etf = sector_etf
+    s.rs_vs_sector = None
+    s.outcome_pct = None
+    s.outcome_1d = None
+    s.outcome_3d = None
+    s.outcome_14d = None
+    s.outcome_at = None
+    s.expires_at = None
+    s.is_active = True
+    return s
+
+
+@pytest.mark.skipif(router is None, reason="routers.signals import failed")
+def test_signals_list_tags_delivery_status():
+    """The feed shows the full BUY book, each tagged with deliverability.
+
+    Deliverable BUYs sort first; below-floor confidence, blocked tickers,
+    blocked sectors, and disabled styles (intraday) are still listed but
+    flagged deliverable=False with a human reason — the same structural gates
+    the Telegram/EOD send path enforces, surfaced rather than hidden.
+    """
+    app = FastAPI()
+    app.include_router(router, prefix="")
+
+    app.dependency_overrides[get_current_user] = lambda: User(id=1, email="t@e.com", is_owner=False)
+
+    mock_db_session = MagicMock()
+
+    async def override_get_db():
+        yield mock_db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    # Production SQL filters to action == "BUY"; the feed tags each BUY.
+    rows = [
+        _make_feed_signal(1, "AAPL", "BUY", 80, "swing"),  # deliverable
+        _make_feed_signal(4, "AMD", "BUY", 44, "swing"),  # below 46 swing floor
+        _make_feed_signal(5, "LRCX", "BUY", 80, "swing"),  # blocked ticker
+        _make_feed_signal(6, "JPM", "BUY", 80, "swing", sector_etf="XLF"),  # blocked sector
+        _make_feed_signal(7, "TSLA", "BUY", 35, "intraday"),  # intraday below 40 floor
+        _make_feed_signal(8, "SCCO", "BUY", 80, "swing", has_mr=False),  # no MR setup
+    ]
+
+    mock_result = MagicMock()
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = rows
+    mock_result.scalars.return_value = mock_scalars
+    mock_result.scalar_one_or_none.return_value = None  # no AppSettings row → no adaptive WRs
+    mock_db_session.execute = AsyncMock(return_value=mock_result)
+    mock_db_session.commit = AsyncMock()
+
+    with (
+        patch("routers.signals.apply_signal_quota", AsyncMock(return_value=_make_quota_result(allowed=300))),
+        patch("routers.signals.record_signal_views", AsyncMock()),
+        patch("services.sector_ml_promotion.get_promoted_sectors_cached", AsyncMock(return_value=frozenset())),
+    ):
+        with TestClient(app) as c:
+            res = c.get("/api/signals/")
+            assert res.status_code == 200
+        body = res.json()
+
+    by_ticker = {s["ticker"]: s for s in body}
+    # All BUYs surfaced, none hidden.
+    assert set(by_ticker) == {"AAPL", "AMD", "LRCX", "JPM", "TSLA", "SCCO"}
+    # Only AAPL is deliverable, and it sorts first.
+    assert body[0]["ticker"] == "AAPL"
+    assert by_ticker["AAPL"]["deliverable"] is True
+    assert by_ticker["AAPL"]["deliveryStatus"] is None
+    # Undeliverable ones carry a flag + reason.
+    for tk in ("AMD", "LRCX", "JPM", "TSLA", "SCCO"):
+        assert by_ticker[tk]["deliverable"] is False
+        assert by_ticker[tk]["deliveryStatus"]
+    assert "floor" in by_ticker["AMD"]["deliveryStatus"]
+    assert "blocked" in by_ticker["LRCX"]["deliveryStatus"]
+    assert "XLF" in by_ticker["JPM"]["deliveryStatus"]
+    assert "40" in by_ticker["TSLA"]["deliveryStatus"]  # intraday below the 40% floor
+    # MR-setup gate: a BUY without ≥2 oversold conditions is not deliverable.
+    assert "mean-reversion setup" in by_ticker["SCCO"]["deliveryStatus"]
+
+
 @pytest.mark.skipif(router is None, reason="routers.signals import failed")
 def test_signals_history_filters_and_404_not_found_on_send():
     app = FastAPI()

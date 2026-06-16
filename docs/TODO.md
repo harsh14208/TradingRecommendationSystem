@@ -66,7 +66,7 @@ Items marked [~] are partially wired but not yet proven/deployed.
 
 ### Free alt-data agenda — §104–§110 / follow-ups
 - [ ] **§104c. FINRA SV forward path only** — keep SPRT ID 8 for the pre-registered definition; optionally register the −10/40 variant as a NEW explicitly-exploratory forward SPRT; the panel's real reuse is the cross-sectional model (§86/§100 harness).
-- [ ] **§111. Cross-sectional model → LIVE promotion gates** — h=21 and h=63 shadows are accruing forward data. Promotion criteria locked; activation must come from `check_promotion_criteria()` returning True, not a manual override.
+- [ ] **§111. Cross-sectional model → LIVE promotion gates** — Promotion criteria locked; activation must come from `check_promotion_criteria()` returning True, not a manual override. **BUGFIX 2026-06-15:** the shadows had been accruing **ZERO** data since 2026-06-09 — `_price_features` needs ≥253 daily bars (12-1 momentum `close.shift(252)`) but the scan fetched `period="1y"` (≈251 bars), so `score_batch()` returned `{}` every scan and no signal was ever tagged (verified: 0 signals carry `xs_shadow_pct`). Fixed: `scanner.py` batch history `1y→2y` (verified: full 173-ticker watchlist now returns 173 percentiles vs 0 at 1y). Forward accrual toward the 150-signal gate begins from the next directional scan; counter is still at 0, so the prior "accruing forward data" status was false.
   - [ ] §111a. Tier 1 sizing haircut on existing signals (h=21).
   - [ ] §111b. Tier 1 for h=63 (independent N≥150 clock).
   - [ ] §111c. Tier 2 standalone dollar-neutral L/S book.
@@ -259,7 +259,7 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 - **§88. Calm-regime sleeve — ABANDONED (2026-06-10).** 0 trades generated in 23-year backtest. Structural, not a gate problem.
 - **§89. Fama-French Short-Term Reversal factor** — `fetch_ff_str()` added; wired as 15th meta-label feature.
 - **§90. Universe expansion batch 3 — all rejected (2026-06-10).** 0 trades across PANW, BWA, FTI, EQH, TRGP, APTV, DHI, FIVE, ITW.
-- **§92. Pre-specify the cross-sectional shadow activation gate (2026-06-10).** `SHADOW_PROMOTION_CRITERIA` locked; promotion criteria immutable.
+- **§92. Pre-specify the cross-sectional shadow activation gate (2026-06-10).** `SHADOW_PROMOTION_CRITERIA` locked (min_resolved_signals=150, bottom-decile WR ≥3pp worse, top≥bottom); promotion criteria immutable. ⚠ **The data collection feeding this gate was dead 2026-06-09 → 2026-06-15** (scan history 1-bar short of the 253 needed — see §111 bugfix); counter genuinely at 0 resolved. Real accrual starts post-fix.
 - **§93. Close the live-vs-IS gap — DONE (2026-06-10).**
   - (a) `sector_rs` scoring-path bug fixed at `assembler.py:1011`.
   - (b) launchd server restarted.

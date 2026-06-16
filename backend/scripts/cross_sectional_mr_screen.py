@@ -61,6 +61,7 @@ from backtest_technicals import (
     fmt_sharpe,
     print_table,
     process_ticker,
+    simulate_ticker,
     stats,
 )
 
@@ -361,15 +362,20 @@ def main() -> None:
 
     _mp.set_start_method("fork", force=True)
 
-    args_list = [(t, vix, spy_trend, stlfsi4, True, None, None, None, None, False, None, False) for t in IS_TICKERS]
+    args_list = [(t, vix, spy_trend, stlfsi4, True, False, {}, False, False) for t in IS_TICKERS]
     with Pool(8) as p:
         results = p.map(process_ticker, args_list)
 
+    # process_ticker now returns the scored indicator frame (ticker, bh_return,
+    # ind_df, earnings_dates); turn each into the MR-only trades frame exactly
+    # like the IS/OOS pipeline does (simulate_ticker).
     all_dfs: dict[str, pd.DataFrame] = {}
     all_trades: dict[str, pd.DataFrame] = {}
-    for ticker, t_df, _, df in results:
-        if df is not None:
-            all_dfs[ticker] = df
+    for ticker, _bh, ind_df, _ed in results:
+        if ind_df is None or ind_df.empty:
+            continue
+        all_dfs[ticker] = ind_df
+        t_df = simulate_ticker(ticker, ind_df, vix, spy_trend, stlfsi4, mr_only=True)
         if t_df is not None and not t_df.empty:
             all_trades[ticker] = t_df
 
@@ -683,17 +689,17 @@ def run_oos_amenability_validation(artifacts: dict) -> None:
 
     # ── Download OOS tickers ─────────────────────────────────────────────────
     print(f"Downloading {len(HELD_OUT_TICKERS)} OOS tickers (parallel)…")
-    oos_args = [
-        (t, vix, spy_trend, stlfsi4, True, None, None, None, None, False, None, False) for t in HELD_OUT_TICKERS
-    ]
+    oos_args = [(t, vix, spy_trend, stlfsi4, True, False, {}, False, False) for t in HELD_OUT_TICKERS]
     with Pool(min(8, len(HELD_OUT_TICKERS))) as p:
         oos_results = p.map(process_ticker, oos_args)
 
     oos_dfs: dict[str, pd.DataFrame] = {}
     oos_trades: dict[str, pd.DataFrame] = {}
-    for ticker, t_df, _, df in oos_results:
-        if df is not None:
-            oos_dfs[ticker] = df
+    for ticker, _bh, ind_df, _ed in oos_results:
+        if ind_df is None or ind_df.empty:
+            continue
+        oos_dfs[ticker] = ind_df
+        t_df = simulate_ticker(ticker, ind_df, vix, spy_trend, stlfsi4, mr_only=True)
         if t_df is not None and not t_df.empty:
             oos_trades[ticker] = t_df
 
