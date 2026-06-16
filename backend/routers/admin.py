@@ -345,6 +345,75 @@ async def system_readiness(
     except Exception as e:
         log.warning("[admin] SPRT state query failed: %s", e)
 
+    # ── Alpha guards — live-monitored experiments (2026-06-15) ───────────────
+    # Observability for the self-correcting guards so they don't need a manual
+    # DB query to inspect: intraday safety rail, the universe-expansion forward
+    # cohort, and §92 cross-sectional shadow accrual.
+    alpha_guards: dict = {}
+    try:
+        from services.delivery_gates import (
+            _INTRADAY_SAFETY_MIN_N,
+            _INTRADAY_SAFETY_MIN_WR,
+            _intraday_safety_blocked,
+        )
+
+        _blk, _iwr, _in = await _intraday_safety_blocked(db)
+        alpha_guards["intraday_rail"] = {
+            "n_resolved": _in,
+            "live_wr": round(_iwr * 100, 1) if _in >= _INTRADAY_SAFETY_MIN_N else None,
+            "floor_wr": _INTRADAY_SAFETY_MIN_WR * 100,
+            "min_n": _INTRADAY_SAFETY_MIN_N,
+            "auto_disabled": _blk,
+        }
+    except Exception as e:
+        log.warning("[admin] intraday rail status failed: %s", e)
+
+    try:
+        _cohort = ["CBRE", "NXPI", "EL", "TRV", "IP", "MCK", "ROK", "CMI", "MET"]
+        _crows = (
+            (
+                await db.execute(
+                    select(Signal.outcome_pct).where(
+                        Signal.ticker.in_(_cohort),
+                        Signal.action == "BUY",
+                        Signal.is_sent == True,
+                        Signal.outcome_pct.isnot(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        _cn = len(_crows)
+        alpha_guards["expansion_cohort"] = {
+            "tickers": _cohort,
+            "n_resolved": _cn,
+            "live_wr": round(sum(1 for o in _crows if o > 0) / _cn * 100, 1) if _cn else None,
+            "pass_wr": 55.0,
+            "target_n": 30,
+            "review_by": "2026-09-15",
+        }
+    except Exception as e:
+        log.warning("[admin] cohort status failed: %s", e)
+
+    try:
+        _srows = (
+            await db.execute(
+                select(Signal.rationale, Signal.outcome_14d).where(
+                    Signal.is_sent == True, Signal.created_at >= datetime(2026, 6, 15)
+                )
+            )
+        ).all()
+        _tagged = _sresolved = 0
+        for _rat, _o14 in _srows:
+            if any(isinstance(r, dict) and "xs_shadow_pct=" in (r.get("meta", "")) for r in (_rat or [])):
+                _tagged += 1
+                if _o14 is not None:
+                    _sresolved += 1
+        alpha_guards["xs_shadow"] = {"tagged": _tagged, "resolved": _sresolved, "gate_n": 150}
+    except Exception as e:
+        log.warning("[admin] shadow accrual status failed: %s", e)
+
     # Overall launch readiness score / status
     ready = env_ok and db_ok and not execution_paused and telegram_ok and stripe_ok and alpaca_ok and redis_ok
 
@@ -357,6 +426,7 @@ async def system_readiness(
         "webhooks": webhooks,
         "queues": queues,
         "sprt": sprt_experiments,
+        "alpha_guards": alpha_guards,
     }
 
 

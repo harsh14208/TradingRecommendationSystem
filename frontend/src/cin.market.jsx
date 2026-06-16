@@ -292,8 +292,10 @@ function PageMarket({ marketCtx, sources, log }) {
   const ycSpread = macro?.yc_spread != null ? macro.yc_spread : (macro?.t10y != null && macro?.t2y != null ? macro.t10y - macro.t2y : M_MACRO.yc_spread);
   const ycTone = ycSpread >= 0 ? "up" : "down";
   const vixTone = macro?.vix != null && macro.vix < 20 ? "up" : "neutral";
-  const sectorList = sectors && sectors.length ? sectors : M_SECTORS;
-  const calendarList = calendar && calendar.length ? calendar : M_CALENDAR;
+  // Real sector/calendar data only — no mock fallback in the authed view. Show a
+  // skeleton while loading (=== null) and an honest empty state when loaded-empty.
+  const realSectors = Array.isArray(sectors) ? sectors : [];
+  const realCalendar = Array.isArray(calendar) ? calendar : [];
   const loadingSectors = sectors === null;
   const loadingCalendar = calendar === null;
   return (
@@ -356,7 +358,13 @@ function PageMarket({ marketCtx, sources, log }) {
             <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)" }}>{rotation.label.toUpperCase()}</span>
           </div>
           <Defer ms={600} skeleton={<div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>{[0, 1, 2, 3, 4, 5].map((i) => <SkelBlock key={i} h={24}></SkelBlock>)}</div>}>
-            <div style={{ marginTop: 8 }}>{sectorList.map((s) => <SectorBar key={s.etf} s={s}></SectorBar>)}</div>
+            {loadingSectors ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>{[0, 1, 2, 3, 4, 5].map((i) => <SkelBlock key={i} h={24}></SkelBlock>)}</div>
+            ) : realSectors.length ? (
+              <div style={{ marginTop: 8 }}>{realSectors.map((s) => <SectorBar key={s.etf} s={s}></SectorBar>)}</div>
+            ) : (
+              <div style={{ marginTop: 14, textAlign: "center", color: "var(--text-faint)", fontSize: 12.5 }}>Sector data unavailable.</div>
+            )}
           </Defer>
           <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: "var(--bull-soft)", border: "1px solid rgba(34,211,238,0.16)", fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>
             Rotation read: <span className="bull" style={{ fontWeight: 600 }}>{rotation.note}</span> — leaders {rotation.etfs.join(", ")}.
@@ -366,7 +374,13 @@ function PageMarket({ marketCtx, sources, log }) {
         <div className="glass" style={{ padding: 20, alignSelf: "start" }}>
           <div className="kicker" style={{ marginBottom: 6 }}>ECONOMIC CALENDAR</div>
           <Defer ms={650} skeleton={<div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>{[0, 1, 2, 3, 4].map((i) => <SkelBlock key={i} h={32}></SkelBlock>)}</div>}>
-            <div style={{ marginTop: 4 }}>{calendarList.slice(0, 9).map((e, i) => <CalendarRow key={i} e={e}></CalendarRow>)}</div>
+            {loadingCalendar ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>{[0, 1, 2, 3, 4].map((i) => <SkelBlock key={i} h={32}></SkelBlock>)}</div>
+            ) : realCalendar.length ? (
+              <div style={{ marginTop: 4 }}>{realCalendar.slice(0, 9).map((e, i) => <CalendarRow key={i} e={e}></CalendarRow>)}</div>
+            ) : (
+              <div style={{ marginTop: 14, textAlign: "center", color: "var(--text-faint)", fontSize: 12.5 }}>No upcoming events.</div>
+            )}
           </Defer>
         </div>
       </div>
