@@ -3,7 +3,6 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
                     suppressed, outcomeByTicker, tickerHistory, allSignals }) {
   const up = (s.change || 0) >= 0;
   const conf = s.confidence || 0;
-  const undeliverable = s.deliverable === false;
 
   // Mini confidence sparkline from same-ticker-same-action signals already in feed.
   // No extra API call — derives from the allSignals array already in memory.
@@ -17,12 +16,7 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
     return prev.length >= 1 ? [...prev, conf] : null;
   }, [allSignals, s.ticker, s.action, s.id, conf]);
   return (
-    <div className={`signal${active?" active":""}${expanded?" expanded":""}${suppressed?" suppressed":""}${undeliverable?" undeliverable":""}`}
-      style={undeliverable ? {
-        opacity: 0.7,
-        borderLeft: "2px solid rgba(120,120,120,0.45)",
-        background: "repeating-linear-gradient(135deg, rgba(120,120,120,0.05) 0 8px, transparent 8px 16px)",
-      } : undefined}>
+    <div className={`signal${active?" active":""}${expanded?" expanded":""}${suppressed?" suppressed":""}`}>
       <button className="signal-row-inner" onClick={onToggle} aria-expanded={expanded} aria-label={`${s.action} ${s.ticker} signal`}>
         <div className={`signal-dot ${s.action}`}/>
         <div className="signal-body">
@@ -30,15 +24,6 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
             <span className={`signal-verb ${s.action}`}>{s.action}</span>
             <span className="signal-ticker">{s.ticker}</span>
             {s.style && <span className={`style-badge ${s.style}`}>{s.style}</span>}
-            {s.deliverable === false && (
-              <span title={s.deliveryStatus ? `Not delivered — ${s.deliveryStatus}` : "Not delivered"}
-                style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700,
-                  color:"var(--text-dim)", background:"rgba(120,120,120,0.14)",
-                  border:"1px solid rgba(120,120,120,0.30)", borderRadius:3,
-                  padding:"1px 4px", whiteSpace:"nowrap", letterSpacing:"0.05em" }}>
-                ⊘ NOT SENT
-              </span>
-            )}
             {s.daysToEarnings != null && s.daysToEarnings <= 5 && s.daysToEarnings >= 0 && (
               <span title={`Earnings in ${s.daysToEarnings}d${s.nextEarningsDate ? ` (${s.nextEarningsDate})` : ""}`}
                 style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700,
@@ -148,17 +133,6 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
 
       {expanded && (
         <div className="signal-expand" onClick={e => e.stopPropagation()}>
-          {s.deliverable === false && (
-            <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:11, lineHeight:1.4,
-              color:"var(--text-dim)", background:"rgba(120,120,120,0.10)",
-              border:"1px solid rgba(120,120,120,0.25)", borderRadius:5,
-              padding:"6px 9px", marginBottom:8 }}>
-              <span style={{ fontWeight:700 }}>⊘ Not delivered</span>
-              <span style={{ color:"var(--text-faint)" }}>
-                {s.deliveryStatus || "fails a structural delivery gate"} — shown for context; no Telegram/EOD alert is sent.
-              </span>
-            </div>
-          )}
           <div className="se-row">
             <div>
               <div className="se-price mono">${fmt(s.price)}</div>
