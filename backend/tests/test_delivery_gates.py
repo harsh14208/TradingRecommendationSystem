@@ -9,16 +9,30 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# Real reference captured before any autouse patch — the direct `_days_to_nearest_fomc`
+# unit tests use this so the calendar-neutralizing fixture below doesn't mock them out.
+from services.delivery_gates import _days_to_nearest_fomc as _real_days_to_fomc
+
 
 @contextmanager
 def _no_calendar_haircuts():
     """Neutralize the date-dependent gate haircuts (FOMC proximity, pre-long-weekend)
-    so confidence-floor *boundary* tests don't flake when run near those calendar
-    dates (e.g. the day before an FOMC decision or a holiday long weekend)."""
+    so `check_delivery_gates` tests don't flake when actually run on/near those
+    calendar dates (e.g. an FOMC decision day or the day before a holiday weekend)."""
     with (
         patch("services.delivery_gates._days_to_nearest_fomc", return_value=999),
         patch("services.market_calendar.is_pre_long_weekend", return_value=(False, None)),
     ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_calendar_gates():
+    """Module-wide: every test runs with the date-dependent FOMC/long-weekend gates
+    neutralized, so the suite is deterministic regardless of the calendar date it
+    runs on. Direct `_days_to_nearest_fomc` unit tests use `_real_days_to_fomc`
+    (captured at import) to exercise the real function despite this patch."""
+    with _no_calendar_haircuts():
         yield
 
 
@@ -62,9 +76,8 @@ async def _db_no_sector_count():
 @pytest.mark.asyncio
 async def test_days_to_nearest_fomc_returns_initial_when_no_dates_match():
     """A date far outside the 2026 schedule should return the sentinel value."""
-    from services.delivery_gates import _days_to_nearest_fomc
 
-    assert _days_to_nearest_fomc("2030-01-01") == 999
+    assert _real_days_to_fomc("2030-01-01") == 999
 
 
 @pytest.mark.asyncio
@@ -584,21 +597,18 @@ async def test_alias_gate_only_fires_on_buy_not_sell():
 
 
 def test_days_to_nearest_fomc_exact_date():
-    from services.delivery_gates import _days_to_nearest_fomc
 
-    assert _days_to_nearest_fomc("2026-01-28") == 0
+    assert _real_days_to_fomc("2026-01-28") == 0
 
 
 def test_days_to_nearest_fomc_one_day_before():
-    from services.delivery_gates import _days_to_nearest_fomc
 
-    assert _days_to_nearest_fomc("2026-01-27") == 1
+    assert _real_days_to_fomc("2026-01-27") == 1
 
 
 def test_days_to_nearest_fomc_far_from_meeting():
-    from services.delivery_gates import _days_to_nearest_fomc
 
-    dist = _days_to_nearest_fomc("2026-02-15")
+    dist = _real_days_to_fomc("2026-02-15")
     assert dist > 2
 
 

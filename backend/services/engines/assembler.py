@@ -73,19 +73,18 @@ def _assemble_signal(
     _mr_bb = tech.get("bb_pct_b")
     _mr_ibs = tech.get("ibs")
     _mr_vwap = tech.get("vwap_pct")
-    # MR-count-2 (backtest-validated 2026-06-09):
-    # Require ≥2 of 4 oversold conditions instead of 1. Backtest showed:
-    #   MR-count=1 → 155 trades, Sharpe 0.20
-    #   MR-count=2 → 154 trades, Sharpe 0.21 (+0.01, -1 trade)
-    # Single-condition MR setups (e.g. IBS-only) are the weakest class and
-    # disproportionately hit stops. Requiring 2+ filters these without
-    # materially reducing trade count.
+    # MR-count: ≥1 of 4 oversold conditions (reverted 2→1 on 2026-06-17).
+    # Backtest called 1-vs-2 a wash (MR-count=1 → 155 trades, Sh 0.20;
+    # MR-count=2 → 154 trades, Sh 0.21 — +0.01 Sh, −1 trade over 23yr), but in
+    # the live trending market the 2-condition requirement collapsed the MR pass
+    # rate to ~0.6% (1/170 BUYs over 10 days) → near-zero delivery. Reverted to 1
+    # to restore deliverable volume on dip days at a backtest-neutral cost.
     _rsi = tech.get("rsi")
     _mr_rsi_trig = float(_rsi if _rsi is not None else 50) < 42
     _mr_bb_trig = _mr_bb is not None and float(_mr_bb) < 0.22
     _mr_ibs_trig = _mr_ibs is not None and float(_mr_ibs) < 0.15
     _mr_vwap_trig = _mr_vwap is not None and float(_mr_vwap) < -0.75
-    _has_mr = sum([_mr_rsi_trig, _mr_bb_trig, _mr_ibs_trig, _mr_vwap_trig]) >= 2
+    _has_mr = sum([_mr_rsi_trig, _mr_bb_trig, _mr_ibs_trig, _mr_vwap_trig]) >= 1
 
     # ── Assemble final signal ───────────────────────────────────────
     # Enforce any blackout/gate that set _force_hold=True mid-scoring.

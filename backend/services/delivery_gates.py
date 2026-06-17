@@ -186,7 +186,7 @@ def structural_delivery_status(
     Covers exactly the gates that decide whether a signal can ever be
     delivered, independent of timing: SELL-disabled/long-only regime (HOLD and
     SELL are never delivered), the mean-reversion setup requirement (BUYs need
-    ≥2 oversold conditions — a property of the signal, not the clock), the
+    ≥1 oversold condition — a property of the signal, not the clock), the
     confidence floor (global + style + ticker-adaptive), and the blocked-ticker /
     blocked-sector lists (honoring QENG-1c sector promotions).
 
@@ -203,12 +203,12 @@ def structural_delivery_status(
     if action != "BUY":
         return False, f"{action} not delivered — long-only regime"
 
-    # MR-setup hard block — BUY needs ≥2 oversold conditions (RSI/BB%B/IBS/VWAP%).
+    # MR-setup hard block — BUY needs ≥1 oversold condition (RSI/BB%B/IBS/VWAP%; reverted 2→1 2026-06-17).
     # Mirrors check_delivery_gates; this is intrinsic to the signal, not transient.
     # Intraday is a momentum/breakout strategy (structurally non-mean-reverting),
     # so it is exempt — it is gated by its own style floor instead.
     if style != "intraday" and not has_mr:
-        return False, "no mean-reversion setup — needs 2+ oversold conditions"
+        return False, "no mean-reversion setup — needs ≥1 oversold condition"
 
     # Blocked tickers (no confirmed 10-day MR edge, N≥30).
     if ticker in BLOCKED_TICKERS:
@@ -297,7 +297,7 @@ async def check_delivery_gates(
     # Intraday is a momentum/breakout strategy (re-enabled 2026-06-15) and is
     # exempt — it never carries an MR setup and is gated by its own style floor.
     if action == "BUY" and style != "intraday" and not sig_dict.get("hasMr", False):
-        return "no MR setup — ≥2 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
+        return "no MR setup — ≥1 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
 
     # ── Ticker-adaptive confidence floor (checked before global floor) ─────────
     # High-win tickers (≥75% historical WR) get a relaxed 52% floor instead of
