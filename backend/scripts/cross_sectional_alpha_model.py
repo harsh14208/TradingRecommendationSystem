@@ -1292,6 +1292,7 @@ def walk_forward(
             "test_end": pd.Timestamp(dates.max()).date(),
             "gross_series": gross,
             "turnover_series": turn,
+            "dates": dates,
             "mean_ic": float(np.nanmean([f[2] for f in fold_summ])),
         }
     )
@@ -1509,6 +1510,51 @@ def borrow_sensitivity(
         print(f"    {bps:>4} bps/yr : {sh:+.3f}")
 
 
+def _save_monthly_series(res: dict, horizon: int, cost_bps: float) -> None:
+    """Persist the walk-forward net return series as monthly returns for sleeve blending.
+
+    The cross-sectional model rebalances every ``horizon`` trading days.  We build a
+    daily equity curve from the non-overlapping period returns, sample it at each
+    calendar month-end, and write the month-over-month returns to
+    ``data/cross_sectional_monthly_h{horizon}.csv``.  This format aligns with
+    ``data/mr_monthly.csv`` and ``data/tsmom_monthly.csv`` and maximises the overlap
+    available for correlation / risk-parity estimation.
+    """
+    gross = res.get("gross_series")
+    turn = res.get("turnover_series")
+    dates = res.get("dates")
+    if gross is None or turn is None or dates is None or len(gross) == 0:
+        print("> --save-monthly skipped: no gross/turnover/dates series in result.")
+        return
+    net = gross - turn * (cost_bps / 1e4)
+    reb_dates = pd.to_datetime(dates)
+    # Build a daily equity index.  Each rebalance period's return is earned from the
+    # rebalance date through the next rebalance date.
+    daily_idx = pd.date_range(reb_dates.min(), reb_dates.max(), freq="D")
+    equity = pd.Series(1.0, index=daily_idx)
+    for i in range(len(reb_dates) - 1):
+        start, end = reb_dates[i], reb_dates[i + 1]
+        mask = (daily_idx >= start) & (daily_idx < end)
+        if not mask.any():
+            continue
+        n_days = int(mask.sum())
+        period_factor = 1 + net[i]
+        # Equity at the start of this period (use the value on start date).
+        start_eq = float(equity.loc[start])
+        elapsed = np.arange(1, n_days + 1, dtype=float)
+        period_equity = start_eq * period_factor ** (elapsed / n_days)
+        equity.loc[mask] = period_equity
+        # Carry the full period return forward to the next rebalance date.
+        equity.loc[end] = start_eq * period_factor
+    # Month-end equity and returns.
+    me = equity.resample("ME").last()
+    monthly = me.pct_change().dropna()
+    monthly.index = monthly.index.to_period("M").astype(str)
+    out_path = os.path.join(_DATA, f"cross_sectional_monthly_h{horizon}.csv")
+    monthly.to_csv(out_path, header=["net_pct"])
+    print(f"> Monthly net return series ({len(monthly)} months) → {out_path}")
+
+
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
@@ -1664,6 +1710,12 @@ def main() -> None:
         default=2,
         help="common fold-years used for selection only, excluded from the nested aggregate (default 2)",
     )
+    ap.add_argument(
+        "--save-monthly",
+        action="store_true",
+        help="after walk-forward, write the net monthly return series to "
+        "data/cross_sectional_monthly_h{H}.csv (used by backtest_sleeves.py --corr)",
+    )
     args = ap.parse_args()
 
     if args.nested_horizon:
@@ -1721,6 +1773,8 @@ def main() -> None:
             exit_decile=args.exit_decile,
         )
         report(res, args.decile, args.cost_bps, mode="wf")
+        if args.save_monthly:
+            _save_monthly_series(res, HORIZON, args.cost_bps)
         if args.cost_sweep:
             cost_sensitivity(res["gross_series"], res["turnover_series"])
         if args.borrow_sweep:

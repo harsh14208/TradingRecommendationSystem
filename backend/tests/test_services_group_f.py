@@ -244,10 +244,12 @@ async def test_get_dynamic_sleeve_sharpes():
     assert "StatArb" in sharpes
     assert "Trend" in sharpes
     assert "Factor" in sharpes
-    # Non-MR sleeves are forced to 0.0 per code comment
+    # Disabled sleeves remain at 0.0; MR uses the validated research Sharpe when
+    # no live signals resolve in the lookback window.
     assert sharpes["StatArb"] == 0.0
     assert sharpes["Trend"] == 0.0
     assert sharpes["Factor"] == 0.0
+    assert sharpes["MR"] == pytest.approx(0.96)
 
 
 @pytest.mark.asyncio
@@ -261,7 +263,7 @@ async def test_get_dynamic_sleeve_sharpes_db_exception():
         mock_dt.utcnow.return_value = fixed_now
         mock_dt.timedelta = timedelta
         sharpes = await get_dynamic_sleeve_sharpes(mock_db, lookback_days=30)
-    assert sharpes["MR"] == 1.0  # fallback
+    assert sharpes["MR"] == pytest.approx(0.96)  # validated research fallback
 
 
 def test_allocate_cross_sleeve_capital_no_active():
@@ -292,6 +294,30 @@ def test_allocate_cross_sleeve_capital_all_constrained():
     # A capped at 500, B capped at 500 → total 1000
     assert alloc["A"] == pytest.approx(500.0)
     assert alloc["B"] == pytest.approx(500.0)
+
+
+def test_allocate_cross_sleeve_capital_risk_parity():
+    from services.alpha_sleeves import allocate_cross_sleeve_capital
+
+    # MR is lower vol than cross-sectional → risk parity overweights MR.
+    sharpes = {"MR": 0.96, "CrossSectional": 0.55}
+    vols = {"MR": 0.044, "CrossSectional": 0.126}
+    alloc = allocate_cross_sleeve_capital(sharpes, 10000.0, sleeve_vols=vols)
+    assert sum(alloc.values()) == pytest.approx(10000.0)
+    # Raw inverse-vol weights would be ~74/26; 50% cap binds on MR, so both hit 50%.
+    assert alloc["MR"] == pytest.approx(5000.0)
+    assert alloc["CrossSectional"] == pytest.approx(5000.0)
+
+    # With three sleeves and moderate vol dispersion, risk parity stays inside
+    # the 10%-50% band and differentiates by inverse volatility.
+    sharpes = {"A": 1.0, "B": 1.0, "C": 1.0}
+    vols = {"A": 0.20, "B": 0.25, "C": 0.30}
+    alloc = allocate_cross_sleeve_capital(sharpes, 1000.0, sleeve_vols=vols)
+    assert sum(alloc.values()) == pytest.approx(1000.0)
+    # Inverse-vol weights: 5 : 4 : 3.33 → normalized ~40.5%, 32.4%, 27.0%
+    assert alloc["A"] == pytest.approx(405.4, abs=0.5)
+    assert alloc["B"] == pytest.approx(324.3, abs=0.5)
+    assert alloc["C"] == pytest.approx(270.3, abs=0.5)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

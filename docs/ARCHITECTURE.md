@@ -52,6 +52,8 @@ Key components:
 | Broker abstraction | `services/broker_svc.py` | Credential encryption, risk limits, order placement, reconciliation |
 | Broker REST clients | `services/alpaca_rest.py`, `services/ibkr_rest.py` | Low-level order APIs |
 | Portfolio allocator | `services/portfolio_allocator.py` | HRP-based target weights when portfolio mode is used |
+| Cross-sleeve allocator | `services/alpha_sleeves.py` | Risk-parity / Sharpe-proportional capital split across MR, cross-sectional L/S, etc. |
+| Cross-sectional alpha | `services/cross_sectional_shadow.py` | Persisted h=21/h=63 XGBoost models; live bottom-decile sizing |
 | TCA / capacity | `services/tca_service.py` | Slippage estimation and fill-quality feedback |
 | User settings | `models.py` | `auto_execute`, `auto_execute_qty_dollars`, `max_daily_orders`, etc. |
 | API surface | `routers/broker.py` | Connect credentials, toggle auto-execute, view status |

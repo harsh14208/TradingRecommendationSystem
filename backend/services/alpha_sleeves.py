@@ -23,6 +23,20 @@ log = logging.getLogger("signal.trade.alpha_sleeves")
 # Asset list for time-series momentum trend sleeve
 TREND_ETFS = ["SPY", "QQQ", "TLT", "GLD", "DXY", "HYG"]
 
+# Validated sleeve metrics from research backtests (annualised Sharpe, annualised
+# volatility).  These are the real numbers that replace the placeholder 1.0s in
+# get_dynamic_sleeve_sharpes().  Refresh when a sleeve is re-backtested.
+# Sources:
+#   MR          : backend/data/mr_monthly_equity.csv (continuous equity curve)
+#   CrossSectional: scripts/cross_sectional_alpha_model.py --horizon 63 --walk-forward
+VALIDATED_SLEEVE_METRICS: dict[str, dict[str, float]] = {
+    "MR": {"sharpe": 0.96, "vol": 0.044},  # ~0.0128 monthly std * sqrt(12)
+    "CrossSectional": {"sharpe": 0.55, "vol": 0.126},  # h=63 walk-forward net
+    "StatArb": {"sharpe": 0.0, "vol": 0.10},  # failed validation
+    "Trend": {"sharpe": 0.0, "vol": 0.12},  # failed validation (beta-inflated)
+    "Factor": {"sharpe": 0.0, "vol": 0.15},  # never validated
+}
+
 
 async def compute_etf_residual_stat_arb(
     tickers: list[str], sector_etfs: dict[str, str], lookback_days: int = 60
@@ -192,10 +206,13 @@ async def compute_cross_sectional_factor_scores(tickers: list[str]) -> dict[str,
 async def get_dynamic_sleeve_sharpes(db: AsyncSession, lookback_days: int = 30) -> dict[str, float]:
     """
     REF-3: Calculate rolling out-of-sample Sharpe ratios for each sleeve.
-    Uses historical database signals for MR, and simulates simple daily returns
-    for StatArb, Trend, and Factor sleeves over the lookback window.
+
+    MR uses resolved live signals when available; otherwise it falls back to the
+    validated research Sharpe.  Cross-sectional uses its validated research
+    Sharpe (h=63 walk-forward).  StatArb, Trend and Factor are disabled (Sharpe
+    0.0) because standalone validation showed no deployable edge.
     """
-    sharpes = {"MR": 1.0, "StatArb": 1.0, "Trend": 1.0, "Factor": 1.0}
+    sharpes = {name: float(metrics["sharpe"]) for name, metrics in VALIDATED_SLEEVE_METRICS.items()}
     cutoff = datetime.utcnow() - timedelta(days=lookback_days)
 
     # 1. MR Sharpe (using resolved live signals)
@@ -292,6 +309,8 @@ async def get_dynamic_sleeve_sharpes(db: AsyncSession, lookback_days: int = 30) 
         log.warning(f"Failed to calculate dynamic StatArb Sharpe: {e}")
 
     # 4. Factor Sharpe (simulated factor long-short returns)
+    # NOTE: Factor sleeve is kept at 0.0 (VALIDATED_SLEEPE_METRICS); the toy
+    # rolling estimate below is retained only for future re-validation work.
     try:
         tickers = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOG"]
         histories = await get_histories_batch(tickers, period="6mo", interval="1d")
@@ -320,44 +339,49 @@ async def get_dynamic_sleeve_sharpes(db: AsyncSession, lookback_days: int = 30) 
             mean = np.mean(factor_daily_rets)
             std = np.std(factor_daily_rets)
             if std > 0.0001:
-                sharpes["Factor"] = max(0.1, (mean / std) * math.sqrt(252.0))
+                _ = max(0.1, (mean / std) * math.sqrt(252.0))  # not used; sleeve disabled
     except Exception as e:
         log.warning(f"Failed to calculate dynamic Factor Sharpe: {e}")
 
-    # 2026-06-08 standalone validation (scripts/backtest_sleeves.py, 23yr IS): the
-    # non-MR sleeves do NOT carry deployable alpha and must not draw capital on the
-    # toy/rolling estimates above —
-    #   • StatArb: non-viable on this universe (cumulative-spread gross edge < 2-leg
-    #     friction; the live daily-return formulation also churns at a 1-day half-life);
-    #   • Trend: apparent Sharpe is multi-asset *basket beta* (buy-hold beats the SMA
-    #     timing) inflated by the 2003-21 bond bull — not repeatable timing alpha;
-    #   • Factor: never validated.
-    # Force them to 0.0 so allocate_cross_sleeve_capital concentrates on the only
-    # validated sleeve (MR). Re-enable a sleeve only after a standalone + correlation
-    # backtest proves a positive, MR-diversifying edge.
-    for _unvalidated in ("StatArb", "Trend", "Factor"):
-        sharpes[_unvalidated] = 0.0
-    log.info(f"Dynamic cross-sleeve Sharpe ratios (non-MR sleeves disabled pending validation): {sharpes}")
+    log.info(f"Dynamic cross-sleeve Sharpe ratios (research-validated): {sharpes}")
     return sharpes
 
 
-def allocate_cross_sleeve_capital(sleeve_sharpes: dict[str, float], total_capital: float) -> dict[str, float]:
+def get_sleeve_vols() -> dict[str, float]:
+    """Return validated annualised volatility for each sleeve."""
+    return {name: float(metrics["vol"]) for name, metrics in VALIDATED_SLEEVE_METRICS.items()}
+
+
+def allocate_cross_sleeve_capital(
+    sleeve_sharpes: dict[str, float],
+    total_capital: float,
+    sleeve_vols: dict[str, float] | None = None,
+) -> dict[str, float]:
     """
     QENG-5d: Cross-sleeve capital allocator.
-    Allocates capital proportional to positive Sharpe, capping each ACTIVE sleeve
-    between 10% and 50%. Sleeves with Sharpe <= 0 (disabled/money-losing — e.g. the
-    non-MR sleeves pending re-validation) receive 0 and are NOT floored to 10% (the
-    old behaviour funded validated money-losers). Falls back to equal weight only if
-    no sleeve is active.
+
+    By default (``sleeve_vols`` omitted) capital is allocated proportionally to
+    positive Sharpe ratios.  When ``sleeve_vols`` is supplied the allocator uses
+    risk-parity weights: inverse volatility, so each active sleeve contributes
+    equal volatility risk to the portfolio.  Either way, each active sleeve is
+    constrained between 10% and 50% of total capital and disabled sleeves
+    (Sharpe <= 0) receive 0.  Falls back to equal weight only if no sleeve is
+    active.
     """
     active = {name: sh for name, sh in sleeve_sharpes.items() if sh > 0}
     if not active:
         n = max(len(sleeve_sharpes), 1)
         return {name: total_capital / n for name in sleeve_sharpes}
-    adjusted = dict(active)
 
-    total_adj = sum(adjusted.values())
-    raw_alloc = {name: (val / total_adj) * total_capital for name, val in adjusted.items()}
+    # Risk-parity branch: inverse-vol weights when volatilities are supplied.
+    if sleeve_vols and all(name in sleeve_vols and sleeve_vols[name] > 0 for name in active):
+        inv_vols = {name: 1.0 / sleeve_vols[name] for name in active}
+        total_inv = sum(inv_vols.values())
+        raw_alloc = {name: (inv_vols[name] / total_inv) * total_capital for name in active}
+    else:
+        # Legacy Sharpe-proportional branch.
+        total_adj = sum(active.values())
+        raw_alloc = {name: (val / total_adj) * total_capital for name, val in active.items()}
 
     # Enforce min 10% and max 50% capital allocation constraints per sleeve
     min_alloc = 0.10 * total_capital
@@ -381,11 +405,11 @@ def allocate_cross_sleeve_capital(sleeve_sharpes: dict[str, float], total_capita
             remaining_capital -= max_alloc
             unconstrained.remove(name)
 
-    # Distribute remainder to unconstrained sleeves
+    # Distribute remainder to unconstrained sleeves proportionally to raw weight.
     if unconstrained:
-        curr_total = sum(adjusted[name] for name in unconstrained)
+        curr_total = sum(raw_alloc[name] for name in unconstrained)
         for name in unconstrained:
-            final_alloc[name] = (adjusted[name] / curr_total) * remaining_capital
+            final_alloc[name] = (raw_alloc[name] / curr_total) * remaining_capital
     else:
         # Fallback if all sleeves hit constraints
         for name in raw_alloc:

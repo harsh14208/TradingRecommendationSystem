@@ -4389,7 +4389,13 @@ def run_portfolio_simulation(
             f"> Concurrent DD compounding: {max_concurrent} simultaneous losing trades → "
             f"{max_concurrent * POSITION_SIZE * 100:.0f}% max concurrent exposure.\n"
         )
-    return {"cagr": cagr, "max_dd": round(max_dd, 2), "ann_sharpe": ann_sharpe, "skipped": skipped}
+    return {
+        "cagr": cagr,
+        "max_dd": round(max_dd, 2),
+        "ann_sharpe": ann_sharpe,
+        "skipped": skipped,
+        "equity_log": equity_log,
+    }
 
 
 def run_walk_forward_with_opt(
@@ -6348,6 +6354,16 @@ def main():
             # Per-trade dump for the short-volume alt-data alpha check.
             _cols = [c for c in ("date", "ticker", "score", "net_pct", "atr_pct", "vix_entry") if c in trades.columns]
             trades[_cols].to_csv("data/mr_trades.csv", index=False)
+
+            # Continuous month-end equity series for robust sleeve blending.
+            _eq_res = run_portfolio_simulation(trades, max_concurrent=MAX_PORTFOLIO_SLOTS, quiet=True)
+            if _eq_res and _eq_res.get("equity_log"):
+                _eq_df = pd.DataFrame(_eq_res["equity_log"], columns=["date", "equity"])
+                _eq_df["date"] = pd.to_datetime(_eq_df["date"])
+                _me = _eq_df.set_index("date").resample("ME").last()
+                _me_m = _me.pct_change().dropna()
+                _me_m.index = _me_m.index.to_period("M").astype(str)
+                _me_m.to_csv("data/mr_monthly_equity.csv", header=["net_pct"])
         except Exception:
             pass
 

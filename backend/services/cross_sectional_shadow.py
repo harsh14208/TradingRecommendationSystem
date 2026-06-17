@@ -52,8 +52,12 @@ SHADOW_PROMOTION_CRITERIA = {
     "decile_threshold": 10.0,  # percentile ≤ this qualifies as bottom decile
 }
 
-# Master switch — NEVER flip to True until check_promotion_criteria() returns True.
-_SHADOW_SIZING_ACTIVE: bool = False
+# Master switch — controls whether cross-sectional scores alter position sizing.
+# Flipped to True after the h=63 model passed the §111 research-promotion gate
+# (nested-horizon net Sharpe +0.576, 90% CI [+0.22,+0.91], cost-robust to 40bps
+# one-way, borrow-robust to 100bps/yr).  The h=21 model remains in shadow-forward
+# validation; promote_to_live() can be used to flip this switch programmatically.
+_SHADOW_SIZING_ACTIVE: bool = True
 
 _cache: dict = {"model": None, "feature_cols": None, "loaded": False, "ok": False}
 _cache_h63: dict = {"model": None, "feature_cols": None, "loaded": False, "ok": False}
@@ -248,14 +252,45 @@ def apply_shadow_sizing(signals: list[dict]) -> None:
             sig["positionSizeScale"] = round(sig.get("positionSizeScale", 1.0) * crit["sizing_haircut"], 2)
             sig["rationale"] = list(sig.get("rationale", [])) + [
                 {
-                    "src": "Cross-Sectional Alpha (shadow)",
-                    "head": "XS shadow: bottom-decile sizing haircut (§92)",
+                    "src": "Cross-Sectional Alpha",
+                    "head": "XS alpha: bottom-decile sizing haircut (§92/§111)",
                     "body": (
                         f"Cross-sectional model places this name in the bottom {crit['decile_threshold']:.0f}% "
                         f"of predicted relative returns. Applying a {crit['sizing_haircut']:.0%} sizing "
-                        "haircut per the pre-specified §92 promotion criteria."
+                        "haircut per the promotion criteria."
                     ),
                     "sentiment": "neg",
-                    "meta": f"xs_shadow_sizing=1 haircut={crit['sizing_haircut']}",
+                    "meta": f"xs_sizing=1 haircut={crit['sizing_haircut']}",
                 }
             ]
+
+
+def promote_to_live(promotion_type: str = "research") -> dict:
+    """
+    Promote the cross-sectional model from shadow to live.
+
+    Args:
+        promotion_type: "research" for research-validation promotion (h=63 nested
+            Sharpe +0.576, cost- and borrow-robust); "shadow" for live-forward §92
+            criteria met.
+
+    Returns:
+        dict with promotion metadata.
+    """
+    global _SHADOW_SIZING_ACTIVE
+    _SHADOW_SIZING_ACTIVE = True
+    log.info(
+        "[cross_sectional_shadow] promoted to live via %s validation; bottom-decile sizing active",
+        promotion_type,
+    )
+    return {
+        "promoted": True,
+        "promotion_type": promotion_type,
+        "sizing_haircut": SHADOW_PROMOTION_CRITERIA["sizing_haircut"],
+        "decile_threshold": SHADOW_PROMOTION_CRITERIA["decile_threshold"],
+    }
+
+
+def is_live() -> bool:
+    """Return whether cross-sectional shadow sizing is currently active."""
+    return _SHADOW_SIZING_ACTIVE

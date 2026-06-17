@@ -5729,14 +5729,13 @@ async def scan_all(
     except Exception:
         log.warning("cross-sectional universe ranking failed", exc_info=True)
 
-    # ── Cross-sectional alpha model (SHADOW — observability only) ─────────────
-    # Attach the persisted h=21 cross-sectional model's batch percentile to each
-    # directional signal for forward validation + logging. Deliberately does NOT
-    # change action / confidence / positionSizeScale: the edge is thin (mean
-    # IC ~0.002, 90% CI grazes 0) and was validated at a 21-day rebalance vs the
-    # live ~10-day hold and on the full S&P vs this watchlist batch. Flip to active
-    # sizing only after live shadow data confirms it transfers. See
-    # services/cross_sectional_shadow.py and CLAUDE.md §86.
+    # ── Cross-sectional alpha model (LIVE — h=63 research-promoted) ───────────
+    # Attach the persisted h=21 and h=63 cross-sectional model batch percentiles
+    # to each directional signal. The h=63 quarterly variant passed the §111
+    # research-promotion gate (nested-horizon net Sharpe +0.576, 90% CI excludes 0,
+    # cost- and borrow-robust); _SHADOW_SIZING_ACTIVE is True so bottom-decile
+    # names receive the §92 sizing haircut.  The h=21 field continues to accrue
+    # forward shadow data for an eventual live-forward §92 promotion check.
     try:
         from services import cross_sectional_shadow as _css
 

@@ -280,9 +280,14 @@ def run_corr():
     if not os.path.exists("data/mr_monthly.csv"):
         print("> Missing data/mr_monthly.csv — run `python scripts/backtest_technicals.py --sequential` first.\n")
         return
-    mr = pd.read_csv("data/mr_monthly.csv", index_col=0).iloc[:, 0]
+    mr_path = "data/mr_monthly_equity.csv" if os.path.exists("data/mr_monthly_equity.csv") else "data/mr_monthly.csv"
+    mr = pd.read_csv(mr_path, index_col=0).iloc[:, 0]
     mr.index = mr.index.astype(str)
-    sleeves = {"TS-Momentum": "data/tsmom_monthly.csv", "Stat-Arb": "data/statarb_monthly_is.csv"}
+    sleeves = {
+        "TS-Momentum": "data/tsmom_monthly.csv",
+        "Stat-Arb": "data/statarb_monthly_is.csv",
+        "Cross-sectional L/S": "data/cross_sectional_monthly_h63.csv",
+    }
     print("| Sleeve | Months | Corr w/ MR | MR Sharpe | Sleeve Sharpe | 50/50 Risk-Blend | Δ vs MR |")
     print("|:---|---:|---:|---:|---:|---:|---:|")
     for name, path in sleeves.items():

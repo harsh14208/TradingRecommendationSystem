@@ -122,7 +122,7 @@ Three layers, in decreasing order of acknowledgment:
 
 ## 4. Live vs Backtest Gap
 
-**Strong points (better than most shops):** phantom-win audit + nightly `validate_predictions.py --fix-phantoms`; `gate_contribution_analysis.py` per-gate live WR attribution; calibration v4 with honest Brier; rolling-AUC drift monitor; §86 deployed **shadow-only** with explicit "must not move a trade" guardrails (cross_sectional_shadow.py docstring); challenger runs as shadow scores; documented honest forward Sharpe (0.13–0.18) below the IS number. The live-WR-42% vs backtest-68% gap was investigated and root-caused rather than ignored.
+**Strong points (better than most shops):** phantom-win audit + nightly `validate_predictions.py --fix-phantoms`; `gate_contribution_analysis.py` per-gate live WR attribution; calibration v4 with honest Brier; rolling-AUC drift monitor; §86 cross-sectional alpha promoted to live via the §111 research gate (nested-horizon h=63 net Sharpe +0.576, 90% CI excludes 0, cost- and borrow-robust) with bottom-decile sizing active; challenger runs as shadow scores; documented honest forward Sharpe (0.13–0.18) below the IS number. The live-WR-42% vs backtest-68% gap was investigated and root-caused rather than ignored.
 
 **Remaining structural gaps:**
 1. The live score is the backtest score plus ~50 unvalidated families (news, options, sentiment, 13F…) at different cap weights — the backtest validates a *subsystem*, not the shipped product. The MR-gate hard block at delivery (delivery_gates.py:132) is the right containment: it forces live entries back into the validated region.

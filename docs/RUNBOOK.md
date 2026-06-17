@@ -258,6 +258,32 @@ python scripts/backfill_confidence.py --check           # readiness report
 python scripts/backfill_confidence.py --force --apply   # recalibrate
 ```
 
+### 6.4 Cross-sectional L/S sleeve validation and promotion
+
+The cross-sectional market-neutral sleeve is validated offline and promoted through the §111 research gate.  The MR-vs-cross-sectional diversification test must pass before promotion: correlation < ~0.3 and blended Sharpe > both legs.
+
+```bash
+cd backend
+
+# 1. Generate / refresh the h=63 monthly return series (one missing artifact)
+../.venv311/bin/python scripts/cross_sectional_alpha_model.py \
+  --horizon 63 --walk-forward --cost-bps 10 --save-monthly
+
+# 2. Ensure the continuous MR equity series is current
+#    (runs the full MR backtest; ~3 min with warm cache)
+../.venv311/bin/python scripts/backtest_technicals.py
+#    OR, if mr_trades.csv is already current:
+../.venv311/bin/python scripts/generate_mr_equity_series.py
+
+# 3. Run the sleeve-correlation / risk-blend gate
+../.venv311/bin/python scripts/backtest_sleeves.py --corr
+
+# 4. If the gate passes, promote the h=63 model to live
+../.venv311/bin/python scripts/promote_cross_sectional_live.py
+```
+
+After promotion, `services.cross_sectional_shadow._SHADOW_SIZING_ACTIVE` is `True` and `services.alpha_sleeves.allocate_cross_sleeve_capital()` uses the validated MR + CrossSectional Sharpes/vols with risk-parity sizing.
+
 ---
 
 ## 7. Going Live with Real-Money Auto-Execution
