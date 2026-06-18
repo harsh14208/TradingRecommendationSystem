@@ -127,7 +127,7 @@ class Source(Base):
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (
-        CheckConstraint("subscription_tier IN ('free', 'basic', 'pro')", name="ck_user_subscription_tier"),
+        CheckConstraint("subscription_tier IN ('free', 'basic', 'pro', 'elite')", name="ck_user_subscription_tier"),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
@@ -141,7 +141,9 @@ class User(Base):
     # Stripe
     stripe_customer_id = Column(String(50), nullable=True)
     stripe_subscription_id = Column(String(50), nullable=True)
-    subscription_tier = Column(String(20), default="free", nullable=False, server_default="free")  # free | basic | pro
+    subscription_tier = Column(
+        String(20), default="free", nullable=False, server_default="free"
+    )  # free | basic | pro | elite
     subscription_status = Column(
         String(20), default="inactive", nullable=False, server_default="inactive"
     )  # active | inactive | past_due | canceled
