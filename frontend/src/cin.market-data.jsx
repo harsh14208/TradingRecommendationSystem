@@ -127,10 +127,12 @@ const M_TRACK_TICKERS = [
 const M_PRICING = [
   { name: "Free", amt: "$0", per: "forever", desc: "Read-only access. See signals after they fire. No notifications.",
     feats: [["Live signal feed", true], ["Track record + history", true], ["Sector heatmap", true], ["Telegram delivery", false], ["Backtesting", false], ["Paper trading", false]] },
-  { name: "Basic", amt: "$29", per: "/mo", featured: true, desc: "The full alerting experience — Telegram delivery plus the backtest engine.",
-    feats: [["Everything in Free", true], ["Telegram alerts (multi-style)", true], ["Delivery window + active days", true], ["Backtesting (1d/3d/7d/14d)", true], ["Watchlist + price alerts", true], ["PWA mobile app", true]] },
-  { name: "Pro", amt: "$79", per: "/mo", desc: "Full quant desk: paper trading, correlation matrix, priority delivery.",
-    feats: [["Everything in Basic", true], ["Alpaca paper-trade auto-execute", true], ["Signal correlation matrix", true], ["Bayesian confidence intervals", true], ["Portfolio risk dashboard", true], ["Priority queue + API access", true]] },
+  { name: "Basic", amt: "$19", per: "/mo", featured: true, desc: "The full alerting experience — Telegram delivery plus the backtest engine.",
+    feats: [["Everything in Free", true], ["Telegram alerts (multi-style)", true], ["Delivery window + active days", true], ["Backtesting (1d/3d/7d/14d)", true], ["Watchlist + price alerts", true], ["PWA mobile app", true], ["Paper trading", true]] },
+  { name: "Pro", amt: "$49", per: "/mo", desc: "Full quant desk: correlation matrix, predictive confidence intervals, priority delivery.",
+    feats: [["Everything in Basic", true], ["Signal correlation matrix", true], ["Bayesian confidence intervals", true], ["Portfolio risk dashboard", true], ["Priority queue + API access", true]] },
+  { name: "Elite", amt: "$99", per: "/mo", desc: "Everything in Pro + early access, priority delivery, API access, dedicated support.",
+    feats: [["Everything in Pro", true], ["Early access to new alpha features", true], ["Priority signal delivery", true], ["API access", true], ["Dedicated support", true]] },
 ];
 
 Object.assign(window, {

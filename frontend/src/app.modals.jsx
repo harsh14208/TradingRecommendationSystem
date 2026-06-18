@@ -413,7 +413,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
               <div style={{ marginBottom:12 }}>
                 <div style={{ fontSize:10, fontWeight:600, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"var(--font-mono)", marginBottom:8 }}>Quota usage today</div>
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
-                  {["free","basic","pro"].map(tier => {
+                  {["free","basic","pro","elite"].map(tier => {
                     const q = quotaAnalytics[tier];
                     return (
                       <div key={tier} style={{ background:"var(--bg-2)", borderRadius:6, padding:"8px 10px" }}>
@@ -430,14 +430,15 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
             )}
             {adminStats && (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:12 }}>
-                {[
-                  ["MRR", `$${(adminStats.mrr||0).toFixed(0)}`, "var(--up)"],
-                  ["ARR", `$${(adminStats.arr||0).toFixed(0)}`, "var(--up)"],
-                  ["Subscribers", adminStats.active_subscriptions ?? adminStats.total_users ?? "—", "var(--accent)"],
-                  ["Basic", adminStats.basic_count ?? "—", "var(--text)"],
-                  ["Pro", adminStats.pro_count ?? "—", "#7c3aed"],
-                  ["Signals sent", adminStats.signals_sent_today ?? adminStats.total_signals ?? "—", "var(--text)"],
-                ].map(([l,v,c]) => (
+                  [
+                    ["MRR", `$${(adminStats.mrr||0).toFixed(0)}`, "var(--up)"],
+                    ["ARR", `$${(adminStats.arr||0).toFixed(0)}`, "var(--up)"],
+                    ["Subscribers", adminStats.active_subscriptions ?? adminStats.total_users ?? "—", "var(--accent)"],
+                    ["Basic", adminStats.basic_count ?? "—", "var(--text)"],
+                    ["Pro", adminStats.pro_count ?? "—", "#7c3aed"],
+                    ["Elite", adminStats.elite_count ?? "—", "#c0a062"],
+                    ["Signals sent", adminStats.signals_sent_today ?? adminStats.total_signals ?? "—", "var(--text)"],
+                  ].map(([l,v,c]) => (
                   <div key={l} style={{ background:"var(--bg-2)", borderRadius:6, padding:"8px 10px" }}>
                     <div style={{ fontSize:9, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:3 }}>{l}</div>
                     <div style={{ fontSize:15, fontWeight:700, fontFamily:"var(--font-mono)", color:c }}>{v}</div>
@@ -662,7 +663,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
             Referral Programme
           </div>
           <div style={{ fontSize:12, color:"var(--text-dim)", marginBottom:10, lineHeight:1.6 }}>
-            Share your link — earn <strong style={{ color:"var(--accent)" }}>$29 credit</strong> (1 free month of Basic) when a friend converts to a paid plan.
+            Share your link — earn <strong style={{ color:"var(--accent)" }}>$19 credit</strong> (1 free month of Basic) when a friend converts to a paid plan.
           </div>
           {referral ? (
             <>

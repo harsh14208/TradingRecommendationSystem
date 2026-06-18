@@ -514,7 +514,7 @@ function PaperView({ open, onClose, online }) {
         <BackButton onClick={onClose}></BackButton>
       </div>
       <div style={{ padding:"20px 28px", overflowY:"auto", maxHeight:"calc(100vh - 100px)", display:"flex", flexDirection:"column", gap:20 }}>
-        {err === "upgrade"  && <UpgradePrompt feature="Paper Portfolio" minTier="pro"/>}
+        {err === "upgrade"  && <UpgradePrompt feature="Paper Portfolio" minTier="basic"/>}
         {err === "offline"  && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline or Alpaca API keys not configured.</div>}
         {loading && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading paper account…</div>}
 

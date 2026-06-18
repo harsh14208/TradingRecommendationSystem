@@ -488,7 +488,7 @@ function Chart({ signal, style, period = "3M" }) {
           <a href="/signup?plan=basic" style={{ padding:"6px 16px", background:"var(--accent)",
             color:"#fff", borderRadius:6, fontSize:11, fontWeight:600, textDecoration:"none",
             fontFamily:"var(--font-mono)", letterSpacing:"0.05em" }}>
-            Upgrade for $29/mo →
+            Upgrade for $19/mo →
           </a>
         </div>
       )}
@@ -633,7 +633,7 @@ function AdSlot({ user, slim = false }) {
       ) : (
         <div style={{ width:"100%", textAlign:"center", opacity:0.5 }}>
           📢 Ad · <a href="/signup?plan=basic" style={{ color:"var(--accent)", textDecoration:"none" }}>
-            Upgrade to Basic ($29/mo)
+            Upgrade to Basic ($19/mo)
           </a> to remove ads
         </div>
       )}
@@ -653,7 +653,7 @@ function AdSlot({ user, slim = false }) {
                         textTransform:"uppercase", letterSpacing:"0.1em" }}>Advertisement</div>
           <div style={{ fontSize:12, color:"var(--text-dim)", textAlign:"center", lineHeight:1.6 }}>
             <strong style={{ color:"var(--text)" }}>Remove ads + unlock Telegram delivery.</strong>
-            <br/>Upgrade to Basic for ${29}/mo.
+            <br/>Upgrade to Basic for ${19}/mo.
           </div>
           <a href="/signup?plan=basic"
              style={{ padding:"6px 18px", background:"var(--accent)", color:"#fff",

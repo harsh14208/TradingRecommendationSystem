@@ -491,7 +491,7 @@ function App() {
       if (!typing && e.key === "p" && active && activeId) {
         e.preventDefault();
         // Check Pro tier access for paper trading
-        if (!hasTierAccess(currentUser.subscription_tier, "pro", currentUser.is_owner)) {
+        if (!hasTierAccess(currentUser.subscription_tier, "basic", currentUser.is_owner)) {
           setPricingOpen(true);
           return;
         }
@@ -1676,7 +1676,7 @@ function App() {
                 <button className="btn" onClick={() => setAlertOpen(true)}>
                   <Icon name="bell" size={14}/> Alert
                 </button>
-                {hasTierAccess(currentUser.subscription_tier, "pro", currentUser.is_owner) && active.action !== "HOLD" && (
+                {hasTierAccess(currentUser.subscription_tier, "basic", currentUser.is_owner) && active.action !== "HOLD" && (
                   <button
                     className="btn"
                     style={{ background: paperTradeFlash ? "var(--up)" : undefined, color: paperTradeFlash ? "#fff" : undefined, transition:"all 0.2s" }}

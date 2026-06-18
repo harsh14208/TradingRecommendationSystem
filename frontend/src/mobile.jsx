@@ -469,7 +469,7 @@ function AccountScreen({ user }) {
           <div className="m-list-item">
             <div className="li-ico"><MIcon name="money" size={16}/></div>
             <div className="li-text">
-              <div className="li-title">{tier === "pro" ? "Pro · $79/mo" : tier === "basic" ? "Basic · $29/mo" : "Free"}</div>
+              <div className="li-title">{tier === "elite" ? "Elite · $99/mo" : tier === "pro" ? "Pro · $49/mo" : tier === "basic" ? "Basic · $19/mo" : "Free"}</div>
               <div className="li-sub">{user?.subscription_status === "active" ? `Renews ${user?.subscription_period_end ? new Date(user.subscription_period_end).toLocaleDateString() : "—"}` : user?.subscription_status || "Inactive"}</div>
             </div>
             <MIcon name="chev" size={16}/>
@@ -752,9 +752,10 @@ function NotifScreen({ notifs = NOTIFS_MOCK }) {
 // ── Paywall screen ────────────────────────────────────────────────────────────
 function PaywallScreen({ onClose }) {
   const tiers = [
-    { name:"Free",   price:"$0",     per:"/forever", fav:false, current:true,  cta:"Current plan",    desc:"5 signals/day, 1h delay, top tickers only" },
-    { name:"Basic",  price:"$29",   per:"/month",   fav:true,  current:false, cta:"Start 7-day trial", desc:"Unlimited live signals, Telegram + Web Push, backtest, Excel export" },
-    { name:"Pro",    price:"$79",   per:"/month",   fav:false, current:false, cta:"Upgrade to Pro",  desc:"Everything in Basic + paper trading, volatility targeting, correlation matrix, weekly digest" },
+    { name:"Free",   price:"$0",     per:"/forever", fav:false, current:true,  cta:"Current plan",    desc:"3 signals/day, 1h delay, top tickers only" },
+    { name:"Basic",  price:"$19",   per:"/month",   fav:true,  current:false, cta:"Start 7-day trial", desc:"Unlimited live signals, Telegram + Web Push, backtest, Excel export" },
+    { name:"Pro",    price:"$49",   per:"/month",   fav:false, current:false, cta:"Upgrade to Pro",  desc:"Everything in Basic + volatility targeting, correlation matrix, weekly digest" },
+    { name:"Elite",  price:"$99",   per:"/month",   fav:false, current:false, cta:"Upgrade to Elite", desc:"Everything in Pro + early access + priority delivery + API access + dedicated support" },
   ];
   return (
     <>
@@ -768,7 +769,7 @@ function PaywallScreen({ onClose }) {
           Unlock the full feed
         </div>
         <div style={{ fontSize:13, color:"var(--text-dim)", lineHeight:1.5, marginBottom:18 }}>
-          Free shows 5 signals/day with 1h delay. Upgrade to receive signals live.
+          Free shows 3 signals/day with 1h delay. Upgrade to receive signals live.
         </div>
         <div style={{ display:"grid", gap:10 }}>
           {tiers.map((t, i) => (

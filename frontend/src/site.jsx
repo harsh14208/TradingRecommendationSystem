@@ -243,16 +243,23 @@ function Pricing({ go }) {
       feats: [["✓","View live signal feed",true],["✓","Track record + history",true],["✓","Sector heatmap",true],["✗","Telegram delivery",false],["✗","Backtesting",false],["✗","Paper trading",false]]
     },
     {
-      name: "Basic", amt: "$29", per: "/month",
+      name: "Basic", amt: "$19", per: "/month",
       desc: "The full alerting experience. Telegram and Web Push delivery, backtest engine, Excel export.",
       cta: "Start 7-day trial", btn: "btn primary", featured: true,
-      feats: [["✓","Everything in Free",true],["✓","Telegram + Web Push alerts",true],["✓","Configure days + delivery window",true],["✓","Backtesting engine (1d/3d/7d/14d)",true],["✓","Watchlist + price alerts + Excel export",true],["✗","Paper trading + correlation",false]]
+      feats: [["✓","Everything in Free",true],["✓","Telegram + Web Push alerts",true],["✓","Configure days + delivery window",true],["✓","Backtesting engine (1d/3d/7d/14d)",true],["✓","Watchlist + price alerts + Excel export",true],["✓","Paper trading",true]]
     },
     {
-      name: "Pro", amt: "$79", per: "/month",
-      desc: "Full institutional quant desk. Paper trading, volatility targeting, correlation matrix, weekly digest.",
+      name: "Pro", amt: "$49", per: "/month",
+      desc: "Full institutional quant desk. Volatility targeting, correlation matrix, weekly digest.",
       cta: "Start 7-day trial", btn: "btn",
-      feats: [["✓","Everything in Basic",true],["✓","Paper trading",true],["✓","Signal correlation matrix",true],["✓","Predictive confidence intervals",true],["✓","Portfolio risk targeting",true],["✓","Simulated backtest with slippage + weekly digest",true]]
+      feats: [["✓","Everything in Basic",true],["✓","Signal correlation matrix",true],["✓","Predictive confidence intervals",true],["✓","Portfolio risk targeting",true],["✓","Simulated backtest with slippage + weekly digest",true]]
+    },
+    {
+      name: "Elite", amt: "$99", per: "/month",
+      desc: "Everything in Pro + Early access + Priority delivery + API access + Dedicated support.",
+      cta: "Start 7-day trial", btn: "btn",
+      color: "#c0a062",
+      feats: [["✓","Everything in Pro",true],["✓","Early access to new alpha features",true],["✓","Priority signal delivery",true],["✓","API access",true],["✓","Dedicated support",true]]
     },
   ];
   return (
@@ -260,13 +267,13 @@ function Pricing({ go }) {
       <div className="section-head">
         <div className="section-eyebrow">04 · Pricing</div>
         <h2 className="section-title">Pick a tier. Cancel anytime in one click.</h2>
-        <p className="section-sub">Stripe Billing Portal — no support ticket required. 7-day free trial on Basic ($29/mo) and Pro ($79/mo). Comparable to Unusual Whales, a fraction of Trade Ideas.</p>
+        <p className="section-sub">Stripe Billing Portal — no support ticket required. 7-day free trial on Basic ($19/mo) and Pro ($49/mo). Comparable to Unusual Whales, a fraction of Trade Ideas.</p>
       </div>
       <div className="pricing-grid">
         {tiers.map((t, i) => (
-          <div key={i} className={`price-card ${t.featured?"featured":""}`}>
+          <div key={i} className={`price-card ${t.featured?"featured":""}`} style={t.color ? { borderColor: t.color, borderWidth: 2, borderStyle: "solid" } : undefined}>
             {t.featured && <div className="featured-tag">MOST POPULAR</div>}
-            <div className="price-tier">{t.name}</div>
+            <div className="price-tier" style={t.color ? { color: t.color } : undefined}>{t.name}</div>
             <div className="price-amt">{t.amt}<small>{t.per}</small></div>
             <div className="price-desc">{t.desc}</div>
             <button className={t.btn} onClick={() => go(t.name === "Free" ? "signup" : "signup")}>{t.cta}</button>
