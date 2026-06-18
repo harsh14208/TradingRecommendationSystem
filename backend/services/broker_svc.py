@@ -562,7 +562,7 @@ async def execute_portfolio_for_user(
 
     # Persist daily equity/PL mark (TSYS-8a / RISK-2 / Drawdown Throttle)
     try:
-        from models import PnlDaily
+        from models import PnlDaily, Position
         from sqlalchemy import select
         import datetime
 
@@ -574,10 +574,25 @@ async def execute_portfolio_for_user(
         unrealized_pl = float(account.get("unrealized_pl") or 0.0)
         cash = float(account.get("cash") or 0.0)
 
+        # Compute gross/net exposure from current positions for drawdown/exposure tracking.
+        gross_exposure = 0.0
+        net_exposure = 0.0
+        try:
+            pos_stmt = select(Position).where(Position.user_id == user.id, Position.status == "open")
+            pos_res = await db.execute(pos_stmt)
+            for p in pos_res.scalars().all():
+                mv = p.market_value or (p.qty * (p.last_price or p.avg_entry_price or 0.0))
+                gross_exposure += abs(mv)
+                net_exposure += mv if p.side == "long" else -mv
+        except Exception as exposure_err:
+            log.warning("broker_svc: user=%d — failed to compute exposure: %s", user.id, exposure_err)
+
         if pnl_row:
             pnl_row.equity = equity
             pnl_row.cash = cash
             pnl_row.unrealized_pnl = unrealized_pl
+            pnl_row.gross_exposure = gross_exposure
+            pnl_row.net_exposure = net_exposure
         else:
             pnl_row = PnlDaily(
                 user_id=user.id,
@@ -587,6 +602,8 @@ async def execute_portfolio_for_user(
                 unrealized_pnl=unrealized_pl,
                 realized_pnl=0.0,
                 n_positions=len(active_signals),
+                gross_exposure=gross_exposure,
+                net_exposure=net_exposure,
             )
             db.add(pnl_row)
         await db.flush()

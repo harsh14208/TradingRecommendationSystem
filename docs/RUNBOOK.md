@@ -33,6 +33,12 @@ Set all of the following before the first `railway up` or `fly deploy`:
 | `GOOGLE_CLIENT_SECRET` | Optional | Google OAuth SSO |
 | `FRED_API_KEY` | Optional | FRED STLFSI4 macro data (improves signal quality) |
 | `LOG_FORMAT` | Optional | Set `json` for structured logging in production |
+| `CASH_OVERLAY_ENABLE` | Optional | `true` to auto-invest residual cash (default `false`) |
+| `CASH_OVERLAY_TICKER` | Optional | Parking vehicle, default `SGOV` (0–3mo T-bill ETF) |
+| `CASH_OVERLAY_BETA_TICKER` | Optional | Beta sleeve, default `VOO` (S&P 500 ETF) |
+| `CASH_OVERLAY_MAX_FRACTION` | Optional | Max fraction of equity in overlay, default `0.50` |
+| `CASH_OVERLAY_VIX_THRESHOLD` | Optional | VIX level below which beta sleeve is used, default `22.0` |
+| `CASH_OVERLAY_MIN_TRADE_DOLLARS` | Optional | Minimum residual order size, default `100.0` |
 
 ### 1.2 Deploy Commands
 
@@ -64,6 +70,24 @@ curl https://your-app/api/health
 curl -X POST https://your-app/api/telegram/set-webhook
 
 # 4. Verify owner account (login at /login with OWNER_EMAIL / OWNER_PASSWORD)
+```
+
+### 1.4 Residual Cash Overlay
+
+When `CASH_OVERLAY_ENABLE=true`, the portfolio allocator auto-invests any capital not used by active MR signals:
+
+- **Default parking**: `CASH_OVERLAY_TICKER` (SGOV) — 0–3 month T-bill ETF, state-tax-exempt interest, minimal drawdown.
+- **Beta sleeve**: `CASH_OVERLAY_BETA_TICKER` (VOO) — used only when all of the following are true:
+  - VIX is at or below `CASH_OVERLAY_VIX_THRESHOLD` (default 22)
+  - The account is not in a drawdown throttle (portfolio DD ≤ 3%)
+  - The engine is not already targeting the beta ticker this cycle
+- **Cap**: Total overlay exposure is capped at `CASH_OVERLAY_MAX_FRACTION` (default 50% of equity).
+- **Min trade**: Residual orders smaller than `CASH_OVERLAY_MIN_TRADE_DOLLARS` are skipped to avoid micro-trades.
+
+Monitoring:
+```bash
+# Track invested % vs overlay over time
+psql $DATABASE_URL -c "SELECT date, equity, gross_exposure, net_exposure, n_positions FROM pnl_daily ORDER BY date DESC LIMIT 30;"
 ```
 
 ---

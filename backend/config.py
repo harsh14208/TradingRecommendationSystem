@@ -82,6 +82,18 @@ class Settings(BaseSettings):
     # Polygon (optional, but .env may contain POLYGON_API_KEY)
     polygon_api_key: str = ""
 
+    # ── Residual cash overlay (cash/beta parking) ───────────────────────────────
+    # When enabled, the portfolio allocator auto-invests any capital not used by
+    # active MR signals into a low-risk parking vehicle (default SGOV). If VIX is
+    # below the threshold and the account is not in a drawdown throttle, the
+    # residual can be rotated into a low-cost beta sleeve (default VOO).
+    cash_overlay_enable: bool = False
+    cash_overlay_ticker: str = "SGOV"  # default parking vehicle: 0-3mo T-bill ETF
+    cash_overlay_beta_ticker: str = "VOO"  # optional beta sleeve: S&P 500 ETF
+    cash_overlay_max_fraction: float = 0.50  # max fraction of equity in overlay
+    cash_overlay_vix_threshold: float = 22.0  # VIX level below which beta sleeve is used
+    cash_overlay_min_trade_dollars: float = 100.0  # minimum residual order size
+
     # Interactive Brokers Client Portal API Gateway Base URL
     ibkr_base_url: str = "https://localhost:5000/v1/api"
 

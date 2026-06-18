@@ -18,14 +18,34 @@ from sqlalchemy import select, func
 
 from models import Instrument, Position, Fill, BrokerOrder, PnlDaily
 
-from services.market_data import get_histories_batch
+from services.market_data import get_histories_batch, get_history
 from services.tca_service import calculate_expected_slippage_bps
 
 # Maximum allowed expected implementation shortfall (bps) before sizing down.
 # Set to 20 bps by default per §118; override via environment if needed.
 _ALLOCATOR_SLIPPAGE_THRESHOLD_BPS = float(os.getenv("TCA_SLIPPAGE_THRESHOLD_BPS", "20.0"))
 
+# Residual cash overlay configuration (see docs/RUNBOOK.md §Cash overlay)
+_CASH_OVERLAY_ENABLE = os.getenv("CASH_OVERLAY_ENABLE", "false").lower() in ("1", "true", "yes", "on")
+_CASH_OVERLAY_TICKER = os.getenv("CASH_OVERLAY_TICKER", "SGOV").strip().upper()
+_CASH_OVERLAY_BETA_TICKER = os.getenv("CASH_OVERLAY_BETA_TICKER", "VOO").strip().upper()
+_CASH_OVERLAY_MAX_FRACTION = float(os.getenv("CASH_OVERLAY_MAX_FRACTION", "0.50"))
+_CASH_OVERLAY_VIX_THRESHOLD = float(os.getenv("CASH_OVERLAY_VIX_THRESHOLD", "22.0"))
+_CASH_OVERLAY_MIN_TRADE_DOLLARS = float(os.getenv("CASH_OVERLAY_MIN_TRADE_DOLLARS", "100.0"))
+
 log = logging.getLogger("signal.trade.allocator")
+
+
+async def _latest_vix() -> float | None:
+    """Fetch the most recent daily close for the VIX index."""
+    try:
+        df = await get_history("^VIX", period="5d", interval="1d")
+        if df is not None and not df.empty and "Close" in df.columns:
+            return float(df["Close"].dropna().iloc[-1])
+    except Exception as e:
+        log.warning(f"Failed to fetch VIX for overlay decision: {e}")
+    return None
+
 
 # Constants for allocator bounds
 MAX_SECTOR_EXPOSURE = 0.35  # max 35% in any single sector
@@ -253,6 +273,83 @@ async def fetch_realized_slippage_avg(db: AsyncSession, lookback_days: int = 30)
     except Exception as e:
         log.warning(f"Failed to fetch realized slippage avg: {e}")
         return {}
+
+
+async def _add_overlay_orders(
+    orders: list[dict],
+    final_weights: dict[str, float],
+    current_weights: dict[str, float],
+    total_cash: float,
+    dd_mult: float,
+) -> list[dict]:
+    """Add orders to deploy residual cash into a parking or beta vehicle.
+
+    The overlay invests any capital the engine did not allocate to active signals.
+    By default residual cash goes into a T-bill ETF (SGOV). When VIX is below the
+    configured threshold and the account is not in a drawdown throttle, the residual
+    can be rotated into a low-cost S&P 500 ETF (VOO) for incremental beta.
+    """
+    if not _CASH_OVERLAY_ENABLE or not _CASH_OVERLAY_TICKER:
+        return orders
+
+    deployed_weight = sum(final_weights.values())
+    residual_weight = max(0.0, 1.0 - deployed_weight)
+    if residual_weight <= 0 and not current_weights:
+        return orders
+
+    # Choose target overlay ticker. Beta sleeve is only used when calm.
+    vix = await _latest_vix()
+    use_beta = _CASH_OVERLAY_BETA_TICKER and dd_mult >= 1.0 and vix is not None and vix <= _CASH_OVERLAY_VIX_THRESHOLD
+    overlay_tickers = {_CASH_OVERLAY_TICKER, _CASH_OVERLAY_BETA_TICKER}
+    target_ticker = _CASH_OVERLAY_BETA_TICKER if use_beta else _CASH_OVERLAY_TICKER
+
+    # Do not overlay a ticker that the engine is actively managing this cycle.
+    if target_ticker in final_weights:
+        log.info(f"Cash overlay: skipping {target_ticker} because engine already has a target weight")
+        return orders
+
+    # Cap overlay exposure.
+    target_overlay_weight = min(residual_weight, _CASH_OVERLAY_MAX_FRACTION)
+    current_overlay_weight = current_weights.get(target_ticker, 0.0)
+    overlay_diff_weight = target_overlay_weight - current_overlay_weight
+    overlay_diff_dollars = overlay_diff_weight * total_cash
+
+    # Close any existing overlay position that is no longer the target.
+    for t, w in list(current_weights.items()):
+        if t in overlay_tickers and t != target_ticker and w > 0:
+            close_dollars = w * total_cash
+            if close_dollars >= _CASH_OVERLAY_MIN_TRADE_DOLLARS:
+                orders.append(
+                    {
+                        "ticker": t,
+                        "action": "SELL",
+                        "notional": round(close_dollars, 2),
+                        "target_weight": 0.0,
+                        "expected_slippage": 0.0,
+                        "signal_id": None,
+                    }
+                )
+                log.info(f"Cash overlay: closing {t} to switch into {target_ticker}")
+
+    if abs(overlay_diff_dollars) <= _CASH_OVERLAY_MIN_TRADE_DOLLARS + 1e-6:
+        return orders
+
+    action = "BUY" if overlay_diff_dollars > 0 else "SELL"
+    orders.append(
+        {
+            "ticker": target_ticker,
+            "action": action,
+            "notional": round(abs(overlay_diff_dollars), 2),
+            "target_weight": round(target_overlay_weight, 4),
+            "expected_slippage": 0.0,
+            "signal_id": None,
+        }
+    )
+    log.info(
+        f"Cash overlay: {action} ${abs(overlay_diff_dollars):,.2f} of {target_ticker} "
+        f"(weight {current_overlay_weight:.2%} -> {target_overlay_weight:.2%}, VIX={vix})"
+    )
+    return orders
 
 
 async def allocate_portfolio(
@@ -484,5 +581,15 @@ async def allocate_portfolio(
                     "signal_id": s.get("id"),
                 }
             )
+
+    # 6. Residual cash overlay (cash/beta parking)
+    if _CASH_OVERLAY_ENABLE:
+        orders_to_place = await _add_overlay_orders(
+            orders_to_place,
+            final_weights,
+            current_weights,
+            total_cash,
+            dd_mult,
+        )
 
     return orders_to_place
