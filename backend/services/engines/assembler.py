@@ -86,6 +86,29 @@ def _assemble_signal(
     _mr_vwap_trig = _mr_vwap is not None and float(_mr_vwap) < -0.75
     _has_mr = sum([_mr_rsi_trig, _mr_bb_trig, _mr_ibs_trig, _mr_vwap_trig]) >= 1
 
+    # SELL MR-setup mirror: ≥1 overbought condition.
+    _mr_sell_rsi_trig = _rsi is not None and float(_rsi) > 58
+    _mr_sell_bb_trig = _mr_bb is not None and float(_mr_bb) > 0.78
+    _mr_sell_ibs_trig = _mr_ibs is not None and float(_mr_ibs) > 0.85
+    _mr_sell_vwap_trig = _mr_vwap is not None and float(_mr_vwap) > 0.75
+    _has_mr_sell = sum([_mr_sell_rsi_trig, _mr_sell_bb_trig, _mr_sell_ibs_trig, _mr_sell_vwap_trig]) >= 1
+
+    # Telemetry accumulator for assembler-level gates that run before GatePipeline.
+    _assembler_traces: list[dict] = []
+
+    def _trace(gate_id: str, passed: bool, reason: str | None, **inputs) -> None:
+        _assembler_traces.append(
+            {
+                "gate_id": gate_id,
+                "version": "1.0",
+                "input_values": {"ticker": ticker, **inputs},
+                "score_delta": 0.0,
+                "confidence_delta": 0.0,
+                "passed": passed,
+                "reason": reason,
+            }
+        )
+
     # ── Assemble final signal ───────────────────────────────────────
     # Enforce any blackout/gate that set _force_hold=True mid-scoring.
     # score=0 alone is not sufficient because subsequent signal blocks
@@ -192,6 +215,12 @@ def _assemble_signal(
     ticker_wr = ticker_wrs.get(ticker)
     if action == "BUY" and ticker_wr is not None and ticker_wr < 0.45:
         action = "HOLD"
+        _trace(
+            "ChronicLoserExclusionGate",
+            False,
+            f"{ticker} historical win rate {ticker_wr * 100:.0f}% < 45%",
+            ticker_win_rate=round(ticker_wr, 3),
+        )
         sources.add("Risk Gate")
         rationale.append(
             {
@@ -224,6 +253,13 @@ def _assemble_signal(
     _active_families = len([s for s in sources if s in _core_families])
     if action == "BUY" and _active_families < 3 and score < 50:
         action = "HOLD"
+        _trace(
+            "TrueOrthogonalityMinimumGate",
+            False,
+            f"Only {_active_families}/3 independent source families (score {score:.1f} < 50)",
+            active_families=_active_families,
+            score=score,
+        )
         sources.add("Risk Gate")
         rationale.append(
             {
@@ -262,6 +298,12 @@ def _assemble_signal(
     _has_alt = any(s in _alt_data_sources for s in sources)
     if action == "SELL" and not _has_alt:
         action = "HOLD"
+        _trace(
+            "TechnicalOnlySellGate",
+            False,
+            "SELL missing alternative-data confirmation",
+            sources=sorted(sources),
+        )
         sources.add("Risk Gate")
         rationale.append(
             {
@@ -317,6 +359,9 @@ def _assemble_signal(
         sector_config=_effective_sector_config(_se_sector_etf_ctx, promoted_sectors),
         is_lev_etf=_is_lev_etf,
     )
+
+    # Attach assembler-level traces so they persist with the technical gate traces.
+    _sig_ctx.gate_traces.extend(_assembler_traces)
 
     GatePipeline([RvolGate(), AdxGate(), OverboughtWeakTrendGate(), DollarVolumeGate()]).run(_sig_ctx)
 
@@ -411,6 +456,12 @@ def _assemble_signal(
     }
     if action == "BUY" and ticker in _DEFENSIVE_BUY_BLOCK:
         action = "HOLD"
+        _trace(
+            "DefensiveTickerBuyGate",
+            False,
+            f"{ticker} is in the defensive BUY block list",
+            blocked_reason="live 0% WR or backtest-negative expected value",
+        )
         sources.add("Risk Gate")
         rationale.append(
             {
@@ -589,6 +640,13 @@ def _assemble_signal(
     if action == "BUY" and (market_ctx or {}).get("buy_saturated") and score < 42:
         action = "HOLD"
         _ratio = (market_ctx or {}).get("buy_sell_ratio", 4.0)
+        _trace(
+            "BuySaturationGate",
+            False,
+            f"7d BUY:SELL ratio {_ratio:.1f}:1 with score {score:.1f} < 42",
+            buy_sell_ratio=_ratio,
+            score=score,
+        )
         sources.add("Risk Gate")
         rationale.append(
             {
@@ -615,6 +673,13 @@ def _assemble_signal(
         _pct_200 = _breadth_ctx.get("pct_above_200d", 0) or 0
         if _pct_200 > 70:
             action = "HOLD"
+            _trace(
+                "BroadMarketBreadthGate",
+                False,
+                f"{_pct_200:.0f}% of S&P 500 above 200-DMA and score {score:.0f} < 42",
+                pct_above_200d=_pct_200,
+                score=score,
+            )
             sources.add("Risk Gate")
             rationale.append(
                 {
@@ -1513,6 +1578,9 @@ def _assemble_signal(
         # (Golden Cross, Above 200-DMA, EPS beats) that have never been validated
         # in the 23-year backtest, producing live WR ≈42% vs backtest WR ≈68%.
         "hasMr": _has_mr,
+        # SELL MR setup flag — delivery_gates enforces this when LONG_ONLY=false.
+        # True = at least one of: RSI>58, BB%B>0.78, IBS>0.85, VWAP%>0.75%.
+        "hasMrSell": _has_mr_sell,
         # ALPHA-5: VIX regime tag — informational; used by per-regime WR audit (gate_contribution_analysis.py --sector-wr)
         # after N≥100 resolved signals per regime. Not a delivery gate yet.
         "vixRegime": (
@@ -1532,6 +1600,7 @@ def _assemble_signal(
             "sp500_trend": sp500_trend,
             "quality_score": _quality_score,
             "hasMr": _has_mr,
+            "hasMrSell": _has_mr_sell,
             "vix_term_ratio": macro.get("vix_term_ratio"),
             "vix_9d_ratio": macro.get("vix_9d_ratio"),
             "sector_momentum": (sector_rs or {}).get("sector_5d_ret"),

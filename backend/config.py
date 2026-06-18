@@ -2,7 +2,7 @@ import hashlib
 import re
 import time as _time
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 # Production security: no hardcoded fallback. JWT_SECRET must be set explicitly.
@@ -93,6 +93,35 @@ class Settings(BaseSettings):
     cash_overlay_max_fraction: float = 0.50  # max fraction of equity in overlay
     cash_overlay_vix_threshold: float = 18.0  # VIX level below which beta sleeve is used
     cash_overlay_min_trade_dollars: float = 100.0  # minimum residual order size
+
+    # ── Signal delivery / pipeline limits ───────────────────────────────────────
+    # Cohort shadow/withheld percentages. Set both to 0 to deliver every signal.
+    # Deterministic routing is preserved; changing these values re-buckets signals.
+    signal_cohort_shadow_pct: int = 0
+    signal_cohort_withheld_pct: int = 0
+    # Long-only regime: when True, SELL signals are never delivered. When False,
+    # SELLs are allowed through a mirrored MR-setup gate.
+    long_only: bool = True
+    # Daily send caps. 0 = no cap.
+    max_sends_per_ticker_per_day: int = 1
+    max_buys_per_sector_per_day: int = 2
+
+    @model_validator(mode="after")
+    def _check_cohort_pct(self):
+        shadow = self.signal_cohort_shadow_pct
+        withheld = self.signal_cohort_withheld_pct
+        if not (0 <= shadow <= 100 and 0 <= withheld <= 100):
+            raise ValueError("cohort percentages must be between 0 and 100")
+        if shadow + withheld > 100:
+            raise ValueError("cohort shadow + withheld percentages must not exceed 100")
+        return self
+
+    @field_validator("max_sends_per_ticker_per_day", "max_buys_per_sector_per_day")
+    @classmethod
+    def _non_negative_int(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("send caps must be non-negative")
+        return v
 
     # Interactive Brokers Client Portal API Gateway Base URL
     ibkr_base_url: str = "https://localhost:5000/v1/api"

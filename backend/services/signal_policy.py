@@ -1,5 +1,6 @@
 import logging
 from sqlalchemy import select
+from config import get_settings
 from database import AsyncSessionLocal
 from models import GateRegistry, SignalPolicy
 
@@ -67,6 +68,7 @@ async def initialize_policy_and_registry():
             stmt = select(SignalPolicy).where(SignalPolicy.version == policy_ver)
             res = await db.execute(stmt)
             policy = res.scalar_one_or_none()
+            _min_conf = get_settings().min_confidence
             if not policy:
                 policy = SignalPolicy(
                     version=policy_ver,
@@ -74,10 +76,16 @@ async def initialize_policy_and_registry():
                         "version": policy_ver,
                         "description": "Quant Engine v10.5 Active Policy Stack",
                         "gates": list(ACTIVE_GATES.keys()),
-                        "min_confidence": 62,
+                        "min_confidence": _min_conf,
                     },
                 )
                 db.add(policy)
+            else:
+                # Keep the policy snapshot in sync with the live floor.
+                _cfg = dict(policy.config or {})
+                if _cfg.get("min_confidence") != _min_conf:
+                    _cfg["min_confidence"] = _min_conf
+                    policy.config = _cfg
 
             # 2. Register gates
             for gate_id, info in ACTIVE_GATES.items():

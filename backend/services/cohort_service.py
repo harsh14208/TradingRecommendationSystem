@@ -12,6 +12,8 @@ import hashlib
 import logging
 from datetime import datetime
 
+from config import get_settings
+
 log = logging.getLogger("signal.trade.cohort")
 
 # Active policy versions (QENG-6c)
@@ -20,14 +22,31 @@ GATES_POLICY_VERSION = "v8.0"
 ML_MODEL_ID = "xgb_classifier_v3.2"
 
 
-def allocate_signal_cohort(ticker: str, ts: datetime) -> str:
+def allocate_signal_cohort(
+    ticker: str,
+    ts: datetime,
+    shadow_pct: int | None = None,
+    withheld_pct: int | None = None,
+) -> str:
     """
     QENG-6b: Deterministic hash-based cohort routing.
     Splits signals into experimental groups:
-      - 70% Delivered (live/paper execution)
-      - 20% Shadow (silent logging only)
-      - 10% Withheld (withheld control group to measure adverse selection)
+      - (100 - shadow - withheld)% Delivered (live/paper execution)
+      - shadow% Shadow (silent logging only)
+      - withheld% Withheld (control group)
+    Percentages default to Settings. Set both to 0 to deliver every signal.
     """
+    if shadow_pct is None or withheld_pct is None:
+        settings = get_settings()
+        shadow_pct = shadow_pct if shadow_pct is not None else settings.signal_cohort_shadow_pct
+        withheld_pct = withheld_pct if withheld_pct is not None else settings.signal_cohort_withheld_pct
+
+    # Clamp to valid ranges defensively.
+    shadow_pct = max(0, min(100, shadow_pct))
+    withheld_pct = max(0, min(100, withheld_pct))
+    total = min(100, shadow_pct + withheld_pct)
+    delivered_pct = 100 - total
+
     # Deterministic hash of ticker + timestamp string
     ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
     seed = f"{ticker}:{ts_str}".encode()
@@ -36,9 +55,9 @@ def allocate_signal_cohort(ticker: str, ts: datetime) -> str:
     # Bucket [0..99]
     bucket = hash_val % 100
 
-    if bucket < 70:
+    if bucket < delivered_pct:
         return "delivered"
-    elif bucket < 90:
+    elif bucket < delivered_pct + shadow_pct:
         return "shadow"
     else:
         return "withheld"

@@ -16,7 +16,7 @@ import aiohttp
 from config import TIERS, get_settings
 from database import AsyncSessionLocal
 from models import AppSettings, SendLog, Signal, SignalAlert, SignalDelivery, User, SignalGateTrace, ModelShadowScore
-from sqlalchemy import desc, select, update
+from sqlalchemy import desc, func, select, update
 
 from services.aaii import get_aaii_sentiment
 from services.breadth import get_market_breadth
@@ -441,23 +441,30 @@ async def _maybe_send(
         )
 
     # ── Cooldown: 24h normally, 30 min on direction-flip (force_resend) ────
-    # ── Hard cap: max 1 send per ticker per trading day ─────────────────────
+    # ── Hard cap: max N sends per ticker per trading day ─────────────────────
     # Multiple same-ticker sends within one session count as one market view but
-    # inflate the "sent signals" count and the win-rate denominator. Cap at 1
-    # regardless of direction flip or confidence changes within the same day.
-    _today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
-    _today_sent = (
-        await db.execute(
-            select(Signal)
-            .where(Signal.ticker == sig_dict["ticker"])
-            .where(Signal.is_sent == True)
-            .where(Signal.sent_at >= _today_start)
-            .limit(1)
+    # inflate the "sent signals" count and the win-rate denominator. Cap at the
+    # configured value (default 1; 0 disables the cap).
+    _max_per_ticker = settings.max_sends_per_ticker_per_day
+    if _max_per_ticker > 0:
+        _today_start = (
+            datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
         )
-    ).scalar_one_or_none()
-    if _today_sent:
-        log.info(f" {sig_dict['ticker']} skipped — already sent today (1/day cap)")
-        return
+        _today_sent_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(Signal)
+                .where(Signal.ticker == sig_dict["ticker"])
+                .where(Signal.is_sent == True)
+                .where(Signal.sent_at >= _today_start)
+            )
+        ).scalar_one()
+        if _today_sent_count >= _max_per_ticker:
+            log.info(
+                f" {sig_dict['ticker']} skipped — already sent {_today_sent_count} times today "
+                f"({_max_per_ticker}/day cap)"
+            )
+            return
 
     if force_resend:
         # Direction flip: only enforce a short anti-spam window (the daily cap above
@@ -1645,6 +1652,7 @@ async def _persist_scan_signals(
             # evaluate identically to the real-time path.
             _gate_extra = {
                 "hasMr": sig.get("hasMr"),
+                "hasMrSell": sig.get("hasMrSell"),
                 "vix": sig.get("vix"),
                 "crossAssetHeadwinds": sig.get("crossAssetHeadwinds"),
                 "daysToExDiv": sig.get("daysToExDiv"),
@@ -1983,7 +1991,7 @@ async def eod_batch_send() -> None:
             # as real-time delivery. Pre-migration rows have extra_data=None →
             # hasMr stays absent and the BUY is conservatively blocked (unchanged).
             _extra = row.extra_data or {}
-            for _k in ("hasMr", "vix", "crossAssetHeadwinds", "daysToExDiv"):
+            for _k in ("hasMr", "hasMrSell", "vix", "crossAssetHeadwinds", "daysToExDiv"):
                 if _extra.get(_k) is not None:
                     sig_dict[_k] = _extra[_k]
             # DELIV-1: entry-validity guard (replaces the 120-min stale cutoff).

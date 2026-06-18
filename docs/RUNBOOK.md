@@ -39,6 +39,11 @@ Set all of the following before the first `railway up` or `fly deploy`:
 | `CASH_OVERLAY_MAX_FRACTION` | Optional | Max fraction of equity in overlay, default `0.50` |
 | `CASH_OVERLAY_VIX_THRESHOLD` | Optional | VIX level below which beta sleeve is used, default `18.0` |
 | `CASH_OVERLAY_MIN_TRADE_DOLLARS` | Optional | Minimum residual order size, default `100.0` |
+| `SIGNAL_COHORT_SHADOW_PCT` | Optional | % of signals routed to shadow (logged only), default `0` |
+| `SIGNAL_COHORT_WITHHELD_PCT` | Optional | % of signals routed to withheld control group, default `0` |
+| `LONG_ONLY` | Optional | `true` (default) disables SELL delivery; `false` enables mirrored SELL MR gate |
+| `MAX_SENDS_PER_TICKER_PER_DAY` | Optional | Hard daily send cap per ticker, default `1` (`0` = unlimited) |
+| `MAX_BUYS_PER_SECTOR_PER_DAY` | Optional | Hard daily BUY cap per sector, default `2` (`0` = unlimited) |
 
 ### 1.2 Deploy Commands
 
@@ -88,6 +93,30 @@ Monitoring:
 ```bash
 # Track invested % vs overlay over time
 psql $DATABASE_URL -c "SELECT date, equity, gross_exposure, net_exposure, n_positions FROM pnl_daily ORDER BY date DESC LIMIT 30;"
+```
+
+### 1.5 Signal Delivery Tuning
+
+If the system is generating signals but delivering very few, check these knobs first:
+
+| Variable | Effect |
+|---|---|
+| `SIGNAL_COHORT_SHADOW_PCT` / `SIGNAL_COHORT_WITHHELD_PCT` | Experimental cohorts. Defaults are `0`/`0` so every signal is delivered. Non-zero values silently shadow or withhold signals. |
+| `LONG_ONLY` | `true` drops all SELL signals. Set `false` to enable SELL delivery through a mirrored overbought MR gate. |
+| `MAX_SENDS_PER_TICKER_PER_DAY` | Hard cap on repeat sends for the same ticker (default `1`). |
+| `MAX_BUYS_PER_SECTOR_PER_DAY` | Hard cap on same-sector BUYs (default `2`). |
+
+Telemetry for assembler-level blocks (chronic loser, orthogonality, defensive ticker, saturation, breadth, source independence) is persisted in `signal_gate_traces`:
+
+```bash
+# Top assembler/delivery reasons signals become HOLD over last 7 days
+psql $DATABASE_URL -c "
+SELECT gate_id, passed, count(*)
+FROM signal_gate_traces
+WHERE signal_id IN (SELECT id FROM signals WHERE created_at >= now() - interval '7 days')
+GROUP BY gate_id, passed
+ORDER BY count(*) DESC;
+"
 ```
 
 ---

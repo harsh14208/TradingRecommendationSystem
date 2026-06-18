@@ -174,6 +174,8 @@ def structural_delivery_status(
     confidence: float,
     min_confidence: float,
     has_mr: bool = True,
+    has_mr_sell: bool = False,
+    long_only: bool = True,
     ticker_win_rates: dict | None = None,
     promoted_sectors: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[bool, str | None]:
@@ -200,15 +202,17 @@ def structural_delivery_status(
     that don't carry the flag (older signals predating the field).
     """
     # Long-only regime: only BUY is deliverable (HOLD/SELL never are).
-    if action != "BUY":
+    if long_only and action != "BUY":
         return False, f"{action} not delivered — long-only regime"
 
     # MR-setup hard block — BUY needs ≥1 oversold condition (RSI/BB%B/IBS/VWAP%; reverted 2→1 2026-06-17).
-    # Mirrors check_delivery_gates; this is intrinsic to the signal, not transient.
+    # SELL needs ≥1 overbought condition when long-only is disabled.
     # Intraday is a momentum/breakout strategy (structurally non-mean-reverting),
     # so it is exempt — it is gated by its own style floor instead.
-    if style != "intraday" and not has_mr:
+    if action == "BUY" and style != "intraday" and not has_mr:
         return False, "no mean-reversion setup — needs ≥1 oversold condition"
+    if action == "SELL" and style != "intraday" and not has_mr_sell:
+        return False, "no SELL mean-reversion setup — needs ≥1 overbought condition"
 
     # Blocked tickers (no confirmed 10-day MR edge, N≥30).
     if ticker in BLOCKED_TICKERS:
@@ -240,6 +244,8 @@ def passes_structural_delivery_gates(
     confidence: float,
     min_confidence: float,
     has_mr: bool = True,
+    has_mr_sell: bool = False,
+    long_only: bool = True,
     ticker_win_rates: dict | None = None,
     promoted_sectors: frozenset[str] | set[str] = frozenset(),
 ) -> bool:
@@ -252,6 +258,8 @@ def passes_structural_delivery_gates(
         confidence=confidence,
         min_confidence=min_confidence,
         has_mr=has_mr,
+        has_mr_sell=has_mr_sell,
+        long_only=long_only,
         ticker_win_rates=ticker_win_rates,
         promoted_sectors=promoted_sectors,
     )
@@ -282,22 +290,18 @@ async def check_delivery_gates(
     if action not in ("BUY", "SELL"):
         return f"action={action} not BUY/SELL", sig_dict
 
-    # Item 3: SELL delivery disabled — long-only regime until SELL-specific
-    # MR-setup validation (overbought mirror of BUY gates) is implemented.
-    if action == "SELL":
+    # Item 3: SELL delivery controlled by LONG_ONLY setting.
+    if getattr(settings, "long_only", True) and action == "SELL":
         return "SELL delivery disabled — long-only regime", sig_dict
 
-    # ── MR gate — hard block for BUY signals without a mean-reversion setup ──
+    # ── MR gate — hard block for BUY/SELL signals without a mean-reversion setup ──
     # Root-cause fix for live WR 42% vs backtest WR 68% gap (audit 2026-06-02).
-    # Updated 2026-06-09: MR-count=2 (was 1). Backtest: 154 trades, Sharpe 0.21
-    # vs 155 trades, Sharpe 0.20 baseline. Requiring 2+ oversold conditions filters
-    # weak single-condition setups (especially IBS-only) without materially
-    # reducing trade count. Validated conditions: RSI<42, BB%B<0.22, IBS<0.15,
-    # VWAP%<-0.75%. Signals on uptrending stocks have no backtest validation.
-    # Intraday is a momentum/breakout strategy (re-enabled 2026-06-15) and is
-    # exempt — it never carries an MR setup and is gated by its own style floor.
+    # BUY needs ≥1 oversold condition; SELL (when long_only=false) needs ≥1
+    # overbought condition. Intraday is momentum/breakout and exempt.
     if action == "BUY" and style != "intraday" and not sig_dict.get("hasMr", False):
         return "no MR setup — ≥1 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
+    if action == "SELL" and style != "intraday" and not sig_dict.get("hasMrSell", False):
+        return "no SELL MR setup — ≥1 overbought condition required for SELL delivery", sig_dict
 
     # ── Ticker-adaptive confidence floor (checked before global floor) ─────────
     # High-win tickers (≥75% historical WR) get a relaxed 52% floor instead of
@@ -494,8 +498,9 @@ async def check_delivery_gates(
                 sig_dict,
             )
 
-    # ── Sector concentration limit (max 2 BUY per sector per 24h) ────────────
-    if sector and action == "BUY":
+    # ── Sector concentration limit (max N BUY per sector per 24h) ────────────
+    _max_per_sector = getattr(settings, "max_buys_per_sector_per_day", 2)
+    if _max_per_sector > 0 and sector and action == "BUY":
         from models import Signal
 
         cutoff = _utcnow_naive() - timedelta(hours=24)
@@ -509,8 +514,8 @@ async def check_delivery_gates(
                 .where(Signal.sent_at >= cutoff)
             )
         ).scalar_one()
-        if count >= 2:
-            return f"sector {sector} already has {count} BUY sends in 24h (max 2)", sig_dict
+        if count >= _max_per_sector:
+            return f"sector {sector} already has {count} BUY sends in 24h (max {_max_per_sector})", sig_dict
 
     # ── Same-underlying deduplication (GOOG/GOOGL alias gate) ────────────────
     # Both share classes map to the same Alphabet equity position. If either
@@ -561,6 +566,21 @@ async def check_delivery_gates(
     # distinguish genuine MR setups from momentum-continuation pullbacks).
     min_non_ta = 2 if style in ("position", "swing") else 1
     if len(non_ta) < min_non_ta:
+        _trace = {
+            "gate_id": "SourceIndependenceGate",
+            "version": "1.0",
+            "input_values": {
+                "ticker": ticker,
+                "style": style,
+                "non_ta_sources": sorted(non_ta),
+                "min_non_ta": min_non_ta,
+            },
+            "score_delta": 0.0,
+            "confidence_delta": 0.0,
+            "passed": False,
+            "reason": f"only {len(non_ta)} non-TA sources for {style} (need {min_non_ta})",
+        }
+        sig_dict.setdefault("gate_traces", []).append(_trace)
         return (
             f"only {len(non_ta)} non-TA sources for {style} (need {min_non_ta})",
             sig_dict,
