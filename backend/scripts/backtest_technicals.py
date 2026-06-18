@@ -796,7 +796,7 @@ _SECTOR_HOLD_DAYS: dict[str, int] = {
 
 _BLOCKED_SECTORS = {"XLP", "XLU", "XLRE"}
 
-START = "2003-01-01"  # extended from 2006 — captures Pre-GFC Bull fully (was only 2006-07)
+START = os.getenv("BACKTEST_START", "2003-01-01")  # extended from 2006 — captures Pre-GFC Bull fully (was only 2006-07)
 END = datetime.today().strftime("%Y-%m-%d")
 TRADE_FROM = END  # no filter by default — override for short-window runs
 HOLD_DAYS = 10  # v5.12 sweep-optimal: HOLD=10 with all quality gates.
