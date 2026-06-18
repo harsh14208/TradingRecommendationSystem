@@ -855,7 +855,7 @@ function WatchlistScreen({ tickers = WATCH_MOCK, demo = false, onRefresh }) {
 // ── Paywall screen ────────────────────────────────────────────────────────────
 function PaywallScreen({ onClose }) {
   const tiers = [
-    { name:"Free",   price:"$0",     per:"/forever", fav:false, current:true,  cta:"Current plan",    desc:"3 signals/day, 1h delay, top tickers only" },
+    { name:"Free",   price:"$0",     per:"/forever", fav:false, current:true,  cta:"Current plan",    desc:"3 signals/day, Signal Journal (resolved outcomes), market context" },
     { name:"Basic",  price:"$19",   per:"/month",   fav:true,  current:false, cta:"Start 7-day trial", desc:"Unlimited live signals, Telegram + Web Push, backtest, Excel export" },
     { name:"Pro",    price:"$49",   per:"/month",   fav:false, current:false, cta:"Upgrade to Pro",  desc:"Everything in Basic + volatility targeting, correlation matrix, weekly digest" },
     { name:"Elite",  price:"$99",   per:"/month",   fav:false, current:false, cta:"Upgrade to Elite", desc:"Everything in Pro + early access + priority delivery + API access + dedicated support" },
@@ -872,7 +872,7 @@ function PaywallScreen({ onClose }) {
           Unlock the full feed
         </div>
         <div style={{ fontSize:13, color:"var(--text-dim)", lineHeight:1.5, marginBottom:18 }}>
-          Free shows 3 signals/day with 1h delay. Upgrade to receive signals live.
+          Free shows 3 signals/day with the Signal Journal (resolved outcomes, 7-day delay). Upgrade to receive signals live.
         </div>
         <div style={{ display:"grid", gap:10 }}>
           {tiers.map((t, i) => (

@@ -271,7 +271,7 @@ function Pricing({ go }) {
       name: "Free", amt: "$0", per: "forever",
       desc: "Read-only access. See signals after they're sent. No notifications.",
       cta: "Get started", btn: "btn",
-      feats: [["✓","View live signal feed",true],["✓","Track record + history",true],["✓","Sector heatmap",true],["✗","Telegram delivery",false],["✗","Backtesting",false],["✗","Paper trading",false]]
+      feats: [["✓","View live signal feed",true],["✓","Signal Journal — resolved outcomes",true],["✓","Sector heatmap",true],["✗","Telegram delivery",false],["✗","Backtesting",false],["✗","Paper trading",false]]
     },
     {
       name: "Basic", amt: "$19", per: "/month",

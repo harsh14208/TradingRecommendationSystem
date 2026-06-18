@@ -126,7 +126,7 @@ const M_TRACK_TICKERS = [
 // ---- Pricing (site.jsx Pricing) ----
 const M_PRICING = [
   { name: "Free", amt: "$0", per: "forever", desc: "Read-only access. See signals after they fire. No notifications.",
-    feats: [["Live signal feed", true], ["Track record + history", true], ["Sector heatmap", true], ["Telegram delivery", false], ["Backtesting", false], ["Paper trading", false]] },
+    feats: [["Live signal feed", true], ["Signal Journal (resolved outcomes)", true], ["Sector heatmap", true], ["Telegram delivery", false], ["Backtesting", false], ["Paper trading", false]] },
   { name: "Basic", amt: "$19", per: "/mo", featured: true, desc: "The full alerting experience — Telegram delivery plus the backtest engine.",
     feats: [["Everything in Free", true], ["Telegram alerts (multi-style)", true], ["Delivery window + active days", true], ["Backtesting (1d/3d/7d/14d)", true], ["Watchlist + price alerts", true], ["PWA mobile app", true], ["Paper trading", true]] },
   { name: "Pro", amt: "$49", per: "/mo", desc: "Full quant desk: correlation matrix, predictive confidence intervals, priority delivery.",
