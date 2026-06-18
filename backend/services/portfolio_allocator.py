@@ -30,7 +30,7 @@ _CASH_OVERLAY_ENABLE = os.getenv("CASH_OVERLAY_ENABLE", "false").lower() in ("1"
 _CASH_OVERLAY_TICKER = os.getenv("CASH_OVERLAY_TICKER", "SGOV").strip().upper()
 _CASH_OVERLAY_BETA_TICKER = os.getenv("CASH_OVERLAY_BETA_TICKER", "VOO").strip().upper()
 _CASH_OVERLAY_MAX_FRACTION = float(os.getenv("CASH_OVERLAY_MAX_FRACTION", "0.50"))
-_CASH_OVERLAY_VIX_THRESHOLD = float(os.getenv("CASH_OVERLAY_VIX_THRESHOLD", "22.0"))
+_CASH_OVERLAY_VIX_THRESHOLD = float(os.getenv("CASH_OVERLAY_VIX_THRESHOLD", "18.0"))
 _CASH_OVERLAY_MIN_TRADE_DOLLARS = float(os.getenv("CASH_OVERLAY_MIN_TRADE_DOLLARS", "100.0"))
 
 log = logging.getLogger("signal.trade.allocator")

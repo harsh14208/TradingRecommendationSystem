@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     cash_overlay_ticker: str = "SGOV"  # default parking vehicle: 0-3mo T-bill ETF
     cash_overlay_beta_ticker: str = "VOO"  # optional beta sleeve: S&P 500 ETF
     cash_overlay_max_fraction: float = 0.50  # max fraction of equity in overlay
-    cash_overlay_vix_threshold: float = 22.0  # VIX level below which beta sleeve is used
+    cash_overlay_vix_threshold: float = 18.0  # VIX level below which beta sleeve is used
     cash_overlay_min_trade_dollars: float = 100.0  # minimum residual order size
 
     # Interactive Brokers Client Portal API Gateway Base URL
