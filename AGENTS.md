@@ -77,7 +77,7 @@ Conventions for coding agents working on the Signal.Trade monorepo.
 
 When changing any of the following, update the relevant docs files
 (`docs/README.md`, `docs/HOWTO.md`, `docs/SECURITY.md`, `docs/ARCHITECTURE.md`,
-`docs/RUNBOOK.md`, `docs/SIGNAL_VALIDATION.md`, `docs/QUANT_ENGINE_REVIEW.md`):
+`docs/RUNBOOK.md`, `docs/SIGNAL_VALIDATION.md`, `docs/LEARNINGS.md`, `docs/PROGRESS.md`):
 
 - Authentication or authorization flows (JWT, OAuth, tier checks, owner-only
   endpoints, risk acknowledgement).
