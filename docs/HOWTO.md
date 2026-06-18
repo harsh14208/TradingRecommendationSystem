@@ -2,7 +2,7 @@
 
 Everything you need to set up, configure, and use the system day-to-day.
 
-> **Version: v6.3** · Last updated: 2026-05-31
+> **Version: v8.8.6+** · Last updated: 2026-06-18
 
 cd backend
 source venv/bin/activate
@@ -165,7 +165,7 @@ Go to `/login` or `/app` (auto-redirects to login if no session).
 
 ### Owner account
 
-The owner bypasses all tier gates and gets Pro access automatically. The password is set in `.env` as `OWNER_PASSWORD`. **Change it on first login**: Account Settings → Security → Change Password.
+The owner bypasses all tier gates and gets full access (all tiers) automatically. The password is set in `.env` as `OWNER_PASSWORD`. **Change it on first login**: Account Settings → Security → Change Password.
 
 ---
 
@@ -313,7 +313,7 @@ Paper trading simulates real trades through Alpaca's paper account.
 **Requires**: `ALPACA_API_KEY` and `ALPACA_API_SECRET` for a **paper** account (not live).
 
 ### Manual paper trade
-1. Click "Paper Trade" button in the action row (requires Pro)
+1. Click "Paper Trade" button in the action row (requires Basic)
 2. Enter quantity, choose market/limit
 3. Review cost, stop, target — click Execute
 
@@ -692,7 +692,7 @@ daily quota is enforced.
 ```bash
 # After adding STRIPE_SECRET_KEY to .env:
 python3 stripe_setup.py
-# Creates Basic + Pro products, auto-fills STRIPE_PRICE_BASIC and STRIPE_PRICE_PRO
+# Creates Basic + Pro + Elite products, auto-fills STRIPE_PRICE_BASIC, STRIPE_PRICE_PRO, and STRIPE_PRICE_ELITE
 ```
 
 ---
@@ -855,6 +855,7 @@ STRIPE_SECRET_KEY=          # sk_live_... or sk_test_...
 STRIPE_WEBHOOK_SECRET=      # whsec_... from Stripe webhook dashboard
 STRIPE_PRICE_BASIC=         # Auto-filled by: python3 stripe_setup.py
 STRIPE_PRICE_PRO=           # Auto-filled by: python3 stripe_setup.py
+STRIPE_PRICE_ELITE=         # Auto-filled by: python3 stripe_setup.py
 
 # ── Email / SendGrid (optional) ───────────────────────────────────────────────
 # SMTP_HOST=smtp.sendgrid.net

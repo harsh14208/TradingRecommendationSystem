@@ -1,8 +1,8 @@
 # Signal.Trade
 
-**Quantitative mean-reversion trading signals — 70+ independent indicators, 23-year backtested MR strategy (IS Sharpe 0.37 with L7+L8 sizing), multi-user Telegram delivery, full subscription stack, and institutional performance analytics.**
+**Quantitative mean-reversion trading signals — 70+ independent indicators, 23-year backtested MR strategy (IS Sharpe 0.24 with L7 conviction sizing), multi-user Telegram delivery, full subscription stack, and institutional performance analytics.**
 
-> **v10.8+v8.8.4** · 2547 tests passing (ex-e2e) · PostgreSQL primary · TSYS-1→13 complete · QENG roadmap complete · public HTTPS live at `https://signaltrade.org` · IS N=155 trades/23yr (Sh=0.25 with L7 score-band sizing + MR-count-2, survivorship-corrected + §63 ADF gate), OOS Sharpe=0.16 · Forward Sharpe est. 0.13–0.20 · cross-sectional L/S net +0.347 (h=21, SHADOW)
+> **v10.8+v8.8.6** · 2550 tests passing (ex-e2e) · PostgreSQL primary · TSYS-1→13 complete · QENG roadmap complete · public HTTPS live at `https://signaltrade.org` · IS N=217 trades/23yr (Sh=0.24 with L7 conviction sizing + MR-count-2, survivorship-corrected + §63 ADF gate), OOS Sharpe=0.16 · Forward Sharpe est. 0.13–0.20 · cross-sectional L/S net +0.576 (h=63, SHADOW) +0.347 (h=21)
 > Not financial advice. For informational and educational purposes only.
 
 ---
@@ -80,18 +80,7 @@ open http://localhost:8000/design # iOS 26 design canvas
 
 ## Live Trading Readiness
 
-Before connecting real money, complete every item:
-
-| Gate | Requirement | Evidence |
-|---|---|---|
-| **Paper track record** | ≥100 resolved signals or ≥3 months of paper trading | `BrokerOrder` table with `account_type='paper'` |
-| **Live win rate** | > 55% on clean delivered BUY signals | `/api/admin/live-wr-stats` |
-| **Calibration** | Brier score ≤ 0.30 and confidence gap ≤ 10pp | Backtest → Calibration tab |
-| **Drawdown tolerance** | Max expected DD < 10% of account | Simulated Returns panel, position sizing ≤ 5% |
-| **Risk limits set** | `max_daily_orders`, `max_ticker_notional`, `auto_execute_qty_dollars` | User record / admin panel |
-| **Kill switch tested** | `POST /api/admin/signals/pause` works from your phone | Runbook §5.2 |
-| **Broker connection verified** | Alpaca/IBKR status returns `connected: true` | `/api/me/broker/status` |
-| **Risk acknowledged** | `POST /api/me/risk-acknowledge` recorded | DB `risk_acknowledged_at` |
+Before connecting real money, complete the go-live checklist in [RUNBOOK.md](RUNBOOK.md) §7.
 
 **Recommended first live settings:**
 - `auto_execute_qty_dollars = 100`
@@ -229,74 +218,7 @@ Run `python3 stripe_setup.py` to create Stripe products and auto-fill `.env`.
 
 ## Architecture
 
-```
-TradingRecommendationSystem/
-├── backend/
-│   ├── main.py                   FastAPI app, lifespan, background jobs
-│   │                             (periodic scan, weekly digest, weekly factor mining,
-│   │                              nightly signal cleanup)
-│   ├── models.py                 SQLAlchemy models (Signal, User, RefreshToken,
-│   │                             SignalDelivery, WatchlistItem, AppSettings…)
-│   ├── config.py                 Settings, tier definitions, feature gates.
-│   │                             All secrets use pydantic.SecretStr; no hardcoded
-│   │                             JWT fallback. JWT_SECRET is required in production.
-│   ├── database.py               PostgreSQL (asyncpg, pool_size=10) or SQLite WAL fallback;
-│   │                             loads .env at import time so DATABASE_URL is always available.
-│   │                             Does NOT auto-commit; callers own transaction boundaries.
-│   ├── data/
-│   │   └── factor_weights.json   Weekly-mined OOS-Sharpe source rankings
-│   ├── routers/
-│   │   ├── auth.py               JWT, refresh cookies, GDPR deletion
-│   │   ├── billing.py            Stripe checkout, webhook, portal, live status
-│   │   ├── signals.py            Signal CRUD, backtest, calibration, factor-mining
-│   │   ├── accuracy.py           Win rate per source / per ticker
-│   │   ├── market.py             F&G, macro, calendar
-│   │   ├── quotes.py             OHLCV, sector heatmap, sector detail
-│   │   ├── paper_router.py       Alpaca paper trading. All endpoints require auth;
-│   │                             POST /orders requires Pro tier (or owner).
-│   │   ├── watchlist_router.py   Watchlist CRUD
-│   │   ├── admin.py              Owner-only: users, MRR, setup status
-│   │   ├── oauth.py              Google OAuth2 with PKCE
-│   │   └── websocket_router.py   Real-time /ws push; requires valid access token
-│   └── services/
-│       ├── signal_engine.py      50+ block scoring engine; style from rationale;
-│       │                         structural invariants; sector peer confirmation
-│       ├── scanner.py            Scan loop, per-ticker win rates, weight overrides,
-│       │                         factor weights, portfolio exposure limits
-│       ├── factor_miner.py       Weekly OOS-Sharpe brute-force factor ranking
-│       ├── cointegration.py      Pairs trading: OLS spread, z-score, Pearson gating
-│       ├── news_scraper.py       Seeking Alpha RSS + Reuters + Finviz (Playwright)
-│       ├── institutional.py      13F SEC EDGAR XBRL (3-quarter QoQ delta)
-│       ├── technicals.py         28 indicators incl. 20-day rolling VWAP
-│       ├── options.py            Multi-expiry sweeps, IV, Greeks
-│       ├── market_data.py        yfinance batch fetch + caching
-│       ├── sector.py             Sector ETF relative strength (154-ticker map)
-│       ├── auth_svc.py           JWT, bcrypt, tier gating
-│       ├── broker_svc.py         Credential encryption (scrypt KDF v2 + per-credential salt),
-│       │                         drawdown circuit breaker, auto-execution
-│       ├── redis_cache.py        Redis with in-memory fallback; asyncio.Lock for
-│       │                         in-memory lock fallback (TSYS-13c)
-│       ├── email_svc.py          Transactional SMTP
-│       └── …
-├── app.jsx                       Dashboard React SPA (~4000 lines)
-│                                 Signal feed, backtest, calibration tab,
-│                                 sortable tables, sector drill-down, rules editor,
-│                                 paper trading, engine bias controls
-├── site.jsx                      Marketing website — 11-page React SPA
-├── mobile.jsx                    Mobile PWA — 8 screens
-├── styles.css                    Dashboard design-system CSS
-├── landing.html / app.html       Entry points
-├── login.html / signup.html      Auth pages (Google + email)
-├── Dockerfile / docker-compose.yml
-├── railway.toml / fly.toml       Deployment configs
-├── .env.example                  All variables documented
-├── stripe_setup.py               One-time Stripe product creation
-└── PROGRESS.md                   Full feature log + remaining TODOs
-```
-
-> **New in this refactor:** all API success responses are moving to a unified
-> envelope helper, `ApiResponse[T]`, so clients can rely on a consistent
-> `{success, data, error, meta}` shape. See `backend/routers/` usage for examples.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system architecture, layer boundaries, transaction policy, error handling, rate limiting, migration standards, and tier & entitlement model.
 
 ---
 

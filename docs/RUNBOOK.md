@@ -20,8 +20,9 @@ Set all of the following before the first `railway up` or `fly deploy`:
 | `DATABASE_URL` | ✅ (prod) | `postgresql://user:pass@host:5432/dbname` — leave empty for SQLite (dev only) |
 | `STRIPE_SECRET_KEY` | ✅ | From Stripe Dashboard → API Keys |
 | `STRIPE_WEBHOOK_SECRET` | ✅ | From Stripe → Webhooks → Signing secret (`whsec_...`) |
-| `STRIPE_PRICE_BASIC` | ✅ | Stripe price ID for Basic tier |
-| `STRIPE_PRICE_PRO` | ✅ | Stripe price ID for Pro tier |
+| `STRIPE_PRICE_BASIC` | ✅ | Stripe price ID for Basic tier ($19/mo) |
+| `STRIPE_PRICE_PRO` | ✅ | Stripe price ID for Pro tier ($49/mo) |
+| `STRIPE_PRICE_ELITE` | ✅ | Stripe price ID for Elite tier ($99/mo) |
 | `TELEGRAM_BOT_TOKEN` | ✅ | From @BotFather on Telegram |
 | `POLYGON_API_KEY` | ✅ | Polygon.io market data API key |
 | `SMTP_HOST` | Strongly rec. | Email delivery host (e.g., `smtp.sendgrid.net`) |

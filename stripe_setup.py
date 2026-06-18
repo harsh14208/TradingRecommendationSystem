@@ -102,24 +102,37 @@ PLANS = [
         "description": (
             "65+ signal blocks · Polygon.io primary data · 13F institutional flow · "
             "Telegram + Discord + Web Push delivery · Backtest analytics (1d/3d/7d/14d) · "
-            "Price alerts · Excel signal export · 164-ticker watchlist. "
+            "Price alerts · Excel signal export · 164-ticker watchlist · "
+            "Alpaca paper trading. "
             "7-day free trial."
         ),
-        "amount": 2900,  # $29/mo
+        "amount": 1900,  # $19/mo
         "tier": "basic",
     },
     {
         "key": "STRIPE_PRICE_PRO",
         "name": "Signal.Trade Pro",
         "description": (
-            "Everything in Basic + Alpaca paper trading · Signal correlation matrix · "
+            "Everything in Basic + Signal correlation matrix · "
             "Bayesian predictive confidence intervals · Portfolio volatility targeting · "
             "Cross-asset risk dashboard · Sector heatmap drill-down · "
             "Weekly performance digest · Simulated backtest with slippage. "
             "7-day free trial."
         ),
-        "amount": 7900,  # $79/mo
+        "amount": 4900,  # $49/mo
         "tier": "pro",
+    },
+    {
+        "key": "STRIPE_PRICE_ELITE",
+        "name": "Signal.Trade Elite",
+        "description": (
+            "Everything in Pro + Early access to new alpha features · "
+            "Priority signal delivery (lowest latency) · Dedicated support channel · "
+            "Custom watchlist import (up to 500 tickers) · API access (webhook + REST). "
+            "7-day free trial."
+        ),
+        "amount": 9900,  # $99/mo
+        "tier": "elite",
     },
 ]
 

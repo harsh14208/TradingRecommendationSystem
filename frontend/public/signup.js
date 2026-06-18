@@ -47,7 +47,7 @@ function goToAccount() {
   document.getElementById('lbl-2').classList.add('active');
 
   // Update plan summary
-  const prices = { free:'Free', basic:'$29/mo', pro:'$79/mo' };
+  const prices = { free:'Free', basic:'$19/mo', pro:'$49/mo' };
   const names  = { free:'Free', basic:'Basic', pro:'Pro' };
   document.getElementById('summary-name').textContent = names[selectedPlan];
   document.getElementById('summary-price').textContent = prices[selectedPlan];

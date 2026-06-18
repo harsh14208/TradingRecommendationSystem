@@ -41,7 +41,7 @@ Signal.Trade backend after the security/architecture refactor.
 - Tier gating is enforced by `services.auth_svc.require_tier(min_tier)`. Owner
   bypasses all tier checks.
 - `paper_router.py` requires authentication on all endpoints;
-  `POST /api/paper/orders` requires the **Pro** tier (or owner).
+  `POST /api/paper/orders` requires the **Basic** tier (or owner).
 - Admin/owner endpoints (`/api/admin/*`) enforce `current_user.is_owner`.
 - User-scoped endpoints (`/api/me/*`, broker connect, paper trading) enforce
   resource ownership.
