@@ -818,8 +818,13 @@ NORMAL_STOP_SLIP_PCT = 0.10
 # Best: BUY_THRESH=40, MAX=∞, HOLD=10 → Sharpe 0.165, WR 51.9%, avg +0.61%
 # v7.1 score-band analysis (2026-05-28): band 40-50 → WR 56.2%, avg +0.26%, Sharpe 0.07
 #                                         band 50-60 → WR 64.7%, avg +0.87%, Sharpe 0.21
-# Raised to 50: halves trade count, ~doubles avg return. 40-50 band not worth the risk.
-BUY_THRESH = 50
+# Was raised to 50 (halves trades, ~doubles avg return); v7.1 judged 40-50 not worth it.
+# §relax-sweep (2026-06-18): that verdict was too coarse — it lumped the weak 40-45 band
+# with the tradeable 45-50 band. Splitting them: BUY_THRESH 50→45 grows N +52% IS / +60%
+# OOS-CLEAN (98→157) while holding OOS Sharpe FLAT at 0.18 (avg +0.68% identical, curation
+# verdict ✅ "edge generalises"). 50→40 gives back Sharpe (−0.02, avg→+0.57%) — stop at 45.
+# Relaxing MR thresholds (BB/IBS/VWAP) adds 0 trades; BUY_THRESH is the only N lever.
+BUY_THRESH = 45
 BUY_THRESH_MAX = 999  # effectively no ceiling
 SELL_THRESH = -100  # SELLs disabled. §32 validation (2026-05-26): −45 threshold produced
 # N=1354 SELLs at WR=33.1%, Avg=−0.43%, Sharpe=−0.08, MaxDD=−28%.
@@ -4612,8 +4617,11 @@ def run_walk_forward_temporal(trades_df: pd.DataFrame) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def run_oos_validation(vix, spy_trend, stlfsi4):
+def run_oos_validation(vix, spy_trend, stlfsi4, buy_thresh_override=None):
     """Run the MR-only strategy on HELD_OUT_TICKERS and compare vs main universe.
+
+    buy_thresh_override — if set (e.g. 45 from --buy-thresh), validates a relaxed
+    entry-score gate out-of-sample (paired with --relax-sweep findings).
 
     These tickers were never touched during research or gate calibration —
     any edge found here is genuinely out-of-sample.
@@ -4647,7 +4655,9 @@ def run_oos_validation(vix, spy_trend, stlfsi4):
             continue
         # process_ticker returns the scored indicator frame; turn it into the
         # MR-only trades frame (net_pct etc.) exactly like the IS pipeline.
-        t_df = simulate_ticker(ticker, ind_df, vix, spy_trend, stlfsi4, mr_only=True)
+        t_df = simulate_ticker(
+            ticker, ind_df, vix, spy_trend, stlfsi4, mr_only=True, buy_thresh_override=buy_thresh_override
+        )
         per_ticker_trades[ticker] = t_df
         if t_df is not None and not t_df.empty:
             oos_trades.append(t_df)
@@ -7798,12 +7808,113 @@ def main():
             print("> Consider relaxing N floor to 60, or combining with options flow data.")
         print()
 
+    # ── Relax Sweep — LOOSEN entry gates to grow N while holding Sharpe ───────
+    # Mirror of --quality-sweep but in the opposite direction: the live delivery
+    # pipeline is signal-starved (June 2026: ~0.5% BUY delivery rate). This asks
+    # the IS question "which gate can we relax to recover N without giving back
+    # Sharpe?" Levers: MR thresholds (BB%B/IBS/VWAP — currently tightened to
+    # 0.22/0.15/-0.75 from 0.30/0.20/-0.50) and BUY_THRESH (50). MR-count is
+    # already 1 (matches live); can't relax further.
+    if "--relax-sweep" in sys.argv and all_dfs:
+        import sys as _sys
+
+        _mod = _sys.modules[__name__]
+        print("\n\n## Relax Sweep — Loosen Entry Gates to Grow N\n")
+        print("> Goal: recover delivery volume (N) without giving back IS Sharpe.")
+        print(
+            f"> Baseline gates: BB%B<{MR_BB_CEIL} OR IBS<{MR_IBS_CEIL} OR VWAP%<{MR_VWAP_FLOOR}%, BUY_THRESH={BUY_THRESH}, MR≥1.\n"
+        )
+
+        def _rrun(bb=None, ibs=None, vwap=None, buy=None):
+            _saved_vwap = _mod.MR_VWAP_FLOOR
+            if vwap is not None:
+                _mod.MR_VWAP_FLOOR = vwap
+            try:
+                trades_list = []
+                for ticker, df in all_dfs.items():
+                    t = simulate_ticker(
+                        ticker,
+                        df,
+                        vix,
+                        spy_trend,
+                        stlfsi4,
+                        mr_only=True,
+                        mr_bb_ceil_override=bb,
+                        mr_ibs_ceil_override=ibs,
+                        buy_thresh_override=buy,
+                    )
+                    if not t.empty:
+                        trades_list.append(t)
+            finally:
+                _mod.MR_VWAP_FLOOR = _saved_vwap
+            if not trades_list:
+                return dict(_EMPTY_STATS)
+            return stats(pd.concat(trades_list, ignore_index=True)["net_pct"].tolist())
+
+        _rs_baseline = _rrun()
+        _rs_bs = _rs_baseline.get("sharpe") or 0.0
+        _rs_bn = _rs_baseline["n"]
+
+        # (label, bb_ceil, ibs_ceil, vwap_floor, buy_thresh) — None = keep current
+        _rs_configs = [
+            ("baseline (current gates)", None, None, None, None),
+            ("BB%B ceil 0.22→0.30", 0.30, None, None, None),
+            ("IBS ceil 0.15→0.20", None, 0.20, None, None),
+            ("VWAP floor -0.75→-0.50", None, None, -0.50, None),
+            ("BUY_THRESH 50→45", None, None, None, 45),
+            ("BUY_THRESH 50→40", None, None, None, 40),
+            ("all MR thresholds relaxed", 0.30, 0.20, -0.50, None),
+            ("all MR relaxed + BUY_THRESH 45", 0.30, 0.20, -0.50, 45),
+            ("all MR relaxed + BUY_THRESH 40", 0.30, 0.20, -0.50, 40),
+        ]
+
+        _rs_rows = []
+        # "Keep" = grows N by ≥10% while holding Sharpe within 0.02 of baseline.
+        best_label, best_n, best_sh = "baseline", _rs_bn, _rs_bs
+        for i, (label, bb, ibs, vwap, buy) in enumerate(_rs_configs, 1):
+            print(f"  [{i:>2}/{len(_rs_configs)}] {label}…", flush=True)
+            sv = _rrun(bb=bb, ibs=ibs, vwap=vwap, buy=buy)
+            sh = sv.get("sharpe") or 0.0
+            dn = sv["n"] - _rs_bn
+            keeps_sharpe = sh >= _rs_bs - 0.02
+            grows_n = sv["n"] >= _rs_bn * 1.10
+            verdict = " ✅ KEEP" if (keeps_sharpe and grows_n) else (" ⚠ N-up Sh-down" if grows_n else "")
+            # prefer the config with the most N among those that hold Sharpe
+            if keeps_sharpe and sv["n"] > best_n:
+                best_n, best_sh, best_label = sv["n"], sh, label
+            _rs_rows.append(
+                [
+                    label + verdict,
+                    f"{sv['n']} ({dn:+d})",
+                    f"{sv['wr']:.1f}%",
+                    f"{sv['avg']:+.2f}%",
+                    f"{fmt_sharpe(sh)} ({sh - _rs_bs:+.2f})",
+                    f"-{sv['max_dd']:.2f}%",
+                ]
+            )
+
+        print_table(["Config", "N (Δ)", "WR", "Avg Ret", "Sharpe (Δ)", "MaxDD"], _rs_rows)
+        print(f"\n> Baseline: N={_rs_bn}, WR={_rs_baseline['wr']:.1f}%, Sharpe={fmt_sharpe(_rs_bs)}")
+        if best_label != "baseline":
+            print(
+                f"> Best N-growth holding Sharpe (≥-0.02): '{best_label}' → N={best_n} (+{best_n - _rs_bn}), Sharpe {best_sh:.2f}"
+            )
+            print(
+                "> Next: --oos with this config to confirm the relaxed gate survives out-of-sample before any live change."
+            )
+        else:
+            print(
+                "> No relaxation grows N ≥10% without giving back >0.02 Sharpe — the gates are at the efficient frontier."
+            )
+        print()
+
     # ── Gate Validation — ablate all backtest-testable live engine gates ─────
     if "--oos" in sys.argv or "--sweep" in sys.argv:
         run_oos_validation(
             vix,
             spy_trend,
             stlfsi4,
+            buy_thresh_override=_buy_thresh_override,
         )
 
     if "--sweep" in sys.argv:

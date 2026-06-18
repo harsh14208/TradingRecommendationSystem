@@ -48,7 +48,8 @@ def test_score_to_action_hold_zero():
 def test_score_to_action_boundary_buy():
     from services.engines.helpers import _score_to_action
 
-    action, _ = _score_to_action(35.0)
+    # BUY bar lowered 35→32 (§relax-sweep 2026-06-18).
+    action, _ = _score_to_action(32.0)
     assert action == "BUY"
 
 
@@ -62,7 +63,7 @@ def test_score_to_action_boundary_sell():
 def test_score_to_action_just_below_buy():
     from services.engines.helpers import _score_to_action
 
-    action, _ = _score_to_action(34.9)
+    action, _ = _score_to_action(31.9)
     assert action == "HOLD"
 
 
