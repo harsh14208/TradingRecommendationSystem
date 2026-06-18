@@ -108,6 +108,15 @@ def _bool_default(false_value: str = "FALSE") -> str:
     return f"BOOLEAN DEFAULT {false_value.upper()}" if _IS_POSTGRES else "INTEGER DEFAULT 0"
 
 
+async def _pg_table_exists(conn, table: str) -> bool:
+    """Check whether a PostgreSQL table exists in the public schema."""
+    result = await conn.execute(
+        text("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = :table"),
+        {"table": table},
+    )
+    return result.scalar() is not None
+
+
 async def _pg_column_exists(conn, table: str, column: str) -> bool:
     """Check whether a column already exists on a PostgreSQL table."""
     result = await conn.execute(
@@ -129,64 +138,70 @@ async def _pg_index_exists(conn, table: str, index: str) -> bool:
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Additive column migrations — kept for environments that have never run
-        # Alembic (e.g. local dev clones, CI test DBs).  For production schema
-        # changes use Alembic instead:
-        #
-        #   # New deployment against empty DB — apply all migrations:
-        #   alembic upgrade head
-        #
-        #   # Existing production DB (schema already current) — stamp it so
-        #   # Alembic knows the starting revision without re-running DDL:
-        #   alembic stamp head
-        #
-        #   # After adding a new column / table to models.py:
-        #   alembic revision --autogenerate -m "add_foo_column"
-        #   alembic upgrade head
-        #
-        # WARNING: never remove columns via this init_db block — that requires a
-        # proper Alembic migration with a downgrade() to be safely reversible.
-        dt = _dt_type()
-        bd = _bool_default
-        _migrations: list[tuple[str, str, str | None]] = [
-            # (table_or_kind, sql, object_name_for_idempotency_check)
-            # users table
-            ("users", "ALTER TABLE users ADD COLUMN min_confidence_override REAL", "min_confidence_override"),
-            (
-                "users",
-                "ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
-                "referred_by",
-            ),
-            ("users", f"ALTER TABLE users ADD COLUMN referral_rewarded {bd('FALSE')}", "referral_rewarded"),
-            ("users", "ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20)", "oauth_provider"),
-            ("users", "ALTER TABLE users ADD COLUMN oauth_sub VARCHAR(255)", "oauth_sub"),
-            ("users", "ALTER TABLE users ADD COLUMN discord_webhook_url VARCHAR(500)", "discord_webhook_url"),
-            ("users", "ALTER TABLE users ADD COLUMN webhook_url VARCHAR(500)", "webhook_url"),
-            ("users", f"ALTER TABLE users ADD COLUMN trial_consumed_at {dt}", "trial_consumed_at"),
-            # oauth_state table
-            ("oauth_state", "ALTER TABLE oauth_state ADD COLUMN code_challenge VARCHAR(255)", "code_challenge"),
-            ("oauth_state", "ALTER TABLE oauth_state ADD COLUMN code_verifier VARCHAR(255)", "code_verifier"),
-            # signals table
-            ("signals", f"ALTER TABLE signals ADD COLUMN expires_at {dt}", "expires_at"),
-            # performance_snapshots table
-            ("performance_snapshots", "ALTER TABLE performance_snapshots ADD COLUMN alpha REAL", "alpha"),
-            # indexes for created_at (CREATE INDEX IF NOT EXISTS is idempotent on its own)
-            ("signals", "CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at)", None),
-            ("send_log", "CREATE INDEX IF NOT EXISTS idx_send_log_created_at ON send_log(created_at)", None),
-            (
-                "broker_orders",
-                "CREATE INDEX IF NOT EXISTS idx_broker_orders_created_at ON broker_orders(created_at)",
-                None,
-            ),
-        ]
-        for table, sql, obj_name in _migrations:
+
+    # Additive column migrations — kept for environments that have never run
+    # Alembic (e.g. local dev clones, CI test DBs).  For production schema
+    # changes use Alembic instead:
+    #
+    #   # New deployment against empty DB — apply all migrations:
+    #   alembic upgrade head
+    #
+    #   # Existing production DB (schema already current) — stamp it so
+    #   # Alembic knows the starting revision without re-running DDL:
+    #   alembic stamp head
+    #
+    #   # After adding a new column / table to models.py:
+    #   alembic revision --autogenerate -m "add_foo_column"
+    #   alembic upgrade head
+    #
+    # WARNING: never remove columns via this init_db block — that requires a
+    # proper Alembic migration with a downgrade() to be safely reversible.
+    dt = _dt_type()
+    bd = _bool_default
+    _migrations: list[tuple[str, str, str | None]] = [
+        # (table_or_kind, sql, object_name_for_idempotency_check)
+        # users table
+        ("users", "ALTER TABLE users ADD COLUMN min_confidence_override REAL", "min_confidence_override"),
+        (
+            "users",
+            "ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
+            "referred_by",
+        ),
+        ("users", f"ALTER TABLE users ADD COLUMN referral_rewarded {bd('FALSE')}", "referral_rewarded"),
+        ("users", "ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20)", "oauth_provider"),
+        ("users", "ALTER TABLE users ADD COLUMN oauth_sub VARCHAR(255)", "oauth_sub"),
+        ("users", "ALTER TABLE users ADD COLUMN discord_webhook_url VARCHAR(500)", "discord_webhook_url"),
+        ("users", "ALTER TABLE users ADD COLUMN webhook_url VARCHAR(500)", "webhook_url"),
+        ("users", f"ALTER TABLE users ADD COLUMN trial_consumed_at {dt}", "trial_consumed_at"),
+        # oauth_states table
+        ("oauth_states", "ALTER TABLE oauth_states ADD COLUMN code_challenge VARCHAR(255)", "code_challenge"),
+        ("oauth_states", "ALTER TABLE oauth_states ADD COLUMN code_verifier VARCHAR(255)", "code_verifier"),
+        # signals table
+        ("signals", f"ALTER TABLE signals ADD COLUMN expires_at {dt}", "expires_at"),
+        # performance_snapshots table
+        ("performance_snapshots", "ALTER TABLE performance_snapshots ADD COLUMN alpha REAL", "alpha"),
+        # indexes for created_at (CREATE INDEX IF NOT EXISTS is idempotent on its own)
+        ("signals", "CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at)", None),
+        ("send_log", "CREATE INDEX IF NOT EXISTS idx_send_log_created_at ON send_log(created_at)", None),
+        (
+            "broker_orders",
+            "CREATE INDEX IF NOT EXISTS idx_broker_orders_created_at ON broker_orders(created_at)",
+            None,
+        ),
+    ]
+    for table, sql, obj_name in _migrations:
+        # Each migration runs in its own transaction so one failure cannot
+        # abort the rest or leave the session in a failed-transaction state.
+        async with engine.begin() as conn:
             try:
-                if obj_name and _IS_POSTGRES:
+                if _IS_POSTGRES:
                     if sql.strip().upper().startswith("CREATE INDEX"):
-                        if await _pg_index_exists(conn, table, obj_name):
+                        if obj_name and await _pg_index_exists(conn, table, obj_name):
                             continue
                     else:
-                        if await _pg_column_exists(conn, table, obj_name):
+                        if not await _pg_table_exists(conn, table):
+                            continue
+                        if obj_name and await _pg_column_exists(conn, table, obj_name):
                             continue
                 await conn.execute(text(sql))
             except (OperationalError, ProgrammingError) as exc:
