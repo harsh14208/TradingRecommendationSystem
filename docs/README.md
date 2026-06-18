@@ -224,61 +224,17 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system architecture, layer b
 
 ## Environment Variables
 
-See `.env.example` for the full reference. Minimum to run locally:
+See [HOWTO.md](HOWTO.md) §29 for the full environment variables reference and `.env` setup.
 
-```bash
-FINNHUB_API_KEY=...          # Free tier: 60 req/min
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_CHAT_ID=...         # Your personal chat ID (owner fallback)
-JWT_SECRET=...               # python3 -c "import secrets; print(secrets.token_hex(32))"
-OWNER_EMAIL=you@email.com
-OWNER_PASSWORD=YourPassword!
-
-# Database (local Homebrew Postgres — pre-filled in .env.example)
-DATABASE_URL=postgresql://signal:signal_dev_pw@127.0.0.1:5432/signal_trade
-# Production: set to Railway/Fly.io/Neon/Supabase managed URL
-
-# Optional (app works without these)
-ALPACA_API_KEY=...           # Paper trading
-ALPACA_API_SECRET=...
-FRED_API_KEY=...             # Macro indicators (yield curve, CPI)
-SMTP_HOST=...                # Transactional email (users auto-verified without it)
-STRIPE_SECRET_KEY=...        # Billing (subscription tiers work without it in dev)
-STRIPE_WEBHOOK_SECRET=...    # whsec_... from Stripe dashboard (required for paid subs)
-GOOGLE_CLIENT_ID=...         # OAuth
-```
+---
 
 ---
 
 ## Deploy
 
-### Railway (recommended — `railway.toml` pre-configured, ~$5/mo)
+See [RUNBOOK.md](RUNBOOK.md) §1 for first-time deployment, and [HOWTO.md](HOWTO.md) §30 for production deployment steps.
 
-```bash
-railway login && railway init && railway up
-railway add --plugin postgresql          # DATABASE_URL auto-injected
-railway variables set JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-railway variables set OWNER_EMAIL=you@example.com OWNER_PASSWORD=StrongPass!
-railway variables set FINNHUB_API_KEY=... TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
-railway variables set APP_URL=https://your-app.up.railway.app
-```
-
-After deploy:
-1. Run `python3 stripe_setup.py` locally → auto-fills Stripe Price IDs in `.env`
-2. In Stripe dashboard: add webhook endpoint `https://your-app.up.railway.app/api/billing/webhook`, listen for `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed` → copy `whsec_...` to `STRIPE_WEBHOOK_SECRET`
-3. Register Telegram webhook via Admin → Setup Status
-4. Verify all green in Admin → Setup Status
-
-> **Security is auto-configured.** Cookie `Secure` flag and CORS origin lock are derived from `APP_URL` — no extra config needed when deploying to HTTPS.
-
-### Docker Compose (self-hosted)
-
-```bash
-cp backend/.env.example backend/.env   # fill required vars
-docker compose up -d
-```
-
-The `docker-compose.yml` starts a `postgres:16-alpine` service alongside the backend. All data (PostgreSQL + factor weights) lives in a named Docker volume — no manual bind-mount paths needed. The backend waits for Postgres to be healthy before starting.
+---
 
 ---
 
