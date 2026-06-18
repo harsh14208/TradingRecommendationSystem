@@ -1,5 +1,15 @@
+/* ─── Skeleton block ─────────────────────────────────────────────────────────── */
+function SkeletonBlock({ width, height, style = {} }) {
+  return (
+    <div
+      className="skeleton"
+      style={{ width, height, ...style }}
+    />
+  );
+}
+
 /* ─── Account modal ─────────────────────────────────────────────────────────── */
-function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
+function AccountModal({ open, onClose, user, setUser, onUpgrade, onDirty }) {
   const [nameSaving,    setNameSaving]    = useState(false);
   const [nameEdit,      setNameEdit]      = useState(user?.full_name || "");
   const [nameError,     setNameError]     = useState("");
@@ -31,6 +41,8 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   const [autoExecMsg,   setAutoExecMsg]   = useState("");
   const [brokerStatus,    setBrokerStatus]    = useState(null);
   const [brokerLoading,   setBrokerLoading]   = useState(false);
+  const [statsLoading,    setStatsLoading]    = useState(false);
+  const [billingLoading,  setBillingLoading]  = useState(false);
   const [showBrokerForm,  setShowBrokerForm]  = useState(false);
   const [brokerKey,       setBrokerKey]       = useState("");
   const [brokerSecret,    setBrokerSecret]    = useState("");
@@ -66,19 +78,33 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
         authFetch("/api/me/broker/status", { signal }).then(r => r.json()).then(d => { setBrokerStatus(d); }).catch(() => {}).finally(() => setBrokerLoading(false));
       }
       if (user.is_owner) {
+        setStatsLoading(true);
         authFetch("/api/admin/setup-status", { signal }).then(r => r.json()).then(setSetupStatus).catch(() => {});
-        apiFetch("/api/admin/stats", { signal }).then(d => { if (d) setAdminStats(d); }).catch(() => {});
+        apiFetch("/api/admin/stats", { signal }).then(d => { if (d) setAdminStats(d); }).catch(() => {}).finally(() => setStatsLoading(false));
         apiFetch("/api/admin/weekly-digest/status", { signal }).then(d => { if (d) setDigestStatus(d); }).catch(() => {});
         apiFetch("/api/admin/execution-kill-switch", { signal }).then(d => { if (d) setKillSwitch(d.execution_paused); }).catch(() => {});
       }
       apiFetch("/api/auth/referral", { signal }).then(d => { if (d) setReferral(d); }).catch(() => {});
-      apiFetch("/api/billing/status", { signal }).then(d => { if (d) setBillingStatus(d); }).catch(() => {});
+      setBillingLoading(true);
+      apiFetch("/api/billing/status", { signal }).then(d => { if (d) setBillingStatus(d); }).catch(() => {}).finally(() => setBillingLoading(false));
       if (user.is_owner) {
         apiFetch("/api/admin/quota-analytics", { signal }).then(d => { if (d) setQuotaAnalytics(d); }).catch(() => {});
       }
       return () => ctrl.abort();
     }
   }, [open, user]);
+
+  useEffect(() => {
+    if (!open) {
+      onDirty?.(false);
+      return;
+    }
+    const dirty =
+      nameEdit.trim() !== (user?.full_name || "").trim() ||
+      brokerKey.trim() !== "" ||
+      brokerSecret.trim() !== "";
+    onDirty?.(dirty);
+  }, [open, nameEdit, brokerKey, brokerSecret, user?.full_name]);
 
   const copyReferral = () => {
     if (!referral?.referral_url) return;
@@ -217,6 +243,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
 
   const connectBroker = async () => {
     if (!brokerKey.trim() || !brokerSecret.trim()) { setBrokerConnMsg("API key and secret are required"); return; }
+    if (brokerKey.trim().length < 10) { setBrokerConnMsg("API key looks too short"); return; }
     setBrokerConnecting(true);
     setBrokerConnMsg("");
     try {
@@ -281,6 +308,14 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
         {/* Subscription */}
         <div style={{ marginBottom:24 }}>
           <div style={{ fontSize:10, fontWeight:600, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"var(--font-mono)", marginBottom:12, paddingBottom:8, borderBottom:"1px solid var(--line)" }}>Subscription</div>
+          {billingLoading ? (
+            <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:12 }}>
+              <SkeletonBlock width="30%" height={12} />
+              <SkeletonBlock width="50%" height={10} />
+              <SkeletonBlock width="40%" height={10} />
+            </div>
+          ) : (
+          <React.Fragment>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
             <span style={{ fontSize:12, fontWeight:700, color:tierColor, background:tierColor+"22", padding:"3px 10px", borderRadius:20, border:`1px solid ${tierColor}44` }}>
               {tier.toUpperCase()}{user.is_owner ? " · OWNER" : ""}
@@ -321,6 +356,8 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
               }}>Manage Billing</button>
             )}
           </div>
+          </React.Fragment>
+          )}
         </div>
 
         {/* Telegram */}
@@ -404,7 +441,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
         )}
 
         {/* Admin section */}
-        {user.is_owner && (setupStatus || adminStats) && (
+        {user.is_owner && (setupStatus || adminStats || statsLoading) && (
           <div style={{ marginBottom:24 }}>
             <div style={{ fontSize:10, fontWeight:600, color:"var(--warn)", textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"var(--font-mono)", marginBottom:12, paddingBottom:8, borderBottom:"1px solid var(--line)", display:"flex", justifyContent:"space-between" }}>
               <span>Admin</span>
@@ -412,6 +449,16 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
                 {setupStatus.all_critical_ok ? "✓ Ready" : "⚠ Action needed"}
               </span>}
             </div>
+            {statsLoading && (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:12 }}>
+                {[1,2,3,4,5,6].map(i => (
+                  <div key={i} style={{ background:"var(--bg-2)", borderRadius:6, padding:"8px 10px", display:"flex", flexDirection:"column", gap:6 }}>
+                    <SkeletonBlock width="60%" height={9} />
+                    <SkeletonBlock width="40%" height={15} />
+                  </div>
+                ))}
+              </div>
+            )}
             {quotaAnalytics && (
               <div style={{ marginBottom:12 }}>
                 <div style={{ fontSize:10, fontWeight:600, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"var(--font-mono)", marginBottom:8 }}>Quota usage today</div>
@@ -563,7 +610,10 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
               <div style={{ marginBottom:14 }}>
                 <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", letterSpacing:"0.08em", marginBottom:8 }}>BROKER CONNECTION</div>
                 {brokerLoading ? (
-                  <div style={{ fontSize:11, color:"var(--text-faint)" }}>Loading…</div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:6, padding:"8px 0" }}>
+                    <SkeletonBlock width="60%" height={14} />
+                    <SkeletonBlock width="40%" height={10} />
+                  </div>
                 ) : brokerStatus?.connected ? (
                   <div>
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
@@ -598,7 +648,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
                         Live mode places real orders with real money. Use paper mode to test first.
                       </div>
                     )}
-                    <input type="text" placeholder="API Key (PKXXXXX…)" value={brokerKey} onChange={e => setBrokerKey(e.target.value)} style={inp} autoComplete="off" spellCheck={false}/>
+                    <input type="text" placeholder="API Key (PKXXXXX…)" value={brokerKey} onChange={e => setBrokerKey(e.target.value)} style={inp} autoComplete="off" spellCheck={false} maxLength={64}/>
                     <input type="password" placeholder="API Secret" value={brokerSecret} onChange={e => setBrokerSecret(e.target.value)} style={inp} autoComplete="new-password"/>
                     <div style={{ display:"flex", gap:8 }}>
                       <button className="btn ghost" style={{ fontSize:11, flex:1 }} onClick={() => { setShowBrokerForm(false); setBrokerConnMsg(""); }}>Cancel</button>
@@ -790,9 +840,15 @@ function PriceAlertModal({ open, onClose, ticker, currentPrice }) {
           </div>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontSize:16, fontWeight:700 }}>Price Alert</div>
-            <div style={{ fontSize:11, color:"var(--text-faint)", marginTop:2, fontFamily:"var(--font-mono)" }}>
-              {cleanTicker || "Signal"}{Number.isFinite(price) && price > 0 ? ` · current $${fmt(price)}` : ""}
-            </div>
+            {Number.isFinite(price) && price > 0 ? (
+              <div style={{ fontSize:11, color:"var(--text-faint)", marginTop:2, fontFamily:"var(--font-mono)" }}>
+                {cleanTicker || "Signal"}{` · current $${fmt(price)}`}
+              </div>
+            ) : (
+              <div style={{ marginTop:4 }}>
+                <SkeletonBlock width="50%" height={10} />
+              </div>
+            )}
           </div>
           <button onClick={onClose} style={{ background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", fontSize:20, lineHeight:1 }}>×</button>
         </div>
@@ -1090,7 +1146,7 @@ function PricingView({ open, onClose, user, context }) {
 }
 
 /* ─── Tweaks panel ─────────────────────────────────────────────────────────── */
-function TweaksPanel({ open, onClose, state, set }) {
+function TweaksPanel({ open, onClose, state, set, saveError }) {
   // Saturated accents only — a near-white accent makes --bull/--accent text
   // invisible (mono removed). Accent drives links, highlights and primary buttons.
   const accents = [
@@ -1232,8 +1288,8 @@ function TweaksPanel({ open, onClose, state, set }) {
         </div>
       </div>
 
-      <div style={{ fontSize:10, fontFamily:"var(--font-mono)", color:"var(--text-faint)", marginTop:14, paddingTop:10, borderTop:"1px solid var(--line)" }}>
-        All settings apply immediately. Rules are local — they filter your feed view only.
+      <div style={{ fontSize:10, fontFamily:"var(--font-mono)", color: saveError ? "var(--down)" : "var(--text-faint)", marginTop:14, paddingTop:10, borderTop:"1px solid var(--line)" }}>
+        {saveError || "All settings apply immediately. Rules are local — they filter your feed view only."}
       </div>
         </div>
       </div>
@@ -1379,7 +1435,11 @@ function AlertsView({ open, onClose }) {
 
         {/* ── Rule list ── */}
         {loading ? (
-          <div style={{ textAlign:"center", color:"var(--text-faint)", fontSize:12, padding:20 }}>Loading…</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8, padding:20 }}>
+            <SkeletonBlock width="100%" height={40} />
+            <SkeletonBlock width="100%" height={40} />
+            <SkeletonBlock width="80%" height={40} />
+          </div>
         ) : rules.length === 0 ? (
           <div style={{ textAlign:"center", color:"var(--text-faint)", fontSize:12, padding:20 }}>
             No rules yet. Add one above to override the global threshold for specific tickers.
@@ -1651,6 +1711,14 @@ function ScreenerView({ open, onClose }) {
                 {saving ? "Saving…" : "Save screener"}
               </button>
             </div>
+
+            {loading && (
+              <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:20 }}>
+                <SkeletonBlock width="100%" height={36} />
+                <SkeletonBlock width="100%" height={36} />
+                <SkeletonBlock width="80%" height={36} />
+              </div>
+            )}
 
             {/* ── Results ── */}
             {results && (

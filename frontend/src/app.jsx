@@ -125,12 +125,14 @@ function App() {
     try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("st_tweaks") || "{}") }; }
     catch { return DEFAULTS; }
   });
+  const [tweakSaveError, setTweakSaveError] = useState("");
   // Guard rapid setTweak calls so overlapping PUTs don't race
   const tweakSaving = useRef(false);
   const pendingTweak = useRef(null);
   const setTweak = patch => {
     const next = { ...tweakState, ...patch };
     setTweakState(next);
+    setTweakSaveError(""); // clear on new save attempt
     try { localStorage.setItem("st_tweaks", JSON.stringify(next)); } catch {}
     // Persist to DB with simple in-flight guard
     pendingTweak.current = next;
@@ -142,7 +144,10 @@ function App() {
         pendingTweak.current = null;
         try {
           await apiFetch("/api/settings", { method:"PUT", body: JSON.stringify(payload) });
-        } catch {}
+        } catch (err) {
+          setTweakSaveError("Could not save tweaks — try again");
+          setTimeout(() => setTweakSaveError(""), 3000);
+        }
       }
       tweakSaving.current = false;
     };
@@ -173,7 +178,10 @@ function App() {
   const [predictive,     setPredictive]     = useState(null);
   const [predLoading,    setPredLoading]    = useState(false);
   const [paperTradeFlash,setPaperTradeFlash]= useState(false);
+  const [paperSubmitting, setPaperSubmitting] = useState(false);
   const [searchQuery,    setSearchQuery]    = useState("");
+  const [searchInput,    setSearchInput]    = useState("");
+  const searchTimeoutRef = useRef(null);
   const [fullDetailOpen, setFullDetailOpen] = useState(false);  // kept for keyboard compat
   const [detailTab,      setDetailTab]      = useState("why"); // why | position | simulate | similar
   const [chartPeriod,    setChartPeriod]    = useState("3M");
@@ -186,6 +194,11 @@ function App() {
   const [alertOpen,      setAlertOpen]      = useState(false);
   const [whatsNewSeen,   setWhatsNewSeen]   = useState(false);
   const [navMenuOpen,    setNavMenuOpen]    = useState(false);  // mobile nav drawer
+  const [ptrState,       setPtrState]       = useState("idle");
+  const ptrStartY = useRef(0);
+  const feedRef = useRef(null);
+  const [ariaLiveMsg,    setAriaLiveMsg]    = useState("");
+  const hasUnsavedData = useRef(false);
   const searchRef       = useRef(null);
   const sidebarRef      = useRef(null);
   const deliveryRef     = useRef(null);
@@ -354,6 +367,18 @@ function App() {
     }
   }, [pricingOpen, tweaksOpen, alertOpen, accountOpen, navMenuOpen, hkOpen, tourOpen, nav]);
 
+  // Warn before leaving if unsaved form data exists
+  useEffect(() => {
+    const handler = (e) => {
+      if (hasUnsavedData.current) {
+        e.preventDefault();
+        e.returnValue = "You have unsaved changes. Are you sure you want to leave?";
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+
   /* ── WebSocket Connection ── */
   useEffect(() => {
     if (!authReady || !currentUser) return;
@@ -380,6 +405,8 @@ function App() {
           const data = JSON.parse(e.data);
           if (data.type === "new_signal") {
             setSignals(prev => [data.signal, ...prev.filter(s => s.id !== data.signal.id)]);
+            setAriaLiveMsg(`New ${data.signal.action} signal for ${data.signal.ticker} at $${fmt(data.signal.price)}`);
+            setTimeout(() => setAriaLiveMsg(""), 3000);
           } else if (data.type === "price_update") {
             if (data.quotes) setTickerTape(data.quotes);
           } else if (data.type === "tick") {
@@ -910,7 +937,11 @@ function App() {
 
   return (
     <div className="app">
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       <h1 style={{ position:"absolute", width:"1px", height:"1px", padding:0, margin:"-1px", overflow:"hidden", clip:"rect(0,0,0,0)", whiteSpace:"nowrap", border:0 }}>Signal.Trade Dashboard</h1>
+      <div aria-live="polite" aria-atomic="true" className="visually-hidden">
+        {ariaLiveMsg}
+      </div>
       {/* ── Top bar ── */}
       <div className="topbar">
         <div className="brand">
@@ -923,15 +954,24 @@ function App() {
             ref={searchRef}
             type="text"
             placeholder="Search tickers or type: 'dark pool buy', 'oversold tech', 'high conf sell'…"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            onKeyDown={e => e.key === "Escape" && setSearchQuery("")}
+            value={searchInput}
+            onChange={e => {
+              setSearchInput(e.target.value);
+              if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+              searchTimeoutRef.current = setTimeout(() => setSearchQuery(e.target.value), 300);
+            }}
+            onKeyDown={e => {
+              if (e.key === "Escape") {
+                setSearchInput("");
+                setSearchQuery("");
+              }
+            }}
             style={{ background:"none", border:"none", outline:"none", flex:1,
               color:"var(--text)", fontFamily:"var(--font-mono)", fontSize:"var(--fs-sm)",
               padding:0, minWidth:0 }}
           />
-          {searchQuery
-            ? <button onClick={e => { e.stopPropagation(); setSearchQuery(""); }}
+          {searchInput
+            ? <button onClick={e => { e.stopPropagation(); setSearchInput(""); setSearchQuery(""); }}
                 style={{ padding:0, lineHeight:1, fontSize:15, color:"var(--text-faint)" }}>×</button>
             : <span><span className="kbd">⌘K</span></span>
           }
@@ -979,7 +1019,8 @@ function App() {
               else setTweak({ density: tweakState.density === "compact" ? "comfortable" : "compact" });
             }}
             aria-label="Menu"
-            title="Menu / density (⌘\\)">
+            title="Menu / density (⌘\\)"
+            style={{ minWidth: 44, minHeight: 44 }}>
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>{tweakState.density==="compact"&&<><line x1="3" y1="9" x2="21" y2="9" opacity="0.4"/><line x1="3" y1="15" x2="21" y2="15" opacity="0.4"/></>}</svg>
           </button>
           <button className="iconbtn" onClick={() => setHkOpen(true)} title="Keyboard shortcuts (?)">
@@ -1219,7 +1260,7 @@ function App() {
       </div>
 
       {/* ── Main ── */}
-      <div className="main" ref={mainRef}>
+      <div className="main" ref={mainRef} id="main-content">
         {/* Feed pane */}
         <div className="pane">
           {/* Slim ad banner for free-tier users — above the feed header */}
@@ -1278,7 +1319,34 @@ function App() {
             <span className="k"><span className="k-dot" style={{ background:"var(--warn)" }}/><Tip term="HOLD">HOLD</Tip></span>
             <span style={{ marginLeft:"auto" }}>Tap to expand</span>
           </div>
-          <div className="feed">
+          {ptrState !== "idle" && (
+            <div style={{ textAlign:"center", padding:"8px 0", color:"var(--text-faint)", fontSize:11, fontFamily:"var(--font-mono)", borderBottom:"1px solid var(--line)" }}>
+              {ptrState === "released" ? "Release to refresh…" : "Pull to refresh…"}
+            </div>
+          )}
+          <div className="feed" ref={feedRef}
+            onTouchStart={e => {
+              if (feedRef.current && feedRef.current.scrollTop === 0) {
+                ptrStartY.current = e.touches[0].clientY;
+              }
+            }}
+            onTouchMove={e => {
+              if (ptrStartY.current === 0) return;
+              const y = e.touches[0].clientY;
+              const diff = y - ptrStartY.current;
+              if (diff > 0 && feedRef.current && feedRef.current.scrollTop === 0) {
+                setPtrState(diff > 80 ? "released" : "pulling");
+                if (diff > 120) ptrStartY.current = y - 120;
+              }
+            }}
+            onTouchEnd={() => {
+              if (ptrState === "released") {
+                setRefreshing(true);
+                loadData(false).finally(() => setRefreshing(false));
+              }
+              setPtrState("idle");
+              ptrStartY.current = 0;
+            }}>
             {loading && <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>Connecting to backend…</div>}
             {!loading && filteredSignals.length === 0 && (
               <div style={{ padding:"44px 24px", textAlign:"center", color:"var(--text-dim)", fontSize:12, maxWidth:340, margin:"0 auto" }}>
@@ -1811,7 +1879,7 @@ function App() {
               )}
 
               {/* ── Journal note ── */}
-              {active?.id && <NoteEditor signal={active} onSave={saveNote}/>}
+              {active?.id && <NoteEditor signal={active} onSave={saveNote} onDirty={d => { hasUnsavedData.current = d; }}/>}
 
               <div className="action-row">
                 <button className="btn primary" onClick={() => sendToTelegram(active.id)}>
@@ -1828,6 +1896,8 @@ function App() {
                     className="btn"
                     style={{ background: paperTradeFlash ? "var(--up)" : undefined, color: paperTradeFlash ? "#fff" : undefined, transition:"all 0.2s" }}
                     onClick={() => {
+                      if (paperSubmitting) return;
+                      setPaperSubmitting(true);
                       const side = active.action === "BUY" ? "buy" : "sell";
                       authFetch("/api/paper/orders", {
                         method: "POST",
@@ -1838,10 +1908,11 @@ function App() {
                           setPaperTradeFlash(true);
                           setTimeout(() => setPaperTradeFlash(false), 1500);
                         }
-                      });
+                      }).finally(() => setPaperSubmitting(false));
                     }}
+                    disabled={paperSubmitting}
                     title="Paper Trade (P)">
-                    {paperTradeFlash ? "✓ Placed" : "Paper Trade"}
+                    {paperSubmitting ? "Placing…" : paperTradeFlash ? "✓ Placed" : "Paper Trade"}
                   </button>
                 )}
                 <button
@@ -1876,7 +1947,7 @@ function App() {
           btCache={btCacheRef.current}
           onBtCache={onBtCache}/>
         <PricingView open={pricingOpen} onClose={() => setPricingOpen(false)} user={currentUser} context={pricingContext}/>
-        <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} user={currentUser} setUser={setCurrentUser} onUpgrade={() => { setAccountOpen(false); setPricingContext("Choose a plan to unlock live signals and delivery."); setPricingOpen(true); }}/>
+        <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} user={currentUser} setUser={setCurrentUser} onUpgrade={() => { setAccountOpen(false); setPricingContext("Choose a plan to unlock live signals and delivery."); setPricingOpen(true); }} onDirty={d => { hasUnsavedData.current = d; }}/>
         <PriceAlertModal open={alertOpen} onClose={() => setAlertOpen(false)} ticker={active?.ticker} currentPrice={active?.price}/>
 
         {/* Mobile delivery-log overlay */}
@@ -1917,6 +1988,13 @@ function App() {
           ["watchlist","eye","Watchlist"],
           ["delivery","send","Delivery"],
           ["overview","globe","Market"],
+          ["sectors","sectors","Sectors"],
+          ["calendar","clock","Calendar"],
+          ["rules","rules","Rules"],
+          ["paper","chart","Paper"],
+          ["performance","bar-chart","Perf"],
+          ["screener","filter","Screen"],
+          ["alerts","bell","Alerts"],
         ].map(([id, icon, label]) => (
           <div key={id} className={`mobile-nav-item${nav===id?" active":""}`} onClick={() => setNav(id)} onKeyDown={onKeyActivate(() => setNav(id))} role="button" tabIndex={0}>
             <Icon name={icon} size={18}/>
@@ -1962,7 +2040,7 @@ function App() {
         </span>
       </div>
 
-      <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} state={tweakState} set={setTweak}/>
+      <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} state={tweakState} set={setTweak} saveError={tweakSaveError}/>
       <HotkeyHelp open={hkOpen} onClose={() => setHkOpen(false)} onTour={() => setTourOpen(true)}/>
       <DemoTour open={tourOpen} onClose={() => { try { localStorage.setItem(TOUR_KEY, "1"); } catch {} setTourOpen(false); }}/>
     </div>

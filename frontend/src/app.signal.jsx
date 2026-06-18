@@ -247,10 +247,13 @@ function TelegramPane({ log, online, onOpenAccount, onClose }) {
 }
 
 /* ─── NoteEditor ─────────────────────────────────────────────────────────────── */
-function NoteEditor({ signal, onSave }) {
+function NoteEditor({ signal, onSave, onDirty }) {
   const [note, setNote] = useState(signal?.notes || "");
   const [saved, setSaved] = useState(false);
   useEffect(() => { setNote(signal?.notes || ""); setSaved(false); }, [signal?.id]);
+  useEffect(() => {
+    onDirty?.(note !== (signal?.notes || ""));
+  }, [note, signal?.notes]);
   const handleSave = () => {
     onSave(signal.id, note);
     setSaved(true);
@@ -266,9 +269,13 @@ function NoteEditor({ signal, onSave }) {
         onChange={e => { setNote(e.target.value); setSaved(false); }}
         placeholder="Add your notes, thesis, or trade rationale…"
         rows={2}
+        maxLength={500}
         style={{ width:"100%", background:"var(--bg)", border:"1px solid var(--line)", borderRadius:4, color:"var(--text)", fontFamily:"var(--font-sans)", fontSize:12, padding:"6px 8px", resize:"vertical", outline:"none", lineHeight:1.5 }}
       />
-      <div style={{ display:"flex", justifyContent:"flex-end", marginTop:4 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:4 }}>
+        <span style={{ fontSize:10, color: note.length > 450 ? "var(--warn)" : "var(--text-faint)", fontFamily:"var(--font-mono)" }}>
+          {note.length}/500 characters
+        </span>
         <button className="btn" style={{ fontSize:11, padding:"4px 12px", color: saved ? "var(--up)" : undefined }} onClick={handleSave}>
           {saved ? "✓ Saved" : "Save note"}
         </button>

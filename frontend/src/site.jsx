@@ -458,6 +458,17 @@ function AuthPage({ kind, go }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(""); setLoading(true);
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (isSignup && !emailRe.test(email)) {
+      setError("Please enter a valid email address");
+      setLoading(false);
+      return;
+    }
+    if (isSignup && password.length < 8) {
+      setError("Password must be at least 8 characters");
+      setLoading(false);
+      return;
+    }
     const path = isSignup ? "/api/auth/register" : "/api/auth/login";
     const body = isSignup ? { email, password, full_name: name } : { email, password };
     const { ok, data } = await apiPost(path, body).catch(() => ({ ok: false, data: { detail: "Network error." } }));

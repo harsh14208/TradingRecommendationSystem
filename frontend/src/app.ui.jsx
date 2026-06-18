@@ -234,16 +234,24 @@ function Chart({ signal, style, period = "3M" }) {
     setLoading(true); setError(false); setNeedsUpgrade(false);
     const ctrl = new AbortController();
     const apiPeriod = PERIOD_API[period] || "3mo";
+    const timeoutId = setTimeout(() => ctrl.abort(), 10000);
     authFetch(`/api/chart/${encodeURIComponent(signal.ticker)}?period=${apiPeriod}`, { signal: ctrl.signal })
       .then(async res => {
+        clearTimeout(timeoutId);
         if (res.status === 402) { setNeedsUpgrade(true); return; }
         if (!res.ok) { setError(true); return; }
         const d = await res.json();
         if (Array.isArray(d) && d.length > 0) setOhlcv(d); else setError(true);
       })
-      .catch(() => setError(true))
+      .catch(() => {
+        clearTimeout(timeoutId);
+        setError(true);
+      })
       .finally(() => setLoading(false));
-    return () => ctrl.abort();
+    return () => {
+      clearTimeout(timeoutId);
+      ctrl.abort();
+    };
   }, [signal?.ticker, period]);
 
   useEffect(() => {

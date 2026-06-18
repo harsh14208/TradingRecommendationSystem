@@ -54,11 +54,19 @@ async function authFetch(path, opts = {}) {
 }
 
 async function apiFetch(path, opts = {}) {
-  try {
-    const res = await authFetch(path, opts);
-    if (!res.ok) throw new Error(res.status);
-    return res.json();
-  } catch { return null; }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await authFetch(path, opts);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      const isNetworkError = !err.message || !err.message.startsWith("HTTP");
+      if (!isNetworkError) throw err; // 4xx/5xx — throw immediately, no retry
+      if (attempt === 2) return null; // all retries exhausted
+      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+    }
+  }
+  return null;
 }
 
 async function apiFetchRaw(path, opts = {}) {

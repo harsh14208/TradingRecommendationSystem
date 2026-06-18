@@ -60,11 +60,11 @@ button:focus-visible, [role="button"]:focus-visible {
 .m-top .brand { font-family: var(--mono); font-weight: 700; font-size: 12px; display: flex; align-items: center; gap: 6px; }
 .m-top .brand .d { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 .m-top .live { font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; color: var(--accent); margin-left: auto; }
-.m-top .ico { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: var(--text-dim); }
+.m-top .ico { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 8px; color: var(--text-dim); }
 
 /* style strip */
 .m-style-strip { display: flex; gap: 6px; padding: 12px 16px 10px; background: color-mix(in oklch, var(--accent) 5%, var(--bg-1)); border-bottom: 1px solid var(--line-soft); overflow-x: auto; }
-.m-pill { font-family: var(--mono); font-size: 10px; font-weight: 600; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--text-dim); white-space: nowrap; transition: all 0.15s var(--ease); }
+.m-pill { font-family: var(--mono); font-size: 10px; font-weight: 600; padding: 14px 12px; border-radius: 99px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--text-dim); white-space: nowrap; transition: all 0.15s var(--ease); display: inline-flex; align-items: center; min-height: 44px; }
 .m-pill.on { background: var(--accent); color: #042116; border-color: var(--accent); }
 .m-pill:active { transform: scale(0.97); }
 
