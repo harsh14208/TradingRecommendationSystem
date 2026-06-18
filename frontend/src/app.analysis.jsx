@@ -518,13 +518,21 @@ function PaperView({ open, onClose, online }) {
         {err === "offline"  && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline or Alpaca API keys not configured.</div>}
         {loading && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading paper account…</div>}
 
-        {account && (
+        {account && (() => {
+          // Alpaca's /v2/account does NOT return unrealized_pl / unrealized_intraday_pl
+          // (those are position-level fields). Derive the summary cards instead:
+          //   Open P&L  = sum of open-position unrealized_pl
+          //   Day P&L   = equity − last_equity (last_equity = equity at prior close)
+          const openPl = positions.reduce((s, p) => s + (parseFloat(p.unrealized_pl) || 0), 0);
+          const lastEq = parseFloat(account.last_equity);
+          const dayPl  = Number.isFinite(lastEq) ? parseFloat(account.equity) - lastEq : null;
+          return (
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12 }}>
             {[
-              ["Equity", fmtMoney(account.equity), rc(account.equity)],
+              ["Equity", fmtMoney(account.equity), "var(--text)"],
               ["Cash", fmtMoney(account.cash), "var(--text)"],
-              ["P&L", fmtMoney(account.unrealized_pl), rc(account.unrealized_pl)],
-              ["Day P&L", fmtMoney(account.unrealized_intraday_pl), rc(account.unrealized_intraday_pl)],
+              ["Open P&L", positions.length ? fmtMoney(openPl) : "—", positions.length ? rc(openPl) : "var(--text-faint)"],
+              ["Day P&L", dayPl == null ? "—" : fmtMoney(dayPl), rc(dayPl)],
             ].map(([l,v,c]) => (
               <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px" }}>
                 <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>{l}</div>
@@ -532,11 +540,13 @@ function PaperView({ open, onClose, online }) {
               </div>
             ))}
           </div>
-        )}
+          );
+        })()}
 
         {risk && (
           <div>
-            <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Risk metrics</div>
+            <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:2 }}>Risk metrics</div>
+            <div style={{ fontSize:10, color:"var(--text-faint)", marginBottom:10 }}>3-month historical proxy on current holdings — not realized account performance</div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10 }}>
               {[
                 ["Beta vs SPY", risk.beta?.toFixed(2), risk.beta > 1.2 ? "var(--warn)" : "var(--text)"],

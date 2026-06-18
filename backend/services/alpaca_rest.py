@@ -331,6 +331,10 @@ async def get_portfolio_value(api_key: str, api_secret: str, live: bool = False)
 
 
 async def get_unrealized_pl(api_key: str, api_secret: str, live: bool = False) -> float:
-    """Return aggregate unrealised P&L across all open positions in dollars."""
-    account = await get_account(api_key, api_secret, live=live)
-    return float(account.get("unrealized_pl") or 0.0)
+    """Return aggregate unrealised P&L across all open positions in dollars.
+
+    Alpaca's /v2/account response has no `unrealized_pl` field — it lives on each
+    position — so this sums the per-position values rather than reading the account.
+    """
+    positions = await get_positions(api_key, api_secret, live=live)
+    return sum(float(p.get("unrealized_pl") or 0.0) for p in positions)

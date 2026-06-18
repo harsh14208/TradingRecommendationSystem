@@ -909,12 +909,12 @@ function WatchlistView({ open, onClose, quotes, histSignals }) {
         </div>
         <BackButton onClick={onClose}></BackButton>
       </div>
-      <div style={{ padding:"0 28px 28px", maxWidth:640 }}>
-        <div style={{ fontSize:12, color:"var(--text-faint)", marginBottom:20, lineHeight:1.6 }}>
+      <div style={{ padding:"0 28px 28px", maxWidth:1600 }}>
+        <div style={{ fontSize:12, color:"var(--text-faint)", marginBottom:20, lineHeight:1.6, maxWidth:720 }}>
           The scanner only fires signals for tickers on this list. Add any US stock ticker — the engine will start watching it on the next scan cycle.
         </div>
 
-        <div style={{ display:"flex", gap:8, marginBottom:24 }}>
+        <div style={{ display:"flex", gap:8, marginBottom:24, maxWidth:480 }}>
           <input
             value={input}
             onChange={e => {
@@ -942,8 +942,8 @@ function WatchlistView({ open, onClose, quotes, histSignals }) {
           </div>
         )}
         {!loading && tickers.length > 0 && (
-          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-            <div style={{ display:"flex", alignItems:"center", marginBottom:8 }}>
+          <>
+            <div style={{ display:"flex", alignItems:"center", marginBottom:12 }}>
               <span style={{ fontSize:10, fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--text-faint)" }}>
                 {tickers.length} ticker{tickers.length !== 1 ? "s" : ""} monitored
               </span>
@@ -954,6 +954,7 @@ function WatchlistView({ open, onClose, quotes, histSignals }) {
                 Sort: {SORT_LABELS[sortMode]}
               </button>
             </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))", gap:8 }}>
             {sorted.map((t, idx) => {
               const q    = quoteMap[t.ticker];
               const last = lastOutcomeMap[t.ticker];
@@ -962,7 +963,7 @@ function WatchlistView({ open, onClose, quotes, histSignals }) {
               const chgColor = q?.changePct == null ? "var(--text-faint)" : q.changePct >= 0 ? "var(--up)" : "var(--down)";
               return (
                 <div key={t.ticker} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px",
-                  background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:8 }}>
+                  background:"var(--panel)", border:"1px solid var(--line-soft)", borderRadius:10 }}>
                   <div style={{ width:24, textAlign:"center", fontFamily:"var(--font-mono)", fontSize:10,
                     color:"var(--text-faint)", flexShrink:0 }}>
                     {sortMode === "added" ? (idx + 1) : null}
@@ -998,7 +999,8 @@ function WatchlistView({ open, onClose, quotes, histSignals }) {
                 </div>
               );
             })}
-          </div>
+            </div>
+          </>
         )}
       </div>
     </div>

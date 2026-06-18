@@ -771,7 +771,7 @@ function App() {
       {/* ── Top bar ── */}
       <div className="topbar">
         <div className="brand">
-          <img src="/logo-full.png" alt="Signal.Trade" style={{ height: 95, width: "auto" }}/>
+          <img src="/logo-full.svg" alt="Signal.Trade" style={{ height: 95, width: "auto" }}/>
           <span className="faint mono" style={{ fontWeight:400, marginLeft:8, fontSize:10 }}>v5.2</span>
         </div>
         <div className="search" onClick={() => searchRef.current?.focus()} style={{ cursor:"text" }}>
