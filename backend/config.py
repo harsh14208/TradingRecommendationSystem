@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     # Polygon (optional, but .env may contain POLYGON_API_KEY)
     polygon_api_key: str = ""
 
+    # ── Frontend analytics sink ───────────────────────────────────────────────
+    analytics_enabled: bool = True
+
     # ── Residual cash overlay (cash/beta parking) ───────────────────────────────
     # When enabled, the portfolio allocator auto-invests any capital not used by
     # active MR signals into a low-risk parking vehicle (default SGOV). If VIX is

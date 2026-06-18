@@ -2,10 +2,11 @@ import re
 
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
-from models import User, WatchlistItem
+from models import Signal, User, WatchlistItem
 from pydantic import BaseModel, field_validator
 from services.auth_svc import get_current_user
-from sqlalchemy import select
+from services.market_data import get_quotes_batch
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
@@ -26,8 +27,16 @@ class TickerBody(BaseModel):
         return v
 
 
-def _row(r: WatchlistItem) -> dict:
-    return {"ticker": r.ticker, "company": r.company or r.ticker, "is_active": r.is_active}
+def _row(r: WatchlistItem, quote: dict | None, sig_count: int = 0) -> dict:
+    return {
+        "ticker": r.ticker,
+        "company": r.company or r.ticker,
+        "is_active": r.is_active,
+        "price": quote.get("p") if quote else None,
+        "change": quote.get("c") if quote else None,
+        "sigs": sig_count,
+        "alert": sig_count > 0,
+    }
 
 
 @router.get("")
@@ -54,7 +63,32 @@ async def list_watchlist(db: AsyncSession = Depends(get_db), _user: User = Depen
             .scalars()
             .all()
         )
-    return [_row(r) for r in rows]
+
+    tickers = [r.ticker for r in rows]
+    quotes = {}
+    if tickers:
+        try:
+            quotes = {q.get("t", "").upper(): q for q in await get_quotes_batch(tickers) if q.get("t")}
+        except Exception:
+            quotes = {}
+
+    sig_counts: dict[str, int] = {}
+    if tickers:
+        try:
+            sig_rows = (
+                await db.execute(
+                    select(Signal.ticker, func.count(Signal.id))
+                    .where(Signal.ticker.in_(tickers))
+                    .where(Signal.is_active == True)
+                    .where(Signal.created_at >= func.datetime("now", "-1 day"))
+                    .group_by(Signal.ticker)
+                )
+            ).all()
+            sig_counts = {r.ticker: r[1] for r in sig_rows}
+        except Exception:
+            sig_counts = {}
+
+    return [_row(r, quotes.get(r.ticker), sig_counts.get(r.ticker, 0)) for r in rows]
 
 
 @router.post("")

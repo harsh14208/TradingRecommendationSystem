@@ -41,6 +41,7 @@ const ESBUILD_OPTS = {
 const APP_FILES = [
   'app.auth.jsx',          // auth/session helpers (getToken, apiFetch, …)
   'app.constants.jsx',     // TIERS, helpers, glossary
+  'analytics.js',          // lightweight first-party analytics (global track/trackClick)
   // Legacy shared components + modals — kept so advanced tools (watchlist,
   // alerts, screener, paper trading, broker, admin) remain reachable.
   'app.ui.jsx',            // Icon, Chart, Sparkline, Tip, etc.
@@ -63,10 +64,10 @@ const APP_FILES = [
 ];
 
 // Landing page — standalone single-file build.
-const LANDING_FILES = ['site.jsx'];
+const LANDING_FILES = ['analytics.js', 'site.jsx'];
 
 // Mobile PWA — standalone single-file build.
-const MOBILE_FILES = ['mobile.jsx'];
+const MOBILE_FILES = ['analytics.js', 'mobile.jsx'];
 
 // Reorganized 2026-06-13: JSX sources live in frontend/src, bundles emit to
 // frontend/dist (served at /dist). Paths are relative to the repo root, where

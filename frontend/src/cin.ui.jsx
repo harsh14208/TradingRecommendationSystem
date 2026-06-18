@@ -107,18 +107,24 @@ function ConfMeter({ conf, color }) {
 
 function LiveDot({ color = "" }) { return <span className={`live-dot ${color}`}></span>; }
 
-// Brand mark — stylized "S" with an up-right trend arrow, drawn in the live
-// theme accent (--bull). Wordmark dot is also accent. See BRAND/LOGO v4.
+// ── Canonical brand mark — SINGLE SOURCE OF TRUTH ──────────────────────────
+// Stylized "S" with an up-right trend arrow, drawn in the live theme accent
+// (--bull). The static brand assets (favicon.svg, logo-full.svg, favicon.png,
+// logo-icon*.png, apple-touch-icon.png) are GENERATED from these exact paths
+// by `python frontend/scripts/generate_brand_assets.py`. Edit the paths here,
+// then re-run that script so the files can never drift from the in-app mark.
+const BRAND_MARK_STROKE = 3.6;
+const BRAND_MARK_PATHS = [
+  "M21.4 11.2c0-3.4-4.1-4.8-7.7-3.5-3.3 1.2-3.5 5-.2 6.4l3.6 1.5c3.3 1.4 3.1 5.2-.2 6.5-3.6 1.3-7.7-.1-7.7-3.6", // S curve
+  "M18.6 13.4 25.3 6.7",          // arrow shaft
+  "M20.4 6.4 25.6 6.4 25.6 11.6", // arrow head
+];
 function BrandMark({ size = 22 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true"
-      stroke="var(--bull)" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round"
+      stroke="var(--bull)" strokeWidth={BRAND_MARK_STROKE} strokeLinecap="round" strokeLinejoin="round"
       style={{ display: "block", flex: "none" }}>
-      {/* S curve */}
-      <path d="M21.4 11.2c0-3.4-4.1-4.8-7.7-3.5-3.3 1.2-3.5 5-.2 6.4l3.6 1.5c3.3 1.4 3.1 5.2-.2 6.5-3.6 1.3-7.7-.1-7.7-3.6"></path>
-      {/* up-right arrow at the top terminal */}
-      <path d="M18.6 13.4 25.3 6.7"></path>
-      <path d="M20.4 6.4 25.6 6.4 25.6 11.6"></path>
+      {BRAND_MARK_PATHS.map((d, i) => <path key={i} d={d}></path>)}
     </svg>
   );
 }

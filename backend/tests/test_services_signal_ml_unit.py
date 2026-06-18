@@ -252,12 +252,20 @@ def test_blend_confidence_with_challenger():
 def test_get_model_returns_none_when_no_model():
     from services.signal_ml import get_model
     import services.signal_ml as ml
+    from unittest.mock import MagicMock
 
     original = ml._model
+    original_file = ml._MODEL_FILE
     ml._model = None
-    result = get_model()
-    assert result is None
-    ml._model = original
+    try:
+        fake_path = MagicMock()
+        fake_path.exists.return_value = False
+        ml._MODEL_FILE = fake_path
+        result = get_model()
+        assert result is None
+    finally:
+        ml._model = original
+        ml._MODEL_FILE = original_file
 
 
 def test_get_entry_model_returns_none_when_file_absent():

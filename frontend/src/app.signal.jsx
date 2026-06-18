@@ -284,7 +284,6 @@ function FilterChips({ filter, setFilter, counts }) {
     { id: "buy",   label: "BUY only",    count: counts.buy,  dot: "var(--up)" },
     { id: "sell",  label: "SELL only",   count: counts.sell, dot: "var(--down)" },
     { id: "high",  label: "High conf 75%+", count: counts.high, accent: true },
-    { id: "today", label: "Today",       count: counts.today },
   ];
   return (
     <div className="filter-chips">

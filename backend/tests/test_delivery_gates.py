@@ -16,13 +16,20 @@ from services.delivery_gates import _days_to_nearest_fomc as _real_days_to_fomc
 
 @contextmanager
 def _no_calendar_haircuts():
-    """Neutralize the date-dependent gate haircuts (FOMC proximity, pre-long-weekend)
-    so `check_delivery_gates` tests don't flake when actually run on/near those
-    calendar dates (e.g. an FOMC decision day or the day before a holiday weekend)."""
+    """Neutralize the date-dependent gate haircuts (FOMC proximity, pre-long-weekend,
+    Thursday haircut) so `check_delivery_gates` tests don't flake when actually run
+    on/near those calendar dates (e.g. an FOMC decision day, the day before a holiday
+    weekend, or a Thursday)."""
+    from datetime import datetime, timezone
+
+    _tuesday = datetime(2026, 2, 10, 12, 0, 0, tzinfo=timezone.utc)
     with (
         patch("services.delivery_gates._days_to_nearest_fomc", return_value=999),
         patch("services.market_calendar.is_pre_long_weekend", return_value=(False, None)),
+        patch("services.delivery_gates.datetime") as mock_dt,
     ):
+        mock_dt.now.return_value = _tuesday
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
         yield
 
 
@@ -342,26 +349,14 @@ async def test_gate_promotion_lookup_failure_fails_closed():
 
 
 @pytest.mark.asyncio
-async def test_gate_blocks_pre_earnings():
+async def test_gate_allows_pre_earnings_window():
+    """daysToEarnings > 2 is fine; 0 is earnings day and was blocked pre-removal."""
     from services.delivery_gates import check_delivery_gates
 
     db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(daysToEarnings=1), db, _Settings())
-    assert reason is not None
-    assert "earnings" in reason.lower()
-
-
-@pytest.mark.asyncio
-async def test_gate_allows_post_earnings_window():
-    """daysToEarnings > 2 is fine; 0 is earnings day and is blocked."""
-    from services.delivery_gates import check_delivery_gates
-
-    db = await _db_no_sector_count()
-    reason, _ = await check_delivery_gates(_sig(daysToEarnings=0), db, _Settings())
-    assert reason is not None
-    assert "earnings" in reason.lower()
-    reason2, _ = await check_delivery_gates(_sig(daysToEarnings=5), db, _Settings())
-    assert reason2 is None
+    # The earnings gate was removed from delivery_gates.py (no longer blocks).
+    reason, _ = await check_delivery_gates(_sig(daysToEarnings=5), db, _Settings())
+    assert reason is None
 
 
 @pytest.mark.asyncio

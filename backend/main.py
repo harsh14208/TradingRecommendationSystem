@@ -148,6 +148,7 @@ from config import get_settings
 from database import init_db
 from models import User
 from routers.accuracy import router as accuracy_router
+from routers.analytics_router import router as analytics_router
 from routers.admin import router as admin_router
 from routers.broker import router as broker_router
 from routers.me import router as me_router
@@ -2019,6 +2020,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 # ── API routers (registered BEFORE the static-file catch-all) ────────────────
 app.include_router(accuracy_router)
 app.include_router(admin_router)
+app.include_router(analytics_router)
 app.include_router(auth_router)
 app.include_router(ml_router)
 app.include_router(oauth_router)

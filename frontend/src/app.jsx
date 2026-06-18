@@ -116,8 +116,10 @@ function App() {
   const [marketCtx,   setMarketCtx]   = useState(null);
   const [signalQuota, setSignalQuota] = useState(null);
   const [online,      setOnline]      = useState(false);
+  const [wsStatus,    setWsStatus]    = useState("connecting"); // connecting | open | closed
   const [lastRefresh, setLastRefresh] = useState(null);  // TSYS-11b: stale-data tracking
   const [loading,     setLoading]     = useState(true);
+  const wsReconnectDelay = useRef(1000);
 
   /* UI state */
   const [tweakState,  setTweakState]  = useState(() => {
@@ -167,6 +169,7 @@ function App() {
   const [tweaksOpen,     setTweaksOpen]     = useState(false);
   const [accountOpen,    setAccountOpen]    = useState(false);
   const [pricingOpen,    setPricingOpen]    = useState(false);
+  const [pricingContext, setPricingContext]  = useState("");
   const [now,            setNow]            = useState(() => new Date());
   const [predictive,     setPredictive]     = useState(null);
   const [predLoading,    setPredLoading]    = useState(false);
@@ -492,6 +495,7 @@ function App() {
         e.preventDefault();
         // Check Basic tier access for paper trading
         if (!hasTierAccess(currentUser.subscription_tier, "basic", currentUser.is_owner)) {
+          setPricingContext("Paper trading requires Basic or higher.");
           setPricingOpen(true);
           return;
         }
@@ -884,6 +888,14 @@ function App() {
         </div>
       </div>
 
+      {/* ── Connection banner ── */}
+      {wsStatus !== "open" && (
+        <div style={{ gridColumn:"1/-1", background:"var(--warn-soft)", borderBottom:"1px solid color-mix(in oklch, var(--warn) 30%, transparent)", padding:"6px 14px", display:"flex", alignItems:"center", gap:8, fontSize:11, color:"var(--warn)", fontFamily:"var(--font-mono)" }}>
+          <span style={{ width:7, height:7, borderRadius:"50%", background:"var(--warn)", animation:"pulse 1.6s infinite" }}/>
+          {wsStatus === "connecting" ? "Reconnecting to live feed…" : "Live feed disconnected. Data may be stale."}
+        </div>
+      )}
+
       {/* ── Mobile nav drawer backdrop ── */}
       {navMenuOpen && <div className="nav-drawer-backdrop" onClick={() => setNavMenuOpen(false)} role="presentation"/>}
 
@@ -983,7 +995,7 @@ function App() {
           <span>My Performance</span>
         </div>
         {(!hasTierAccess(currentUser.subscription_tier,"basic",currentUser.is_owner)) && (
-          <div className="nav-item" onClick={() => setPricingOpen(true)} style={{ color:"var(--accent)" }} role="button" tabIndex={0}>
+          <div className="nav-item" onClick={() => { setPricingContext("Unlock Telegram delivery, backtesting, paper trading, and more."); setPricingOpen(true); }} style={{ color:"var(--accent)" }} role="button" tabIndex={0}>
             <Icon name="lock" size={15}/>
             <span>Upgrade plan</span>
           </div>
@@ -1090,9 +1102,6 @@ function App() {
                 <span className="faint">· click to dismiss</span>
               </span>
             )}
-            <div className="right">
-              <button className="iconbtn" style={{ width:24, height:24 }} onClick={manualScan} aria-label="Refresh signals"><Icon name="refresh" size={12}/></button>
-            </div>
           </div>
           <FilterChips
             filter={feedFilter}
@@ -1102,7 +1111,6 @@ function App() {
               buy:   signals.filter(s => (s.confidence||0) >= threshold && s.action==="BUY"  && (!s.style || s.style===styleFilter)).length,
               sell:  signals.filter(s => (s.confidence||0) >= threshold && s.action==="SELL" && (!s.style || s.style===styleFilter)).length,
               high:  signals.filter(s => (s.confidence||0) >= 75 && (!s.style || s.style===styleFilter)).length,
-              today: signals.filter(s => (s.confidence||0) >= threshold && (!s.style || s.style===styleFilter)).length,
             }}
           />
           <div className="style-strip">
@@ -1379,6 +1387,28 @@ function App() {
                     </div>
                   </div>
                   <Chart signal={active} style={tweakState.chartStyle} period={chartPeriod}/>
+                  {/* ── Compare vs benchmark ─────────────────────────────────── */}
+                  <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:8, paddingTop:8, borderTop:"1px solid var(--line)" }}>
+                    <span style={{ fontSize:9, fontFamily:"var(--font-mono)", color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", flexShrink:0 }}>Compare vs</span>
+                    {["SPY","QQQ","IWM","GLD"].map(b => (
+                      <button key={b} onClick={() => setCompareVs(compareVs === b ? null : b)}
+                        style={{ fontSize:9, fontFamily:"var(--font-mono)", padding:"2px 8px", borderRadius:4, cursor:"pointer",
+                          border: compareVs === b ? "1px solid var(--accent)" : "1px solid var(--line)",
+                          background: compareVs === b ? "var(--accent)22" : "var(--bg-2)",
+                          color: compareVs === b ? "var(--accent)" : "var(--text-faint)", transition:"all 0.15s" }}>
+                        {b}
+                      </button>
+                    ))}
+                    {compareVs && (
+                      <button onClick={() => setCompareVs(null)}
+                        style={{ fontSize:9, marginLeft:"auto", background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", padding:"2px 4px" }}>
+                        ✕ Clear
+                      </button>
+                    )}
+                  </div>
+                  {compareVs && active?.ticker && (
+                    <CompareChart ticker={active.ticker} versus={compareVs} period={chartPeriod}/>
+                  )}
                 </div>
                 <WhyNow signal={active}/>
                 {(predictive || active.confidence) && (
@@ -1388,6 +1418,13 @@ function App() {
 
               {/* ── Tab: Position (sizing calculator) ── */}
               {detailTab === "position" && active.entry && active.stop && (
+                !hasTierAccess(currentUser.subscription_tier, "basic", currentUser.is_owner) ? (
+                  <div style={{ margin:"20px", padding:"14px", background:"var(--warn-soft)", border:"1px solid color-mix(in oklch, var(--warn) 30%, transparent)", borderRadius:8, fontSize:12, color:"var(--warn)", display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ width:7, height:7, borderRadius:"50%", background:"var(--warn)" }}/>
+                    Position sizing and paper trading require Basic or higher.
+                    <button className="btn primary" style={{ marginLeft:"auto", fontSize:11, padding:"5px 12px" }} onClick={() => { setPricingContext("Position sizing and paper trading require Basic or higher."); setPricingOpen(true); }}>Upgrade</button>
+                  </div>
+                ) : (
                 <PositionCalc signal={active} onPaperTrade={() => {
                   authFetch("/api/paper/orders", {
                     method:"POST",
@@ -1397,7 +1434,7 @@ function App() {
                       type:"market", time_in_force:"day" }),
                   }).catch(()=>{});
                 }}/>
-              )}
+              ))}
 
               {/* ── Tab: Simulate (Monte Carlo) ── */}
               {detailTab === "simulate" && (
@@ -1550,31 +1587,7 @@ function App() {
                   </div>
                 </div>
                 <Chart signal={active} style={tweakState.chartStyle} period={chartPeriod}/>
-                {/* ── Compare vs benchmark ─────────────────────────────────── */}
-                <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:8, paddingTop:8, borderTop:"1px solid var(--line)" }}>
-                  <span style={{ fontSize:9, fontFamily:"var(--font-mono)", color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.1em", flexShrink:0 }}>Compare vs</span>
-                  {["SPY","QQQ","IWM","GLD"].map(b => (
-                    <button key={b} onClick={() => setCompareVs(compareVs === b ? null : b)}
-                      style={{ fontSize:9, fontFamily:"var(--font-mono)", padding:"2px 8px", borderRadius:4, cursor:"pointer",
-                        border: compareVs === b ? "1px solid var(--accent)" : "1px solid var(--line)",
-                        background: compareVs === b ? "var(--accent)22" : "var(--bg-2)",
-                        color: compareVs === b ? "var(--accent)" : "var(--text-faint)", transition:"all 0.15s" }}>
-                      {b}
-                    </button>
-                  ))}
-                  {compareVs && (
-                    <button onClick={() => setCompareVs(null)}
-                      style={{ fontSize:9, marginLeft:"auto", background:"none", border:"none", color:"var(--text-faint)", cursor:"pointer", padding:"2px 4px" }}>
-                      ✕ Clear
-                    </button>
-                  )}
-                </div>
-                {compareVs && active?.ticker && (
-                  <CompareChart ticker={active.ticker} versus={compareVs} period={chartPeriod}/>
-                )}
-              </div>
-
-              {(active.rationale||[]).length > 0 && (
+                {(active.rationale||[]).length > 0 && (
                 <div className="section">
                   <div className="section-title">
                     Why this recommendation · {active.rationale.length} signals agree
@@ -1729,8 +1742,8 @@ function App() {
         <BacktestView open={nav==="backtest"} onClose={() => setNav("feed")} online={online}
           btCache={btCacheRef.current}
           onBtCache={onBtCache}/>
-        <PricingView open={pricingOpen} onClose={() => setPricingOpen(false)} user={currentUser}/>
-        <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} user={currentUser} setUser={setCurrentUser} onUpgrade={() => { setAccountOpen(false); setPricingOpen(true); }}/>
+        <PricingView open={pricingOpen} onClose={() => setPricingOpen(false)} user={currentUser} context={pricingContext}/>
+        <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} user={currentUser} setUser={setCurrentUser} onUpgrade={() => { setAccountOpen(false); setPricingContext("Choose a plan to unlock live signals and delivery."); setPricingOpen(true); }}/>
         <PriceAlertModal open={alertOpen} onClose={() => setAlertOpen(false)} ticker={active?.ticker} currentPrice={active?.price}/>
 
         {/* Mobile delivery-log overlay */}

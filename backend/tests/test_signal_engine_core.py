@@ -533,8 +533,14 @@ def test_ar1_gate_applies_haircut_on_momentum_regime():
     base = _mr_buy_kwargs(score=50.0)
     base["tech"] = {**base["tech"], "momentum_ar1": 0.10}  # trending regime
 
-    res_no_ar1 = _assemble_signal(**_mr_buy_kwargs(score=50.0))
-    res_ar1 = _assemble_signal(**base)
+    from unittest.mock import patch
+
+    with (
+        patch("services.signal_ml.get_model", return_value=None),
+        patch("services.signal_ml.get_entry_model", return_value=None),
+    ):
+        res_no_ar1 = _assemble_signal(**_mr_buy_kwargs(score=50.0))
+        res_ar1 = _assemble_signal(**base)
 
     # Both should still produce BUY (gate is a haircut, not a hard block)
     if res_no_ar1 and res_ar1 and res_no_ar1["action"] == "BUY" and res_ar1["action"] == "BUY":

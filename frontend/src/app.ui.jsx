@@ -486,7 +486,7 @@ function Chart({ signal, style, period = "3M" }) {
             Interactive OHLCV chart requires a <strong>Basic</strong> subscription.
           </div>
           <a href="/signup?plan=basic" style={{ padding:"6px 16px", background:"var(--accent)",
-            color:"#fff", borderRadius:6, fontSize:11, fontWeight:600, textDecoration:"none",
+            color:"var(--text)", borderRadius:6, fontSize:11, fontWeight:600, textDecoration:"none",
             fontFamily:"var(--font-mono)", letterSpacing:"0.05em" }}>
             Upgrade for $19/mo →
           </a>
@@ -656,7 +656,7 @@ function AdSlot({ user, slim = false }) {
             <br/>Upgrade to Basic for ${19}/mo.
           </div>
           <a href="/signup?plan=basic"
-             style={{ padding:"6px 18px", background:"var(--accent)", color:"#fff",
+             style={{ padding:"6px 18px", background:"var(--accent)", color:"var(--text)",
                       borderRadius:6, fontSize:11, fontWeight:600, textDecoration:"none",
                       fontFamily:"var(--font-mono)", letterSpacing:"0.05em" }}>
             Start 7-day trial →

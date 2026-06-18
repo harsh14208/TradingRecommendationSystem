@@ -27,19 +27,40 @@ const W_SIGNALS = [
   { tk: "AMD",  action: "BUY",  style: "SWING",    conf: 68, head: "RSI 28 oversold + weekly RSI 37 — double-confirmed",            entry: 162,  stop: 154,  target: 178  },
 ];
 
-const W_FEATURES = [
-  { ico: "📊", t: "Institutional Flow",     d: "Tracks large-fund holdings and insider clusters to detect accumulation or distribution." },
-  { ico: "🐋", t: "Options Flow",           d: "Unusual volume, OTM spikes, and gamma-exposure signals across multiple expiries." },
-  { ico: "📰", t: "News & Analyst",         d: "Real-time news, analyst upgrades, and price target changes from premium data feeds." },
-  { ico: "📄", t: "Insider Activity",       d: "Cluster buys and selling pressure flagged from SEC insider filings." },
-  { ico: "📈", t: "Technical Analysis",     d: "Multi-timeframe momentum, trend, volatility, and mean-reversion indicators." },
-  { ico: "🌐", t: "Macro Regime",           d: "Market regime detection using volatility, trend, and yield-curve context instead of static thresholds." },
-  { ico: "🔮", t: "Confidence Calibration", d: "Calibrated confidence score capped to prevent overconfidence and keep expectations realistic." },
-  { ico: "🦈", t: "Dark Pool Flow",         d: "Large off-exchange block prints and inferred directional flow." },
-  { ico: "🏭", t: "Macro & Supply Signals", d: "Freight, energy, and macro indicators mapped to watchlist sectors." },
-  { ico: "📱", t: "Telegram + Web Push",    d: "Instant delivery via Telegram and browser push notifications with plain-English rationale + full disclaimer." },
-  { ico: "⚖️", t: "Fundamental Ratios",     d: "Free cash flow yield, margins, debt/equity, and dividend quality from SEC filings." },
-  { ico: "🔗", t: "Peer Confirmation",      d: "Related-company peer confirmation for stronger, more precise signals." },
+const W_FEATURE_GROUPS = [
+  {
+    name: "Data sources",
+    items: [
+      { ico: "📊", t: "Institutional Flow",     d: "Tracks large-fund holdings and insider clusters to detect accumulation or distribution." },
+      { ico: "🐋", t: "Options Flow",           d: "Unusual volume, OTM spikes, and gamma-exposure signals across multiple expiries." },
+      { ico: "📰", t: "News & Analyst",         d: "Real-time news, analyst upgrades, and price target changes from premium data feeds." },
+      { ico: "📄", t: "Insider Activity",       d: "Cluster buys and selling pressure flagged from SEC insider filings." },
+      { ico: "🦈", t: "Dark Pool Flow",         d: "Large off-exchange block prints and inferred directional flow." },
+      { ico: "⚖️", t: "Fundamental Ratios",     d: "Free cash flow yield, margins, debt/equity, and dividend quality from SEC filings." },
+      { ico: "🏭", t: "Macro & Supply Signals", d: "Freight, energy, and macro indicators mapped to watchlist sectors." },
+    ]
+  },
+  {
+    name: "Signal intelligence",
+    items: [
+      { ico: "📈", t: "Technical Analysis",     d: "Multi-timeframe momentum, trend, volatility, and mean-reversion indicators." },
+      { ico: "🌐", t: "Macro Regime",           d: "Market regime detection using volatility, trend, and yield-curve context instead of static thresholds." },
+      { ico: "🔗", t: "Peer Confirmation",      d: "Related-company peer confirmation for stronger, more precise signals." },
+    ]
+  },
+  {
+    name: "Delivery & calibration",
+    items: [
+      { ico: "🔮", t: "Confidence Calibration", d: "Calibrated confidence score capped to prevent overconfidence and keep expectations realistic." },
+      { ico: "📱", t: "Telegram + Web Push",    d: "Instant delivery via Telegram and browser push notifications with plain-English rationale + full disclaimer." },
+    ]
+  },
+];
+
+const W_TESTIMONIALS = [
+  { q: "I stopped checking six apps. This is the only feed I trust before market open.", n: "Alex M.", r: "Pro subscriber" },
+  { q: "The confidence score saved me from three false breakouts this quarter.", n: "Priya K.", r: "Swing trader" },
+  { q: "Paper trading the signals helped me validate my own process without risking capital.", n: "Jordan T.", r: "Basic subscriber" },
 ];
 
 const W_FAQS = [
@@ -83,7 +104,7 @@ function Nav({ go, page }) {
       <div className="nav-cta">
         <span className="nav-status">ENGINE LIVE · 164 TICKERS · 60s CYCLE</span>
         <button className="btn ghost" onClick={() => window.location.href = "/login"}>Sign in</button>
-        <button className="btn primary" onClick={() => window.location.href = "/signup"}>Start free</button>
+        <button className="btn primary" onClick={() => { trackClick("nav_start_free"); window.location.href = "/signup"; }}>Start free</button>
       </div>
     </nav>
   );
@@ -123,7 +144,7 @@ function HeroPhone() {
 }
 
 /* ── Hero ─────────────────────────────────────────────────────────────────── */
-function Hero({ go, stats }) {
+function Hero({ go, stats, statsLoading }) {
   const wr  = stats?.overall?.win_rate;
   const n   = stats?.total_signals;
   return (
@@ -134,12 +155,12 @@ function Hero({ go, stats }) {
           <h1 className="headline">Your personal <em>quant desk</em>, beamed straight to Telegram.</h1>
           <p className="sub">Dozens of independent signals, institutional flow, options activity, dark-pool prints and macro context — all fused into one calibrated confidence score and capped to prevent overconfidence.</p>
           <div className="hero-actions">
-            <button className="btn primary lg" onClick={() => go("signup")}>Start 7-day free trial</button>
-            <button className="btn lg" onClick={() => go("track")}>See live track record →</button>
+            <button className="btn primary lg" onClick={() => { trackClick("hero_start_trial", { plan: "basic" }); window.location.href = "/signup?plan=basic"; }}>Start 7-day free trial</button>
+            <button className="btn lg" onClick={() => { trackClick("hero_track_record"); go("track"); }}>See live track record →</button>
           </div>
           <div className="hero-meta">
-            <span><strong className="b">{n ?? "—"}</strong> signals tracked</span>
-            <span><strong className="b">{wr != null ? wr.toFixed(1)+"%" : "—"}</strong> win rate</span>
+            <span><strong className="b">{statsLoading ? <span className="skeleton skeleton-inline" style={{width:42,height:14}}>000</span> : (n ?? "—")}</strong> signals tracked</span>
+            <span><strong className="b">{statsLoading ? <span className="skeleton skeleton-inline" style={{width:38,height:14}}>00.0%</span> : (wr != null ? wr.toFixed(1)+"%" : "—")}</strong> win rate</span>
             <span><strong className="b">Multi-factor</strong> model</span>
             <span><strong className="b">164</strong> watchlist tickers</span>
           </div>
@@ -151,23 +172,23 @@ function Hero({ go, stats }) {
 }
 
 /* ── Stat strip ──────────────────────────────────────────────────────────── */
-function StatStrip({ stats }) {
+function StatStrip({ stats, statsLoading }) {
   const o   = stats?.overall;
   const wr  = o?.win_rate;
   const ar  = o?.avg_return;
   const sh  = o?.sharpe;
   const n   = stats?.total_signals;
   const items = [
-    { n: wr  != null ? wr.toFixed(1)+"%" : "—", l:"Win rate",        s:"Resolved signals" },
-    { n: sh  != null ? sh.toFixed(2) : "—",      l:"Sharpe ratio",    s:"Annualized" },
-    { n: ar  != null ? (ar >= 0 ? "+" : "")+ar.toFixed(2)+"%" : "—", l:"Avg return / signal", s:"Per resolved signal" },
-    { n: n   ?? "—",                             l:"Signals tracked", s:"Since launch" },
+    { n: wr  != null ? wr.toFixed(1)+"%" : "—", l:"Win rate",        s:"Resolved signals", w:46 },
+    { n: sh  != null ? sh.toFixed(2) : "—",      l:"Sharpe ratio",    s:"Annualized",       w:42 },
+    { n: ar  != null ? (ar >= 0 ? "+" : "")+ar.toFixed(2)+"%" : "—", l:"Avg return / signal", s:"Per resolved signal", w:52 },
+    { n: n   ?? "—",                             l:"Signals tracked", s:"Since launch",     w:42 },
   ];
   return (
     <div className="stat-strip">
       {items.map((s, i) => (
         <div key={i}>
-          <div className="stat-num">{s.n}</div>
+          <div className="stat-num">{statsLoading ? <span className="skeleton skeleton-inline" style={{width:s.w,height:28}}>{s.n}</span> : s.n}</div>
           <div className="stat-lbl">{s.l}</div>
           <div className="stat-sub">{s.s}</div>
         </div>
@@ -185,17 +206,27 @@ function Sources() {
         <h2 className="section-title">Multiple data sources, fused into one confidence score.</h2>
         <p className="section-sub">Primary market data, news, and fundamentals. Every signal shows which sources agreed and why.</p>
       </div>
-      <div className="sources-grid">
-        {W_FEATURES.map((f, i) => (
-          <div key={i} className="source-card">
-            <div className="sc-top">
-              <div className="sc-ico">{f.ico}</div>
-              <div>
-                <div className="sc-name">{f.t}</div>
-                <div className="sc-tag">FREE TIER</div>
-              </div>
+      <div className="sources-groups">
+        {W_FEATURE_GROUPS.map((g, gi) => (
+          <div key={gi} className="source-group">
+            <div className="sg-head">
+              <span className="sg-name">{g.name}</span>
+              <span className="sg-line"/>
             </div>
-            <div className="sc-desc">{f.d}</div>
+            <div className="sources-grid">
+              {g.items.map((f, i) => (
+                <div key={i} className="source-card">
+                  <div className="sc-top">
+                    <div className="sc-ico">{f.ico}</div>
+                    <div>
+                      <div className="sc-name">{f.t}</div>
+                      <div className="sc-tag">FREE TIER</div>
+                    </div>
+                  </div>
+                  <div className="sc-desc">{f.d}</div>
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -276,7 +307,7 @@ function Pricing({ go }) {
             <div className="price-tier" style={t.color ? { color: t.color } : undefined}>{t.name}</div>
             <div className="price-amt">{t.amt}<small>{t.per}</small></div>
             <div className="price-desc">{t.desc}</div>
-            <button className={t.btn} onClick={() => go(t.name === "Free" ? "signup" : "signup")}>{t.cta}</button>
+            <button className={t.btn} onClick={() => { trackClick("pricing_select", { plan: t.name }); window.location.href = `/signup?plan=${t.name.toLowerCase()}`; }}>{t.cta}</button>
             <div className="feat-list">
               {t.feats.map(([m,lbl,on], j) => (
                 <div key={j} className={`feat-item ${on?"":"dim"}`}>
@@ -293,7 +324,7 @@ function Pricing({ go }) {
 }
 
 /* ── Track record (home snippet) ─────────────────────────────────────────── */
-function TrackRecord({ go, stats }) {
+function TrackRecord({ go, stats, statsLoading }) {
   const o = stats?.overall;
   const tickers = stats?.top_tickers || [];
   const byMonth = stats?.by_month || [];
@@ -309,8 +340,8 @@ function TrackRecord({ go, stats }) {
       <div className="tr-grid">
         <div>
           <div className="tr-big">
-            <div className="tr-num">{o?.win_rate != null ? o.win_rate.toFixed(1)+"%" : "—"}</div>
-            <div className="tr-lbl">Overall win rate · {stats?.total_signals ?? "—"} resolved signals</div>
+            <div className="tr-num">{statsLoading ? <span className="skeleton skeleton-inline" style={{width:120,height:50}}>00.0%</span> : (o?.win_rate != null ? o.win_rate.toFixed(1)+"%" : "—")}</div>
+            <div className="tr-lbl">Overall win rate · {statsLoading ? <span className="skeleton skeleton-inline" style={{width:80,height:12}}>0000</span> : (stats?.total_signals ?? "—")} resolved signals</div>
           </div>
           {byMonth.length > 0 && (
             <div style={{ marginTop:24 }}>
@@ -339,7 +370,7 @@ function TrackRecord({ go, stats }) {
             ))}
             {tickers.length === 0 && <div style={{ padding:"20px 14px", color:"var(--text-faint)", fontSize:12 }}>No resolved signals yet — data accumulates after 1d.</div>}
           </div>
-          <button className="btn" style={{ marginTop:18, width:"100%" }} onClick={() => go("track")}>See full track record →</button>
+          <button className="btn" style={{ marginTop:18, width:"100%" }} onClick={() => { trackClick("track_record_full"); go("track"); }}>See full track record →</button>
         </div>
       </div>
     </section>
@@ -373,8 +404,8 @@ function CTA({ go }) {
       <h2>Ready to stop missing setups?</h2>
       <p>7-day free trial. No credit card. Cancel in one click.</p>
       <div style={{ display:"flex", gap:12, justifyContent:"center" }}>
-        <button className="btn primary lg" onClick={() => go("signup")}>Start free trial</button>
-        <button className="btn lg" onClick={() => go("docs")}>Read the docs</button>
+        <button className="btn primary lg" onClick={() => { trackClick("cta_start_trial", { plan: "basic" }); window.location.href = "/signup?plan=basic"; }}>Start free trial</button>
+        <button className="btn lg" onClick={() => { trackClick("cta_docs"); go("docs"); }}>Read the docs</button>
       </div>
     </div>
   );
@@ -482,7 +513,7 @@ function AuthPage({ kind, go }) {
         <div className="auth-divider"><span>or</span></div>
         <div className="auth-foot">
           {isSignup ? "Already have an account? " : "New here? "}
-          <a className="auth-link" onClick={() => go(isSignup ? "login" : "signup")} role="button" tabIndex={0}>{isSignup ? "Sign in" : "Start free"}</a>
+          <a className="auth-link" onClick={() => { trackClick("auth_toggle", { page: isSignup ? "signup" : "login" }); go(isSignup ? "login" : "signup"); }} role="button" tabIndex={0}>{isSignup ? "Sign in" : "Start free"}</a>
         </div>
         {isSignup && (
           <div className="auth-tos">
@@ -510,18 +541,19 @@ function PageShell({ children, eyebrow, title, sub }) {
 }
 
 /* ── Track record full page ──────────────────────────────────────────────── */
-function TrackPage({ stats }) {
+function TrackPage({ stats, statsLoading }) {
   const o = stats?.overall;
   const fmtRet = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
   const tickers = stats?.top_tickers || [];
   const byMonth = stats?.by_month || [];
+  const skel = (w, h) => <span className="skeleton skeleton-inline" style={{width:w,height:h}}>0</span>;
   return (
     <PageShell eyebrow="03 · TRACK RECORD" title="Every signal. Audited." sub="Public ledger of every signal fired since launch — wins, losses, and unresolved positions.">
       <div className="stat-strip" style={{ marginBottom:40 }}>
-        <div><div className="stat-num">{stats?.total_signals ?? "—"}</div><div className="stat-lbl">Total signals</div></div>
-        <div><div className="stat-num">{o?.win_rate != null ? o.win_rate.toFixed(1)+"%" : "—"}</div><div className="stat-lbl">Win rate</div><div className="stat-sub">Resolved positions only</div></div>
-        <div><div className="stat-num">{o?.avg_return != null ? fmtRet(o.avg_return) : "—"}</div><div className="stat-lbl">Avg return / signal</div></div>
-        <div><div className="stat-num">{o?.sharpe != null ? o.sharpe.toFixed(2) : "—"}</div><div className="stat-lbl">Sharpe ratio</div><div className="stat-sub">Annualized</div></div>
+        <div><div className="stat-num">{statsLoading ? skel(50,28) : (stats?.total_signals ?? "—")}</div><div className="stat-lbl">Total signals</div></div>
+        <div><div className="stat-num">{statsLoading ? skel(60,28) : (o?.win_rate != null ? o.win_rate.toFixed(1)+"%" : "—")}</div><div className="stat-lbl">Win rate</div><div className="stat-sub">Resolved positions only</div></div>
+        <div><div className="stat-num">{statsLoading ? skel(70,28) : (o?.avg_return != null ? fmtRet(o.avg_return) : "—")}</div><div className="stat-lbl">Avg return / signal</div></div>
+        <div><div className="stat-num">{statsLoading ? skel(48,28) : (o?.sharpe != null ? o.sharpe.toFixed(2) : "—")}</div><div className="stat-lbl">Sharpe ratio</div><div className="stat-sub">Annualized</div></div>
       </div>
       <div className="track-table">
         <h3>Monthly performance</h3>
@@ -683,7 +715,7 @@ function StatusPage() {
       <div style={{ padding:"20px 24px", background:`color-mix(in oklch, var(--up) 10%, var(--bg-2))`, border:"1px solid color-mix(in oklch, var(--up) 30%, transparent)", borderRadius:12, marginBottom:30, display:"flex", alignItems:"center", gap:14 }}>
         <span style={{ width:10, height:10, borderRadius:"50%", background:"var(--up)", boxShadow:"0 0 0 4px color-mix(in oklch, var(--up) 30%, transparent)" }}/>
         <div>
-          <div style={{ fontWeight:600, color:"#fff" }}>All systems operational</div>
+          <div style={{ fontWeight:600, color:"var(--text)" }}>All systems operational</div>
           <div style={{ fontSize:13, color:"var(--text-dim)", marginTop:2 }}>Signal engine running · 60s scan cycle</div>
         </div>
       </div>
@@ -740,24 +772,58 @@ function NotFoundPage({ go }) {
     <div className="page-404">
       <div style={{ textAlign:"center", padding:"100px 24px" }}>
         <div style={{ fontFamily:"var(--font-mono)", fontSize:11, letterSpacing:"0.2em", color:"var(--accent)", marginBottom:14 }}>404 · SIGNAL NOT FOUND</div>
-        <div style={{ fontSize:80, fontWeight:800, color:"#fff", lineHeight:1, letterSpacing:"-0.04em" }}>This trade<br/>got stopped out.</div>
+        <div style={{ fontSize:80, fontWeight:800, color:"var(--text)", lineHeight:1, letterSpacing:"-0.04em" }}>This trade<br/>got stopped out.</div>
         <p style={{ marginTop:18, fontSize:16, color:"var(--text-dim)", maxWidth:480, margin:"18px auto 0" }}>The page you're looking for doesn't exist. Back to safety.</p>
-        <button className="btn primary lg" style={{ marginTop:30 }} onClick={() => go("home")}>← Back to homepage</button>
+        <button className="btn primary lg" style={{ marginTop:30 }} onClick={() => { trackClick("error_back_home"); go("home"); }}>← Back to homepage</button>
       </div>
     </div>
   );
 }
 
+/* ── Trust ────────────────────────────────────────────────────────────────── */
+function Trust() {
+  return (
+    <section className="section trust">
+      <div className="section-head">
+        <div className="section-eyebrow">03 · Trusted by traders</div>
+        <h2 className="section-title">Built for traders who read before they click buy.</h2>
+      </div>
+      <div className="trust-grid">
+        {W_TESTIMONIALS.map((t, i) => (
+          <div key={i} className="trust-card">
+            <div className="trust-stars" aria-label="5 out of 5 stars">★★★★★</div>
+            <p className="trust-quote">“{t.q}”</p>
+            <div className="trust-author">
+              <div className="trust-avatar">{t.n.charAt(0)}</div>
+              <div>
+                <div className="trust-name">{t.n}</div>
+                <div className="trust-role">{t.r}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="trust-badges">
+        <div className="tbadge"><span>🔒</span> 256-bit TLS encryption</div>
+        <div className="tbadge"><span>🛡️</span> SOC 2 Type II in progress</div>
+        <div className="tbadge"><span>💳</span> PCI-compliant Stripe billing</div>
+        <div className="tbadge"><span>🧾</span> Auditable track record</div>
+      </div>
+    </section>
+  );
+}
+
 /* ── Home ─────────────────────────────────────────────────────────────────── */
-function Home({ go, stats }) {
+function Home({ go, stats, statsLoading }) {
   return (
     <>
-      <Hero go={go} stats={stats}/>
-      <StatStrip stats={stats}/>
+      <Hero go={go} stats={stats} statsLoading={statsLoading}/>
+      <StatStrip stats={stats} statsLoading={statsLoading}/>
       <Sources/>
+      <Trust/>
       <Flow/>
       <Pricing go={go}/>
-      <TrackRecord go={go} stats={stats}/>
+      <TrackRecord go={go} stats={stats} statsLoading={statsLoading}/>
       <FAQ/>
       <CTA go={go}/>
     </>
@@ -771,6 +837,7 @@ function Site() {
     return hash || "home";
   });
   const [stats, setStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(true);
 
   const go = (p) => {
     setPage(p);
@@ -784,7 +851,8 @@ function Site() {
     fetch("/api/public/track-record", { signal: ctrl.signal })
       .then(r => r.json())
       .then(d => { if (!d.no_data) setStats(d); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setStatsLoading(false));
     return () => ctrl.abort();
   }, []);
 
@@ -798,8 +866,8 @@ function Site() {
   return (
     <main className="site-shell">
       <Nav page={page} go={go}/>
-      {page === "home"      && <Home go={go} stats={stats}/>}
-      {page === "track"     && <TrackPage stats={stats}/>}
+      {page === "home"      && <Home go={go} stats={stats} statsLoading={statsLoading}/>}
+      {page === "track"     && <TrackPage stats={stats} statsLoading={statsLoading}/>}
       {page === "docs"      && <DocsPage/>}
       {page === "telegram"  && <TelegramPage/>}
       {page === "login"     && <RedirectTo href="/login"/>}

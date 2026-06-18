@@ -78,18 +78,18 @@
   --text-dim: #5b6576;
   --text-faint: #5d6b7f;
   --text-ghost: #c9cdd4;
-  --accent: #0891b2;
+  --accent: #0e7490;
   --accent-soft: color-mix(in oklch, var(--accent) 14%, transparent);
-  --accent-glow: rgba(8, 145, 178, 0.35);
-  --up: #0891b2;
-  --up-soft: rgba(8, 145, 178, 0.12);
-  --up-glow: rgba(8, 145, 178, 0.35);
-  --down: #e11d48;
-  --down-soft: rgba(225, 29, 72, 0.12);
-  --down-glow: rgba(225, 29, 72, 0.35);
-  --warn: #b45309;
-  --warn-soft: rgba(180, 83, 9, 0.12);
-  --info: #2563eb;
+  --accent-glow: rgba(14, 116, 144, 0.35);
+  --up: #0e7490;
+  --up-soft: rgba(14, 116, 144, 0.12);
+  --up-glow: rgba(14, 116, 144, 0.35);
+  --down: #be123c;
+  --down-soft: rgba(190, 18, 60, 0.12);
+  --down-glow: rgba(190, 18, 60, 0.35);
+  --warn: #92400e;
+  --warn-soft: rgba(146, 64, 14, 0.12);
+  --info: #1d4ed8;
 }
 
 /* Light-theme WCAG AA fixes: dark text on bright accent fails, so invert primary buttons. */

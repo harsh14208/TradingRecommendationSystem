@@ -1,6 +1,6 @@
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -47,7 +47,11 @@ async def test_get_fundamentals_success():
     mock_ticker_inst.quarterly_balance_sheet = pd.DataFrame()
     mock_ticker_inst.quarterly_cashflow = pd.DataFrame()
 
-    with patch("services.fundamentals.yf.Ticker", return_value=mock_ticker_inst):
+    with (
+        patch("services.fundamentals.yf.Ticker", return_value=mock_ticker_inst),
+        patch("services.fundamentals.cache_get", new=AsyncMock(return_value=None)),
+        patch("services.fundamentals.cache_set", new=AsyncMock()),
+    ):
         res = await get_fundamentals("AAPL")
 
         assert "piotroski_f" in res

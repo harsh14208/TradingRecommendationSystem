@@ -89,8 +89,26 @@ async def _mock_db_zero_sector():
     db = AsyncMock()
     result = AsyncMock()
     result.scalar_one = MagicMock(return_value=0)
+    result.scalar_one_or_none = MagicMock(return_value=None)
     db.execute = AsyncMock(return_value=result)
     return db
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_calendar_gates():
+    """Neutralize calendar-dependent gates (pre-long-weekend, Thursday) so tests
+    are deterministic.  FOMC is NOT patched here — FOMC-specific tests rely on
+    the real _days_to_nearest_fomc with a patched datetime."""
+    from datetime import datetime, timezone
+
+    _tuesday = datetime(2026, 2, 10, 12, 0, 0, tzinfo=timezone.utc)
+    with (
+        patch("services.market_calendar.is_pre_long_weekend", return_value=(False, None)),
+        patch("services.delivery_gates.datetime") as mock_dt,
+    ):
+        mock_dt.now.return_value = _tuesday
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        yield
 
 
 # ── §65 TRIN / Arms Index ─────────────────────────────────────────────────────

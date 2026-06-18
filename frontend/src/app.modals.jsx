@@ -1008,17 +1008,19 @@ function WatchlistView({ open, onClose, quotes, histSignals }) {
 }
 
 /* ─── Pricing overlay ───────────────────────────────────────────────────────── */
-function PricingView({ open, onClose, user }) {
+function PricingView({ open, onClose, user, context }) {
   const [plans, setPlans] = useState([]);
   const [checking, setChecking] = useState(null);
 
   useEffect(() => {
     if (!open) return;
+    if (typeof trackGate === "function") trackGate("pricing_overlay", context || "");
     fetch("/api/billing/plans").then(r => r.json()).then(setPlans).catch(() => {});
-  }, [open]);
+  }, [open, context]);
 
   const startCheckout = async tier => {
     setChecking(tier);
+    if (typeof trackClick === "function") trackClick("pricing_upgrade", { tier, context: context || "" });
     try {
       const res  = await authFetch(`/api/billing/checkout/${tier}`, { method:"POST" });
       const data = await res.json();
@@ -1034,12 +1036,18 @@ function PricingView({ open, onClose, user }) {
         <BackButton onClick={onClose}></BackButton>
       </div>
       <div style={{ padding:"20px 28px 40px", overflowY:"auto", maxHeight:"calc(100vh - 120px)" }}>
+        {context && (
+          <div style={{ maxWidth:860, margin:"0 auto 16px", padding:"10px 14px", background:"var(--warn-soft)", border:"1px solid color-mix(in oklch, var(--warn) 30%, transparent)", borderRadius:8, fontSize:12, color:"var(--warn)", display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ width:7, height:7, borderRadius:"50%", background:"var(--warn)" }}/>
+            {context}
+          </div>
+        )}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:16, maxWidth:860, margin:"0 auto" }}>
           {plans.map(plan => {
             const isCurrent = user?.subscription_tier === plan.id && (plan.id === "free" || user?.subscription_status === "active");
             return (
               <div key={plan.id} style={{ background:"var(--bg-2)", borderRadius:12, padding:"24px 24px 28px", border: plan.highlight ? "2px solid var(--accent)" : "1px solid var(--line)", position:"relative" }}>
-                {plan.highlight && <div style={{ position:"absolute", top:-11, left:"50%", transform:"translateX(-50%)", background:"var(--accent)", color:"#fff", fontSize:10, fontWeight:700, padding:"3px 12px", borderRadius:20 }}>MOST POPULAR</div>}
+                {plan.highlight && <div style={{ position:"absolute", top:-11, left:"50%", transform:"translateX(-50%)", background:"var(--accent)", color:"var(--text)", fontSize:10, fontWeight:700, padding:"3px 12px", borderRadius:20 }}>MOST POPULAR</div>}
                 <div style={{ fontSize:14, fontWeight:700, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>{plan.name}</div>
                 <div style={{ fontSize:26, fontWeight:800, fontFamily:"var(--font-mono)", marginBottom:16 }}>
                   {plan.price === 0 ? "Free" : `$${(plan.price/100).toFixed(2)}`}

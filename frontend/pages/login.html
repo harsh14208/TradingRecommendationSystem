@@ -33,7 +33,7 @@ main{display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
 .left::before{content:"";position:absolute;top:-20%;left:-10%;width:70%;height:70%;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.06) 0%,transparent 70%);pointer-events:none}
 @media(max-width:768px){.left{display:none}}
 .left-logo{margin-bottom:auto}
-.left-logo img{height:160px;width:auto;display:block}
+.left-logo img{height:80px;width:auto;display:block}
 .left-content{margin:auto 0;padding:40px 0}
 .left-headline{font-size:clamp(28px,3vw,40px);font-weight:800;letter-spacing:-0.04em;line-height:1.1;margin-bottom:16px}
 .left-headline span{color:var(--up)}
@@ -61,7 +61,7 @@ main{display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
 .right{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;min-height:100vh}
 .form-wrap{width:100%;max-width:400px}
 .mobile-logo{display:none;margin-bottom:40px}
-.mobile-logo img{height:120px;width:auto;display:block}
+.mobile-logo img{height:80px;width:auto;display:block}
 @media(max-width:768px){.mobile-logo{display:block}}
 .form-title{font-size:26px;font-weight:800;letter-spacing:-0.03em;margin-bottom:6px}
 .form-sub{font-size:14px;color:var(--dim);margin-bottom:32px}
@@ -83,6 +83,13 @@ input::placeholder{color:var(--faint)}
 .signup-link{text-align:center;font-size:14px;color:var(--dim);margin-top:24px}
 .signup-link a{color:var(--up);font-weight:600}
 .form-footer{margin-top:32px;font-size:11px;color:var(--faint);text-align:center;line-height:1.7}
+.forgot{background:none;border:none;padding:0;font-size:12px;color:var(--dim);cursor:pointer;text-decoration:none;font-family:var(--sans)}
+.forgot:hover{color:var(--up)}
+.forgot-form{display:none;background:var(--bg1);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:16px}
+.forgot-form.show{display:block}
+.forgot-form p{font-size:12px;color:var(--dim);line-height:1.5;margin-bottom:10px}
+.forgot-form .msg{font-size:12px;margin-top:8px;display:none}
+.forgot-form .msg.show{display:block}
 .form-footer a{color:var(--faint)}
 .form-footer a:hover{color:var(--dim)}
 /* ── Social OAuth buttons ── */
@@ -152,12 +159,19 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(-
         <label for="password">Password</label>
         <input id="password" type="password" placeholder="Your password" required autocomplete="current-password"/>
       </div>
-      <a href="#" class="forgot">Forgot password?</a>
+      <button type="button" class="forgot" id="forgot-btn">Forgot password?</button>
+
+      <div class="forgot-form" id="forgot-form">
+        <p>Enter your email and we'll send you a reset link.</p>
+        <input type="email" id="forgot-email" placeholder="you@example.com" autocomplete="email"/>
+        <button type="button" class="submit-btn" id="forgot-submit" style="padding:10px;font-size:14px">Send reset link</button>
+        <div class="msg" id="forgot-msg"></div>
+      </div>
       <div style="display:flex;align-items:center;gap:7px;margin-bottom:12px;font-size:11px;">
         <span id="server-dot" style="width:7px;height:7px;border-radius:50%;background:var(--faint);flex-shrink:0;transition:background .3s,box-shadow .3s"></span>
         <span id="server-text" style="color:var(--faint);font-family:var(--mono)">Checking server…</span>
       </div>
-      <button type="submit" class="submit-btn" id="submit-btn" disabled>Sign In</button>
+      <button type="submit" class="submit-btn" id="submit-btn">Sign In</button>
     </form>
 
     <div class="divider"><span>or continue with</span></div>
@@ -179,6 +193,7 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(-
 </div>
 
 </main>
+<script src="/src/analytics.js"></script>
 <script src="/login.js"></script>
 </body>
 </html>

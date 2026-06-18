@@ -117,6 +117,7 @@ const MIcon = ({ name, size = 22 }) => {
     money:    <><circle cx="12" cy="12" r="10"/><path d="M15 9.5a3 3 0 0 0-3-1.5c-1.7 0-3 1-3 2.5s1.5 2 3 2.5 3 1 3 2.5-1.3 2.5-3 2.5-3-.5-3-1.5"/><line x1="12" y1="6" x2="12" y2="8"/><line x1="12" y1="16" x2="12" y2="18"/></>,
     shield:   <path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/>,
     plug:     <><path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0V8z"/><path d="M12 18v4"/></>,
+    refresh:  <><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1 2.12-9.36L23 10"/></>,
   };
   return (
     <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -125,10 +126,13 @@ const MIcon = ({ name, size = 22 }) => {
   );
 };
 
-function MStatusBar({ time = "9:41" }) {
+function MStatusBar({ time }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id); }, []);
+  const display = time || now.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
   return (
     <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 22px 0", fontFamily:"var(--mono)", fontSize:13, fontWeight:600 }}>
-      <span>{time}</span>
+      <span>{display}</span>
       <span style={{ display:"inline-flex", gap:6, alignItems:"center" }}>
         <svg aria-hidden="true" width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="0.5"/><rect x="4" y="5" width="3" height="6" rx="0.5"/><rect x="8" y="3" width="3" height="8" rx="0.5"/><rect x="12" y="0" width="3" height="11" rx="0.5"/></svg>
         <svg aria-hidden="true" width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 2C5 2 2.5 3 1 5l1.5 1.5C3.5 5 5.5 4 8 4s4.5 1 5.5 2.5L15 5C13.5 3 11 2 8 2zm0 3.5C6.5 5.5 5 6 4 7l1.5 1.5C6 8 7 7.5 8 7.5s2 .5 2.5 1L12 7c-1-1-2.5-1.5-4-1.5zm0 3.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>
@@ -159,11 +163,37 @@ function MTabBar({ active, setTab }) {
 }
 
 // ── Feed screen ──────────────────────────────────────────────────────────────
-function FeedScreen({ signals, onSelect }) {
+function FeedScreen({ signals, onSelect, loading, demo, onRefresh }) {
   const [filter, setFilter] = useState("all");
+  const [ptrState, setPtrState] = useState("idle"); // idle | pulling | released
+  const ptrStartY = useRef(0);
+  const ptrRef = useRef(null);
+
   const items = filter === "all" ? signals
     : filter === "buy" ? signals.filter(s => (s.action||s.act) === "BUY")
     : signals.filter(s => (s.confidence||s.conf||0) >= 70);
+
+  const onTouchStart = e => {
+    if (ptrRef.current && ptrRef.current.scrollTop === 0) {
+      ptrStartY.current = e.touches[0].clientY;
+    }
+  };
+  const onTouchMove = e => {
+    if (ptrStartY.current === 0) return;
+    const y = e.touches[0].clientY;
+    const diff = y - ptrStartY.current;
+    if (diff > 0 && ptrRef.current && ptrRef.current.scrollTop === 0) {
+      setPtrState(diff > 80 ? "released" : "pulling");
+      if (diff > 120) ptrStartY.current = y - 120;
+    }
+  };
+  const onTouchEnd = () => {
+    if (ptrState === "released" && onRefresh) {
+      onRefresh();
+    }
+    setPtrState("idle");
+    ptrStartY.current = 0;
+  };
 
   const toCard = s => ({
     tk:     s.ticker || s.tk,
@@ -197,14 +227,29 @@ function FeedScreen({ signals, onSelect }) {
           <span style={{ fontFamily:"var(--mono, monospace)", fontWeight:700, fontSize:14, letterSpacing:"0.06em", color:"var(--text, #e6edf7)" }}>SIGNAL<span style={{ color:"var(--accent)" }}>.</span>TRADE</span>
         </span>
         <span className="live">LIVE · {signals.length}</span>
-        <span className="ico"><MIcon name="filter" size={18}/></span>
+        <span className="ico" onClick={onRefresh} role="button" tabIndex={0} title="Refresh" style={{ opacity: loading ? 0.5 : 1 }}><MIcon name="refresh" size={18}/></span>
       </div>
+      {demo && (
+        <div style={{ padding:"6px 16px", background:"var(--warn-soft)", borderBottom:"1px solid color-mix(in oklch, var(--warn) 30%, transparent)", fontSize:11, color:"var(--warn)", display:"flex", alignItems:"center", gap:6 }}>
+          <span style={{ width:6, height:6, borderRadius:"50%", background:"var(--warn)" }}/>
+          Demo data · connect to server for live signals
+        </div>
+      )}
       <div className="m-style-strip">
         {[["all","ALL"],["buy","BUY ONLY"],["high","≥70% CONF"]].map(([k,l]) => (
           <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} role="button" tabIndex={0}>{l}</span>
         ))}
       </div>
-      <div className="m-feed">
+      {ptrState !== "idle" && (
+        <div style={{ textAlign:"center", padding:"8px 0", color:"var(--text-faint)", fontSize:11, fontFamily:"var(--mono)" }}>
+          {ptrState === "released" ? "Release to refresh…" : "Pull to refresh…"}
+        </div>
+      )}
+      <div className="m-feed" ref={ptrRef}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+        {loading && items.length === 0 && (
+          <div style={{ textAlign:"center", padding:"60px 20px", color:"var(--text-faint)", fontSize:13 }}>Loading signals…</div>
+        )}
         {items.map((s, i) => {
           const c = toCard(s);
           const undeliv = c.deliverable === false;
@@ -261,10 +306,37 @@ function FeedScreen({ signals, onSelect }) {
 }
 
 // ── Detail screen ────────────────────────────────────────────────────────────
-function DetailScreen({ signal, onBack, onSend }) {
+function DetailScreen({ signal, onBack, onSend, onPaperTrade }) {
   const s = signal;
   const up = (s.ch||0) >= 0;
   const rationale = s.raw?.rationale || [];
+  const [sendState, setSendState] = useState("idle");
+  const [paperState, setPaperState] = useState("idle");
+
+  const handleSend = async () => {
+    if (sendState !== "idle") return;
+    setSendState("sending");
+    try {
+      await onSend?.();
+      setSendState("sent");
+      setTimeout(() => setSendState("idle"), 2000);
+    } catch {
+      setSendState("idle");
+    }
+  };
+
+  const handlePaper = async () => {
+    if (paperState !== "idle") return;
+    setPaperState("placing");
+    try {
+      await onPaperTrade?.();
+      setPaperState("placed");
+      setTimeout(() => setPaperState("idle"), 2000);
+    } catch {
+      setPaperState("idle");
+    }
+  };
+
   return (
     <>
       <MStatusBar/>
@@ -334,15 +406,19 @@ function DetailScreen({ signal, onBack, onSend }) {
         )}
       </div>
       <div className="m-action-row">
-        <button className="m-btn primary" onClick={onSend}><MIcon name="send" size={14}/> &nbsp;Send to Telegram</button>
-        <button className="m-btn">Paper trade</button>
+        <button className="m-btn primary" onClick={handleSend} disabled={sendState !== "idle"}>
+          <MIcon name="send" size={14}/> &nbsp;{sendState === "sending" ? "Sending…" : sendState === "sent" ? "Sent ✓" : "Send to Telegram"}
+        </button>
+        <button className="m-btn" onClick={handlePaper} disabled={paperState !== "idle"}>
+          {paperState === "placing" ? "Placing…" : paperState === "placed" ? "Placed ✓" : "Paper trade"}
+        </button>
       </div>
     </>
   );
 }
 
 // ── Portfolio screen ─────────────────────────────────────────────────────────
-function PortfolioScreen({ positions }) {
+function PortfolioScreen({ positions, demo }) {
   const equity = positions.reduce((s, p) => s + (p.last || 0) * Math.abs(p.shares || p.qty || 0), 0);
   const totalPnl = positions.reduce((s, p) => s + (p.pnl || 0), 0);
   return (
@@ -353,6 +429,12 @@ function PortfolioScreen({ positions }) {
         <span className="live" style={{ color:"var(--info)" }}>SIM</span>
         <span className="ico"><MIcon name="settings" size={18}/></span>
       </div>
+      {demo && (
+        <div style={{ padding:"6px 16px", background:"var(--warn-soft)", borderBottom:"1px solid color-mix(in oklch, var(--warn) 30%, transparent)", fontSize:11, color:"var(--warn)", display:"flex", alignItems:"center", gap:6 }}>
+          <span style={{ width:6, height:6, borderRadius:"50%", background:"var(--warn)" }}/>
+          Demo positions · connect to server for real P&L
+        </div>
+      )}
       <div className="m-feed" style={{ padding:0 }}>
         <div className="m-pf-hero">
           <div className="m-pf-eyebrow">Equity · Sim account</div>
@@ -532,7 +614,7 @@ function OnboardScreen({ onLogin, onSignup }) {
       <MStatusBar/>
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"60px 28px 24px", textAlign:"center" }}>
         <div style={{ fontFamily:"var(--mono)", fontSize:11, letterSpacing:"0.2em", color:"var(--accent)", marginBottom:14 }}>SIGNAL.TRADE</div>
-        <div style={{ fontSize:44, lineHeight:1.05, color:"#fff", letterSpacing:"-0.02em", fontWeight:800 }}>
+        <div style={{ fontSize:44, lineHeight:1.05, color:"var(--text)", letterSpacing:"-0.02em", fontWeight:800 }}>
           Quant signals.<br/><span style={{ color:"var(--accent)" }}>Plain English.</span>
         </div>
         <div style={{ marginTop:18, fontSize:14, color:"var(--text-dim)", lineHeight:1.5 }}>
@@ -558,13 +640,62 @@ function OnboardScreen({ onLogin, onSignup }) {
 // ── Root mobile app ──────────────────────────────────────────────────────────
 function MobileApp() {
   const [tab,       setTab]       = useState("feed");
-  const [signals,   setSignals]   = useState(MOBILE_SIGNALS_MOCK);
-  const [positions, setPositions] = useState(POSITIONS_MOCK);
+  const [signals,   setSignals]   = useState([]);
+  const [positions, setPositions] = useState([]);
+  const [watchlist, setWatchlist] = useState([]);
+  const [signalsDemo, setSignalsDemo] = useState(false);
+  const [positionsDemo, setPositionsDemo] = useState(false);
+  const [watchlistDemo, setWatchlistDemo] = useState(false);
+  const [dataLoading, setDataLoading] = useState(false);
   const [stats,     setStats]     = useState(null);
   const [user,      setUser]      = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [selected,  setSelected]  = useState(null);
   const [now,       setNow]       = useState(() => new Date());
+
+  const loadData = async (opts = {}) => {
+    if (!user) return;
+    const ctrl = opts.signal ? { signal: opts.signal } : {};
+    setDataLoading(true);
+    try {
+      const [sigs, pos, wl] = await Promise.all([
+        apiFetch("/api/signals", ctrl),
+        apiFetch("/api/paper/positions", ctrl),
+        apiFetch("/api/watchlist", ctrl),
+      ]);
+      if (sigs && Array.isArray(sigs) && sigs.length > 0) {
+        setSignals(sigs);
+        setSignalsDemo(false);
+      } else {
+        setSignals(MOBILE_SIGNALS_MOCK);
+        setSignalsDemo(true);
+      }
+      if (pos && Array.isArray(pos) && pos.length > 0) {
+        setPositions(pos);
+        setPositionsDemo(false);
+      } else {
+        setPositions(POSITIONS_MOCK);
+        setPositionsDemo(true);
+      }
+      if (wl && Array.isArray(wl) && wl.length > 0) {
+        setWatchlist(wl);
+        setWatchlistDemo(false);
+      } else {
+        setWatchlist(WATCH_MOCK);
+        setWatchlistDemo(true);
+      }
+    } catch {
+      setSignals(MOBILE_SIGNALS_MOCK);
+      setPositions(POSITIONS_MOCK);
+      setWatchlist(WATCH_MOCK);
+      setSignalsDemo(true);
+      setPositionsDemo(true);
+      setWatchlistDemo(true);
+    } finally {
+      setDataLoading(false);
+    }
+    apiFetch("/api/public/track-record", ctrl).then(d => { if (d && !d.no_data) setStats(d); }).catch(() => {});
+  };
 
   // Auth
   useEffect(() => {
@@ -596,10 +727,7 @@ function MobileApp() {
   useEffect(() => {
     if (!user) return;
     const ctrl = new AbortController();
-    const opts = { signal: ctrl.signal };
-    apiFetch("/api/signals", opts).then(d => { if (d && Array.isArray(d) && d.length > 0) setSignals(d); });
-    apiFetch("/api/paper/positions", opts).then(d => { if (d && Array.isArray(d) && d.length > 0) setPositions(d); });
-    apiFetch("/api/public/track-record", opts).then(d => { if (d && !d.no_data) setStats(d); });
+    loadData({ signal: ctrl.signal });
     return () => ctrl.abort();
   }, [user]);
 
@@ -610,23 +738,40 @@ function MobileApp() {
 
   if (!user) return <OnboardScreen onLogin={() => window.location.href="/login?next=/mobile"} onSignup={() => window.location.href="/signup"}/>;
 
+  const refresh = () => loadData();
+
   const sendSignal = async (s) => {
     if (s.raw?.id) {
       await mFetch(`/api/signals/${s.raw.id}/send`);
-      alert(`✓ ${s.action} ${s.tk} sent to Telegram`);
     }
   };
 
+  const paperTrade = async (s) => {
+    if (!s?.tk) return;
+    await authFetch("/api/paper/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol: s.tk,
+        qty: 1,
+        side: s.action === "BUY" ? "buy" : "sell",
+        type: "market",
+        time_in_force: "day",
+      }),
+    });
+  };
+
   const screenContent = () => {
-    if (selected && tab === "feed") return <DetailScreen signal={selected} onBack={() => setSelected(null)} onSend={() => sendSignal(selected)}/>;
+    if (selected && tab === "feed") return <DetailScreen signal={selected} onBack={() => setSelected(null)} onSend={() => sendSignal(selected)} onPaperTrade={() => paperTrade(selected)}/>;
     switch (tab) {
-      case "feed":      return <FeedScreen signals={signals} onSelect={s => setSelected(s)}/>;
-      case "portfolio": return <PortfolioScreen positions={positions}/>;
+      case "feed":      return <FeedScreen signals={signals} onSelect={s => setSelected(s)} loading={dataLoading} demo={signalsDemo} onRefresh={refresh}/>;
+      case "portfolio": return <PortfolioScreen positions={positions} demo={positionsDemo}/>;
       case "record":    return <RecordScreen stats={stats}/>;
       case "account":   return <AccountScreen user={user}/>;
+      case "watch":     return <WatchlistScreen tickers={watchlist} demo={watchlistDemo} onRefresh={refresh}/>;
       default:          return (
         <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-faint)", fontSize:13 }}>
-          Watchlist coming soon
+          Coming soon
         </div>
       );
     }
@@ -654,21 +799,28 @@ const WATCH_MOCK = [
   { tk:"PLTR",  co:"Palantir",    price:28.40,   ch:4.12,  sigs:2, alert:true  },
 ];
 
-function WatchlistScreen({ tickers = WATCH_MOCK }) {
+function WatchlistScreen({ tickers = WATCH_MOCK, demo = false, onRefresh }) {
   const [filter, setFilter] = useState("all");
-  const items = filter === "signals" ? tickers.filter(t => t.sigs > 0)
+  const items = filter === "signals" ? tickers.filter(t => (t.sigs||0) > 0)
               : filter === "alerts"  ? tickers.filter(t => t.alert)
               : tickers;
   return (
     <>
       <MStatusBar/>
       <div className="m-top">
-        <span style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:13, color:"#fff" }}>Watchlist</span>
+        <span style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:13, color:"var(--text)" }}>Watchlist</span>
         <span style={{ marginLeft:"auto", display:"inline-flex", gap:10, alignItems:"center" }}>
+          {onRefresh && <span className="ico" onClick={onRefresh} role="button" tabIndex={0}><MIcon name="refresh" size={18}/></span>}
           <span className="ico"><MIcon name="filter" size={18}/></span>
           <span className="ico" style={{ color:"var(--accent)", fontSize:20 }}>+</span>
         </span>
       </div>
+      {demo && (
+        <div style={{ padding:"6px 16px", background:"var(--warn-soft)", borderBottom:"1px solid color-mix(in oklch, var(--warn) 30%, transparent)", fontSize:11, color:"var(--warn)", display:"flex", alignItems:"center", gap:6 }}>
+          <span style={{ width:6, height:6, borderRadius:"50%", background:"var(--warn)"}}/>
+          Demo watchlist · connect to server for live prices
+        </div>
+      )}
       <div style={{ padding:"0 16px 12px", display:"flex", gap:6, overflowX:"auto" }}>
         {[["all","ALL · "+tickers.length],["signals","SIGNALS"],["alerts","ALERTS"]].map(([k,l]) => (
           <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} role="button" tabIndex={0}>{l}</span>
@@ -682,15 +834,15 @@ function WatchlistScreen({ tickers = WATCH_MOCK }) {
             </div>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <span style={{ fontFamily:"var(--mono)", fontWeight:600, fontSize:14, color:"#fff" }}>{w.tk}</span>
+                <span style={{ fontFamily:"var(--mono)", fontWeight:600, fontSize:14, color:"var(--text)" }}>{w.tk}</span>
                 {w.sigs > 0 && <span style={{ fontFamily:"var(--mono)", fontSize:9, padding:"2px 5px", borderRadius:4, background:"color-mix(in oklch,var(--accent) 18%,transparent)", color:"var(--accent)" }}>{w.sigs} live</span>}
                 {w.alert && <span style={{ color:"var(--warn)" }}><MIcon name="bell" size={11}/></span>}
               </div>
               <div style={{ fontSize:11, color:"var(--text-dim)", marginTop:2 }}>{w.co}</div>
             </div>
             <div style={{ textAlign:"right" }}>
-              <div style={{ fontFamily:"var(--mono)", fontSize:13, color:"#fff" }}>${w.price.toFixed(2)}</div>
-              <div style={{ fontFamily:"var(--mono)", fontSize:11, color: w.ch >= 0 ? "var(--up)" : "var(--down)", marginTop:2 }}>{w.ch >= 0 ? "+" : ""}{w.ch}%</div>
+              <div style={{ fontFamily:"var(--mono)", fontSize:13, color:"var(--text)" }}>{w.price != null ? `$${Number(w.price).toFixed(2)}` : "—"}</div>
+              <div style={{ fontFamily:"var(--mono)", fontSize:11, color: (w.change||w.ch) >= 0 ? "var(--up)" : "var(--down)", marginTop:2 }}>{w.change != null || w.ch != null ? `${(w.change||w.ch) >= 0 ? "+" : ""}${Number(w.change||w.ch).toFixed(2)}%` : ""}</div>
             </div>
           </div>
         ))}
@@ -699,55 +851,6 @@ function WatchlistScreen({ tickers = WATCH_MOCK }) {
   );
 }
 
-// ── Notifications / activity screen ──────────────────────────────────────────
-const NOTIFS_MOCK = [
-  { type:"BUY",   tk:"NVDA", text:"Confidence raised to 87% — entry $1,245",       ago:"2m"  },
-  { type:"FILL",  tk:"AAPL", text:"Paper portfolio: BUY 50 @ $178.20 filled",       ago:"14m" },
-  { type:"SELL",  tk:"TSLA", text:"Pivot break confirmed — entry $165, stop $172",  ago:"32m" },
-  { type:"ALERT", tk:"PLTR", text:"Volume spike 4.2× — added to watchlist",         ago:"1h"  },
-  { type:"BUY",   tk:"AMD",  text:"50-DMA reclaim + flow surge — 69% conf",         ago:"2h"  },
-  { type:"SYS",   tk:null,   text:"Daily recap: 12 fired, 8 W / 3 L / 1 open",      ago:"9h"  },
-  { type:"HOLD",  tk:"META", text:"Mixed signals — suppressed below 60%",           ago:"1d"  },
-];
-
-function NotifScreen({ notifs = NOTIFS_MOCK }) {
-  const [filter, setFilter] = useState("all");
-  const items = filter === "all" ? notifs
-    : notifs.filter(n => n.type.toLowerCase() === filter || (filter === "fills" && n.type === "FILL"));
-  return (
-    <>
-      <MStatusBar/>
-      <div className="m-top">
-        <span style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:13, color:"#fff" }}>Activity</span>
-        <span style={{ marginLeft:"auto", fontFamily:"var(--mono)", fontSize:10, color:"var(--text-faint)" }}>Mark all read</span>
-      </div>
-      <div style={{ padding:"0 16px 12px", display:"flex", gap:6, overflowX:"auto" }}>
-        {[["all","ALL · "+notifs.length],["buy","SIGNALS"],["fill","FILLS"],["alert","ALERTS"]].map(([k,l]) => (
-          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} role="button" tabIndex={0}>{l}</span>
-        ))}
-      </div>
-      <div style={{ flex:1, overflowY:"auto" }}>
-        {items.map((n, i) => {
-          const c = n.type==="BUY" ? "var(--up)" : n.type==="SELL" ? "var(--down)" : n.type==="HOLD" ? "var(--warn)" : n.type==="FILL" ? "var(--accent)" : "var(--text-faint)";
-          return (
-            <div key={i} style={{ display:"flex", gap:12, padding:"14px 16px", borderBottom:"1px solid var(--line)" }}>
-              <div style={{ width:36, height:36, borderRadius:10, background:`color-mix(in oklch,${c} 14%,transparent)`, color:c, display:"grid", placeItems:"center", fontFamily:"var(--mono)", fontSize:9, fontWeight:700, flex:"none" }}>
-                {n.type}
-              </div>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
-                  {n.tk && <span style={{ fontFamily:"var(--mono)", fontWeight:600, fontSize:13, color:"#fff" }}>{n.tk}</span>}
-                  <span style={{ fontFamily:"var(--mono)", fontSize:10, color:"var(--text-faint)", marginLeft:"auto" }}>{n.ago} ago</span>
-                </div>
-                <div style={{ fontSize:12, color:"var(--text-dim)", marginTop:3, lineHeight:1.4 }}>{n.text}</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
 
 // ── Paywall screen ────────────────────────────────────────────────────────────
 function PaywallScreen({ onClose }) {
@@ -765,7 +868,7 @@ function PaywallScreen({ onClose }) {
         <span style={{ fontFamily:"var(--mono)", fontSize:11, letterSpacing:"0.15em", color:"var(--text-dim)", marginLeft: onClose ? 0 : "auto" }}>UPGRADE</span>
       </div>
       <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 20px" }}>
-        <div style={{ fontSize:26, fontWeight:800, color:"#fff", lineHeight:1.1, letterSpacing:"-0.02em", marginBottom:8 }}>
+        <div style={{ fontSize:26, fontWeight:800, color:"var(--text)", lineHeight:1.1, letterSpacing:"-0.02em", marginBottom:8 }}>
           Unlock the full feed
         </div>
         <div style={{ fontSize:13, color:"var(--text-dim)", lineHeight:1.5, marginBottom:18 }}>
@@ -776,8 +879,8 @@ function PaywallScreen({ onClose }) {
             <div key={i} style={{ padding:16, borderRadius:14, background:t.fav ? "color-mix(in oklch,var(--accent) 8%,var(--bg-2))" : "var(--bg-2)", border:t.fav ? "1.5px solid var(--accent)" : "1px solid var(--line)", position:"relative" }}>
               {t.fav && <span style={{ position:"absolute", top:-8, right:12, padding:"3px 8px", borderRadius:4, background:"var(--accent)", color:"#000", fontFamily:"var(--mono)", fontSize:9, fontWeight:700, letterSpacing:"0.1em" }}>POPULAR</span>}
               <div style={{ display:"flex", alignItems:"baseline", gap:6, marginBottom:6 }}>
-                <span style={{ fontWeight:600, fontSize:14, color:"#fff" }}>{t.name}</span>
-                <span style={{ marginLeft:"auto", fontFamily:"var(--mono)", fontSize:20, fontWeight:700, color:"#fff" }}>{t.price}</span>
+                <span style={{ fontWeight:600, fontSize:14, color:"var(--text)" }}>{t.name}</span>
+                <span style={{ marginLeft:"auto", fontFamily:"var(--mono)", fontSize:20, fontWeight:700, color:"var(--text)" }}>{t.price}</span>
                 <span style={{ fontFamily:"var(--mono)", fontSize:10, color:"var(--text-faint)" }}>{t.per}</span>
               </div>
               <div style={{ fontSize:12, color:"var(--text-dim)", lineHeight:1.45, marginBottom:10 }}>{t.desc}</div>
@@ -804,7 +907,6 @@ function PortfolioScreen_Static() { return <PortfolioScreen positions={POSITIONS
 function AccountScreen_Static()   { return <AccountScreen user={{ full_name:"Rohan K.", email:"rohan@gmail.com", subscription_tier:"pro", subscription_status:"active", is_owner:false, telegram_linked:true }}/> }
 function OnboardScreen_Static()   { return <OnboardScreen onLogin={() => {}} onSignup={() => {}}/> }
 function WatchlistScreen_Static() { return <WatchlistScreen tickers={WATCH_MOCK}/> }
-function NotifScreen_Static()     { return <NotifScreen notifs={NOTIFS_MOCK}/> }
 function PaywallScreen_Static()   { return <PaywallScreen onClose={() => {}}/> }
 
 if (typeof window !== 'undefined') {
@@ -816,7 +918,6 @@ if (typeof window !== 'undefined') {
     AccountScreen:   AccountScreen_Static,
     OnboardScreen:   OnboardScreen_Static,
     WatchlistScreen: WatchlistScreen_Static,
-    NotifScreen:     NotifScreen_Static,
     PaywallScreen:   PaywallScreen_Static,
   });
 }

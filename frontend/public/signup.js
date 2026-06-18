@@ -7,6 +7,7 @@ const urlPlan = params.get('plan');
 // Pass ?ref= + ?plan= through to OAuth providers
 function googleSignup(e) {
   e.preventDefault();
+  if (typeof trackClick === 'function') trackClick('oauth_google', { page: 'signup', plan: selectedPlan });
   const ref = params.get('ref');
   window.location.href = '/api/auth/google' + (ref ? `?ref=${encodeURIComponent(ref)}` : '');
 }
@@ -20,6 +21,7 @@ if (urlPlan && ['free','basic','pro'].includes(urlPlan)) {
 
 function selectPlan(plan) {
   selectedPlan = plan;
+  if (typeof trackClick === 'function') trackClick('signup_select_plan', { plan });
   document.querySelectorAll('.plan-card').forEach(c => c.classList.remove('selected','selected-pro'));
   const card = document.querySelector(`[data-plan="${plan}"]`);
   if (card) card.classList.add(plan === 'pro' ? 'selected-pro' : 'selected');
@@ -79,15 +81,27 @@ function goToPlan() {
 
 document.getElementById('signup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (typeof track === 'function') track('signup_submit', { plan: selectedPlan });
   const btn = document.getElementById('submit-btn');
   const err = document.getElementById('error');
   err.style.display = 'none';
+
+  const email    = suEmail.value.trim();
+  const password = suPassword.value;
+  const name     = document.getElementById('name').value.trim();
+
+  clearInlineError(suEmail);
+  clearInlineError(suPassword);
+
+  let invalid = false;
+  if (!email) { showInlineError(suEmail, 'Email is required.'); invalid = true; }
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showInlineError(suEmail, 'Please enter a valid email address.'); invalid = true; }
+  if (!password) { showInlineError(suPassword, 'Password is required.'); invalid = true; }
+  else if (password.length < 8) { showInlineError(suPassword, 'Password must be at least 8 characters.'); invalid = true; }
+  if (invalid) return;
+
   btn.disabled = true;
   document.getElementById('btn-text').textContent = 'Creating account…';
-
-  const email    = document.getElementById('email').value.trim();
-  const password = document.getElementById('password').value;
-  const name     = document.getElementById('name').value.trim();
 
   try {
     // 1. Register account
@@ -199,6 +213,42 @@ function showCheckEmail(email, plan) {
   wrap.append(signIn, disclaimer);
   document.body.appendChild(wrap);
 }
+
+// ── Inline validation helpers ────────────────────────────────────────────────
+const suEmail = document.getElementById('email');
+const suPassword = document.getElementById('password');
+
+function showInlineError(input, msg) {
+  input.style.borderColor = 'var(--down)';
+  let tip = input.parentNode.querySelector('.inline-error');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'inline-error';
+    tip.style.cssText = 'font-size:12px;color:var(--down);margin-top:-8px;margin-bottom:12px';
+    input.parentNode.appendChild(tip);
+  }
+  tip.textContent = msg;
+}
+function clearInlineError(input) {
+  input.style.borderColor = '';
+  const tip = input.parentNode.querySelector('.inline-error');
+  if (tip) tip.remove();
+}
+
+suEmail?.addEventListener('blur', () => {
+  const v = suEmail.value.trim();
+  if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) showInlineError(suEmail, 'Please enter a valid email address.');
+  else clearInlineError(suEmail);
+});
+suEmail?.addEventListener('input', () => clearInlineError(suEmail));
+suPassword?.addEventListener('blur', () => {
+  const v = suPassword.value;
+  if (v && v.length < 8) showInlineError(suPassword, 'Password must be at least 8 characters.');
+  else clearInlineError(suPassword);
+});
+suPassword?.addEventListener('input', () => {
+  if (suPassword.value.length >= 8) clearInlineError(suPassword);
+});
 
 // Wire up event listeners (replaces onclick= attributes blocked by CSP)
 document.querySelectorAll('.plan-card').forEach(card => {

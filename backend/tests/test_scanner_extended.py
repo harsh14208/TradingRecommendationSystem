@@ -37,6 +37,7 @@ def _settings(**kwargs):
         telegram_chat_id="-100123",
         min_confidence=55.0,
         telegram_broadcast_channel_id="",
+        max_sends_per_ticker_per_day=1,
     )
     defaults.update(kwargs)
     return types.SimpleNamespace(**defaults)
@@ -185,7 +186,7 @@ class TestMaybeSend:
         db.add = MagicMock()
 
         row = _db_row()
-        settings = _settings()
+        settings = _settings(max_sends_per_ticker_per_day=0)
 
         with patch.object(scanner, "_market_hours_ok", return_value=True):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
@@ -233,7 +234,7 @@ class TestMaybeSend:
         db.add = MagicMock()
 
         row = _db_row()
-        settings = _settings()
+        settings = _settings(max_sends_per_ticker_per_day=0)
 
         with patch.object(scanner, "_market_hours_ok", return_value=True):
             with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=(True, "12345", None))):
@@ -274,7 +275,7 @@ class TestMaybeSend:
         db.add = lambda obj: added_objects.append(obj)
 
         row = _db_row()
-        settings = _settings()
+        settings = _settings(max_sends_per_ticker_per_day=0)
 
         from models import SendLog
 
