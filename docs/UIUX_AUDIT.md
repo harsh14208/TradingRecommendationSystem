@@ -426,7 +426,7 @@ The following fixes were implemented in response to this audit. The frontend bui
     - Added `pricingContext` state and passed it to `PricingView`.
     - Paper-trade keyboard shortcut, Position tab, and sidebar "Upgrade plan" now show specific upsell messages.
 
-### P2/P3 — Polish
+### P2 — Polish
 
 14. **Logo sizing on auth pages**
     - Reduced left-panel and mobile logos from 160px/120px to 80px on `login.html` and from 90px to 80px on `signup.html`.
@@ -434,22 +434,47 @@ The following fixes were implemented in response to this audit. The frontend bui
 15. **Mobile status bar**
     - `MStatusBar` now shows the actual current time instead of a hard-coded "9:41".
 
+### P3 — Strategic
+
+16. **Grouped marketing feature cards**
+    - Replaced the flat 12-card grid with 2 categories: **Signal intelligence** and **Delivery & calibration**. The separate "Data sources" category was removed because all sources are now always enabled.
+    - Added category headers with a visual rule in `site.jsx` + `site.css`.
+
+17. **Testimonials and trust badges**
+    - Added a `Trust` section with 3 subscriber quotes + star ratings and a badge row (TLS, SOC 2 in progress, Stripe PCI, auditable track record).
+
+18. **Completed mobile Watchlist; removed dead Notifications tab**
+    - `WatchlistScreen` now receives live data from `/api/watchlist` enriched with real-time prices and 24h signal counts.
+    - Removed the unused `NotifScreen` component and static references.
+
+19. **Formal WCAG 2.1 AA light-theme contrast audit**
+    - Darkened light-theme accent/up to `#0e7490`, down to `#be123c`, warn to `#92400e`, and info to `#1d4ed8` to hit ≥4.5:1 on white backgrounds.
+    - Replaced hard-coded `#fff` text in `mobile.jsx`, `app.ui.jsx`, `app.modals.jsx`, and `site.jsx` with `var(--text)` so copy remains readable in light mode.
+
+20. **Analytics instrumentation**
+    - Added `frontend/src/analytics.js` (first-party, no third-party trackers, no persistent device ID) and included it in all bundles via `build.mjs`.
+    - Created backend `routers/analytics_router.py` with `POST /api/analytics/event`; events are appended to `logs/analytics.jsonl`.
+    - Instrumented marketing CTAs, pricing-card selections, login/signup/OAuth submits, and dashboard/mobile paywall impressions.
+
+21. **Removed the data-sources tool and UI**
+    - Deleted backend `routers/sources.py`, `services/source_svc.py`, and `tests/test_routers_sources_unit.py`; removed the `/api/sources` mount from `main.py`.
+    - Removed `SourcesView`, the sidebar "Sources" nav item, the status-bar source count, and `/api/sources` fetching from the legacy dashboard (`app.jsx`, `app.views.jsx`).
+    - Removed the DATA SOURCES section from the cinematic Market page, the "Data Sources" tool card, the backtest source toggles, and all related mock data (`cin.market.jsx`, `cin.tools.jsx`, `cin.backtest.jsx`, `cin.market-data.jsx`, `cin.styles.css`).
+    - Removed the "Data sources" marketing feature group and docs/status copy that presented sources as a separate surface.
+    - All upstream feeds are now always enabled; there is no user-facing source toggle.
+
 ### Not addressed in this pass
 
-- Grouping the 12 marketing feature cards into meta-categories.
-- Adding testimonials or third-party trust badges.
-- Formal WCAG 2.1 AA contrast audit of the light theme.
-- Adding analytics events for CTA/plan/gated-feature tracking.
 - Consolidating shared auth components into a single bundle (login/signup still separate for now).
 
 ### Verification
 
 ```bash
 npm run build
-# frontend/dist/app-bundle.js — 1525 KB
-# frontend/dist/site-bundle.js — 152 KB
-# frontend/dist/mobile-bundle.js — 167 KB
+# frontend/dist/app-bundle.js — 1515 KB
+# frontend/dist/site-bundle.js — 169 KB
+# frontend/dist/mobile-bundle.js — 169 KB
 
-cd backend && ../.venv311/bin/python -m pytest tests/test_routers_auth.py -q
-# 8 passed
+cd backend && ../.venv311/bin/pytest tests -q
+# 2615 passed, 33 skipped
 ```

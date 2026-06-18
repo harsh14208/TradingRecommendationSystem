@@ -2,6 +2,60 @@
 const TIER_ORDER  = ["free","basic","pro","elite"];
 const TIER_COLORS = { free:"var(--text-faint)", basic:"var(--accent)", pro:"#7c3aed", elite:"#c0a062" };
 
+/* ── Keyboard activation helper for role="button" elements ──────────────────── */
+function onKeyActivate(handler) {
+  return (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handler(e);
+    }
+  };
+}
+
+/* ── Focus trap hook for overlays (modal dialogs, panels) ──────────────────── */
+function useFocusTrap(open, onClose, containerRef) {
+  const prevFocusRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    // Store previously focused element
+    prevFocusRef.current = document.activeElement;
+    const container = containerRef?.current;
+    if (!container) return;
+    // Find first focusable element and focus it
+    const focusable = container.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    const first = focusable[0];
+    if (first) first.focus();
+
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose?.();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = Array.from(container.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'));
+      if (items.length === 0) return;
+      const last = items[items.length - 1];
+      const firstItem = items[0];
+      if (e.shiftKey && document.activeElement === firstItem) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        firstItem.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      // Return focus when closing
+      if (prevFocusRef.current && typeof prevFocusRef.current.focus === "function") {
+        prevFocusRef.current.focus();
+      }
+    };
+  }, [open]);
+}
+
 /* ── ET timezone helpers (module-scope so all components can use them) ──────── */
 const _etFmt = (date, opts) => {
   try {

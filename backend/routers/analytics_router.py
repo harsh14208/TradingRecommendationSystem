@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from config import get_settings
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 from services.auth_svc import get_current_user_optional
 
@@ -64,11 +64,6 @@ async def record_event(
     settings = get_settings()
     if not settings.analytics_enabled:
         return {"ok": True}
-
-    # Basic payload size guard (FastAPI already limits, but belt-and-suspenders).
-    raw = await req.body()
-    if len(raw) > 16_000:
-        raise HTTPException(413, "Event payload too large")
 
     row = {
         "received_at": datetime.now(timezone.utc).isoformat(),

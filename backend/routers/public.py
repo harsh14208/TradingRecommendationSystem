@@ -105,7 +105,12 @@ async def public_track_record(db: AsyncSession = Depends(get_db)):
             n = len(returns)
             mean = sum(returns) / n
             std = math.sqrt(sum((r - mean) ** 2 for r in returns) / max(n - 1, 1)) if n > 1 else 0
-            sharpe = round((mean / std) * math.sqrt(52), 2) if std > 0 and n >= 5 else None
+            # Require a meaningful sample and cap the ratio so tiny, lucky samples
+            # don't produce absurd per-ticker Sharpe figures.
+            if n < 15 or std == 0:
+                sharpe = None
+            else:
+                sharpe = round(min((mean / std) * math.sqrt(52), 3.0), 2)
             return {
                 "n": n,
                 "win_rate": round(len(wins) / n * 100, 1),

@@ -202,18 +202,6 @@ const SIGNALS = [
   },
 ];
 
-const SOURCES = [
-  { id: "yahoo", name: "Yahoo Finance", abbr: "YAHO", desc: "Quotes, fundamentals, news", on: true,  reqs: 1842, latency: 210, feed: "Quotes · 15m" },
-  { id: "av",    name: "Alpha Vantage",  abbr: "AV",   desc: "Technicals, TA indicators", on: true,  reqs: 541,  latency: 430, feed: "5/min free tier" },
-  { id: "finn",  name: "Finnhub",        abbr: "FINN", desc: "Realtime news, insider", on: true,  reqs: 2204, latency: 180, feed: "60/min free" },
-  { id: "reut",  name: "Reuters / BBG",  abbr: "REUT", desc: "RSS newswire", on: true,  reqs: 88,   latency: 95,  feed: "Polling 30s" },
-  { id: "edgar", name: "SEC EDGAR",      abbr: "EDGR", desc: "8-K, 10-Q, Form 4", on: true,  reqs: 34,   latency: 620, feed: "Polling 60s" },
-  { id: "x",     name: "Twitter / X",    abbr: "X",    desc: "Curated accounts list (42)", on: true,  reqs: 3102, latency: 330, feed: "Streaming" },
-  { id: "redd",  name: "Reddit / WSB",   abbr: "REDD", desc: "r/wallstreetbets sentiment", on: true,  reqs: 412,  latency: 280, feed: "Polling 5m" },
-  { id: "gnews", name: "Google News",    abbr: "GNEW", desc: "Financial category RSS", on: false, reqs: 0,    latency: 0,   feed: "Disabled" },
-  { id: "cal",   name: "Earnings Cal.",  abbr: "CAL",  desc: "Upcoming events + estimates", on: true,  reqs: 22,   latency: 140, feed: "Daily 05:00 ET" },
-];
-
 const WA_MESSAGES = [
   { type: "date", text: "TODAY" },
   { type: "out", sender: "TradeBot", time: "07:58", body: "🟢 *BUY* — *PLTR* @ $23.88\nConf: 61%  |  R:R 2.6\n———————\n• New $480M DoD ceiling (SAM.gov)\n• WSB sentiment +34% WoW\nEntry 23.80 / Stop 21.40 / TP 28.50" },

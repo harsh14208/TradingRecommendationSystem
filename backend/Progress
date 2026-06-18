@@ -51,7 +51,6 @@ TradingRecommendationSystem/
         ├── accuracy.py                   ← Win rate by source + ticker (/api/accuracy/*)
         ├── signals.py                    ← CRUD + send/skip/review
         ├── quotes.py                     ← ticker tape + chart OHLCV
-        ├── sources.py                    ← toggle data sources
         ├── settings_router.py            ← persist user settings
         ├── whatsapp_router.py            ← messages + send log
         ├── market.py                     ← F&G + macro context
@@ -225,7 +224,7 @@ GET         /api/signals/history        All past signals
 GET         /api/quotes                 Live ticker tape
 GET         /api/chart/{ticker}?period= Real OHLCV (1D/5D/1M/3M/1Y)
 GET/PUT     /api/settings               Persist user preferences
-GET/PUT     /api/sources/{id}           Toggle data sources
+
 GET         /api/whatsapp/messages      Chat history
 GET         /api/whatsapp/log           Send log
 GET         /api/market/context         F&G + macro snapshot

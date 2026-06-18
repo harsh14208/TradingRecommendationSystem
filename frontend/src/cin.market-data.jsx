@@ -63,18 +63,6 @@ const M_CALENDAR = [
   { date: "2026-06-25", time: "10:00", name: "New Home Sales",             label: "Housing", impact: "LOW",    category: "housing",    forecast: "640K",  previous: "634K",  description: "Rate-sensitive housing demand." },
 ];
 
-const M_SOURCES = [
-  { id: "yahoo", name: "Yahoo Finance", abbr: "YAHO", desc: "Quotes, fundamentals, news",       on: true,  reqs: 1842, latency: 210, feed: "Quotes · 15m" },
-  { id: "av",    name: "Alpha Vantage", abbr: "AV",   desc: "Technicals, TA indicators",        on: true,  reqs: 541,  latency: 430, feed: "5/min free tier" },
-  { id: "finn",  name: "Finnhub",       abbr: "FINN", desc: "Realtime news, insider",           on: true,  reqs: 2204, latency: 180, feed: "60/min free" },
-  { id: "reut",  name: "Reuters / BBG", abbr: "REUT", desc: "RSS newswire",                     on: true,  reqs: 88,   latency: 95,  feed: "Polling 30s" },
-  { id: "edgar", name: "SEC EDGAR",     abbr: "EDGR", desc: "8-K, 10-Q, Form 4",                on: true,  reqs: 34,   latency: 620, feed: "Polling 60s" },
-  { id: "x",     name: "Twitter / X",   abbr: "X",    desc: "Curated accounts list (42)",       on: true,  reqs: 3102, latency: 330, feed: "Streaming" },
-  { id: "redd",  name: "Reddit / WSB",  abbr: "REDD", desc: "r/wallstreetbets sentiment",       on: true,  reqs: 412,  latency: 280, feed: "Polling 5m" },
-  { id: "gnews", name: "Google News",   abbr: "GNEW", desc: "Financial category RSS",           on: false, reqs: 0,    latency: 0,   feed: "Disabled" },
-  { id: "cal",   name: "Earnings Cal.", abbr: "CAL",  desc: "Upcoming events + estimates",      on: true,  reqs: 22,   latency: 140, feed: "Daily 05:00 ET" },
-];
-
 const M_LOG = [
   { t: "Jun 13 · 09:31", s: "sent",  m: "→ BUY NVDA @ 1248.32 (Conf 87%)" },
   { t: "Jun 13 · 09:14", s: "sent",  m: "→ SELL TSLA @ 164.82 (Conf 72%)" },
@@ -137,6 +125,6 @@ const M_PRICING = [
 
 Object.assign(window, {
   M_FEAR_GREED, M_MACRO, M_BREADTH, M_PUTCALL, M_NAAIM, M_COT, M_HMM,
-  M_CONTEXT_SIGNALS, M_SECTORS, M_ROTATION, M_CALENDAR, M_SOURCES, M_LOG, M_FAQS,
+  M_CONTEXT_SIGNALS, M_SECTORS, M_ROTATION, M_CALENDAR, M_LOG, M_FAQS,
   M_TRACK_TOP, M_TRACK_MONTHS, M_TRACK_TICKERS, M_PRICING,
 });

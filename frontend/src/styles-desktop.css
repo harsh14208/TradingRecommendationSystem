@@ -540,20 +540,11 @@ input, select, textarea { font: inherit; color: inherit; }
 .overlay-head h2 { margin: 0; font-size: var(--fs-xl); font-weight: 600; }
 .overlay-head .crumb { color: var(--text-faint); font-family: var(--font-mono); font-size: var(--fs-sm); }
 
-.src-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(224px,1fr)); gap: 11.2px; padding: 16px 22.4px; }
 .src-card {
   padding: 12.8px; border: 0.8px solid var(--line); border-radius: var(--radius-lg);
   background: var(--bg-1); display: flex; flex-direction: column; gap: 8px; position: relative;
 }
 .src-card:hover { border-color: var(--accent-soft); transform: translateY(-0.8px); }
-.src-card .head { display: flex; align-items: center; gap: 8px; }
-.src-card .icon { width: 28.8px; height: 28.8px; border-radius: 6.4px; display: grid; place-items: center; font-family: var(--font-mono); font-weight: 700; font-size: 9.6px; color: var(--text); background: var(--bg-3); }
-.src-card h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; }
-.src-card .desc { font-size: 8.8px; color: var(--text-dim); font-family: var(--font-mono); }
-.src-card .stats { display: flex; gap: 11.2px; margin-top: auto; padding-top: 8px; border-top: 0.8px dashed var(--line); }
-.src-card .stats .s { font-family: var(--font-mono); }
-.src-card .stats .s .n { font-size: var(--fs-md); font-weight: 600; display: block; }
-.src-card .stats .s .l { font-size: 7.2px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); }
 
 .toggle { position: relative; width: 27.2px; height: 16px; border-radius: 8px; background: var(--bg-3); border: 0.8px solid var(--line-2); cursor: pointer; transition: all 150ms; margin-left: auto; }
 .toggle::after { content: ""; position: absolute; top: 0.8px; left: 0.8px; width: 12.8px; height: 12.8px; border-radius: 50%; background: var(--text-faint); transition: all 150ms; }

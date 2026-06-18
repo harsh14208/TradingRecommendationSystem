@@ -1,6 +1,16 @@
 /* global React */
 const { useState, useEffect } = React;
 
+/* ── Accessibility helpers ──────────────────────────────────────────────── */
+function onKeyActivate(handler) {
+  return (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handler(e);
+    }
+  };
+}
+
 /* ── Auth helpers ─────────────────────────────────────────────────────────── */
 // Access token in module memory only — the HTTP-only refresh cookie persists sessions.
 let _accessToken = null;
@@ -28,18 +38,6 @@ const W_SIGNALS = [
 ];
 
 const W_FEATURE_GROUPS = [
-  {
-    name: "Data sources",
-    items: [
-      { ico: "📊", t: "Institutional Flow",     d: "Tracks large-fund holdings and insider clusters to detect accumulation or distribution." },
-      { ico: "🐋", t: "Options Flow",           d: "Unusual volume, OTM spikes, and gamma-exposure signals across multiple expiries." },
-      { ico: "📰", t: "News & Analyst",         d: "Real-time news, analyst upgrades, and price target changes from premium data feeds." },
-      { ico: "📄", t: "Insider Activity",       d: "Cluster buys and selling pressure flagged from SEC insider filings." },
-      { ico: "🦈", t: "Dark Pool Flow",         d: "Large off-exchange block prints and inferred directional flow." },
-      { ico: "⚖️", t: "Fundamental Ratios",     d: "Free cash flow yield, margins, debt/equity, and dividend quality from SEC filings." },
-      { ico: "🏭", t: "Macro & Supply Signals", d: "Freight, energy, and macro indicators mapped to watchlist sectors." },
-    ]
-  },
   {
     name: "Signal intelligence",
     items: [
@@ -93,13 +91,13 @@ function Logo({ size = 13 }) {
 function Nav({ go, page }) {
   return (
     <nav className="nav">
-      <a onClick={() => go("home")} style={{ cursor:"pointer", textDecoration:"none" }} role="button" tabIndex={0}><Logo/></a>
+      <a onClick={() => go("home")} style={{ cursor:"pointer", textDecoration:"none" }} onKeyDown={onKeyActivate(() => go("home"))} role="button" tabIndex={0}><Logo/></a>
       <div className="nav-links">
-        <a onClick={() => go("home")}      className={page==="home"?"on":""} role="button" tabIndex={0}>Features</a>
-        <a onClick={() => go("track")}     className={page==="track"?"on":""} role="button" tabIndex={0}>Track record</a>
-        <a onClick={() => go("docs")}      className={page==="docs"?"on":""} style={{ cursor:"pointer" }} role="button" tabIndex={0}>Docs</a>
-        <a onClick={() => go("telegram")}  className={page==="telegram"?"on":""} role="button" tabIndex={0}>Telegram</a>
-        <a style={{ cursor:"pointer" }} onClick={() => { go("home"); setTimeout(() => document.getElementById("pricing")?.scrollIntoView({ behavior:"smooth" }), 80); }} role="button" tabIndex={0}>Pricing</a>
+        <a onClick={() => go("home")}      className={page==="home"?"on":""} onKeyDown={onKeyActivate(() => go("home"))} role="button" tabIndex={0}>Features</a>
+        <a onClick={() => go("track")}     className={page==="track"?"on":""} onKeyDown={onKeyActivate(() => go("track"))} role="button" tabIndex={0}>Track record</a>
+        <a onClick={() => go("docs")}      className={page==="docs"?"on":""} style={{ cursor:"pointer" }} onKeyDown={onKeyActivate(() => go("docs"))} role="button" tabIndex={0}>Docs</a>
+        <a onClick={() => go("telegram")}  className={page==="telegram"?"on":""} onKeyDown={onKeyActivate(() => go("telegram"))} role="button" tabIndex={0}>Telegram</a>
+        <a style={{ cursor:"pointer" }} onClick={() => { go("home"); setTimeout(() => document.getElementById("pricing")?.scrollIntoView({ behavior:"smooth" }), 80); }} onKeyDown={onKeyActivate(() => { go("home"); setTimeout(() => document.getElementById("pricing")?.scrollIntoView({ behavior:"smooth" }), 80); })} role="button" tabIndex={0}>Pricing</a>
       </div>
       <div className="nav-cta">
         <span className="nav-status">ENGINE LIVE · 164 TICKERS · 60s CYCLE</span>
@@ -237,7 +235,7 @@ function Sources() {
 /* ── Flow ─────────────────────────────────────────────────────────────────── */
 function Flow() {
   const steps = [
-    { n:"01", t:"Sources scan",     d:"Market data, news, options flow, insider filings, and macro indicators — all polled or streamed." },
+    { n:"01", t:"Market scan",     d:"Market data, news, options flow, insider filings, and macro indicators — all polled or streamed." },
     { n:"02", t:"Score fusion",     d:"Dozens of signals across multiple scoring families are blended, regime-gated, and calibrated. Confidence is capped to prevent overconfidence." },
     { n:"03", t:"Filters apply",    d:"Confidence threshold, R:R floor, ex-dividend blackout, earnings cooldown, low-volatility regime filter, your delivery window + style filter." },
     { n:"04", t:"You get pinged",   d:"Telegram and Web Push with plain-English rationale, entry/stop/target, R:R, and full legal disclaimer." },
@@ -422,22 +420,22 @@ function Footer({ go }) {
         </div>
         <div className="foot-col">
           <p className="foot-hd">Product</p>
-          <a onClick={() => go("home")} role="button" tabIndex={0}>Features</a>
-          <a onClick={() => go("home")} role="button" tabIndex={0}>Pricing</a>
-          <a onClick={() => go("track")} role="button" tabIndex={0}>Track record</a>
-          <a onClick={() => go("changelog")} role="button" tabIndex={0}>Changelog</a>
+          <a onClick={() => go("home")} onKeyDown={onKeyActivate(() => go("home"))} role="button" tabIndex={0}>Features</a>
+          <a onClick={() => go("home")} onKeyDown={onKeyActivate(() => go("home"))} role="button" tabIndex={0}>Pricing</a>
+          <a onClick={() => go("track")} onKeyDown={onKeyActivate(() => go("track"))} role="button" tabIndex={0}>Track record</a>
+          <a onClick={() => go("changelog")} onKeyDown={onKeyActivate(() => go("changelog"))} role="button" tabIndex={0}>Changelog</a>
         </div>
         <div className="foot-col">
           <p className="foot-hd">Resources</p>
-          <a onClick={() => go("docs")} role="button" tabIndex={0}>Documentation</a>
-          <a onClick={() => go("telegram")} role="button" tabIndex={0}>Telegram setup</a>
-          <a onClick={() => go("status")} role="button" tabIndex={0}>Status page</a>
+          <a onClick={() => go("docs")} onKeyDown={onKeyActivate(() => go("docs"))} role="button" tabIndex={0}>Documentation</a>
+          <a onClick={() => go("telegram")} onKeyDown={onKeyActivate(() => go("telegram"))} role="button" tabIndex={0}>Telegram setup</a>
+          <a onClick={() => go("status")} onKeyDown={onKeyActivate(() => go("status"))} role="button" tabIndex={0}>Status page</a>
         </div>
         <div className="foot-col">
           <p className="foot-hd">Legal</p>
-          <a onClick={() => go("terms")} role="button" tabIndex={0}>Terms of service</a>
-          <a onClick={() => go("privacy")} role="button" tabIndex={0}>Privacy policy</a>
-          <a onClick={() => go("risk")} role="button" tabIndex={0}>Risk disclosure</a>
+          <a onClick={() => go("terms")} onKeyDown={onKeyActivate(() => go("terms"))} role="button" tabIndex={0}>Terms of service</a>
+          <a onClick={() => go("privacy")} onKeyDown={onKeyActivate(() => go("privacy"))} role="button" tabIndex={0}>Privacy policy</a>
+          <a onClick={() => go("risk")} onKeyDown={onKeyActivate(() => go("risk"))} role="button" tabIndex={0}>Risk disclosure</a>
           <a href="/app">Open dashboard</a>
         </div>
       </footer>
@@ -513,11 +511,11 @@ function AuthPage({ kind, go }) {
         <div className="auth-divider"><span>or</span></div>
         <div className="auth-foot">
           {isSignup ? "Already have an account? " : "New here? "}
-          <a className="auth-link" onClick={() => { trackClick("auth_toggle", { page: isSignup ? "signup" : "login" }); go(isSignup ? "login" : "signup"); }} role="button" tabIndex={0}>{isSignup ? "Sign in" : "Start free"}</a>
+          <a className="auth-link" onClick={() => { trackClick("auth_toggle", { page: isSignup ? "signup" : "login" }); go(isSignup ? "login" : "signup"); }} onKeyDown={onKeyActivate(() => { trackClick("auth_toggle", { page: isSignup ? "signup" : "login" }); go(isSignup ? "login" : "signup"); })} role="button" tabIndex={0}>{isSignup ? "Sign in" : "Start free"}</a>
         </div>
         {isSignup && (
           <div className="auth-tos">
-            By continuing you agree to our <a onClick={() => go("terms")} role="button" tabIndex={0}>Terms</a>, <a onClick={() => go("privacy")} role="button" tabIndex={0}>Privacy</a> and <a onClick={() => go("risk")} role="button" tabIndex={0}>Risk Disclosure</a>.<br/>
+            By continuing you agree to our <a onClick={() => go("terms")} onKeyDown={onKeyActivate(() => go("terms"))} role="button" tabIndex={0}>Terms</a>, <a onClick={() => go("privacy")} onKeyDown={onKeyActivate(() => go("privacy"))} role="button" tabIndex={0}>Privacy</a> and <a onClick={() => go("risk")} onKeyDown={onKeyActivate(() => go("risk"))} role="button" tabIndex={0}>Risk Disclosure</a>.<br/>
             ⚠️ Not financial advice · Educational tool only.
           </div>
         )}
@@ -587,7 +585,6 @@ function TrackPage({ stats, statsLoading }) {
 function DocsPage() {
   const sections = [
     { t:"Getting started", items:["Installation","First signal","Telegram bot setup","Confidence threshold","Owner account"] },
-    { t:"Data sources",    items:["Market data & OHLCV","News & analyst data","Options flow","Insider & institutional filings","Macro indicators","Real-time quote stream"] },
     { t:"Signal engine",   items:["Multi-factor technical model","Options sweep detection","Institutional flow clusters","Macro regime model","Confidence calibration","Dark pool block prints","Macro supply signals","Ex-dividend & earnings blackouts","Low-volatility regime filter"] },
     { t:"Backtesting",     items:["Win rate analytics","By-horizon breakdown","Outcome backfill","Auditable simulation","Track record"] },
     { t:"Subscription",    items:["Free / Basic / Pro","Stripe checkout","Billing portal","Plan upgrades/downgrades"] },
@@ -711,7 +708,7 @@ function StatusPage() {
   const color = s => s === "operational" ? "var(--up)" : s === "degraded" ? "var(--warn)" : "var(--down)";
   const allGreen = services.every(s => s.s === "operational");
   return (
-    <PageShell eyebrow="07 · STATUS" title={allGreen ? "All systems operational." : "Service degraded."} sub="Live status of the signal engine and every upstream data source.">
+    <PageShell eyebrow="07 · STATUS" title={allGreen ? "All systems operational." : "Service degraded."} sub="Live status of the signal engine and market-data pipelines.">
       <div style={{ padding:"20px 24px", background:`color-mix(in oklch, var(--up) 10%, var(--bg-2))`, border:"1px solid color-mix(in oklch, var(--up) 30%, transparent)", borderRadius:12, marginBottom:30, display:"flex", alignItems:"center", gap:14 }}>
         <span style={{ width:10, height:10, borderRadius:"50%", background:"var(--up)", boxShadow:"0 0 0 4px color-mix(in oklch, var(--up) 30%, transparent)" }}/>
         <div>

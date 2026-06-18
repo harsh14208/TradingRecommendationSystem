@@ -58,6 +58,7 @@ Key components:
 | TCA / capacity | `services/tca_service.py` | Slippage estimation and fill-quality feedback |
 | User settings | `models.py` | `auto_execute`, `auto_execute_qty_dollars`, `max_daily_orders`, etc. |
 | API surface | `routers/broker.py` | Connect credentials, toggle auto-execute, view status |
+| Analytics sink | `routers/analytics_router.py` | First-party CTA/feature-gate events → `logs/analytics.jsonl` |
 | Kill switch | `routers/admin.py` | Global pause/resume of all signal delivery and broker execution |
 
 ## Layer Boundaries

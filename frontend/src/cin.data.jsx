@@ -169,39 +169,6 @@ const TELEGRAM_FEED = [
   { dir: "out", time: "09:14", verb: "SELL", tk: "TSLA", px: "164.82", body: "Conf 72% · R:R 2.1\n• Q1 deliveries miss (−10.5% YoY)\n• SEC 8-K $412M warranty reserve\nEntry 164.50 / Stop 172 / TP 148" },
 ];
 
-// ---- Backtest engine (parameter-driven, deterministic) ----
-function runBacktest({ confMin, holdDays, stopPct, sources }) {
-  const nSources = Object.values(sources).filter(Boolean).length || 1;
-  const edge = 0.00042 * nSources * (confMin / 60) * Math.min(1.6, holdDays / 6 + 0.7);
-  const vol = 0.0095 * (1.25 - confMin / 200) * (1 + (10 - stopPct) * 0.012);
-  const seed = Math.round(confMin * 7 + holdDays * 131 + stopPct * 17 + nSources * 999);
-  const rnd = mulberry32(seed);
-  const n = 240;
-  const curve = [100000];
-  let peak = 100000, maxDD = 0, wins = 0, trades = 0, sumR = 0, sumR2 = 0;
-  for (let i = 1; i < n; i++) {
-    let r = edge + (rnd() - 0.5) * 2 * vol;
-    if (r < -stopPct / 100) r = -stopPct / 100;
-    const v = curve[i - 1] * (1 + r);
-    curve.push(v);
-    if (v > peak) peak = v;
-    const dd = (peak - v) / peak;
-    if (dd > maxDD) maxDD = dd;
-    if (i % Math.max(1, Math.round(holdDays / 2)) === 0) { trades++; if (r > 0) wins++; }
-    sumR += r; sumR2 += r * r;
-  }
-  const mean = sumR / (n - 1);
-  const sd = Math.sqrt(Math.max(1e-9, sumR2 / (n - 1) - mean * mean));
-  const sharpe = (mean / sd) * Math.sqrt(252);
-  const total = curve[n - 1] / curve[0] - 1;
-  const cagr = Math.pow(1 + total, 252 / n) - 1;
-  let p2 = curve[0];
-  const ddCurve = curve.map((v) => { if (v > p2) p2 = v; return (p2 - v) / p2; });
-  return {
-    curve, ddCurve,
-    metrics: { cagr: cagr * 100, sharpe, winRate: trades ? (wins / trades) * 100 : 0, maxDD: maxDD * 100, trades: trades * 8, final: curve[n - 1] },
-  };
-}
 
 const FEATURES = [
   { t: "Institutional flow, decoded", d: "SEC 13F filings and Form 4 insider buys — the engine fires the moment institutions add.", chart: "spark", seed: 41, color: "bull", stat: "EDGAR · polled 60s" },
@@ -219,5 +186,5 @@ const HOME_STATS = [
 
 Object.assign(window, {
   mulberry32, genSeries, SIGNALS, WATCHLIST, chartFor, sparkFor, winSparkFor,
-  TICKER_TAPE, TELEGRAM_FEED, runBacktest, FEATURES, HOME_STATS,
+  TICKER_TAPE, TELEGRAM_FEED, FEATURES, HOME_STATS,
 });

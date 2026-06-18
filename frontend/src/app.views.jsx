@@ -1,37 +1,3 @@
-/* ─── Sources overlay ──────────────────────────────────────────────────────── */
-function SourcesView({ open, onClose, sources, toggle }) {
-  return (
-    <div className={`overlay ${open?"open":""}`}>
-      <div className="overlay-head">
-        <BackButton onClick={onClose}></BackButton>
-        <div>
-          <div className="crumb">SOURCES / INTEGRATIONS</div>
-          <h2>Data feeds &amp; signal sources</h2>
-        </div>
-      </div>
-      <div className="src-grid">
-        {(sources||[]).map(s => (
-          <div key={s.id} className="src-card">
-            <div className="head">
-              <div className="icon">{s.abbr}</div>
-              <div style={{ minWidth:0 }}>
-                <h3>{s.name}</h3>
-                <div className="desc">{s.description}</div>
-              </div>
-              <div className={`toggle ${s.is_on?"on":""}`} onClick={() => toggle(s.id)} role="button" tabIndex={0}/>
-            </div>
-            <Sparkline ticker={s.id} up={s.is_on}/>
-            <div className="stats">
-              <div className="s"><span className="n">{(s.requests_24h||0).toLocaleString()}</span><span className="l">Requests 24h</span></div>
-              <div className="s"><span className="n">{s.latency_ms||0}ms</span><span className="l">p50 latency</span></div>
-              <div className="s"><span className="n" style={{ fontSize:11 }}>{s.feed||"—"}</span><span className="l">Cadence</span></div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 /* ─── Rules overlay ────────────────────────────────────────────────────────── */
 const STYLE_INFO = {

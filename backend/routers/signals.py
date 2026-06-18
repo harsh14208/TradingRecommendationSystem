@@ -842,7 +842,12 @@ async def track_record(
         n = len(returns)
         mean_r = sum(returns) / n
         std_r = math.sqrt(sum((r - mean_r) ** 2 for r in returns) / max(n - 1, 1)) if n > 1 else 0
-        sharpe = round((mean_r / std_r) * math.sqrt(52), 2) if std_r > 0 and n >= 3 else None
+        # Require a meaningful sample and cap the ratio so tiny, lucky samples
+        # don't produce absurd per-ticker Sharpe figures.
+        if n < 15 or std_r == 0:
+            sharpe = None
+        else:
+            sharpe = round(min((mean_r / std_r) * math.sqrt(52), 3.0), 2)
         best = max(signals, key=lambda s: s.outcome_pct)
         worst = min(signals, key=lambda s: s.outcome_pct)
         result.append(

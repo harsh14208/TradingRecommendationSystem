@@ -199,8 +199,8 @@ function TelegramPane({ log, online, onOpenAccount, onClose }) {
         </div>
       </div>
       <div className="del-tabs">
-        <div className={`del-tab ${view==="log"?"active":""}`} onClick={() => setView("log")} role="button" tabIndex={0}>Send log</div>
-        <div className={`del-tab ${view==="info"?"active":""}`} onClick={() => setView("info")} role="button" tabIndex={0}>Setup</div>
+        <div className={`del-tab ${view==="log"?"active":""}`} onClick={() => setView("log")} onKeyDown={onKeyActivate(() => setView("log"))} role="button" tabIndex={0}>Send log</div>
+        <div className={`del-tab ${view==="info"?"active":""}`} onClick={() => setView("info")} onKeyDown={onKeyActivate(() => setView("info"))} role="button" tabIndex={0}>Setup</div>
       </div>
 
       {view === "log" ? (
@@ -236,7 +236,7 @@ function TelegramPane({ log, online, onOpenAccount, onClose }) {
               <li>24-hour cooldown per ticker+action</li>
             </ul>
           </div>
-          <a href="#" onClick={e => { e.preventDefault(); onOpenAccount?.(); }}
+          <a href="#" onClick={e => { e.preventDefault(); onOpenAccount?.(); }} onKeyDown={onKeyActivate(() => { onOpenAccount?.(); })}
             style={{ fontSize:12, color:"var(--accent)", cursor:"pointer" }} role="button" tabIndex={0}>
             Open Account Settings →
           </a>

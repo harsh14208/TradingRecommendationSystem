@@ -872,6 +872,9 @@ STRIPE_PRICE_ELITE=         # Auto-filled by: python3 stripe_setup.py
 # ── Web Push (optional — VAPID browser notifications) ────────────────────────
 # VAPID_PRIVATE_KEY=         # Generate: cd backend && python3 -c "from py_vapid import Vapid; ..."
 # VAPID_SUBJECT=mailto:admin@yourdomain.com
+
+# ── Frontend analytics sink (optional) ────────────────────────────────────────
+ANALYTICS_ENABLED=true      # Set to false to drop first-party CTA/feature-gate events
 ```
 
 > `.env` changes are picked up every 30 seconds — no restart needed.

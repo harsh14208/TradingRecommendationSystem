@@ -110,7 +110,6 @@ function App() {
     return typeof SIGNALS !== "undefined" && Array.isArray(SIGNALS) ? SIGNALS : [];
   });
   const [histSignals, setHistSignals] = useState([]);
-  const [sources,     setSources]     = useState(typeof SOURCES !== "undefined" ? SOURCES : []);
   const [log,         setLog]         = useState([]);
   const [tickerTape,  setTickerTape]  = useState(typeof TICKER_TAPE !== "undefined" ? TICKER_TAPE : []);
   const [marketCtx,   setMarketCtx]   = useState(null);
@@ -188,6 +187,10 @@ function App() {
   const [whatsNewSeen,   setWhatsNewSeen]   = useState(false);
   const [navMenuOpen,    setNavMenuOpen]    = useState(false);  // mobile nav drawer
   const searchRef       = useRef(null);
+  const sidebarRef      = useRef(null);
+  const deliveryRef     = useRef(null);
+  useFocusTrap(navMenuOpen, () => setNavMenuOpen(false), sidebarRef);
+  useFocusTrap(nav === "delivery", () => setNav("feed"), deliveryRef);
 
   /* Auth bootstrap — also handles ?oauth_code= redirect from Google OAuth */
   useEffect(() => {
@@ -241,39 +244,185 @@ function App() {
   // was tapped) so selecting a destination dismisses the menu.
   useEffect(() => { setNavMenuOpen(false); }, [nav]);
 
+  // P0 Fix 4: Hash-based URL state for overlays
+  // On initial load, open overlay if hash matches
+  useEffect(() => {
+    const hash = window.location.hash.replace("#", "");
+    if (!hash) return;
+    const map = {
+      pricing: () => setPricingOpen(true),
+      tweaks: () => setTweaksOpen(true),
+      alerts: () => setAlertOpen(true),
+      account: () => setAccountOpen(true),
+      menu: () => setNavMenuOpen(true),
+      help: () => setHkOpen(true),
+      tour: () => setTourOpen(true),
+      screener: () => setNav("screener"),
+      watchlist: () => setNav("watchlist"),
+      backtest: () => setNav("backtest"),
+      rules: () => setNav("rules"),
+      history: () => setNav("history"),
+      overview: () => setNav("overview"),
+      sectors: () => setNav("sectors"),
+      calendar: () => setNav("calendar"),
+      paper: () => setNav("paper"),
+      performance: () => setNav("performance"),
+      delivery: () => setNav("delivery"),
+    };
+    if (map[hash]) map[hash]();
+  }, []);
+
+  // Listen to popstate/hashchange to close overlays when user clicks Back
+  useEffect(() => {
+    const onPop = () => {
+      const hash = window.location.hash.replace("#", "");
+      if (!hash) {
+        setPricingOpen(false);
+        setTweaksOpen(false);
+        setAlertOpen(false);
+        setAccountOpen(false);
+        setNavMenuOpen(false);
+        setHkOpen(false);
+        setTourOpen(false);
+        if (["screener","watchlist","backtest","rules","alerts","history","overview","sectors","calendar","paper","performance","delivery"].includes(nav)) {
+          setNav("feed");
+        }
+      } else {
+        const map = {
+          pricing: () => setPricingOpen(true),
+          tweaks: () => setTweaksOpen(true),
+          alerts: () => setAlertOpen(true),
+          account: () => setAccountOpen(true),
+          menu: () => setNavMenuOpen(true),
+          help: () => setHkOpen(true),
+          tour: () => setTourOpen(true),
+          screener: () => setNav("screener"),
+          watchlist: () => setNav("watchlist"),
+          backtest: () => setNav("backtest"),
+          rules: () => setNav("rules"),
+          history: () => setNav("history"),
+          overview: () => setNav("overview"),
+          sectors: () => setNav("sectors"),
+          calendar: () => setNav("calendar"),
+          paper: () => setNav("paper"),
+          performance: () => setNav("performance"),
+          delivery: () => setNav("delivery"),
+        };
+        if (map[hash]) map[hash]();
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("hashchange", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("hashchange", onPop);
+    };
+  }, [nav]);
+
+  // Update hash when overlay state changes
+  useEffect(() => {
+    const active = (() => {
+      if (pricingOpen) return "pricing";
+      if (tweaksOpen) return "tweaks";
+      if (alertOpen) return "alerts";
+      if (accountOpen) return "account";
+      if (navMenuOpen) return "menu";
+      if (hkOpen) return "help";
+      if (tourOpen) return "tour";
+      if (nav === "screener") return "screener";
+      if (nav === "watchlist") return "watchlist";
+      if (nav === "backtest") return "backtest";
+      if (nav === "rules") return "rules";
+      if (nav === "alerts") return "alerts";
+      if (nav === "history") return "history";
+      if (nav === "overview") return "overview";
+      if (nav === "sectors") return "sectors";
+      if (nav === "calendar") return "calendar";
+      if (nav === "paper") return "paper";
+      if (nav === "performance") return "performance";
+      if (nav === "delivery") return "delivery";
+      return "";
+    })();
+    if (active) {
+      if (window.location.hash !== `#${active}`) {
+        window.location.hash = active;
+      }
+    } else {
+      if (window.location.hash) {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
+    }
+  }, [pricingOpen, tweaksOpen, alertOpen, accountOpen, navMenuOpen, hkOpen, tourOpen, nav]);
+
   /* ── WebSocket Connection ── */
   useEffect(() => {
     if (!authReady || !currentUser) return;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const token = getToken();
     const wsUrl = `${protocol}//${window.location.host}/ws`;
-    // Send token via subprotocol so it never appears in the URL query string.
-    let ws = token ? new WebSocket(wsUrl, ["token", token]) : new WebSocket(wsUrl);
-    ws.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.type === "new_signal") {
-          setSignals(prev => [data.signal, ...prev.filter(s => s.id !== data.signal.id)]);
-        } else if (data.type === "price_update") {
-          if (data.quotes) setTickerTape(data.quotes);
-        } else if (data.type === "tick") {
-          setTickerTape(prev => {
-            const idx = prev.findIndex(t => t.t === data.ticker);
-            if (idx === -1) return prev;
-            const next = [...prev];
-            next[idx] = { ...next[idx], p: data.price };
-            return next;
-          });
-        } else if (data.type === "market_context") {
-          setMarketCtx(data.data);
-        }
-      } catch (err) {}
+    let ws = null;
+    let reconnectTimer = null;
+    let alive = true;
+
+    const connect = () => {
+      if (!alive) return;
+      setWsStatus("connecting");
+      ws = token ? new WebSocket(wsUrl, ["token", token]) : new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        if (!alive) return;
+        setWsStatus("open");
+        wsReconnectDelay.current = 1000; // reset backoff on success
+      };
+
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === "new_signal") {
+            setSignals(prev => [data.signal, ...prev.filter(s => s.id !== data.signal.id)]);
+          } else if (data.type === "price_update") {
+            if (data.quotes) setTickerTape(data.quotes);
+          } else if (data.type === "tick") {
+            setTickerTape(prev => {
+              const idx = prev.findIndex(t => t.t === data.ticker);
+              if (idx === -1) return prev;
+              const next = [...prev];
+              next[idx] = { ...next[idx], p: data.price };
+              return next;
+            });
+          } else if (data.type === "market_context") {
+            setMarketCtx(data.data);
+          }
+        } catch (err) {}
+      };
+
+      ws.onerror = () => {
+        if (!alive) return;
+        setWsStatus("closed");
+      };
+
+      ws.onclose = () => {
+        if (!alive) return;
+        setWsStatus("closed");
+        // Exponential backoff reconnection, capped at 30s
+        const delay = Math.min(wsReconnectDelay.current, 30000);
+        wsReconnectDelay.current = delay * 1.5;
+        reconnectTimer = setTimeout(connect, delay);
+      };
     };
+
+    connect();
+
     return () => {
-      ws.onmessage = null;
-      ws.onerror = null;
-      ws.onclose = null;
-      ws.close();
+      alive = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        ws.close();
+      }
     };
   }, [authReady, currentUser]);
 
@@ -458,7 +607,7 @@ function App() {
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 
       if (e.key === "?" || (e.shiftKey && e.key === "/")) { e.preventDefault(); setHkOpen(v => !v); return; }
-      if (e.key === "Escape") { if (navMenuOpen) { setNavMenuOpen(false); return; } if (tourOpen) { setTourOpen(false); return; } setHkOpen(false); if (!hkOpen) setFullDetailOpen(false); return; }
+      if (e.key === "Escape") { if (navMenuOpen) { setNavMenuOpen(false); return; } if (tourOpen) { setTourOpen(false); return; } if (!whatsNewSeen) { setWhatsNewSeen(true); return; } setHkOpen(false); if (!hkOpen) setFullDetailOpen(false); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setTweak({ density: tweakState.density === "compact" ? "comfortable" : "compact" }); return; }
       if (!typing && e.key === "1") { setFeedFilter("all");  return; }
       if (!typing && e.key === "2") { setFeedFilter("buy");  return; }
@@ -589,17 +738,13 @@ function App() {
 
     // ── Tier 1: fast DB-only reads — clears loading immediately ──────────────
     try {
-      const [sigsRaw, srcs] = await Promise.all([
-        apiFetchRaw("/api/signals", { signal }),
-        apiFetch("/api/sources", { signal }),
-      ]);
+      const sigsRaw = await apiFetchRaw("/api/signals", { signal });
       const sigs = sigsRaw.json;
       if (Array.isArray(sigs)) {
         setSignals(sigs);
         try { localStorage.setItem("st_signals_cache", JSON.stringify(sigs)); } catch {}
       }
       if (sigsRaw.ok) setSignalQuota(_parseQuotaHeaders(sigsRaw.headers));
-      if (Array.isArray(srcs)) setSources(srcs);
       setOnline(true);
       setLastRefresh(new Date());  // TSYS-11b
     } catch {
@@ -716,12 +861,6 @@ function App() {
     setSignals(prev => prev.map(s => s.id === id ? { ...s, notes: note } : s));
   };
 
-  const toggleSource = async (id) => {
-    const src = sources.find(s => s.id === id);
-    if (!src) return;
-    await apiFetch(`/api/sources/${id}`, { method:"PATCH", body: JSON.stringify({ is_on: !src.is_on }) });
-    setSources(prev => prev.map(s => s.id === id ? { ...s, is_on: !s.is_on } : s));
-  };
 
   const manualScan = async () => {
     setRefreshing(true);
@@ -900,67 +1039,62 @@ function App() {
       {navMenuOpen && <div className="nav-drawer-backdrop" onClick={() => setNavMenuOpen(false)} role="presentation"/>}
 
       {/* ── Sidebar (slides in as a drawer on mobile) ── */}
-      <div className={`sidebar${navMenuOpen ? " open" : ""}`}>
+      <div ref={sidebarRef} className={`sidebar${navMenuOpen ? " open" : ""}`} aria-modal="true">
         <div className="nav-drawer-head">
           <span>Menu</span>
           <button className="iconbtn" aria-label="Close menu" onClick={() => setNavMenuOpen(false)}><Icon name="x" size={14}/></button>
         </div>
         <div className="nav-label">Workspace</div>
-        <div className={`nav-item ${nav==="feed"?"active":""}`} onClick={() => setNav("feed")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="feed"?"active":""}`} onClick={() => setNav("feed")} onKeyDown={onKeyActivate(() => setNav("feed"))} role="button" tabIndex={0}>
           <Icon name="feed" size={15}/>
           <span>Live signals</span>
           <span className="dot-live"/>
           <span className="count">{filteredSignals.length}</span>
         </div>
-        <div className={`nav-item ${nav==="history"?"active":""}`} onClick={() => setNav("history")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="history"?"active":""}`} onClick={() => setNav("history")} onKeyDown={onKeyActivate(() => setNav("history"))} role="button" tabIndex={0}>
           <Icon name="history" size={15}/>
           <span>History</span>
         </div>
-        <div className={`nav-item ${nav==="backtest"?"active":""}`} onClick={() => setNav("backtest")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="backtest"?"active":""}`} onClick={() => setNav("backtest")} onKeyDown={onKeyActivate(() => setNav("backtest"))} role="button" tabIndex={0}>
           <Icon name="chart" size={15}/>
           <span>Backtest</span>
         </div>
 
-        <div className={`nav-item ${nav==="watchlist"?"active":""}`} onClick={() => setNav("watchlist")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="watchlist"?"active":""}`} onClick={() => setNav("watchlist")} onKeyDown={onKeyActivate(() => setNav("watchlist"))} role="button" tabIndex={0}>
           <Icon name="star" size={15}/>
           <span>Watchlist</span>
           <span className="count">{/* filled on load */}</span>
         </div>
-        <div className={`nav-item ${nav==="paper"?"active":""}`} onClick={() => setNav("paper")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="paper"?"active":""}`} onClick={() => setNav("paper")} onKeyDown={onKeyActivate(() => setNav("paper"))} role="button" tabIndex={0}>
           <Icon name="chart" size={15}/>
           <span>Paper Portfolio</span>
         </div>
 
         <div className="nav-label">Market</div>
-        <div className={`nav-item ${nav==="overview"?"active":""}`} onClick={() => setNav("overview")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="overview"?"active":""}`} onClick={() => setNav("overview")} onKeyDown={onKeyActivate(() => setNav("overview"))} role="button" tabIndex={0}>
           <Icon name="chart" size={15}/>
           <span>Market overview</span>
         </div>
-        <div className={`nav-item ${nav==="sectors"?"active":""}`} onClick={() => setNav("sectors")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="sectors"?"active":""}`} onClick={() => setNav("sectors")} onKeyDown={onKeyActivate(() => setNav("sectors"))} role="button" tabIndex={0}>
           <Icon name="sectors" size={15}/>
           <span>Sector heatmap</span>
         </div>
-        <div className={`nav-item ${nav==="calendar"?"active":""}`} onClick={() => setNav("calendar")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="calendar"?"active":""}`} onClick={() => setNav("calendar")} onKeyDown={onKeyActivate(() => setNav("calendar"))} role="button" tabIndex={0}>
           <Icon name="clock" size={15}/>
           <span>Economic calendar</span>
         </div>
 
         <div className="nav-label">Configure</div>
-        <div className={`nav-item ${nav==="sources"?"active":""}`} onClick={() => setNav("sources")} role="button" tabIndex={0}>
-          <Icon name="plug" size={15}/>
-          <span>Sources</span>
-          <span className="count">{(sources||[]).filter(s => s.is_on).length}/{(sources||[]).length}</span>
-        </div>
-        <div className={`nav-item ${nav==="rules"?"active":""}`} onClick={() => setNav("rules")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="rules"?"active":""}`} onClick={() => setNav("rules")} onKeyDown={onKeyActivate(() => setNav("rules"))} role="button" tabIndex={0}>
           <Icon name="rules" size={15}/>
           <span>Rules &amp; filters</span>
         </div>
-        <div className={`nav-item ${nav==="alerts"?"active":""}`} onClick={() => setNav("alerts")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="alerts"?"active":""}`} onClick={() => setNav("alerts")} onKeyDown={onKeyActivate(() => setNav("alerts"))} role="button" tabIndex={0}>
           <Icon name="bell" size={15}/>
           <span>Alert rules</span>
           {/* per-ticker alert count badge rendered when rules exist */}
         </div>
-        <div className={`nav-item ${nav==="screener"?"active":""}`} onClick={() => setNav("screener")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="screener"?"active":""}`} onClick={() => setNav("screener")} onKeyDown={onKeyActivate(() => setNav("screener"))} role="button" tabIndex={0}>
           <Icon name="filter" size={15}/>
           <span>Screener</span>
         </div>
@@ -983,19 +1117,19 @@ function App() {
         </div>
 
         <div className="nav-label">Account</div>
-        <div className="nav-item" onClick={() => setAccountOpen(true)} role="button" tabIndex={0}>
+        <div className="nav-item" onClick={() => setAccountOpen(true)} onKeyDown={onKeyActivate(() => setAccountOpen(true))} role="button" tabIndex={0}>
           <Icon name="user" size={15}/>
           <span>{currentUser.full_name || currentUser.email?.split("@")[0] || "Account"}</span>
           <span style={{ fontSize:9, fontFamily:"var(--font-mono)", fontWeight:700, color:TIER_COLORS[currentUser.subscription_tier], background:TIER_COLORS[currentUser.subscription_tier]+"22", padding:"2px 6px", borderRadius:10 }}>
             {(currentUser.subscription_tier||"FREE").toUpperCase()}{currentUser.is_owner?" ★":""}
           </span>
         </div>
-        <div className={`nav-item ${nav==="performance"?"active":""}`} onClick={() => setNav("performance")} role="button" tabIndex={0}>
+        <div className={`nav-item ${nav==="performance"?"active":""}`} onClick={() => setNav("performance")} onKeyDown={onKeyActivate(() => setNav("performance"))} role="button" tabIndex={0}>
           <Icon name="trending-up" size={15}/>
           <span>My Performance</span>
         </div>
         {(!hasTierAccess(currentUser.subscription_tier,"basic",currentUser.is_owner)) && (
-          <div className="nav-item" onClick={() => { setPricingContext("Unlock Telegram delivery, backtesting, paper trading, and more."); setPricingOpen(true); }} style={{ color:"var(--accent)" }} role="button" tabIndex={0}>
+          <div className="nav-item" onClick={() => { setPricingContext("Unlock Telegram delivery, backtesting, paper trading, and more."); setPricingOpen(true); }} onKeyDown={onKeyActivate(() => { setPricingContext("Unlock Telegram delivery, backtesting, paper trading, and more."); setPricingOpen(true); })} style={{ color:"var(--accent)" }} role="button" tabIndex={0}>
             <Icon name="lock" size={15}/>
             <span>Upgrade plan</span>
           </div>
@@ -1096,7 +1230,7 @@ function App() {
             <span className="sep"/>
             <span className="chip">Today · {filteredSignals.length}</span>
             {!whatsNewSeen && signals.length > 0 && (
-              <span className="whats-new" onClick={() => setWhatsNewSeen(true)} title="Click to dismiss" role="button" tabIndex={0}>
+              <span className="whats-new" onClick={() => setWhatsNewSeen(true)} onKeyDown={onKeyActivate(() => setWhatsNewSeen(true))} title="Click to dismiss" role="button" tabIndex={0}>
                 <span className="wn-pulse"/>
                 <strong>{signals.length} live</strong>
                 <span className="faint">· click to dismiss</span>
@@ -1134,7 +1268,7 @@ function App() {
                 <span key={d} className={`day ${tweakState.days?.includes(d)?"on":""}`} onClick={() => {
                   const cur = tweakState.days || [];
                   setTweak({ days: cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d] });
-                }} role="button" tabIndex={0}>{d[0]}</span>
+                }} onKeyDown={onKeyActivate(() => { const cur = tweakState.days || []; setTweak({ days: cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d] }); })} role="button" tabIndex={0}>{d[0]}</span>
               ))}
             </span>
           </div>
@@ -1382,7 +1516,7 @@ function App() {
                     <div className="tabs" style={{ marginLeft:"auto" }}>
                       {["1D","5D","1M","3M","1Y"].map(t => (
                         <span key={t} className={`tab ${t===chartPeriod?"active":""}`}
-                          onClick={() => setChartPeriod(t)} style={{ cursor:"pointer" }} role="button" tabIndex={0}>{t}</span>
+                          onClick={() => setChartPeriod(t)} onKeyDown={onKeyActivate(() => setChartPeriod(t))} style={{ cursor:"pointer" }} role="button" tabIndex={0}>{t}</span>
                       ))}
                     </div>
                   </div>
@@ -1582,7 +1716,7 @@ function App() {
                   </span>
                   <div className="tabs" style={{ marginLeft:"auto" }}>
                     {["1D","5D","1M","3M","1Y"].map(t => (
-                      <span key={t} className={`tab ${t===chartPeriod?"active":""}`} onClick={() => setChartPeriod(t)} style={{ cursor:"pointer" }} role="button" tabIndex={0}>{t}</span>
+                      <span key={t} className={`tab ${t===chartPeriod?"active":""}`} onClick={() => setChartPeriod(t)} onKeyDown={onKeyActivate(() => setChartPeriod(t))} style={{ cursor:"pointer" }} role="button" tabIndex={0}>{t}</span>
                     ))}
                   </div>
                 </div>
@@ -1729,7 +1863,6 @@ function App() {
         {/* Overlays */}
         <WatchlistView open={nav==="watchlist"} onClose={() => setNav("feed")}
           quotes={tickerTape} histSignals={histSignals}/>
-        <SourcesView open={nav==="sources"} onClose={() => setNav("feed")} sources={sources} toggle={toggleSource}/>
         <RulesView open={nav==="rules"} onClose={() => setNav("feed")} aggr={tweakState.aggressiveness} style={tweakState.style} days={tweakState.days} startTime={tweakState.startTime} endTime={tweakState.endTime} setTweak={setTweak} customConf={tweakState.customConf}/>
         <MarketOverviewView open={nav==="overview"} onClose={() => setNav("feed")} online={online}/>
         <SectorView open={nav==="sectors"} onClose={() => setNav("feed")}/>
@@ -1747,7 +1880,7 @@ function App() {
         <PriceAlertModal open={alertOpen} onClose={() => setAlertOpen(false)} ticker={active?.ticker} currentPrice={active?.price}/>
 
         {/* Mobile delivery-log overlay */}
-        <div className={`overlay ${nav==="delivery"?"open":""}`}>
+        <div ref={deliveryRef} className={`overlay ${nav==="delivery"?"open":""}`} aria-modal="true">
           <TelegramPane log={log} online={online} onOpenAccount={() => setAccountOpen(true)} onClose={() => setNav("feed")}/>
         </div>
       </div>
@@ -1785,7 +1918,7 @@ function App() {
           ["delivery","send","Delivery"],
           ["overview","globe","Market"],
         ].map(([id, icon, label]) => (
-          <div key={id} className={`mobile-nav-item${nav===id?" active":""}`} onClick={() => setNav(id)} role="button" tabIndex={0}>
+          <div key={id} className={`mobile-nav-item${nav===id?" active":""}`} onClick={() => setNav(id)} onKeyDown={onKeyActivate(() => setNav(id))} role="button" tabIndex={0}>
             <Icon name={icon} size={18}/>
             <span>{label}</span>
           </div>
@@ -1795,7 +1928,6 @@ function App() {
       {/* ── Status bar ── */}
       <div className="statusbar">
         <span><span className="dot"/>CONNECTED</span>
-        <span>SOURCES <span className="mono">{(sources||[]).filter(s=>s.is_on).length}/{(sources||[]).length}</span></span>
         <span>SIGNALS <span className="mono">{filteredSignals.length}</span></span>
         <span style={{ display:"flex", alignItems:"center", gap:3, userSelect:"none" }}>
           THRESH{" "}

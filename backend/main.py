@@ -166,7 +166,6 @@ from routers.screener import router as screener_router
 from routers.settings_router import router as settings_router
 from routers.signal_alerts import router as signal_alerts_router
 from routers.signals import router as signals_router
-from routers.sources import router as sources_router
 from routers.telegram_webhook import router as telegram_webhook_router
 from routers.watchlist_router import router as watchlist_router
 from routers.websocket_router import manager
@@ -1736,7 +1735,7 @@ app.add_middleware(HttpsRedirectMiddleware)
 # public traffic. Health checks stay public so Fly.io/Railway keep the app alive.
 # Visitors see a static login page and must enter the preview token to continue.
 class PrivatePreviewMiddleware(BaseHTTPMiddleware):
-    _PUBLIC_PATHS = {"/api/health", "/api/health/uptime", "/health"}
+    _PUBLIC_PATHS = {"/api/health", "/api/health/uptime", "/health", "/api/analytics/event"}
     _LOGIN_PATH = "/preview-login"
 
     @classmethod
@@ -2030,7 +2029,6 @@ app.include_router(telegram_webhook_router)
 app.include_router(signals_router)
 app.include_router(me_router)
 app.include_router(quotes_router)
-app.include_router(sources_router)
 app.include_router(settings_router)
 app.include_router(delivery_router)
 app.include_router(market_router)

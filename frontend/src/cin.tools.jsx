@@ -18,7 +18,7 @@ function ToolCard({ title, desc, onClick }) {
 }
 
 function PageTools({ openAccount, openWatchlist, openAlerts, openScreener, openPaper, openMarket, openSector, openCalendar,
-  openHistory, openRules, openSources, openPerformance, openPricing, openTweaks, currentUser }) {
+  openHistory, openRules, openPerformance, openPricing, openTweaks, currentUser }) {
   const isOwner = currentUser?.is_owner;
   const tier = currentUser?.subscription_tier || "free";
   const pro = tier === "pro" || isOwner;
@@ -40,7 +40,6 @@ function PageTools({ openAccount, openWatchlist, openAlerts, openScreener, openP
         <ToolCard title="Earnings Calendar" desc="Upcoming earnings and macro events." onClick={openCalendar} />
         <ToolCard title="Signal History" desc="Archived signals, filters, and CSV export." onClick={openHistory} />
         <ToolCard title="Rules & Filters" desc="Trading style, confidence, delivery window, and earnings block." onClick={openRules} />
-        <ToolCard title="Data Sources" desc="Toggle feeds and view latency / request volume." onClick={openSources} />
         <ToolCard title="My Performance" desc="Delivered signals, win rate, and recent exits." onClick={openPerformance} />
         <ToolCard title="Tweaks" desc="Theme, density, aggressiveness, and engine weight overrides." onClick={openTweaks} />
         <ToolCard title="Pricing" desc="View plans and upgrade or manage billing." onClick={openPricing} />

@@ -1,6 +1,16 @@
 /* global React */
 const { useState, useEffect } = React;
 
+/* ── Accessibility helpers ──────────────────────────────────────────────── */
+function onKeyActivate(handler) {
+  return (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handler(e);
+    }
+  };
+}
+
 // Human, non-alarming label for why a signal isn't delivered (most are simply
 // below the confidence bar). `short` returns a compact uppercase chip.
 function deliveryLabel(status, short) {
@@ -237,7 +247,7 @@ function FeedScreen({ signals, onSelect, loading, demo, onRefresh }) {
       )}
       <div className="m-style-strip">
         {[["all","ALL"],["buy","BUY ONLY"],["high","≥70% CONF"]].map(([k,l]) => (
-          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} role="button" tabIndex={0}>{l}</span>
+          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} onKeyDown={onKeyActivate(() => setFilter(k))} role="button" tabIndex={0}>{l}</span>
         ))}
       </div>
       {ptrState !== "idle" && (
@@ -823,7 +833,7 @@ function WatchlistScreen({ tickers = WATCH_MOCK, demo = false, onRefresh }) {
       )}
       <div style={{ padding:"0 16px 12px", display:"flex", gap:6, overflowX:"auto" }}>
         {[["all","ALL · "+tickers.length],["signals","SIGNALS"],["alerts","ALERTS"]].map(([k,l]) => (
-          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} role="button" tabIndex={0}>{l}</span>
+          <span key={k} className={`m-pill ${filter===k?"on":""}`} onClick={() => setFilter(k)} onKeyDown={onKeyActivate(() => setFilter(k))} role="button" tabIndex={0}>{l}</span>
         ))}
       </div>
       <div style={{ flex:1, overflowY:"auto" }}>

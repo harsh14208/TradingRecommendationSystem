@@ -38,6 +38,9 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   const [brokerConnecting,setBrokerConnecting]= useState(false);
   const [brokerConnMsg,   setBrokerConnMsg]   = useState("");
 
+  const ref = useRef(null);
+  useFocusTrap(open, onClose, ref);
+
   useEffect(() => {
     if (open && user) {
       setNameEdit(user.full_name || "");
@@ -253,7 +256,7 @@ function AccountModal({ open, onClose, user, setUser, onUpgrade }) {
   const inp = { background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:6, padding:"8px 12px", fontSize:12, color:"var(--text)", outline:"none", fontFamily:"var(--font-mono)", width:"100%", boxSizing:"border-box" };
 
   return (
-    <div className="overlay open">
+    <div ref={ref} className="overlay open" aria-modal="true">
       <div className="overlay-head">
         <BackButton onClick={onClose}></BackButton>
         <div><div className="crumb">TOOLS / ACCOUNT</div><h2>Account</h2></div>
@@ -712,6 +715,9 @@ function PriceAlertModal({ open, onClose, ticker, currentPrice }) {
   const [message, setMessage]     = useState("");
   const [targetError, setTargetError] = useState("");
 
+  const ref = useRef(null);
+  useFocusTrap(open, onClose, ref);
+
   useEffect(() => {
     if (!open) return;
     const price = Number(currentPrice);
@@ -776,7 +782,7 @@ function PriceAlertModal({ open, onClose, ticker, currentPrice }) {
   };
 
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,0.64)", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={onClose}>
+    <div ref={ref} aria-modal="true" style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,0.64)", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={onClose}>
       <div style={{ width:"100%", maxWidth:380, background:"var(--bg-1)", border:"1px solid var(--line)", borderRadius:10, padding:"22px 24px", boxShadow:"0 20px 70px rgba(0,0,0,0.45)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:18 }}>
           <div style={{ width:34, height:34, borderRadius:8, background:"var(--bg-2)", display:"grid", placeItems:"center", color:"var(--accent)" }}>
@@ -1012,6 +1018,9 @@ function PricingView({ open, onClose, user, context }) {
   const [plans, setPlans] = useState([]);
   const [checking, setChecking] = useState(null);
 
+  const ref = useRef(null);
+  useFocusTrap(open, onClose, ref);
+
   useEffect(() => {
     if (!open) return;
     if (typeof trackGate === "function") trackGate("pricing_overlay", context || "");
@@ -1030,7 +1039,7 @@ function PricingView({ open, onClose, user, context }) {
 
   if (!open) return null;
   return (
-    <div className={`overlay open`}>
+    <div ref={ref} className={`overlay open`} aria-modal="true">
       <div className="overlay-head">
         <div><div className="crumb">ACCOUNT / PRICING</div><h2>Choose your plan</h2></div>
         <BackButton onClick={onClose}></BackButton>
@@ -1088,9 +1097,11 @@ function TweaksPanel({ open, onClose, state, set }) {
     ["#22d3ee","cyan"],["#60a5fa","azure"],["#34d399","emerald"],
     ["#fbbf24","amber"],["#fb4d6d","crimson"],["#a78bfa","violet"],
   ];
+  const ref = useRef(null);
+  useFocusTrap(open, onClose, ref);
   if (!open) return null;
   return (
-    <div className="overlay open">
+    <div ref={ref} className="overlay open" aria-modal="true">
       <div className="overlay-head">
         <BackButton onClick={onClose}></BackButton>
         <div><div className="crumb">TOOLS / TWEAKS</div><h2>Tweaks</h2></div>
@@ -1101,7 +1112,7 @@ function TweaksPanel({ open, onClose, state, set }) {
         <span className="l">Accent</span>
         <div className="swatches">
           {accents.map(([c,n]) => (
-            <div key={c} title={n} className={`swatch ${state.accent===c?"on":""}`} style={{ background:c }} onClick={() => set({ accent:c })} role="button" tabIndex={0}/>
+            <div key={c} title={n} className={`swatch ${state.accent===c?"on":""}`} style={{ background:c }} onClick={() => set({ accent:c })} onKeyDown={onKeyActivate(() => set({ accent:c }))} role="button" tabIndex={0}/>
           ))}
         </div>
       </div>
@@ -1243,6 +1254,9 @@ function AlertsView({ open, onClose }) {
   const [editConf, setEditConf] = useState("");
   const [editAction, setEditAction] = useState("any");
 
+  const ref = useRef(null);
+  useFocusTrap(open, onClose, ref);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -1316,7 +1330,7 @@ function AlertsView({ open, onClose }) {
   const selS = { ...inputS };
 
   return (
-    <div className="overlay open">
+    <div ref={ref} className="overlay open" aria-modal="true">
       <div style={{ maxWidth:760, margin:"0 auto", padding:"8px 28px 48px", width:"100%" }}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
           <BackButton onClick={onClose}></BackButton>
@@ -1455,6 +1469,9 @@ function ScreenerView({ open, onClose }) {
   const [error,    setError]    = useState("");
   const [activePreset, setActivePreset] = useState(null);
 
+  const ref = useRef(null);
+  useFocusTrap(open, onClose, ref);
+
   const loadPresets = async () => {
     try {
       const res = await authFetch("/api/screener");
@@ -1540,7 +1557,7 @@ function ScreenerView({ open, onClose }) {
     fontSize:12, color:"var(--text)", outline:"none", fontFamily:"var(--font-mono)" };
 
   return (
-    <div className="overlay open">
+    <div ref={ref} className="overlay open" aria-modal="true">
       <div style={{ maxWidth:980, margin:"0 auto", padding:"8px 28px 48px", width:"100%" }}>
         <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
           <BackButton onClick={onClose}></BackButton>

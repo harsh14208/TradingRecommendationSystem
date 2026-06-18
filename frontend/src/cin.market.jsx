@@ -1,6 +1,6 @@
 /* global React, apiFetch */
 // SIGNAL.TRADE cinematic — Market Context page.
-// Wired to /api/market/context, /api/sources, /api/delivery/log,
+// Wired to /api/market/context, /api/delivery/log,
 // /api/market/sectors and /api/market/calendar.
 
 const { useState: mUseState, useEffect: mUseEffect } = React;
@@ -104,23 +104,6 @@ function CalendarRow({ e }) {
   );
 }
 
-function SourcePill({ s }) {
-  return (
-    <div className="glass" style={{ padding: "12px 14px", opacity: s.on ? 1 : 0.5 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span className={`live-dot ${s.on ? "" : "red"}`} style={{ background: s.on ? "var(--bull)" : "var(--text-faint)" }}></span>
-        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{s.name}</span>
-        <span className="kicker" style={{ marginLeft: "auto" }}>{s.abbr}</span>
-      </div>
-      <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>{s.desc}</div>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <span className="mono" style={{ fontSize: 10.5, color: "var(--text-faint)" }}>{s.on ? `${s.reqs} req · ${s.latency}ms` : "Disabled"}</span>
-        <span className="kicker" style={{ color: s.on ? "var(--bull)" : "var(--text-ghost)" }}>{s.feed}</span>
-      </div>
-    </div>
-  );
-}
-
 // Parse a free-text delivery message ("→ BUY NVDA @ 1248.32 (Conf 87%)") into
 // its structured pieces so each log entry can render as a signal card.
 function _parseDeliveryMsg(m) {
@@ -199,21 +182,6 @@ function _first(...vals) {
   return vals[vals.length - 1];
 }
 
-function marketSources(sources) {
-  if (!Array.isArray(sources) || !sources.length) return M_SOURCES;
-  const abbrFor = (s) => s.abbr || (typeof srcAbbr === "function" ? srcAbbr(s.name) : (s.name || "").slice(0, 4).toUpperCase());
-  return sources.map((s) => ({
-    id: s.id,
-    name: s.name,
-    abbr: abbrFor(s),
-    desc: s.description || s.desc || "",
-    on: s.is_on,
-    reqs: _first(s.requests_24h, s.reqs, 0),
-    latency: _first(s.latency_ms, s.latency, 0),
-    feed: s.feed || (s.is_on ? "Live" : "Disabled"),
-  }));
-}
-
 const ROTATION_MAP = { early: "early_bull", mid: "early_bull", late: "early_bear", recession: "late_bear" };
 function marketRotation(macro) {
   const stage = macro?.sector_rotation?.stage || macro?.sector_rotation || M_MACRO.sector_rotation;
@@ -261,7 +229,7 @@ function marketContextCards(m) {
   return cards.length ? cards : M_CONTEXT_SIGNALS;
 }
 
-function PageMarket({ marketCtx, sources, log }) {
+function PageMarket({ marketCtx, log }) {
   const [sectors, setSectors] = mUseState(null);
   const [calendar, setCalendar] = mUseState(null);
 
@@ -287,7 +255,6 @@ function PageMarket({ marketCtx, sources, log }) {
     ? "var(--text-faint)"
     : hmm.regime === "bear" ? "var(--bear)" : hmm.regime === "transition" ? "var(--neutral)" : "var(--bull)";
   const contextSignals = marketContextCards(marketCtx);
-  const srcList = marketSources(sources);
   const rotation = marketRotation(macro);
   const ycSpread = macro?.yc_spread != null ? macro.yc_spread : (macro?.t10y != null && macro?.t2y != null ? macro.t10y - macro.t2y : M_MACRO.yc_spread);
   const ycTone = ycSpread >= 0 ? "up" : "down";
@@ -385,11 +352,6 @@ function PageMarket({ marketCtx, sources, log }) {
         </div>
       </div>
 
-      {/* Sources */}
-      <div style={{ marginTop: 26 }}>
-        <div className="kicker" style={{ marginBottom: 12 }}>DATA SOURCES · {srcList.filter((s) => s.on).length}/{srcList.length} ONLINE</div>
-        <div className="mkt-sources">{srcList.map((s) => <SourcePill key={s.id} s={s}></SourcePill>)}</div>
-      </div>
     </div>
   );
 }

@@ -1757,6 +1757,8 @@ function CalendarView({ open, onClose }) {
 /* ─── DemoTour — BUG FIX: useEffect moved before early return ────────────────── */
 function DemoTour({ open, onClose }) {
   const [step, setStep] = useState(0);
+  const ref = useRef(null);
+  useFocusTrap(open, onClose, ref);
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
   const steps = isMobile ? [
     { title: "Welcome to Signal.Trade",   body: "A personal quant desk that fuses 65+ signal blocks — options flow, 13F institutional data, insider trades and technicals — into one confidence score. Here's the 30-second tour." },
@@ -1777,7 +1779,7 @@ function DemoTour({ open, onClose }) {
   useEffect(() => { if (open) setStep(0); }, [open]);
   if (!open) return null;
   return (
-    <div className="hk-backdrop" onClick={onClose}>
+    <div ref={ref} className="hk-backdrop" onClick={onClose} aria-modal="true">
       <div className="tour-modal" onClick={e => e.stopPropagation()}>
         <div className="tour-progress">
           {steps.map((_, i) => <span key={i} className={`tp-dot ${i === step ? "on" : i < step ? "done" : ""}`}/>)}
@@ -1801,6 +1803,8 @@ function DemoTour({ open, onClose }) {
 }
 
 function HotkeyHelp({ open, onClose, onTour }) {
+  const ref = useRef(null);
+  useFocusTrap(open, onClose, ref);
   const groups = [
     { title: "Navigation", keys: [["⌘K / Ctrl K", "Search tickers"], ["j / k", "Next / previous signal"], ["Enter", "Open full explanation"], ["Esc", "Close any panel"]] },
     { title: "Actions",    keys: [["d", "Toggle detail / Simulator"], ["p", "Paper trade signal"], ["s", "Skip signal"], ["Shift S", "Send to Telegram"]] },
@@ -1809,7 +1813,7 @@ function HotkeyHelp({ open, onClose, onTour }) {
   ];
   if (!open) return null;
   return (
-    <div className="hk-backdrop" onClick={onClose}>
+    <div ref={ref} className="hk-backdrop" onClick={onClose} aria-modal="true">
       <div className="hk-modal" onClick={e => e.stopPropagation()}>
         <div className="hk-head">
           <span className="crumb">SHORTCUTS</span>
