@@ -1,6 +1,6 @@
 /* ─── Tier constants ────────────────────────────────────────────────────────── */
-const TIER_ORDER  = ["free","basic","pro"];
-const TIER_COLORS = { free:"var(--text-faint)", basic:"var(--accent)", pro:"#7c3aed" };
+const TIER_ORDER  = ["free","basic","pro","elite"];
+const TIER_COLORS = { free:"var(--text-faint)", basic:"var(--accent)", pro:"#7c3aed", elite:"#c0a062" };
 
 /* ── ET timezone helpers (module-scope so all components can use them) ──────── */
 const _etFmt = (date, opts) => {

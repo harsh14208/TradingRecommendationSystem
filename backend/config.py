@@ -196,7 +196,7 @@ def get_settings() -> Settings:
 
 
 # Tier hierarchy — higher index = more access
-TIERS = ["free", "basic", "pro"]
+TIERS = ["free", "basic", "pro", "elite"]
 
 TIER_PRICES_CENTS = {
     "free": 0,
