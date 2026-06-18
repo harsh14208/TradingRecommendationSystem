@@ -58,10 +58,11 @@ class TestTierAndQuotaHelpers:
         assert get_quota_for_tier("enterprise") == SIGNAL_QUOTAS["free"]
 
     def test_get_user_quota_limit(self):
-        assert get_user_quota_limit(_make_user("free")) == 5
+        assert get_user_quota_limit(_make_user("free")) == 3
         assert get_user_quota_limit(_make_user("basic", "active")) == 100
         assert get_user_quota_limit(_make_user("pro", "active")) is None
-        assert get_user_quota_limit(_make_user("pro", "past_due")) == 5  # downgraded
+        assert get_user_quota_limit(_make_user("elite", "active")) is None
+        assert get_user_quota_limit(_make_user("pro", "past_due")) == 3  # downgraded
         assert get_user_quota_limit(_make_user("free", is_owner=True)) is None
 
 
@@ -140,19 +141,19 @@ class TestApplySignalQuota:
         db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
 
         result = await apply_signal_quota(db, _make_user("free"), 300)
-        assert result["limit"] == 5
-        assert result["remaining"] == 3
-        assert result["allowed_count"] == 3
+        assert result["limit"] == 3
+        assert result["remaining"] == 1
+        assert result["allowed_count"] == 1
         assert result["exceeded"] is False
 
     async def test_limited_user_exceeded(self):
         db = MagicMock()
         today = _utc_midnight()
-        existing = UserSignalQuota(user_id=1, window_start=today, views_count=5)
+        existing = UserSignalQuota(user_id=1, window_start=today, views_count=3)
         db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
 
         result = await apply_signal_quota(db, _make_user("free"), 300)
-        assert result["limit"] == 5
+        assert result["limit"] == 3
         assert result["remaining"] == 0
         assert result["allowed_count"] == 0
         assert result["exceeded"] is True
@@ -164,7 +165,7 @@ class TestApplySignalQuota:
         db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
 
         result = await apply_signal_quota(db, _make_user("free"), 10)
-        assert result["allowed_count"] == 5  # free tier limit is 5
+        assert result["allowed_count"] == 3  # free tier limit is 3
 
 
 @pytest.mark.asyncio

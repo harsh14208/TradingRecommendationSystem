@@ -29,6 +29,7 @@ router = APIRouter(prefix="/api/billing", tags=["billing"])
 PLAN_TIERS = {
     "basic": "basic",
     "pro": "pro",
+    "elite": "elite",
 }
 
 
@@ -40,7 +41,7 @@ def _stripe():
 
 def _price_id(tier: str) -> str:
     s = get_settings()
-    return s.stripe_price_basic if tier == "basic" else s.stripe_price_pro
+    return s.stripe_price_basic if tier == "basic" else s.stripe_price_pro if tier == "pro" else s.stripe_price_elite
 
 
 # ── Public: pricing info ──────────────────────────────────────────────────────
@@ -77,6 +78,15 @@ async def get_plans():
             "cta": "Start Pro",
             "highlight": True,
         },
+        {
+            "id": "elite",
+            "name": "Elite",
+            "price": TIER_PRICES_CENTS["elite"],
+            "currency": "usd",
+            "interval": "month",
+            "features": TIER_PLAN_FEATURES["elite"],
+            "cta": "Start Elite",
+        },
     ]
     return plans
 
@@ -90,8 +100,8 @@ async def create_checkout(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if tier not in ("basic", "pro"):
-        raise HTTPException(400, "Invalid plan. Choose 'basic' or 'pro'.")
+    if tier not in ("basic", "pro", "elite"):
+        raise HTTPException(400, "Invalid plan. Choose 'basic', 'pro', or 'elite'.")
 
     s = get_settings()
     if not s.stripe_secret_key:

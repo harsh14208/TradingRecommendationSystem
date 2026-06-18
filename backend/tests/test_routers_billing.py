@@ -48,8 +48,9 @@ def test_get_plans():
     assert any(p["id"] == "basic" for p in plans)
     assert any(p["id"] == "pro" for p in plans)
     prices = {p["id"]: p["price"] for p in plans}
-    assert prices["basic"] == 2900
-    assert prices["pro"] == 7900
+    assert prices["basic"] == 1900
+    assert prices["pro"] == 4900
+    assert prices["elite"] == 9900
 
 
 @pytest.fixture
