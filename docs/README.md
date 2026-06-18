@@ -36,7 +36,7 @@ Signal.Trade is a personal quant desk that:
 - **Mines factor weights weekly** — brute-forces all source combos by out-of-sample Sharpe; re-weights the engine automatically
 - **Tracks calibration** — plots "what we said" vs "how often we were right" in a reliability diagram
 - **Supports multi-user Telegram fan-out** with per-user confidence thresholds
-- **Runs full subscription billing** via Stripe (Free / Basic $29 / Pro $79)
+- **Runs full subscription billing** via Stripe (Free / Basic $19 / Pro $49 / Elite $99)
 
 ---
 
@@ -209,8 +209,9 @@ Seeded automatically on fresh deployment via `_ensure_default_watchlist()`.
 | Tier | Price | Features |
 |------|-------|---------|
 | **Free** | $0 | View signals in dashboard, market context |
-| **Basic** | $29/mo | + Telegram delivery, backtest analytics, custom watchlist, signal history |
-| **Pro** | $79/mo | + Paper trading, correlation matrix, predictive intervals, sector heatmap, calibration dashboard, simulated backtest |
+| **Basic** | $19/mo | + Telegram delivery, backtest analytics, custom watchlist, signal history, paper trading |
+| **Pro** | $49/mo | + Correlation matrix, predictive intervals, sector heatmap, calibration dashboard, simulated backtest, volatility targeting |
+| **Elite** | $99/mo | + Early access, priority delivery, API access, dedicated support |
 
 Run `python3 stripe_setup.py` to create Stripe products and auto-fill `.env`.
 

@@ -154,7 +154,7 @@ First scan results appear ~30 seconds after startup.
 ### First time
 
 1. Go to `/signup`
-2. **Step 1 — Choose plan**: Free (view only), Basic ($29/mo, Telegram + backtest), Pro ($79/mo, all features). Select one, click Continue.
+2. **Step 1 — Choose plan**: Free (view only), Basic ($19/mo, Telegram + backtest + paper trading), Pro ($49/mo, all features + analytics), Elite ($99/mo, early access + API). Select one, click Continue.
 3. **Step 2 — Create account**: Enter name (optional), email, password (min 8 chars). Click "Create account".
 4. If you chose a paid plan, you're redirected to **Stripe Checkout** to enter card details.
 5. On success you land at `/app`.
