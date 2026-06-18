@@ -490,7 +490,7 @@ function App() {
       // Paper Trade shortcut (P) — only when a signal is selected and detail is open
       if (!typing && e.key === "p" && active && activeId) {
         e.preventDefault();
-        // Check Pro tier access for paper trading
+        // Check Basic tier access for paper trading
         if (!hasTierAccess(currentUser.subscription_tier, "basic", currentUser.is_owner)) {
           setPricingOpen(true);
           return;
@@ -1183,7 +1183,7 @@ function App() {
                   outcomeByTicker={outcomeByTicker}
                   allSignals={signals}
                 />
-                {/* Full ad unit every 5 signals for free users */}
+                {/* Ad slot shown every 5th signal in the feed */}
                 {(idx + 1) % 5 === 0 && <AdSlot user={currentUser}/>}
               </React.Fragment>
             ))}
