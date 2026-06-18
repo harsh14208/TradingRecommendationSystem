@@ -2,7 +2,7 @@
 
 > **Version: v8.8.7** · Updated: 2026-06-18 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
 >
-> **v8.8.7 (2026-06-18) — Backtest page realism, sources removal, elite tier support, and aiohttp CVE patch.** Replaced the cinematic Backtest Lab's toy simulator with real `/api/signals/backtest/simulate` trade replay; capped per-ticker track-record Sharpe at 3.0 and required ≥15 observations. Removed the dead `/api/sources` router/service/tests and all UI toggles/status sections. Widened the `users.subscription_tier` check constraint to allow `'elite'` and migrated owner accounts to `elite/active`. Bumped `aiohttp` `3.14.0 → 3.14.1` to fix 8 CVEs and keep CI green. **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Frontend 9.0→9.1, Product Completeness 9.4→9.5, Security Posture 8.2→8.3; headline unchanged per v8.0.1 discipline).
+> **v8.8.7 (2026-06-18) — Backtest realism, QA audit hardening, entry-score relaxation, sources removal, elite tier, and aiohttp CVE patch.** Replaced the Backtest Lab toy simulator with real `/api/signals/backtest/simulate` trade replay; shipped a major QA pass (WebSocket reconnect, a11y handlers, focus traps, mobile parity, form validation, API retry); lowered backtest `BUY_THRESH` 50→45 and live BUY score bar 35→32 (forward-validated, first live read pending); removed the dead `/api/sources` module; widened the user-tier check constraint for `'elite'`; bumped `aiohttp` to fix 8 CVEs and keep CI green. **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Frontend 9.0→9.1, Product Completeness 9.4→9.5, Security Posture 8.2→8.3; headline unchanged per v8.0.1 discipline).
 >
 > **v8.8.5 (2026-06-12) — Dashboard UI scaling + mobile panel navigation shipped.** Removed the desktop `zoom:0.8`/`125vw` hack that clipped the right edge; replaced it with a desktop-only `styles-desktop.css` density override. Mobile dashboard is now a horizontal scroll-snap carousel (Feed/Detail/Delivery) with a bottom arrow/dot pager. Fixed missing Backtest/Watchlist/Market icons in the mobile nav, made the detail pane and topbar responsive on phones, and made the signal-card **Full detail** button jump to the center panel. **Ratings: 9.0/10 product · 8.3/10 B+ quality** (Frontend 8.8→9.0, Product Completeness 9.3→9.4).
 >
@@ -22,9 +22,9 @@
 > **Tests: 2615 passed, 33 skipped (ex-e2e) · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.8: N=155, WR=67.1%, Sharpe=0.25 with L7 score-band sizing + MR-count=2 (survivorship-corrected + §63 ADF gate)**
 > **v8.2 (2026-06-09) — Sharpe improvement sweep + live engine updates.** v10.8 backtest sweep: 12 candidate approaches on 100-ticker/23yr IS. Score-band sizing (+0.05 Sharpe, zero trade impact), MR-count=2 (+0.01 Sharpe, −1 trade), and dynamic RSI stops all validated and shipped live. IS Sharpe 0.23→0.25. See `docs/Stats.md §83`.
 > **v8.1 (2026-06-09) — Survivorship correction + new live gates + correctness fixes + open-source quant-library audit.** Survivorship bias corrected via free PIT S&P constituents (the #1 named ceiling); new live gates (§14 FRED macro-regime, Polygon short-volume, dynamic sector limits + XLI ML); live correctness fixes (`sector_etf` decouple — was nulling ~81% of signals; cohort-enrichment restore; dark_pool restart-storm); §63 cointegration ADF correctness fix + macro-regime HMM→hmmlearn (both live); cross-sectional model net-positive at h=21 (net +0.347, borrow-robust) deployed in **SHADOW**. **Overall 8.8/10 product · 8.6/10 quality** (+0.1 from v8.0.1; shadow/research work excluded per "implemented ≠ working live"). See Stats.md §15.
-### v8.8.7 (2026-06-18) — Backtest Realism, Sources Removal, Elite Tier, aiohttp CVE Patch
+### v8.8.7 (2026-06-18) — Backtest Realism, QA Hardening, Entry-Score Relaxation, Sources Removal, Elite Tier, aiohttp CVE Patch
 
-**Why this matters:** the Backtest page was advertising impossible simulated performance (Sharpe 9.12, CAGR 108.8%, Max DD −1.4%) on the same screen as the real live backtest (Sharpe 0.65, Max DD −18.5%), undermining trust. Meanwhile the `elite` tier existed in code/config but could not be persisted in Postgres, and a CVE-blocked `aiohttp` version was breaking CI.
+**Why this matters:** the Backtest page was advertising impossible simulated performance (Sharpe 9.12, CAGR 108.8%, Max DD −1.4%) on the same screen as the real live backtest (Sharpe 0.65, Max DD −18.5%), undermining trust. A separate QA audit found a11y/mobile gaps, the entry-score band just below the cutoff carries forward-generalizing alpha, the `elite` tier could not be persisted in Postgres, and a CVE-blocked `aiohttp` was breaking CI.
 
 **Changes:**
 - `frontend/src/cin.backtest.jsx`: removed the deterministic toy `runBacktest` simulator and parameter/comparison sliders.
@@ -34,13 +34,17 @@
 - `backend/routers/signals.py` + `backend/routers/public.py`: per-ticker Sharpe now requires ≥15 observations and is capped at 3.0, preventing absurd tiny-sample values.
 - `backend/routers/sources.py`, `backend/services/source_svc.py`, `backend/tests/test_routers_sources_unit.py`: deleted.
 - `frontend/src/app.views.jsx`, `frontend/src/cin.app.jsx`, `frontend/src/cin.market.jsx`, `frontend/src/cin.market-data.jsx`, `frontend/src/site.jsx`, `frontend/src/mobile.jsx`: removed source-status sections and source toggles.
+- `frontend/src/app.auth.jsx`, `app.jsx`, `app.modals.jsx`, `app.signal.jsx`, `app.ui.jsx`, `styles.css`, `mobile.css`, `site.jsx`: QA audit hardening — WebSocket reconnect with exponential backoff, keyboard handlers on role="button", overlay focus traps + Escape-to-close, hash-based overlay URL state, paper-trade double-submit guard, API retry with exponential backoff, tweak-save error feedback, skeleton screens, mobile nav parity (13 items), 44px touch targets, pull-to-refresh, email/password/broker-key validation, note maxLength counter, search debounce, chart fetch timeout, aria-live signal announcements, skip-nav link, beforeunload guard for unsaved forms.
+- `backend/scripts/backtest_technicals.py`: `BUY_THRESH` 50→45; new `--relax-sweep` mode; `buy_thresh_override` threaded through `run_oos_validation`.
+- `backend/services/engines/helpers.py`: live BUY score bar 35→32 (conservative ~10% mirror of the backtest relaxation).
+- `backend/tests/test_engines_helpers_unit.py`: updated BUY-bar boundary expectations.
 - `backend/models.py`: widened `ck_user_subscription_tier` to include `'elite'`.
 - `backend/alembic/versions/20260618_1325_3344e655631f_add_elite_to_user_tier_check.py`: new migration adding the elite check constraint on Postgres.
 - Owner accounts migrated to `subscription_tier='elite'`, `subscription_status='active'`.
 - `backend/requirements.txt`: `aiohttp==3.14.0 → 3.14.1` (CVE-2026-54273–54280).
 - Docs updated: `docs/Stats.md §15` and `docs/PROGRESS.md` ratings bumped.
 
-**Ratings impact:** Frontend 9.0→**9.1**, Product Completeness 9.4→**9.5**, Security Posture 8.2→**8.3**. Overall headline unchanged at 8.9/8.3 (maintenance/integrity, not new capability).
+**Ratings impact:** Frontend 9.0→**9.1** (Backtest honesty + QA a11y/mobile hardening), Product Completeness 9.4→**9.5** (elite tier end-to-end, dead source module removed, form/overlay polish), Security Posture 8.2→**8.3** (prompt CVE patch). IS Backtest Accuracy, OOS / Forward Validation, Live Alpha Quality, and headline overall unchanged — the entry-score relaxation is forward-validated but not yet live-and-proven; per v8.0.1 discipline it earns a forward gate, not a score move. Overall headline unchanged at 8.9/8.3.
 
 **Tests:** `npm run build` green; backend non-E2E **2615 passed, 33 skipped**; `pip-audit` clean; `npm audit --audit-level=high --omit=dev` clean.
 
