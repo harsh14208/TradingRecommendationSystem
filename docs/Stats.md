@@ -371,6 +371,16 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 ---
 
+## 15. Project Ratings — v10.11 (2026-06-18)
+
+> **Single source of truth** for all project quality ratings. Referenced by `docs/TODO.md` and `docs/PROGRESS.md`.
+> **v10.11 (2026-06-18 — integrity/maintenance session):** Three commits, none of which raise the alpha ceiling, but all close real product-integrity or maintenance gaps.
+> **(1) Backtest page honesty fix:** the cinematic Backtest Lab was rendering a deterministic toy simulator (Sharpe 9.12, CAGR 108.8%, Max DD −1.4%) that contradicted the real live-backtest summary below it. Replaced the top equity curve and headline cards with the real `/api/signals/backtest/simulate` trade replay (next-day open entry, stop/target/timeout exit, slippage, cost drag). Per-ticker track-record Sharpe now requires ≥15 observations and is capped at 3.0, killing absurd values like Sharpe 66.68 on a 100% win tiny sample.
+> **(2) Sources module removal:** the `/api/sources` router/service/tests and all UI toggles/source-status sections were deleted. The feature was non-functional and added surface area; removing it is cleanup, not a capability change.
+> **(3) Elite tier DB support:** `subscription_tier` check constraint widened to include `'elite'` (Alembic migration `3344e655631f`), and owner accounts were migrated to `elite/active`. The admin endpoint already accepted `elite`; the DB was the missing piece.
+> **(4) Dependency security:** `aiohttp` bumped `3.14.0 → 3.14.1` to resolve 8 CVEs (CVE-2026-54273/54274/54275/54276/54277/54278/54279/54280) and keep CI green.
+> **Ratings:** Frontend 9.0→**9.1** (Backtest page now honest and consistent), Product Completeness 9.4→**9.5** (elite tier end-to-end, dead source module removed), Security Posture 8.2→**8.3** (prompt CVE patch). **Overall headline unchanged at 8.9/10 product · 8.3/10 B+ quality** — the moves are maintenance/integrity, not new alpha or capability, per v8.0.1 discipline.
+
 ## 15. Project Ratings — v10.10 (2026-06-15)
 
 > **Single source of truth** for all project quality ratings. Referenced by `docs/TODO.md` and `docs/PROGRESS.md`.
@@ -440,7 +450,7 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 > v7.3 (2026-05-31): adversarial quant review, 10 methodology fixes, OOS v6 CLEAN (N=51, Sh=0.16), block bootstrap, phantom win correction.
 > Two lenses: **Quant** = statistical rigour | **Product** = user-facing completeness × soundness.
 
-**Overall: 8.9/10 product audit · 8.3/10 B+ quality grade** (v10.10, 2026-06-15 — headline unchanged; Confidence Calibration 7.6→7.9 is the only aspect move (sector-aware + fixed a silently-off bug, live-and-proven). The session was net integrity-restoring: real UI-honesty fixes and a calibration fix on the positive side, balanced by sobering live findings — 43.7% baseline WR concentrated in XLK, and the §92 shadow having accrued zero data since 2026-06-09. Per v8.0.1 discipline, bug-fixes/honesty don't raise the ceiling and negative findings can lower it; the moves cancel. Tuning levers declared spent.)
+**Overall: 8.9/10 product audit · 8.3/10 B+ quality grade** (v10.11, 2026-06-18 — headline unchanged. Aspect moves: Frontend 9.0→9.1, Product Completeness 9.4→9.5, Security Posture 8.2→8.3. These are maintenance/integrity moves: Backtest page now uses real trade replay, elite tier is DB-supported, dead sources module removed, and aiohttp CVEs patched. No alpha or capability ceiling raised. Prior v10.10 session was net integrity-restoring: Confidence Calibration 7.6→7.9 live-and-proven, balanced by sobering live findings — 43.7% baseline WR concentrated in XLK, and the §92 shadow having accrued zero data since 2026-06-09.)
 
 > **Prior headline (v8.6):** 8.9/10 product · 8.3/10 B+ quality — Backtest Infrastructure 7.9→8.1 was the only aspect move; the h=63 validation is shadow-only and earned a forward gate, not a score.
 
@@ -476,9 +486,9 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 | Feature | Score | Grade | Δ | Notes / Ceiling |
 |---|---|---|---|---|
-| **Product Completeness** | 9.4/10 | A | ↑ from 9.3 (v8.8.5) | Full stack complete. Dual auto-execution (Alpaca + IBKR). Added broker execution preview, paper/live parity, and unified delivery queue. **v8.8.5:** dashboard desktop scaling fixed, mobile panel carousel + pager shipped, responsive detail pane/topbar on phones. Remaining: FE-2 accessibility. |
-| **Frontend** | 9.0/10 | A | ↑ from 8.8 (v8.8.5) | **v8.8.5:** desktop scaling hack removed, mobile scroll-snap carousel for feed/detail/delivery, bottom arrow/dot pager, missing mobile nav icons added, detail pane/topbar responsive on phones, full-detail scrolls to center panel. Architecture: 8.3/10 -- ErrorBoundary, Lighthouse CI, API contract drift-guard, last-refresh, version badge. Remaining: FE-2 accessibility (147 contrast items) + ≥1 golden-path E2E in CI. |
-| **Security Posture** | 8.2/10 | B+ | ↑ from 8.0 (v8.5) | MultiFernet key rotation, CSP unsafe-eval eliminated, gitleaks, OWASP, action audit log, risk-ack gate, GDPR deletion report. **v8.5:** OWNER_PASSWORD fixed (32-char secure, 2026-06-09); VAPID keys generated and wired (2026-06-10); `.env.example` updated with guidance. Still blocked on HTTPS deploy + external pen-test. |
+| **Product Completeness** | 9.5/10 | A | ↑ from 9.4 (v10.11) | Full stack complete. Dual auto-execution (Alpaca + IBKR). Added broker execution preview, paper/live parity, and unified delivery queue. **v10.11:** elite tier now supported end-to-end in the user model/admin/DB; dead `/api/sources` module and UI toggles removed. **v8.8.5:** dashboard desktop scaling fixed, mobile panel carousel + pager shipped, responsive detail pane/topbar on phones. Remaining: FE-2 accessibility. |
+| **Frontend** | 9.1/10 | A | ↑ from 9.0 (v10.11) | **v10.11:** cinematic Backtest Lab now uses real `/api/signals/backtest/simulate` trade replay for its headline equity curve and metrics; removed the deterministic toy simulator that showed impossible Sharpe 9.12 / CAGR 108.8% / Max DD −1.4%. Source-status sections/toggles removed with the dead sources module. **v8.8.5:** desktop scaling hack removed, mobile scroll-snap carousel for feed/detail/delivery, bottom arrow/dot pager, missing mobile nav icons added, detail pane/topbar responsive on phones, full-detail scrolls to center panel. Architecture: 8.3/10 -- ErrorBoundary, Lighthouse CI, API contract drift-guard, last-refresh, version badge. Remaining: FE-2 accessibility (147 contrast items) + ≥1 golden-path E2E in CI. |
+| **Security Posture** | 8.3/10 | B+ | ↑ from 8.2 (v10.11) | MultiFernet key rotation, CSP unsafe-eval eliminated, gitleaks, OWASP, action audit log, risk-ack gate, GDPR deletion report. **v10.11:** `aiohttp` bumped `3.14.0 → 3.14.1` to resolve 8 CVEs (CVE-2026-54273–54280) and keep CI pip-audit green. **v8.5:** OWNER_PASSWORD fixed (32-char secure, 2026-06-09); VAPID keys generated and wired (2026-06-10); `.env.example` updated with guidance. Still blocked on HTTPS deploy + external pen-test. |
 | **Deployment Readiness** | 7.9/10 | B+ | ↑ from 7.7 (v8.5) | RUNBOOK.md, locust, Railway/Fly CI/CD. Incident timeline + Prometheus /metrics. Data retention/purge + Alembic smoke tests. **v8.1:** dark_pool stall heartbeat + give-up backoff ended a 15s restart storm (3ceaeb2). **v8.5:** VAPID done, E2E tests passing (5/12), owner password done. Remaining: HTTPS, Stripe webhook, SMTP, Telegram broadcast, Cloudflare, Redis prod, SendGrid, DB backups. |
 
 ### Infrastructure & ML
