@@ -544,13 +544,13 @@ async def quota_analytics(
     users = (await db.execute(select(User).where(User.is_active == True))).scalars().all()
 
     # Group users by effective tier.
-    tiers: dict[str, list[User]] = {"free": [], "basic": [], "pro": []}
+    tiers: dict[str, list[User]] = {"free": [], "basic": [], "pro": [], "elite": []}
     for u in users:
         limit = get_user_quota_limit(u)
         if limit == 100:
             bucket = "basic"
         elif limit is None:
-            bucket = "pro"
+            bucket = "elite" if u.subscription_tier == "elite" else "pro"
         else:
             bucket = "free"
         tiers[bucket].append(u)
@@ -574,7 +574,7 @@ async def quota_analytics(
 
     result = {}
     for tier, members in tiers.items():
-        limit = {"free": 5, "basic": 100, "pro": None}[tier]
+        limit = {"free": 3, "basic": 100, "pro": None, "elite": None}[tier]
         used_counts = []
         exceeded = 0
         for u in members:
@@ -611,7 +611,7 @@ async def set_user_tier(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "User not found.")
-    if body.tier not in ("free", "basic", "pro"):
+    if body.tier not in ("free", "basic", "pro", "elite"):
         raise HTTPException(400, "Invalid tier.")
     if body.status not in ("active", "inactive", "past_due", "canceled"):
         raise HTTPException(400, "Invalid status.")
