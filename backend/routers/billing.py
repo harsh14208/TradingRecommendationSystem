@@ -41,7 +41,15 @@ def _stripe():
 
 def _price_id(tier: str) -> str:
     s = get_settings()
-    return s.stripe_price_basic if tier == "basic" else s.stripe_price_pro if tier == "pro" else s.stripe_price_elite
+    return (
+        s.stripe_price_basic
+        if tier == "basic"
+        else s.stripe_price_pro
+        if tier == "pro"
+        else s.stripe_price_elite
+        if tier == "elite"
+        else None
+    )
 
 
 # ── Public: pricing info ──────────────────────────────────────────────────────

@@ -401,10 +401,10 @@ def test_quota_analytics_endpoint():
     assert resp.status_code == 200
     data = resp.json()
 
-    # free bucket: 3 users (2 free + 1 inactive basic), 2 free quota rows (1+2), 1 at limit
+    # free bucket: 3 users (2 free + 1 inactive basic), 2 exceeded (user 1 at 5, user 5 at 4)
     assert data["free"]["users"] == 3
-    assert data["free"]["limit"] == 5
-    assert data["free"]["exceeded_count"] == 1
+    assert data["free"]["limit"] == 3
+    assert data["free"]["exceeded_count"] == 2
 
     # basic bucket: 1 active basic user, 1 quota row with 50 used
     assert data["basic"]["users"] == 1

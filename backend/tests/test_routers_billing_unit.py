@@ -278,13 +278,15 @@ def test_price_id_basic():
     settings = MagicMock()
     settings.stripe_price_basic = "price_basic_test"
     settings.stripe_price_pro = "price_pro_test"
+    settings.stripe_price_elite = "price_elite_test"
     with patch("routers.billing.get_settings", return_value=settings):
         from routers.billing import _price_id
 
         assert _price_id("basic") == "price_basic_test"
         assert _price_id("pro") == "price_pro_test"
-        # "unknown" returns stripe_price_pro (ternary fallback)
-        assert _price_id("unknown") == "price_pro_test"
+        assert _price_id("elite") == "price_elite_test"
+        # "unknown" returns None (no fallback for invalid tiers)
+        assert _price_id("unknown") is None
 
 
 @patch("routers.billing.get_settings")
