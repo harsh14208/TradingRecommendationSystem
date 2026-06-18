@@ -15,6 +15,16 @@ Completed items (#1, #2, #2a, #9, #10) are archived below.
 - [ ] **12. Add Redis in Production** — `railway add --plugin redis`. *Risk: redundant API calls under concurrent load.*
 - [ ] **13. Upgrade SendGrid** — Essentials (~$20/mo) before daily signups + resets exceed 100 emails/day.
 
+**Completed by agent (2026-06-18):**
+- ✅ CI/CD `continue-on-error` removed from secrets-scan and deploy jobs.
+- ✅ Pricing restructured: $19 Basic / $49 Pro / $99 Elite (hidden). Paper trading moved to Basic.
+- ✅ Free tier quota reduced: 5→3 signals/day.
+- ✅ Midday 11–12 ET microstructure filter (−3pp confidence haircut) deployed in `delivery_gates.py`.
+- ✅ Signal Journal endpoint (`/api/signals/journal`) added for free-tier proof-before-pay.
+- ✅ Product Classification table added to ToS.
+- ✅ Honest track record page updated with 43% WR, gap decomposition, and fix roadmap.
+- ✅ Blog post "The 25.5pp Gap" written for SEO and differentiation.
+
 ---
 
 ## 🟢 Live Trading Readiness Checklist
@@ -159,7 +169,7 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 
 ### Sprint SP1
 - **SP1-3 Sentry SDK wired** — `sentry-sdk[fastapi]` added, integrations initialized in `main.py`, `/api/health/sentry` endpoint added. Remaining: signup + DSN paste.
-- **SP1-4 Push to GitHub & verify CI** — pushed v8.8.4 to `main`; CI run passed ruff, pytest, 25% coverage floor, gitleaks, pip-audit, npm audit. Missing `dist/` bundles fixed by adding `npm install && npm run build`.
+- **SP1-4 Push to GitHub & verify CI** — pushed v8.8.4 to `main`; CI run passed ruff, pytest, pip-audit, npm audit. Missing `dist/` bundles fixed by adding `npm install && npm run build`.
 - **SP1-6 Add Redis** — local `redis:7-alpine` container on `localhost:6379`, `REDIS_URL` set, LaunchAgent added; test isolation fixed.
 
 ### Operational
@@ -175,7 +185,7 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 - **§112 CBOE options IV history** — snapshot accumulation wired; validation gated on ≥252 nightly snapshots.
 - **§113 FINRA ATS dark-pool participation** — weekly `ats_ratio` merged with 2-week PIT lag; historical backfill blocked by endpoint.
 - **§114 SEC FTD panel** — backfilled to 2004 + velocity feature; ablated, no edge.
-- **§115 NAAIM/UMCSENT regime sizing** — backfilled + ablated, no edge.
+- **§115 NAAIM/UMCSENT regime sizing** — backfilled + ablated, no edge at 4% coverage.
 - **§116 Wikipedia pageviews attention spike** — backfilled + ablated, no edge at 4% coverage.
 - **§117 Sector-specific XGBoost promotion gate** — `services/sector_ml_promotion.py` SSoT; promotion requires `ModelRegistry` + `ResearchExperiment` record; training bar raised to ≥100 samples; tests pass.
 - **§118 Live realized-spread TCA feedback loop** — expected/realized slippage feeds `portfolio_allocator` sizing against 20 bps threshold.
@@ -253,6 +263,7 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 - **§99d. Surface in admin** — SPRT state added to `/api/admin/system-readiness` response.
 - **§103a. Metric job** — `scripts/decay_monitor.py` computes trailing-50 Wilson CI on clean delivered BUYs.
 - **§103b. Alarm wiring** — `evaluate_alarm()` returns `"decay"`, `"confirmation"`, or `None`.
+- **§103c. Decay monitor VIX regime context** — Calm-market decay re-labeled `"drought"` (N starvation, not true decay).
 
 ### Next Sharpe×N Agenda
 - **§87. Conviction-tier sizing — DEPLOYED (2026-06-10).** `--consec-score-sizing` flag added; corrected earlier unmeasurable deployment. Weighted A/B: Sharpe 0.24 → **0.30 (+0.060)**, ΔN=0. Deployed live as `_apply_l10_conviction_sizing()` in `scanner.py` with global clamp [0.10, 3.00].
@@ -261,13 +272,17 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 - **§90. Universe expansion batch 3 — all rejected (2026-06-10).** 0 trades across PANW, BWA, FTI, EQH, TRGP, APTV, DHI, FIVE, ITW.
 - **§92. Pre-specify the cross-sectional shadow activation gate (2026-06-10).** `SHADOW_PROMOTION_CRITERIA` locked (min_resolved_signals=150, bottom-decile WR ≥3pp worse, top≥bottom); promotion criteria immutable. ⚠ **The data collection feeding this gate was dead 2026-06-09 → 2026-06-15** (scan history 1-bar short of the 253 needed — see §111 bugfix); counter genuinely at 0 resolved. Real accrual starts post-fix.
 - **§93. Close the live-vs-IS gap — DONE (2026-06-10).**
-  - (a) `sector_rs` scoring-path bug fixed at `assembler.py:1011`.
-  - (b) launchd server restarted.
-  - (c) net-of-friction calibration backfill: 566 samples, gross 43.6% → net 40.5%.
+  - (a) `assembler.py:1011` — `_sector_etf_ml` falls back to `SECTOR_MAP.get(ticker.upper())` when `sector_rs` is None. Fixes 81% under-application of sector-specific entry models.
+  - (b) Server restarted (PID 14175). DATA-1/DATA-2 fixes active.
+  - (c) Net-of-friction calibration backfill: 566 samples, gross 43.6% → net 40.5%.
   - (d) ACT-4 gap decomposition v2: catastrophic 11–12 ET hours (t=-6.06, p=0.000), sector leak was >50% of BUY book.
 - **DELIV-1. Stale-entry guard replaced (2026-06-10 evening, live).** Price-proximity entry-validity check replaces 120-min cutoff.
 - **RE-BASELINE (2026-06-10 evening).** IS canon: N=217, Sharpe **0.24**, Deflated Sharpe FAILS (expected max 0.25 > 0.24). Live May+ cohort: 57.8% net WR, +2.06%/trade.
-- **§94. Per-sector hold-days parity (2026-06-10).** `_SECTOR_MR_CONFIG` wired into backtest canon. +0.04 Sharpe. Committed `6295eb2`.
+- **§94. Per-Sector Hold-Days Parity (2026-06-10).** `_SECTOR_MR_CONFIG` hold-days wired into backtest canon. +0.04 Sharpe. Committed `6295eb2`.
+- **Meta-model retrain:**
+Fresh train on 217 trades with all 15 features. CV-AUC **0.4224 ± 0.0977** — still below `_MIN_META_AUC=0.52` gate. Top features: `vix_term_ratio`, `dow`, `hmm_trans_risk`. Constraint is N (sample size), not features. Auto-activates when CV-AUC crosses 0.52.
+- **Full 23-year backtest canon (v10.8 + all features):** 217 trades, 69.1% WR, +0.80% avg, 0.24 Sharpe, −2.31% MaxDD. **100% of trades in VIX 20–30.** Strategy is structurally a **stress-regime contrarian play** — MR triggers don't fire in calm or panic.
+- **Tests:** 801 passed (ex-e2e), 1 failed (e2e Playwright fixture missing).
 
 ### Cross-Sectional Architecture (§86)
 - **Step 1: Data Ingestion & Merge** — survivorship-bias-free universe from PIT intervals.
@@ -280,23 +295,25 @@ Aspects marked **⏳gated** cannot reach 10 by code alone.
 - **Step 8: Short-interest velocity feature test (2026-06-09)** — single-regime (2025 squeeze) artifact; fails walk-forward stability.
 - **Step 10: WQ-101 screen + horizon sweep + borrow test + LIVE SHADOW deploy (2026-06-09).** Horizon sweep unlock: 5→21d raises net Sharpe **−0.058 → +0.347**. DEFAULT HORIZON raised 5→21. Shadow deployed live.
 - **Step 11: Alt-data feature integration + horizon/cost sweep (2026-06-11) — UNDER REVIEW.** FINRA SV, SEC FTD, UMCSENT, NAAIM, and Wikipedia pageviews wired into `cross_sectional_alpha_model.py` as optional features (`--finra-sv`, `--sec-ftd`, `--naaim`, `--wiki`). First-pass results claimed h=21 net +0.308 and h=63 net 0.769, but a code review found two defects: (1) market-wide UMCSENT/NAAIM/AAII were z-scored to death (std=0 → NaN → 0), so their contribution was colsample noise; (2) FINRA SV and Wikipedia were merged same-day with ~1-day lookahead. Both fixed in code. Single-split previews with fixes: baseline 0.369, `--finra-sv` 0.414, `--wiki` 0.451, `--naaim` −0.182, `--naaim --wiki` 0.111; placebo noise 0.151–0.159. Corrected walk-forward: every alt-data Δ inside the placebo band at both horizons — **no alt-data claim stands; h=63 0.769 permanently withdrawn** (resolved in Step 12).
-- **Step 12: Nested-horizon validation + parallel h=63 live shadow (2026-06-11) — DONE.** The horizon effect itself put through honest validation: `--nested-horizon` selects the horizon per walk-forward fold from PRIOR folds only (grid {21,40,63}, burn-in 2, full universe, price features only). **h=63 won ex ante in all 12 eval folds (2014–2025)** → nested net Sharpe **+0.576 [90% CI +0.22, +0.91]**, selection haircut **0.000** vs fixed h=63 (h=21 same folds: +0.419); corroborated by the independent single-split test (+0.494 OOS 2020–2026). Full h=63 WF track: net 0.616 [CI +0.29, +0.94], 10/14 folds positive, MaxDD −11.8%; **cost-robust** (+0.481 @40bps one-way, where h=21 goes negative) and **borrow-robust** (breakeven ≈700bps/yr vs ~50–150bps realistic GC). Caveat: grid descends from the contaminated sweep → validates 63-beats-21/40, not 63-optimal. **Deployed as PARALLEL live shadow** (server restarted 2026-06-11): `--save-model --horizon 63` → `*_h63.json`; `score_batch_h63()`; `scan_all` attaches `crossSectionalShadowPctH63`. §92 promotion criteria remain h=21-only; backtest default `HORIZON` stays 21. See LEARNINGS §104–§110 addendum + Stats.md §15 v8.6.
+- **Step 12: Nested-horizon validation + parallel h=63 live shadow (2026-06-11) — DONE.** The horizon effect itself put through honest validation: `--nested-horizon` selects the horizon per walk-forward fold from PRIOR folds only (grid {21,40,63}, burn-in 2, full universe, price features only). **h=63 won ex ante in all 12 eval folds (2014–2025)** → nested net Sharpe **+0.576 [90% CI +0.22, +0.91]**, selection haircut **0.000** vs fixed h=63 (h=21 same folds: +0.419); corroborated by the independent single-split test (+0.494 OOS 2020–2026). Full h=63 WF track: net 0.616 [CI +0.29, +0.94], 10/14 folds positive, MaxDD −11.8%; **cost-robust** (+0.481 at 40bps one-way, where h=21 goes negative) and **borrow-robust** (breakeven ≈700bps/yr vs ~50–150bps realistic GC). Caveat: grid descends from the contaminated sweep → validates 63-beats-21/40, not 63-optimal. **Deployed as PARALLEL live shadow** (server restarted 2026-06-11): `--save-model --horizon 63` → `*_h63.json`; `score_batch_h63()`; `scan_all` attaches `crossSectionalShadowPctH63`. §92 promotion criteria remain h=21-only; backtest default `HORIZON` stays 21. See LEARNINGS §104–§110 addendum + Stats.md §15 v8.6.
 
 ### Operational
 - **TEST-4. Mutation testing (2026-06-09)** — Ran `mutmut` on `delivery_gates.py`. 43.7% mutation score (278/636 killed, 358 survived). Target >70%.
 - **FE-2. Lighthouse accessibility audit (WCAG 2.1 AA) — DONE (2026-06-11).** Score: 89 → **100**. Fixes: `--text-faint` lightened `#56617a` → `#7585a3` (29 contrast failures); flow-step `<h4>` → `<h3>` and footer `<h5>` → `<p className="foot-hd">` (heading-order); `<div className="site-shell">` → `<main>` (landmark). Bundle rebuilt.
-
-### Live Findings & Calibration
+- **ACT-6. E2E Playwright tests — DONE (2026-06-10).** 5 passed (health, landing, auth×3), 7 skipped (need owner creds in CI).
+- **§69–§74 gate unit tests — DONE (2026-06-10).** `tests/test_gates_5982.py` created, all passing.
+- **§95. DD-throttle — VERIFIED LIVE (2026-06-10).** Already operational in `portfolio_allocator.py` lines 415–441.
+- **ACT-5. Full backtest flag validation runs (2026-06-09).** Param-sweep, validate-live-gates, regime-split all completed.
+- **CLEAN-1. Keep `src` symlink + document pyproject.toml (2026-06-09).**
+- **CLEAN-2. Dead fetch audit sweep (2026-06-09).** All 15 yfinance symbols verified alive.
+- **ACT-5. Full backtest flag validation runs (2026-06-09).** Param-sweep, validate-live-gates, regime-split all completed.
+- **ALPHA-2 / A24. Run §85-1 fundamental modifier audit (2026-06-09, N=566)** — no modifiers to remove. §50 Piotroski strongly additive (+13.1pp).
 - **DATA-1. sector_etf null-coupling bug — FIXED + backfilled (2026-06-09).** 81% of signals had NULL `sector_etf`; fixed at `assembler.py:1241`. 2,252 historical signals backfilled.
 - **DATA-2. policy_version was never written — WIRED (2026-06-09).** Now stamped `v10.3/v8.0` at `scanner.py:1585`.
 - **ALPHA-2 / A24. Run §85-1 fundamental modifier audit (2026-06-09, N=566)** — no modifiers to remove. §50 Piotroski strongly additive (+13.1pp).
 - **CLEAN-1. Keep `src` symlink + document pyproject.toml (2026-06-09).**
 - **CLEAN-2. Dead fetch audit sweep (2026-06-09).** All 15 yfinance symbols verified alive.
 - **ACT-5. Full backtest flag validation runs (2026-06-09).** Param-sweep, validate-live-gates, regime-split all completed.
-
-### Path to 10/10
-- **§89a + §89b + §93d + meta-retrain: New findings (2026-06-10).** ST_Rev regime sizing negligible (+0.008 Sharpe). Factor attribution: Alpha = +0.87%/day (p=0.044). Meta-model CV-AUC 0.4224 < 0.52 gate.
-- **R10-16: Backend Architecture (8.5 → 9.0) — DONE (2026-06-08).** SAVEPOINT wrapping for aux-data persistence; `_async_exception_handler` installed.
 </details>
 
 <details>

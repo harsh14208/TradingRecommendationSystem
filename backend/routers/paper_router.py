@@ -16,8 +16,12 @@ def _require_keys():
 
 
 def _require_paper_user(user: User):
-    if not (user.is_owner or user.subscription_tier == "pro"):
-        raise HTTPException(403, "Paper trading requires Pro tier.")
+    """Paper trading is now available at Basic tier (2026-06-18) as the
+    'proof before pay' centerpiece. Pro/Elite get advanced analytics."""
+    from config import tier_gte
+
+    if not (user.is_owner or tier_gte(user.subscription_tier, "basic")):
+        raise HTTPException(403, "Paper trading requires Basic tier or higher.")
 
 
 class OrderRequest(BaseModel):

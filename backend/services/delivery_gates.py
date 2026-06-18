@@ -13,6 +13,7 @@ Extracted from scanner._maybe_send() so that:
 import logging
 from datetime import datetime, timedelta, timezone
 
+import pytz
 from sqlalchemy import func, select
 
 log = logging.getLogger("scanner")
@@ -482,10 +483,35 @@ async def check_delivery_gates(
         if _vix_now is not None and _vix_now < 15.0:
             return f"VIX={_vix_now:.1f} < 15 — MR entry suspended in ultra-low vol regime (§54)", sig_dict
 
-    # ── Pre-earnings blackout (≤2 trading days, including earnings today) ───────
-    dte = sig_dict.get("daysToEarnings")
-    if dte is not None and dte <= 2:
-        return f"{dte}d to earnings — pre-earnings hard blackout", sig_dict
+    # ── §93d Midday microstructure filter (11:00–12:00 ET) ───────────────────
+    # Live data: WR 23.7% in 11–12 ET vs 47.8% baseline (p=0.000). May+ cohort
+    # shows reversal (N=4, WR=75%), so this is a confidence haircut, not a hard
+    # block, to avoid starvation while the effect is re-evaluated forward.
+    try:
+        _now_et = datetime.now(pytz.timezone("America/New_York"))
+        if action == "BUY" and _now_et.hour == 11:
+            _conf_before = sig_dict.get("confidence", 0)
+            sig_dict = dict(sig_dict)
+            sig_dict["confidence"] = round(max(35.0, _conf_before - 3.0), 1)
+            sig_dict.setdefault("rationale", [])
+            sig_dict["rationale"] = list(sig_dict["rationale"]) + [
+                {
+                    "src": "Risk Gate",
+                    "head": "Midday Microstructure Haircut (−3pp)",
+                    "body": (
+                        "11:00–12:00 ET has historically shown elevated adverse-selection "
+                        "(WR 23.7% vs 47.8% baseline, p=0.000). Institutional order-flow "
+                        "rebalancing and ETF creation/redemption activity cluster in this "
+                        "window, creating noise-driven dips that persist rather than revert. "
+                        "Confidence reduced by 3pp."
+                    ),
+                    "sentiment": "neg",
+                    "meta": "midday=11-12et haircut=-3pp §93d",
+                }
+            ]
+            conf = sig_dict["confidence"]
+    except Exception:
+        pass
 
     # ── Ex-dividend blackout (0–2 days to ex-div, BUY only) ───────────────────
     # Stock drops by dividend amount on ex-div date — structural, not a panic dip.

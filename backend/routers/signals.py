@@ -2010,3 +2010,59 @@ async def execution_confirm(
         "entry": sig.entry,
         "message": f"Fill confirmed for {sig.ticker} signal at ${sig.entry:.4f}",
     }
+
+
+@router.get("/journal")
+async def signal_journal(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Signal Journal — "Proof Before Pay" for free-tier users.
+
+    Shows signals that were visible to the user 7+ days ago, with their
+    resolved outcomes. This lets free users verify signal quality before
+    upgrading, without giving them real-time access.
+
+    2026-06-18: endpoint created to close the "no proof before pay" gap.
+    """
+    from services.signal_quota_svc import get_tier_for_quota
+
+    tier = get_tier_for_quota(user)
+    if tier not in ("free", "basic"):
+        # Pro/Elite users get full real-time signals; this endpoint is
+        # primarily for free users evaluating quality.
+        pass
+
+    # Free users see signals created >= 7 days ago, with outcomes resolved
+    cutoff = _utcnow_naive() - timedelta(days=7)
+    rows = (
+        (
+            await db.execute(
+                select(Signal)
+                .where(Signal.is_active == True)
+                .where(Signal.created_at <= cutoff)
+                .where(Signal.outcome_pct.isnot(None))  # resolved only
+                .order_by(desc(Signal.created_at))
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    result = []
+    for r in rows:
+        d = _to_dict(r)
+        # Add a simple quality score for the journal
+        d["quality_score"] = round((r.outcome_pct or 0) * (r.confidence or 40) / 100, 2)
+        result.append(d)
+
+    return {
+        "journal": result,
+        "count": len(result),
+        "avg_outcome": round(sum(r.outcome_pct for r in rows if r.outcome_pct is not None) / len(rows), 2)
+        if rows
+        else None,
+        "win_rate": round(sum(1 for r in rows if (r.outcome_pct or 0) > 0) / len(rows) * 100, 1) if rows else None,
+        "note": "Only signals ≥ 7 days old with resolved outcomes shown. Upgrade for real-time signals.",
+    }

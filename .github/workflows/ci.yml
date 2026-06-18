@@ -216,7 +216,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # optional: only needed for org scans
-        continue-on-error: true  # warn but don't block until baseline is clean
+        # 2026-06-18: removed continue-on-error: true — secrets must block the build
+        # until gitleaks baseline is clean.
 
   deploy:
     runs-on: ubuntu-latest
@@ -235,7 +236,7 @@ jobs:
           railway up --service signal-trade --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        continue-on-error: true  # don't fail CI if deploy token not set
+        # 2026-06-18: removed continue-on-error — a failed deploy should be visible
 
       - name: Deploy to Fly.io (fallback)
         if: ${{ env.FLY_API_TOKEN != '' && env.RAILWAY_TOKEN == '' }}
@@ -248,4 +249,4 @@ jobs:
         run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        continue-on-error: true
+        # 2026-06-18: removed continue-on-error — a failed deploy should be visible

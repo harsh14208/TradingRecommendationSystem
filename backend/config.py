@@ -200,32 +200,36 @@ TIERS = ["free", "basic", "pro"]
 
 TIER_PRICES_CENTS = {
     "free": 0,
-    "basic": 2900,
-    "pro": 7900,
+    "basic": 1900,
+    "pro": 4900,
+    "elite": 9900,
 }
 
 TIER_LABELS = {
     "free": "Free",
-    "basic": "Basic · $29/mo",
-    "pro": "Pro · $79/mo",
+    "basic": "Basic · $19/mo",
+    "pro": "Pro · $49/mo",
+    "elite": "Elite · $99/mo",
 }
 
 TIER_PLAN_FEATURES = {
     "free": [
-        "View signals in dashboard",
+        "3 signals/day",
+        "7-day delayed history",
+        "Public track record only",
         "Market context panel",
-        "Signal history (read-only)",
     ],
     "basic": [
         "Everything in Free",
-        "Telegram signal delivery",
-        "Backtest & win-rate stats",
-        "Custom watchlist",
-        "Full signal history",
+        "Real-time signal delivery",
+        "Telegram alerts",
+        "Paper trading (Alpaca)",
+        "Custom watchlist (50 tickers)",
+        "Email alerts",
     ],
     "pro": [
         "Everything in Basic",
-        "Paper trading (Alpaca)",
+        "Backtest & win-rate analytics",
         "Signal correlation matrix",
         "Predictive confidence intervals",
         "Sector heatmap",
@@ -233,12 +237,45 @@ TIER_PLAN_FEATURES = {
         "Price alerts",
         "Weekly digest",
     ],
+    "elite": [
+        "Everything in Pro",
+        "Auto-execution (when WR > 55%)",
+        "Broker integration (Alpaca/IBKR)",
+        "Portfolio analytics",
+        "Weekly 1-on-1 summary",
+    ],
 }
 
 TIER_FEATURES = {
     "free": {"signals_view", "market_context"},
-    "basic": {"signals_view", "market_context", "telegram", "backtest", "watchlist", "history", "chart"},
+    "basic": {
+        "signals_view",
+        "market_context",
+        "telegram",
+        "backtest",
+        "watchlist",
+        "history",
+        "chart",
+        "paper_trading",  # 2026-06-18: moved from Pro to Basic as "proof before pay"
+        "email_alerts",
+    },
     "pro": {
+        "signals_view",
+        "market_context",
+        "telegram",
+        "backtest",
+        "watchlist",
+        "history",
+        "chart",
+        "paper_trading",
+        "correlation",
+        "predictive",
+        "price_alerts",
+        "sector_heatmap",
+        "backtest_simulate",
+        "weekly_digest",
+    },
+    "elite": {
         "signals_view",
         "market_context",
         "telegram",
@@ -274,9 +311,10 @@ def tier_gte(tier: str, min_tier: str) -> bool:
 # in a UTC day.  None = unlimited.  Owners always bypass.
 
 SIGNAL_QUOTAS: dict[str, int | None] = {
-    "free": 5,
+    "free": 3,
     "basic": 100,
     "pro": None,
+    "elite": None,
 }
 
 
