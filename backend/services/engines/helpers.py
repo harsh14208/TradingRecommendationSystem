@@ -116,16 +116,12 @@ def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
     # This prevents the alpha score from starting outside the calibration's output range.
     confidence = round(min(78.0, raw), 1)
     # Thresholds are asymmetric: the system has a structural bullish bias (~+13 pts).
-    # BUY bar 35 / SELL bar -30 corrects for this.
-    # §relax-sweep (2026-06-18): the backtest BUY_THRESH 50→45 relaxation grew N +60%
-    # OOS-CLEAN at FLAT Sharpe (0.18) — the entry-score band just below the cutoff carries
-    # real, OOS-generalising alpha. The live score scale differs (50+ families inflate it),
-    # so this is a conservative proportional mirror: BUY bar 35→32 (~10%, matching 50→45).
-    # NOTE: this admits score 32-35 BUYs (conf ~48%, still above the 46% swing floor) and
-    # partially relaxes the bullish-bias correction; it does NOT fix live signal-starvation
-    # (that bottleneck is the upstream MR-setup hasMr gate, not the score bar). Easily
-    # reverted to 35 if live WR in the 32-35 band underperforms.
-    if score >= 32:
+    # Raising BUY bar to 35 and SELL bar to -30 corrects for this.
+    # §relax-sweep (2026-06-18→19): briefly lowered to 32 to mirror the backtest
+    # BUY_THRESH 50→45 win, but live verification (2026-06-19) showed it INERT — the
+    # binding live BUY floor is the assembler's regime-gate stack (breadth ≥70%→score<42
+    # HOLD, buy-saturation, active-families<3), not this bar. Reverted to 35.
+    if score >= 35:
         return "BUY", confidence
     if score <= -30:
         return "SELL", confidence
