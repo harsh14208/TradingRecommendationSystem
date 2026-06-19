@@ -51,6 +51,7 @@ import socket
 
 socket.setdefaulttimeout(10)
 
+import asyncio
 import warnings
 from datetime import datetime
 from multiprocessing import Pool
@@ -5137,19 +5138,32 @@ def main():
             print(f"failed ({e})")
 
     # ── §111: ORATS historical options panel ──────────────────────────────────
+    # The purchased FTP download expires after ~30 days, so PostgreSQL is the
+    # authoritative long-term store.  Parquet is used only as a build-time cache.
     _orats_flag = "--orats" in sys.argv
     if _orats_flag:
         print("Loading ORATS options panel…", end=" ", flush=True)
         try:
-            from services.orats_data import load_orats_panel
+            from database import _IS_POSTGRES
+            from services.orats_data import load_orats_panel, load_orats_panel_from_db
 
             _orats_path = Path(__file__).resolve().parent.parent / "data" / "cache_orats" / "orats_panel.parquet"
-            _alt_data_panels["orats"] = load_orats_panel(_orats_path)
-            print(
-                f"ok ({len(_alt_data_panels['orats'])} rows, {_alt_data_panels['orats']['ticker'].nunique()} tickers)"
-                if _alt_data_panels["orats"] is not None
-                else "not found"
-            )
+            # Prefer Postgres (persistent) over parquet (temporary build artifact).
+            _orats_source = "postgres" if _IS_POSTGRES else "sqlite"
+            try:
+                _alt_data_panels["orats"] = asyncio.run(load_orats_panel_from_db())
+            except Exception as _db_err:
+                _db_msg = str(_db_err).split("\n")[0][:120]
+                print(f"\n  [db fallback: {_db_msg}…]", end=" ", flush=True)
+                _alt_data_panels["orats"] = load_orats_panel(_orats_path)
+                _orats_source = "parquet"
+            if _alt_data_panels["orats"] is not None:
+                print(
+                    f"ok ({_orats_source}: {len(_alt_data_panels['orats'])} rows, "
+                    f"{_alt_data_panels['orats']['ticker'].nunique()} tickers)"
+                )
+            else:
+                print("not found")
         except Exception as e:
             print(f"failed ({e})")
 

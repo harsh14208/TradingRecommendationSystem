@@ -12,6 +12,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from datetime import date
@@ -21,7 +22,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from services.orats_data import build_orats_panel  # noqa: E402
+from services.orats_data import build_orats_panel, save_orats_panel_to_db  # noqa: E402
 
 log = logging.getLogger("signal.build_orats_panel")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -37,6 +38,7 @@ def main() -> None:
     parser.add_argument("--output", default="data/cache_orats/orats_panel.parquet", help="Output parquet path")
     parser.add_argument("--start", type=_parse_date, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=_parse_date, help="End date (YYYY-MM-DD)")
+    parser.add_argument("--save-to-db", action="store_true", help="Persist panel to PostgreSQL")
     args = parser.parse_args()
 
     panel = build_orats_panel(
@@ -46,6 +48,10 @@ def main() -> None:
         end_date=args.end,
     )
     print(f"Built panel: {len(panel):,} rows, {panel['ticker'].nunique():,} tickers, {panel['date'].nunique():,} dates")
+
+    if args.save_to_db:
+        inserted = asyncio.run(save_orats_panel_to_db(panel))
+        print(f"Persisted {inserted:,} rows to orats_daily_features")
 
 
 if __name__ == "__main__":

@@ -732,6 +732,39 @@ class OptionsChainDaily(Base):
     fetched_at = Column(DateTime, server_default=func.now())
 
 
+class OratsDailyFeatures(Base):
+    """§111 — ORATS historical near-EOD options features per ticker per day.
+
+    Persisted because the purchased ORATS FTP download expires after ~30 days.
+    This table becomes the long-term source for backtests and research; the
+    raw CSVs and parquet cache are only build-time artifacts.
+    """
+
+    __tablename__ = "orats_daily_features"
+    __table_args__ = (
+        UniqueConstraint("ticker", "date", name="uq_orats_daily_features_ticker_date"),
+        Index("ix_orats_daily_features_ticker_date", "ticker", "date"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(12), nullable=False)
+    date = Column(Date, nullable=False)
+    stk_px = Column(Float, nullable=True)
+    atm_iv_30d = Column(Float, nullable=True)
+    iv_25d_call = Column(Float, nullable=True)
+    iv_25d_put = Column(Float, nullable=True)
+    pc_iv_skew = Column(Float, nullable=True)
+    gex = Column(Float, nullable=True)
+    dex = Column(Float, nullable=True)
+    pc_volume_ratio = Column(Float, nullable=True)
+    pc_oi_ratio = Column(Float, nullable=True)
+    total_opt_volume = Column(Float, nullable=True)
+    total_opt_oi = Column(Float, nullable=True)
+    zero_dte_put_volume = Column(Float, nullable=True)
+    iv_rank_252 = Column(Float, nullable=True)
+    iv_pctile_252 = Column(Float, nullable=True)
+    fetched_at = Column(DateTime, server_default=func.now())
+
+
 class CorporateActionValidation(Base):
     """Validation comparing corporate-action adjustments across providers (TSYS-5c)."""
 

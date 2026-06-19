@@ -257,3 +257,75 @@ def load_orats_panel(path: Path | str | None = None) -> pd.DataFrame | None:
     if not path.exists():
         return None
     return pd.read_parquet(path)
+
+
+# ── PostgreSQL persistence (ORATS FTP download expires ~30 days after purchase) ──
+
+_DB_COLUMNS = [
+    "ticker",
+    "date",
+    "stk_px",
+    "atm_iv_30d",
+    "iv_25d_call",
+    "iv_25d_put",
+    "pc_iv_skew",
+    "gex",
+    "dex",
+    "pc_volume_ratio",
+    "pc_oi_ratio",
+    "total_opt_volume",
+    "total_opt_oi",
+    "zero_dte_put_volume",
+    "iv_rank_252",
+    "iv_pctile_252",
+]
+
+
+async def save_orats_panel_to_db(panel: pd.DataFrame, batch_size: int = 5000) -> int:
+    """Persist an ORATS feature panel to PostgreSQL.
+
+    Uses ``on_conflict_do_nothing`` on (ticker, date) so re-running the builder
+    is idempotent.  Returns the number of rows inserted.
+    """
+    from database import _IS_POSTGRES, AsyncSessionLocal
+    from models import OratsDailyFeatures
+
+    if _IS_POSTGRES:
+        from sqlalchemy.dialects.postgresql import insert as _insert
+    else:
+        from sqlalchemy import insert as _insert
+
+    df = panel[_DB_COLUMNS].copy()
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    records = df.replace({np.nan: None}).to_dict("records")
+
+    inserted = 0
+    async with AsyncSessionLocal() as db:
+        for i in range(0, len(records), batch_size):
+            batch = records[i : i + batch_size]
+            stmt = _insert(OratsDailyFeatures).values(batch)
+            if _IS_POSTGRES:
+                stmt = stmt.on_conflict_do_nothing(index_elements=["ticker", "date"])
+            result = await db.execute(stmt)
+            inserted += int(result.rowcount) if result.rowcount is not None else len(batch)
+        await db.commit()
+    log.info("Persisted %d ORATS rows to orats_daily_features", inserted)
+    return inserted
+
+
+async def load_orats_panel_from_db() -> pd.DataFrame | None:
+    """Load the ORATS feature panel from PostgreSQL, or None if empty."""
+    from sqlalchemy import select
+
+    from database import AsyncSessionLocal
+    from models import OratsDailyFeatures
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(OratsDailyFeatures))
+        rows = result.scalars().all()
+        if not rows:
+            return None
+        data = [{col: getattr(r, col) for col in _DB_COLUMNS + ["fetched_at"]} for r in rows]
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
+    return df
