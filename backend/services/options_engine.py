@@ -47,6 +47,19 @@ from scripts.orats_opportunity_model import get_vol_view  # noqa: E402
 
 log = logging.getLogger("signal.options_engine")
 
+# Avoid a hard dependency if the chain resolver is not imported in this process.
+try:
+    from services.options_chain_resolver import (  # noqa: F401
+        OptionContract,
+        select_contract,
+        target_delta_for_leg,
+    )
+except Exception:  # pragma: no cover - defensive for isolated workers
+    OptionContract = None  # type: ignore[misc,assignment]
+    select_contract = None  # type: ignore[misc,assignment]
+    target_delta_for_leg = None  # type: ignore[misc,assignment]
+
+
 # Default risk settings mirror the plan's signal-only defaults.
 DEFAULT_CAPITAL = 50_000.0
 DEFAULT_RISK_PER_TRADE = 0.01
@@ -122,61 +135,94 @@ def _nearest_monthly_expiry(as_of: date, min_days: int = 14) -> date:
             d = date(d.year, d.month + 1, 1)
 
 
-def _build_option_legs(row: pd.Series, expiry: date) -> list[dict[str, Any]]:
-    """Construct a tentative option-leg plan from a recommendation row.
+def _build_option_legs(
+    row: pd.Series,
+    expiry: date,
+    chain: list[OptionContract] | None = None,
+) -> list[dict[str, Any]]:
+    """Construct an option-leg plan from a recommendation row.
 
-    Strike selection is intentionally simple: it uses the implied-move width as a
-    proxy for the ~30-delta strangle / ~30-delta cash-secured put.  For paper/live
-    trading the broker client will re-derive the exact contract from real quotes.
+    When ``chain`` is supplied, the function selects the exact expiry/strike from
+    real Polygon snapshot contracts and applies liquidity/spread filters.  Without
+    a chain it falls back to the original nearest-monthly placeholder strikes.
     """
     action = row["action"]
     px = float(row["stk_px"])
     impl = float(row["impl_move"])
     qty = max(1, int(round(row["units"])))
+    ticker = row["ticker"]
 
-    def _occ(side: str, strike: float) -> dict[str, Any]:
-        # OCC symbol format: O:<ROOT><YYMMDD><C/P><STRIKE*1000>
-        sym = f"O:{row['ticker']}{expiry.strftime('%y%m%d')}{side}{int(round(float(strike) * 1000)):08d}"
+    def _placeholder_leg(option_type: str, strike: float, position: str) -> dict[str, Any]:
+        side_letter = "C" if option_type == "call" else "P"
+        sym = f"O:{ticker}{expiry.strftime('%y%m%d')}{side_letter}{int(round(float(strike) * 1000)):08d}"
         return {
-            "side": "put" if side == "P" else "call",
+            "option_type": option_type,
+            "side": "buy" if position == "long" else "sell",
+            "position": position,
             "option_symbol": sym,
             "quantity": int(qty),
             "strike": round(float(strike), 2),
             "expiry": expiry.isoformat(),
             "premium": round(float(row["exp_gain"]) / int(qty), 4) if qty else 0.0,
+            "midpoint": None,
+            "bid": None,
+            "ask": None,
+            "resolved": False,
         }
+
+    def _resolve_leg(option_type: str, strike: float, position: str) -> dict[str, Any] | None:
+        if not chain or select_contract is None:
+            return None
+        target_delta = target_delta_for_leg(action, option_type, position)
+        contract = select_contract(
+            chain,
+            ctype=option_type,
+            target_expiry=expiry,
+            target_strike=strike,
+            target_delta=target_delta,
+        )
+        if contract is None:
+            return None
+        return {
+            "option_type": option_type,
+            "side": "buy" if position == "long" else "sell",
+            "position": position,
+            "option_symbol": contract.option_symbol,
+            "quantity": int(qty),
+            "strike": contract.strike,
+            "expiry": contract.expiry.isoformat(),
+            "premium": round(contract.midpoint, 4),
+            "midpoint": round(contract.midpoint, 4),
+            "bid": round(contract.bid, 4),
+            "ask": round(contract.ask, 4),
+            "resolved": True,
+        }
+
+    def _leg(option_type: str, strike: float, position: str) -> dict[str, Any]:
+        return _resolve_leg(option_type, strike, position) or _placeholder_leg(option_type, strike, position)
 
     if action == "SELL_CASH_SEC_PUT":
         strike = px * (1.0 - impl * 0.5)
-        leg = _occ("P", strike)
-        leg["position"] = "short"
-        return [leg]
+        return [_leg("put", strike, "short")]
 
     if action in ("SELL_STRANGLE", "SELL_DEFINED_RISK"):
         call_strike = px * (1.0 + impl)
         put_strike = px * (1.0 - impl)
-        call_leg = _occ("C", call_strike)
-        call_leg["position"] = "short"
-        put_leg = _occ("P", put_strike)
-        put_leg["position"] = "short"
+        legs = [_leg("call", call_strike, "short"), _leg("put", put_strike, "short")]
         if action == "SELL_DEFINED_RISK":
-            # Tentative protective wings ~5% further OTM for the index defined-risk case.
             long_call_strike = call_strike * 1.05
             long_put_strike = put_strike * 0.95
-            lc = _occ("C", long_call_strike)
-            lc["position"] = "long"
-            lp = _occ("P", long_put_strike)
-            lp["position"] = "long"
-            return [call_leg, put_leg, lc, lp]
-        return [call_leg, put_leg]
+            legs.extend(
+                [
+                    _leg("call", long_call_strike, "long"),
+                    _leg("put", long_put_strike, "long"),
+                ]
+            )
+        return legs
 
     if action == "LONG_STRADDLE":
         strike = px
-        c = _occ("C", strike)
-        c["position"] = "long"
-        p = _occ("P", strike)
-        p["position"] = "long"
-        return [c, p]
+        return [_leg("call", strike, "long"), _leg("put", strike, "long")]
 
     return []
 
@@ -419,7 +465,8 @@ def book_to_signal_dicts(book: pd.DataFrame, summary: dict) -> list[dict[str, An
             "rsVsSector": None,
             # Option-specific payload (mirrors the Signal model columns).
             "option_strategy": r["action"],
-            "option_legs": list(r.get("option_legs", [])),
+            "option_legs": (_legs := list(r.get("option_legs", []))),
+            "option_liquidity_ok": all(leg.get("resolved") for leg in _legs) if _legs else False,
             "option_underlying_action": r.get("dir_action"),
             "option_richness": float(r["richness"]) if pd.notna(r.get("richness")) else None,
             "option_impl_move": float(r["impl_move"]) if pd.notna(r.get("impl_move")) else None,

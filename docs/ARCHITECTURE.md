@@ -61,6 +61,37 @@ Key components:
 | Analytics sink | `routers/analytics_router.py` | First-party CTA/feature-gate events → `logs/analytics.jsonl` |
 | Kill switch | `routers/admin.py` | Global pause/resume of all signal delivery and broker execution |
 
+## Options Execution Flow
+
+Option VRP signals follow the same scanner/delivery path, but use a dedicated
+execution branch in `services/broker_svc.py`:
+
+```text
+Scanner (daily options VRP loop)
+  └── options_engine_worker scores universe
+        └── options_scanner resolves real expiry/strike from Polygon snapshot
+              └── Signal persisted with option_legs
+                    └── _execute_option_signal_for_user()
+                          ├── Options risk acknowledgement check
+                          ├── Live mode: generic risk ack + Alpaca options approval >= 3
+                          ├── Fetch real option chain from Polygon
+                          ├── Liquidity/spread filter on every leg
+                          ├── Paper mode → simulate_fill() (natural-side spread)
+                          └── Live mode → AlpacaOptionsBroker.place_option_order()
+```
+
+Key components:
+
+| Component | File | Responsibility |
+|-----------|------|----------------|
+| Chain resolver | `services/options_chain_resolver.py` | Polygon snapshot parsing, liquidity filter, exact expiry/strike selection |
+| VRP engine | `services/options_engine.py` | Score universe, build tentative legs, fallback placeholder |
+| Scanner hook | `services/options_scanner.py` | Subprocess scoring + real chain resolution |
+| Paper simulator | `services/options_paper.py` | Natural-side fills, mark-to-market P&L against Polygon |
+| Live broker | `services/brokers/alpaca_options.py` | Alpaca single/multi-leg option orders |
+| Opt-in/ack | `routers/me.py` `/api/me/options/*` | Mode settings + options-specific risk acknowledgement |
+| Order book | `models.py` → `BrokerOrder` | `option_legs`, `realized_pnl`, `unrealized_pnl` |
+
 ## Layer Boundaries
 
 - **Routers** (`backend/routers/`) validate HTTP shape, call services, and

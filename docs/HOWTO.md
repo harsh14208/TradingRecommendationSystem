@@ -1372,3 +1372,28 @@ pip-audit -r requirements.txt
 ```
 
 Known false positives are excluded with `--ignore-vuln PYSEC-2022-42969`. All other CVEs should be investigated and dependencies updated.
+
+## Enabling Options Paper/Live Execution
+
+Options VRP signals are **signal-only by default** (`options_mode='signal'`).  To enable execution:
+
+1. Acknowledge the options-specific risk disclosure:
+   ```bash
+   curl -H "Authorization: Bearer $JWT" \
+        -X POST https://signal.trade/api/me/options/risk-acknowledge
+   ```
+
+2. Switch to paper mode to simulate fills:
+   ```bash
+   curl -H "Authorization: Bearer $JWT" \
+        -H "Content-Type: application/json" \
+        -X PUT https://signal.trade/api/me/options/settings \
+        -d '{"options_mode":"paper"}'
+   ```
+
+3. For live mode you must also:
+   - Complete the generic trading-risk acknowledgement (`POST /api/me/risk-acknowledge`).
+   - Connect an Alpaca account with options approval level ≥ 3.
+   - Then `PUT /api/me/options/settings {"options_mode":"live"}`.
+
+Paper fills are priced at the natural side of the spread (buy at ask, sell at bid) and marked to market nightly against Polygon option snapshots.  All option orders are filtered for liquidity (volume, open interest, bid/ask spread) before submission.

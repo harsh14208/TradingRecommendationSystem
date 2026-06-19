@@ -179,6 +179,11 @@ Required disclaimers are present on every surface: README/public site, email foo
 auto-execution is gated by an explicit, immutably-recorded risk acknowledgement
 (`POST /api/me/risk-acknowledge`, TSYS-13b/13c).
 
+Options paper/live execution has a separate, additional acknowledgement
+(`POST /api/me/options/risk-acknowledge`).  Live options mode is also blocked unless the
+linked Alpaca account reports `option_approved_level >= 3`, and every option order is
+liquidity-filtered against real Polygon bid/ask snapshots before submission.
+
 **Standing rules:**
 1. Re-run the grep audit before each marketing push; extend the pattern list as copy expands.
 2. The risk-ack UI must render the suitability/risk disclosure *before* the user acknowledges

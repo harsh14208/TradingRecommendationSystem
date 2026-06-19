@@ -25,7 +25,13 @@ from sqlalchemy import update
 
 from database import AsyncSessionLocal
 from models import Signal
-from services.options_engine import book_to_signal_dicts
+from services.options_chain_resolver import fetch_option_chain
+from services.options_engine import (
+    _OPTION_ACTIONS,
+    _build_option_legs,
+    _nearest_monthly_expiry,
+    book_to_signal_dicts,
+)
 
 log = logging.getLogger("signal.options_scanner")
 
@@ -102,6 +108,39 @@ async def _score_one_universe(universe: str, direction_df: pd.DataFrame) -> tupl
         summary = json.loads(summary_path.read_text())
         book = pd.read_parquet(book_path)
         return summary, book
+
+
+async def _resolve_book_legs(book: pd.DataFrame, summary: dict) -> pd.DataFrame:
+    """Rebuild option legs using real Polygon chain snapshots when available."""
+    if book.empty:
+        return book
+
+    as_of = date.fromisoformat(summary.get("as_of", datetime.utcnow().date().isoformat()))
+    expiry = _nearest_monthly_expiry(as_of, min_days=max(2 + 5, 14))
+
+    action_mask = book["action"].isin(_OPTION_ACTIONS)
+    tickers = book.loc[action_mask, "ticker"].unique().tolist()
+
+    chain_map: dict[str, list] = {}
+
+    async def _fetch(ticker: str) -> None:
+        try:
+            chain_map[ticker] = await fetch_option_chain(ticker)
+        except Exception:
+            log.exception("Failed to fetch option chain for %s", ticker)
+            chain_map[ticker] = []
+
+    await asyncio.gather(*(_fetch(t) for t in tickers))
+
+    def _rebuild(row: pd.Series) -> list[dict[str, Any]]:
+        if row["action"] not in _OPTION_ACTIONS:
+            return row.get("option_legs", [])
+        chain = chain_map.get(row["ticker"]) or []
+        return _build_option_legs(row, expiry, chain=chain)
+
+    book = book.copy()
+    book["option_legs"] = book.apply(_rebuild, axis=1)
+    return book
 
 
 async def _persist_option_signals(
@@ -211,6 +250,7 @@ async def run_options_scan(
     for universe in _OPTIONS_UNIVERSES:
         try:
             summary, book = await _score_one_universe(universe, direction_df)
+            book = await _resolve_book_legs(book, summary)
             sigs = book_to_signal_dicts(book, summary)
             log.info("Options universe %s: %d book signals", universe, len(sigs))
             all_option_signals.extend(sigs)

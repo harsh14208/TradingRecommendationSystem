@@ -214,6 +214,9 @@ class User(Base):
     options_max_book_risk = Column(Float, nullable=True)  # fraction of capital
     options_max_positions = Column(Integer, nullable=True)
     options_max_iv_sell = Column(Float, nullable=True)  # e.g. 0.80
+    # Options-specific risk acknowledgement (TSYS-14b)
+    options_risk_acknowledged = Column(Boolean, default=False, nullable=False, server_default="0")
+    options_risk_acknowledged_at = Column(DateTime, nullable=True)
 
 
 class UserSignalQuota(Base):
@@ -375,6 +378,11 @@ class BrokerOrder(Base):
     stop_child_order_id = Column(String(50), nullable=True)
     target_child_order_id = Column(String(50), nullable=True)
     final_execution_status = Column(String(20), nullable=True)
+
+    # TSYS-14: option-specific order book columns
+    option_legs = Column(JSON, nullable=True)  # snapshot of leg fills at entry
+    realized_pnl = Column(Float, nullable=True)
+    unrealized_pnl = Column(Float, nullable=True)
 
 
 class PerformanceSnapshot(Base):

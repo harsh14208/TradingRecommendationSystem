@@ -45,8 +45,9 @@ def test_build_option_legs_long_straddle() -> None:
     expiry = _nearest_monthly_expiry(pd.Timestamp("2026-06-18").date())
     legs = _build_option_legs(row, expiry)
     assert len(legs) == 2
-    assert legs[0]["side"] == "call"
-    assert legs[1]["side"] == "put"
+    assert legs[0]["option_type"] == "call"
+    assert legs[1]["option_type"] == "put"
+    assert legs[0]["side"] == "buy"
     assert legs[0]["quantity"] == 2
     assert legs[0]["strike"] == 170.0
     assert legs[0]["position"] == "long"
@@ -66,7 +67,8 @@ def test_build_option_legs_cash_secured_put() -> None:
     expiry = _nearest_monthly_expiry(pd.Timestamp("2026-06-18").date())
     legs = _build_option_legs(row, expiry)
     assert len(legs) == 1
-    assert legs[0]["side"] == "put"
+    assert legs[0]["option_type"] == "put"
+    assert legs[0]["side"] == "sell"
     assert legs[0]["position"] == "short"
     assert legs[0]["strike"] < 170.0
 
@@ -75,7 +77,8 @@ def test_book_to_signal_dicts() -> None:
     expiry = _nearest_monthly_expiry(pd.Timestamp("2026-06-18").date())
     legs = [
         {
-            "side": "call",
+            "option_type": "call",
+            "side": "buy",
             "option_symbol": "O:AAPL260717C00170000",
             "quantity": 1,
             "strike": 170.0,

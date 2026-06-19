@@ -214,3 +214,130 @@ async def acknowledge_risk(
     await record_action(db, ACTION_RISK_ACK, user_id=user.id)
     await db.commit()
     return {"acknowledged": True, "acknowledged_at": merged.risk_acknowledged_at.isoformat()}
+
+
+class OptionsSettingsUpdate(BaseModel):
+    options_mode: Optional[str] = None
+    options_capital: Optional[float] = None
+    options_risk_per_trade: Optional[float] = None
+    options_max_book_risk: Optional[float] = None
+    options_max_positions: Optional[int] = None
+    options_max_iv_sell: Optional[float] = None
+
+
+@router.get("/options/settings")
+async def get_options_settings(
+    user: User = Depends(get_current_user),
+):
+    """Return the current user's options execution settings and acknowledgement state."""
+    return {
+        "options_mode": user.options_mode,
+        "options_capital": user.options_capital,
+        "options_risk_per_trade": user.options_risk_per_trade,
+        "options_max_book_risk": user.options_max_book_risk,
+        "options_max_positions": user.options_max_positions,
+        "options_max_iv_sell": user.options_max_iv_sell,
+        "options_risk_acknowledged": bool(user.options_risk_acknowledged),
+        "options_risk_acknowledged_at": (
+            user.options_risk_acknowledged_at.isoformat() if user.options_risk_acknowledged_at else None
+        ),
+    }
+
+
+@router.put("/options/settings")
+async def update_options_settings(
+    update: OptionsSettingsUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update options execution settings.
+
+    ``paper`` and ``live`` modes require the options-specific risk acknowledgement.
+    ``live`` additionally requires the generic trading-risk acknowledgement and an
+    Alpaca account with options approval level >= 3.
+    """
+    from fastapi import HTTPException
+
+    from services.audit_svc import ACTION_OPTIONS_SETTINGS, record_action
+    from services.broker_svc import decrypt_credential
+
+    merged = await db.merge(user)
+
+    if update.options_mode is not None:
+        new_mode = update.options_mode
+        if new_mode not in {"none", "signal", "paper", "live"}:
+            raise HTTPException(status_code=400, detail=f"Invalid options_mode: {new_mode}")
+
+        if new_mode in ("paper", "live") and not merged.options_risk_acknowledged:
+            raise HTTPException(
+                status_code=403,
+                detail="Options risk acknowledgement is required before enabling paper or live mode.",
+            )
+
+        if new_mode == "live":
+            if not merged.risk_acknowledged:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Trading risk acknowledgement is required before live options execution.",
+                )
+            if merged.auto_execute_broker != "alpaca" or not merged.alpaca_key_enc:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Live options requires Alpaca broker credentials. Connect Alpaca first.",
+                )
+            # Verify Alpaca options approval level.
+            try:
+                from services import alpaca_rest
+
+                key = decrypt_credential(merged.alpaca_key_enc) or ""
+                secret = decrypt_credential(merged.alpaca_secret_enc) if merged.alpaca_secret_enc else ""
+                live = merged.alpaca_account_type == "live"
+                account = await alpaca_rest.get_account(key, secret, live=live)
+                approved = account.get("option_approved_level") or account.get("option_trading_level") or 0
+                if int(approved) < 3:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Alpaca account options approval level {approved} is insufficient for live trading.",
+                    )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Could not verify Alpaca account options approval: {exc}",
+                )
+
+        merged.options_mode = new_mode
+
+    if update.options_capital is not None:
+        merged.options_capital = max(0.0, update.options_capital)
+    if update.options_risk_per_trade is not None:
+        merged.options_risk_per_trade = max(0.0, min(1.0, update.options_risk_per_trade))
+    if update.options_max_book_risk is not None:
+        merged.options_max_book_risk = max(0.0, min(1.0, update.options_max_book_risk))
+    if update.options_max_positions is not None:
+        merged.options_max_positions = max(1, update.options_max_positions)
+    if update.options_max_iv_sell is not None:
+        merged.options_max_iv_sell = max(0.0, min(2.0, update.options_max_iv_sell))
+
+    await record_action(db, ACTION_OPTIONS_SETTINGS, user_id=user.id, details=update.model_dump(exclude_unset=True))
+    await db.commit()
+    return await get_options_settings(merged)
+
+
+@router.post("/options/risk-acknowledge")
+async def acknowledge_options_risk(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record the user's acknowledgement of the options-specific risk disclosure."""
+    from datetime import datetime, timezone
+
+    from services.audit_svc import ACTION_OPTIONS_RISK_ACK, record_action
+
+    merged = await db.merge(user)
+    merged.options_risk_acknowledged = True
+    merged.options_risk_acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await record_action(db, ACTION_OPTIONS_RISK_ACK, user_id=user.id)
+    await db.commit()
+    return {"acknowledged": True, "acknowledged_at": merged.options_risk_acknowledged_at.isoformat()}

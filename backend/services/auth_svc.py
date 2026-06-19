@@ -162,5 +162,7 @@ def user_to_dict(u: User) -> dict:
         "auto_execute_min_conf": getattr(u, "auto_execute_min_conf", None),
         "auto_execute_broker": getattr(u, "auto_execute_broker", None),
         "auto_execute_qty_dollars": getattr(u, "auto_execute_qty_dollars", None),
+        "options_mode": getattr(u, "options_mode", "signal"),
+        "options_risk_acknowledged": bool(getattr(u, "options_risk_acknowledged", False)),
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }

@@ -16,6 +16,8 @@ from typing import Optional
 from cryptography.fernet import Fernet, MultiFernet
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.brokers.options_broker import OptionLeg, OptionOrder
+
 log = logging.getLogger("broker_svc")
 
 # TSYS-9d: credential encryption key versioning. The primary (current) version is
@@ -334,6 +336,192 @@ async def check_runtime_risk_limits(user, ticker: str, notional: float, db: Asyn
     return None
 
 
+def _normalize_broker_status(status: str | None) -> str:
+    """Map broker status strings to the constrained ``broker_orders.status`` values."""
+    if not status:
+        return "submitted"
+    s = status.lower()
+    if s in ("filled", "partially_filled"):
+        return "filled"
+    if s in ("canceled", "cancelled", "expired", "done_for_day"):
+        return "canceled"
+    if s in ("rejected",) or "reject" in s:
+        return "rejected"
+    # accepted, pending_new, new, etc. all map to submitted while we wait for fills.
+    return "submitted"
+
+
+def _option_order_from_signal(sig: dict) -> OptionOrder:
+    """Convert a signal's option_legs JSON into an OptionOrder dataclass."""
+    raw_legs = sig.get("option_legs", [])
+    legs: list[OptionLeg] = []
+    for leg in raw_legs:
+        option_symbol = leg.get("option_symbol", "")
+        position = leg.get("position", "long")
+        # New format: side is buy/sell; old format: side was call/put.
+        side_raw = leg.get("side", "")
+        if side_raw in ("buy", "sell"):
+            side = side_raw
+        else:
+            side = "buy" if position == "long" else "sell"
+        legs.append(
+            OptionLeg(
+                side=side,
+                position=position,
+                option_symbol=option_symbol,
+                quantity=int(leg.get("quantity", 1)),
+                strike=float(leg.get("strike", 0.0)),
+                expiry=str(leg.get("expiry", "")),
+            )
+        )
+    return OptionOrder(
+        underlying=sig.get("ticker", "").upper(),
+        strategy=sig.get("option_strategy", ""),
+        legs=legs,
+        max_loss=float(sig.get("option_max_loss") or 0.0),
+        expected_gain=float(sig.get("option_exp_gain") or 0.0),
+    )
+
+
+def _notional_for_option_order(order: OptionOrder, sig: dict) -> float:
+    """Estimate dollar notional for risk-limit checks from leg premiums if available."""
+    total = 0.0
+    for leg in order.legs:
+        premium = 0.0
+        for raw in sig.get("option_legs", []):
+            if raw.get("option_symbol") == leg.option_symbol:
+                premium = float(raw.get("premium") or raw.get("midpoint") or 0.0)
+                break
+        if premium <= 0:
+            # Fallback: use mid if no premium stored.
+            premium = 1.0
+        total += premium * leg.quantity * 100.0
+    return round(total, 2)
+
+
+async def _execute_option_signal_for_user(
+    user,
+    sig: dict,
+    signal_id: Optional[int],
+    db: AsyncSession,
+) -> None:
+    """Execute one option signal in paper or live mode."""
+    from models import BrokerOrder
+    from services.brokers.alpaca_options import AlpacaOptionsBroker
+    from services.options_chain_resolver import fetch_option_chain, resolve_option_order
+    from services.options_paper import simulate_fill
+
+    mode = user.options_mode
+    if mode not in ("paper", "live"):
+        return
+
+    if not user.options_risk_acknowledged:
+        log.info("broker_svc: user=%d — option execution blocked (options risk ack missing)", user.id)
+        return
+    if mode == "live" and not user.risk_acknowledged:
+        log.info("broker_svc: user=%d — live option execution blocked (trading risk ack missing)", user.id)
+        return
+
+    order = _option_order_from_signal(sig)
+    if not order.legs:
+        log.warning("broker_svc: user=%d — option signal has no legs", user.id)
+        return
+
+    # Resolve real chain and liquidity-check the legs.
+    chain = await fetch_option_chain(order.underlying)
+    if not chain:
+        log.info(
+            "broker_svc: user=%d — no option chain for %s, cannot execute option signal",
+            user.id,
+            order.underlying,
+        )
+        return
+
+    resolved_order = resolve_option_order(order, chain)
+    if resolved_order is None:
+        log.info(
+            "broker_svc: user=%d — option legs for %s failed liquidity filter",
+            user.id,
+            order.underlying,
+        )
+        return
+
+    notional = _notional_for_option_order(resolved_order, sig)
+    _risk_block = await check_runtime_risk_limits(user, order.underlying, notional, db)
+    if _risk_block:
+        log.info("broker_svc: user=%d — option order blocked by risk limit: %s", user.id, _risk_block)
+        return
+
+    from services.provider_telemetry import current_cycle_id
+
+    if mode == "paper":
+        try:
+            await simulate_fill(
+                resolved_order,
+                {**sig, "signal_id": signal_id, "user_id": user.id},
+                db,
+            )
+            log.info(
+                "broker_svc: user=%d — paper option fill recorded for %s %s",
+                user.id,
+                order.underlying,
+                order.strategy,
+            )
+        except Exception as exc:
+            log.warning("broker_svc: user=%d — paper option fill failed: %s", user.id, exc)
+        return
+
+    # Live mode: Alpaca only for now.
+    broker_type = user.auto_execute_broker or "alpaca"
+    if broker_type != "alpaca" or not user.alpaca_key_enc:
+        log.info("broker_svc: user=%d — live options require Alpaca credentials", user.id)
+        return
+    if not user.alpaca_secret_enc:
+        return
+
+    key = decrypt_credential(user.alpaca_key_enc)
+    secret = decrypt_credential(user.alpaca_secret_enc) if user.alpaca_secret_enc else ""
+    if not key or not secret:
+        log.warning("broker_svc: user=%d — credential decryption failed, skipping option order", user.id)
+        return
+
+    live = user.alpaca_account_type == "live"
+    broker = AlpacaOptionsBroker(api_key=key, api_secret=secret, paper=not live)
+    order_record = BrokerOrder(
+        signal_id=signal_id,
+        user_id=user.id,
+        broker=broker_type,
+        account_type=user.alpaca_account_type or "paper",
+        symbol=order.underlying,
+        notional=notional,
+        side="sell" if order.strategy.startswith("SELL") else "buy",
+        status="submitted",
+        cycle_id=current_cycle_id.get(),
+        arrival_price=float(sig.get("entry") or sig.get("price") or 0.0),
+        option_legs=[leg.__dict__ for leg in resolved_order.legs],
+    )
+    try:
+        result = await broker.place_option_order(resolved_order)
+        order_record.alpaca_order_id = result.get("alpaca_order_id")
+        order_record.status = result.get("status", "submitted")
+        if order_record.status == "error":
+            order_record.error_msg = result.get("reason", "")[:500]
+            order_record.reject_reason = result.get("reason", "")[:500]
+        log.info(
+            "broker_svc: user=%d — live option order %s %s -> %s",
+            user.id,
+            order.underlying,
+            order.strategy,
+            order_record.status,
+        )
+    except Exception as exc:
+        order_record.status = "error"
+        order_record.error_msg = str(exc)[:500]
+        log.warning("broker_svc: user=%d — live option order failed: %s", user.id, exc)
+
+    db.add(order_record)
+
+
 async def execute_signal_for_user(
     user,  # models.User
     sig: dict,
@@ -357,13 +545,7 @@ async def execute_signal_for_user(
     # TSYS-14: option signals are routed through a separate execution path.
     # Default options_mode='signal' means alert-only; paper/live require opt-in.
     if sig.get("option_strategy"):
-        if user.options_mode in ("paper", "live"):
-            log.info(
-                "broker_svc: user=%d — option strategy %s execution not yet wired (mode=%s)",
-                user.id,
-                sig["option_strategy"],
-                user.options_mode,
-            )
+        await _execute_option_signal_for_user(user, sig, signal_id, db)
         return
 
     broker_type = user.auto_execute_broker or "alpaca"
