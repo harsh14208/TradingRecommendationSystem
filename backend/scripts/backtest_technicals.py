@@ -5161,10 +5161,13 @@ def main():
                 _alt_data_panels["orats"] = load_orats_panel(_orats_path)
                 _orats_source = "parquet"
             if _alt_data_panels["orats"] is not None:
-                print(
-                    f"ok ({_orats_source}: {len(_alt_data_panels['orats'])} rows, "
-                    f"{_alt_data_panels['orats']['ticker'].nunique()} tickers)"
-                )
+                _orats_df = _alt_data_panels["orats"]
+                print(f"ok ({_orats_source}: {len(_orats_df)} rows, {_orats_df['ticker'].nunique()} tickers)")
+                # Convert to nested dict for fast point-in-time lookup in simulate_ticker().
+                _orats_dict: dict[str, dict] = {}
+                for _ot, _og in _orats_df.groupby("ticker"):
+                    _orats_dict[_ot] = {pd.to_datetime(_r["date"]).date(): _r for _r in _og.to_dict("records")}
+                _alt_data_panels["orats"] = _orats_dict
             else:
                 print("not found")
         except Exception as e:
