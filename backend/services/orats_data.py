@@ -201,6 +201,9 @@ def build_orats_panel(
     daily_frames: list[pd.DataFrame] = []
 
     for f in files:
+        if not f.exists():
+            # Skip files that disappeared between glob and open (e.g. transient zips during download)
+            continue
         m = date_re.search(f.name)
         if not m:
             continue
