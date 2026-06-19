@@ -71,6 +71,7 @@ STYLE_CONF_FLOORS: dict[str, float] = {
     # On honest 40-50% confidence scale, 46% selects the upper half of the distribution.
     # Swing alpha was −1.028%/trade; only near-ceiling setups pass even at new scale.
     "position": 0.0,  # no additional floor — driven by global min_confidence (40%)
+    "options_vrp": 0.0,  # additive option signals are gated by their own risk engine
 }
 
 # ── Intraday safety rail (auto-disable) ──────────────────────────────────────
@@ -202,6 +203,10 @@ def structural_delivery_status(
     mean-reversion conditions is never delivered. Defaults True for callers/rows
     that don't carry the flag (older signals predating the field).
     """
+    # Options VRP signals have their own risk engine; don't apply stock MR/long-only gates.
+    if style == "options_vrp":
+        return True, None
+
     # Long-only regime: only BUY is deliverable (HOLD/SELL never are).
     if long_only and action != "BUY":
         return False, f"{action} not delivered — long-only regime"
@@ -290,6 +295,10 @@ async def check_delivery_gates(
     # ── Action guard ─────────────────────────────────────────────────────────
     if action not in ("BUY", "SELL"):
         return f"action={action} not BUY/SELL", sig_dict
+
+    # Options VRP signals are additive and bypass stock MR/long-only gates.
+    if sig_dict.get("option_strategy"):
+        return None, sig_dict
 
     # Item 3: SELL delivery controlled by LONG_ONLY setting.
     if getattr(settings, "long_only", True) and action == "SELL":

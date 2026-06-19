@@ -596,6 +596,66 @@ async def _nightly_cboe_options_snapshot():
             log.warning("[nightly] CBOE options snapshot failed: %s: %s", type(e).__name__, e)
 
 
+async def _nightly_massive_options_panel():
+    """Download + build the previous day's Massive options flat files at 8:00pm ET.
+
+    The Massive day-agg files land shortly after the 16:00 close; this job runs
+    after the 18:30 CBOE snapshot so the options panel is fresh for the next
+    trading day.  It builds incrementally from the last date already in
+    ``orats_daily_features`` through yesterday (inclusive) so re-runs are safe.
+    """
+    import subprocess
+
+    from sqlalchemy import func as _func, select as _select
+
+    from database import AsyncSessionLocal as _ASL
+    from models import OratsDailyFeatures
+
+    ET = pytz.timezone("America/New_York")
+    while True:
+        now_et = datetime.now(ET)
+        target = now_et.replace(hour=20, minute=0, second=0, microsecond=0)
+        if now_et >= target:
+            target += timedelta(days=1)
+        await asyncio.sleep((target - now_et).total_seconds())
+        try:
+            async with _ASL() as _odb:
+                max_date = (await _odb.execute(_select(_func.max(OratsDailyFeatures.date)))).scalar()
+            if max_date is None:
+                max_date = datetime.now(ET).date() - timedelta(days=30)
+            start = max_date + timedelta(days=1)
+            end = datetime.now(ET).date() - timedelta(days=1)
+            if start > end:
+                log.info("[nightly] Massive panel up to date (latest=%s)", max_date)
+                continue
+
+            cmd = [
+                str(Path(__file__).resolve().parent / ".venv311" / "bin" / "python"),
+                "scripts/build_massive_options_panel.py",
+                "--download",
+                "--build",
+                "--incremental",
+                "--save-to-db",
+                "--universe-from-watchlist",
+                "--start",
+                start.isoformat(),
+                "--end",
+                end.isoformat(),
+            ]
+            log.info("[nightly] Massive panel build %s → %s: %s", start, end, " ".join(cmd))
+            result = await asyncio.to_thread(
+                subprocess.run, cmd, cwd=str(Path(__file__).resolve().parent), capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                log.warning("[nightly] Massive panel build failed:\n%s", result.stderr[-2000:])
+            else:
+                log.info("[nightly] Massive panel build complete:\n%s", result.stdout[-2000:])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("[nightly] Massive panel build failed: %s: %s", type(e).__name__, e)
+
+
 async def _intraday_stop_monitor():
     """
     Check active sent signals for stop/target hits every 30 minutes during market hours.
@@ -1669,6 +1729,7 @@ async def lifespan(app: FastAPI):
     _supervise("nightly_stripe_reconciliation", _nightly_stripe_reconciliation, restart=True)
     _supervise("nightly_outcome_resolution", _nightly_outcome_resolution, restart=True)
     _supervise("nightly_cboe_options_snapshot", _nightly_cboe_options_snapshot, restart=True)
+    _supervise("nightly_massive_options_panel", _nightly_massive_options_panel, restart=True)
     _supervise("intraday_stop_monitor", _intraday_stop_monitor, restart=True)
     _supervise("nightly_reflection", _nightly_reflection_learning, restart=True)
     _supervise("weekly_screener", _weekly_ticker_screener, restart=True)

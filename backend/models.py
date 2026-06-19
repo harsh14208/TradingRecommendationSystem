@@ -65,6 +65,19 @@ class Signal(Base):
     # that `confidence` creates (confidence is partially derived from the model's
     # own output via Platt scaling → training on it is tautological).
     raw_score = Column(Float, nullable=True)
+    # Options VRP engine payload (additive, nullable; see services/options_engine.py)
+    option_strategy = Column(
+        String(30), nullable=True
+    )  # SELL_CASH_SEC_PUT | SELL_STRANGLE | SELL_DEFINED_RISK | LONG_STRADDLE
+    option_legs = Column(JSON, nullable=True)  # [{side, option_symbol, quantity, strike, expiry, premium, position}]
+    option_underlying_action = Column(String(10), nullable=True)  # directional signal action on the underlying
+    option_richness = Column(Float, nullable=True)  # implied / forecast move
+    option_impl_move = Column(Float, nullable=True)  # option-implied horizon move (fraction)
+    option_forecast_move = Column(Float, nullable=True)  # model-forecast horizon move (fraction)
+    option_exp_gain = Column(Float, nullable=True)  # expected P&L ($)
+    option_max_loss = Column(Float, nullable=True)  # tail-capped max loss ($)
+    option_days_to_earnings = Column(Integer, nullable=True)
+
     # Outcome tracking
     outcome_pct = Column(Float, nullable=True)  # % return from entry after ~7 trading days
     outcome_at = Column(DateTime, nullable=True)
@@ -128,6 +141,7 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint("subscription_tier IN ('free', 'basic', 'pro', 'elite')", name="ck_user_subscription_tier"),
+        CheckConstraint("options_mode IN ('none', 'signal', 'paper', 'live')", name="ck_user_options_mode"),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
@@ -191,6 +205,15 @@ class User(Base):
     # Risk acknowledgement (TSYS-13b)
     risk_acknowledged = Column(Boolean, default=False, nullable=False, server_default="0")
     risk_acknowledged_at = Column(DateTime, nullable=True)
+    # Options execution mode & risk settings (default signal-only)
+    options_mode = Column(
+        String(10), default="signal", nullable=False, server_default="signal"
+    )  # none | signal | paper | live
+    options_capital = Column(Float, nullable=True)  # defaults to global DEFAULT_CAPITAL if null
+    options_risk_per_trade = Column(Float, nullable=True)  # fraction of capital
+    options_max_book_risk = Column(Float, nullable=True)  # fraction of capital
+    options_max_positions = Column(Integer, nullable=True)
+    options_max_iv_sell = Column(Float, nullable=True)  # e.g. 0.80
 
 
 class UserSignalQuota(Base):
@@ -328,7 +351,7 @@ class BrokerOrder(Base):
     broker = Column(String(20), nullable=False)  # "alpaca"
     account_type = Column(String(10), nullable=False)  # "paper" | "live"
     alpaca_order_id = Column(String(50), nullable=True)
-    symbol = Column(String(10), nullable=False, index=True)
+    symbol = Column(String(24), nullable=False, index=True)  # TSYS-14: OCC option symbols are ~21 chars
     notional = Column(Float, nullable=False)  # dollar amount ordered
     side = Column(String(10), nullable=False)  # "buy" | "sell"
     status = Column(

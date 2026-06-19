@@ -25,6 +25,7 @@ from services.cot import get_cot_signal
 from services.fear_greed import get_fear_greed, get_put_call_ratio
 from services.macro import get_macro_context
 from services.market_data import get_histories_batch, get_infos_sequential, get_quotes_batch
+from services.options_scanner import run_options_scan
 from services.signal_engine import scan_all
 from services.telegram_svc import format_signal, send_telegram
 
@@ -2335,6 +2336,16 @@ async def _run_scan_impl(broadcast_fn=None, broadcast_signal_fn=None):
     # ── Step 6: persist (smart daily deduplication) ──────────────────────
     _mark_scan_stage("persistence")
     new_signals, refreshed_unsent = await _persist_scan_signals(signals, _today_start_utc())
+
+    # ── Step 6b: daily options VRP scan (additive, does not touch stock flow) ──
+    _mark_scan_stage("options_scan")
+    try:
+        option_signals = await run_options_scan(signals, _today_start_utc())
+        if option_signals:
+            new_signals.extend(option_signals)
+            log.info("Appended %d option signals to delivery queue", len(option_signals))
+    except Exception as e:
+        log.warning("[scanner] options VRP scan failed: %s", e, exc_info=True)
 
     # ── Step 7: auto-send + auto paper trade ────────────────────────────
     _mark_scan_stage("delivery")

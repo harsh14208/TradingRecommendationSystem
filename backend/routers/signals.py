@@ -106,6 +106,16 @@ def _to_dict(s: Signal) -> dict:
         "outcomeAt": s.outcome_at.strftime("%Y-%m-%d") if s.outcome_at else None,
         # Expiry
         "expiresAt": s.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if s.expires_at else None,
+        # Options VRP engine payload (additive, null when absent)
+        "optionStrategy": s.option_strategy,
+        "optionLegs": s.option_legs or [],
+        "optionUnderlyingAction": s.option_underlying_action,
+        "optionRichness": s.option_richness,
+        "optionImplMove": s.option_impl_move,
+        "optionForecastMove": s.option_forecast_move,
+        "optionExpGain": s.option_exp_gain,
+        "optionMaxLoss": s.option_max_loss,
+        "optionDaysToEarnings": s.option_days_to_earnings,
     }
 
 
@@ -152,13 +162,16 @@ async def list_signals(
     except Exception:
         promoted_sectors = frozenset()  # fail closed — keep blocked sectors blocked
 
-    # Full active BUY book (long-only regime → HOLD/SELL are never deliverable
-    # and are not surfaced in the actionable feed).
+    # Full active BUY book plus any option VRP signals (long-only regime → HOLD/
+    # non-option SELL are not surfaced in the actionable feed).
     rows = (
         (
             await db.execute(
                 select(Signal)
-                .where(Signal.is_active == True, Signal.action == "BUY")
+                .where(
+                    Signal.is_active == True,
+                    (Signal.action == "BUY") | (Signal.option_strategy.isnot(None)),
+                )
                 .order_by(desc(Signal.confidence), desc(Signal.created_at))
             )
         )

@@ -354,6 +354,18 @@ async def execute_signal_for_user(
     """
     from models import BrokerOrder
 
+    # TSYS-14: option signals are routed through a separate execution path.
+    # Default options_mode='signal' means alert-only; paper/live require opt-in.
+    if sig.get("option_strategy"):
+        if user.options_mode in ("paper", "live"):
+            log.info(
+                "broker_svc: user=%d — option strategy %s execution not yet wired (mode=%s)",
+                user.id,
+                sig["option_strategy"],
+                user.options_mode,
+            )
+        return
+
     broker_type = user.auto_execute_broker or "alpaca"
 
     # IBKR authenticates with a single bearer token (no secret); Alpaca needs both.
