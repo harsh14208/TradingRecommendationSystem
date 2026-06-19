@@ -629,8 +629,9 @@ async def _nightly_massive_options_panel():
                 log.info("[nightly] Massive panel up to date (latest=%s)", max_date)
                 continue
 
+            _project_root = Path(__file__).resolve().parent.parent
             cmd = [
-                str(Path(__file__).resolve().parent / ".venv311" / "bin" / "python"),
+                str(_project_root / ".venv311" / "bin" / "python"),
                 "scripts/build_massive_options_panel.py",
                 "--download",
                 "--build",
