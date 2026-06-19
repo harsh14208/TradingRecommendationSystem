@@ -107,5 +107,14 @@ backend/mutants/
 # ORATS raw/panel cache (rebuilt from purchased FTP data)
 backend/data/cache_orats/
 
+# Massive (Polygon) options flat-file cache and panel outputs
+backend/data/cache_massive/
+backend/data/cache_options/
+
+# Polygon ticker metadata caches (fetched on demand)
+backend/data/orats_shares_outstanding.json
+backend/data/orats_ticker_type.json
+backend/data/orats_ticker_meta.json
+
 # Ad-hoc analysis outputs
 analysis_output/
