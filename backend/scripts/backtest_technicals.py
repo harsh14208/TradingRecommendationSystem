@@ -32,6 +32,7 @@ Run from backend/:
     python scripts/backtest_technicals.py --oos       # OOS v4 validation (18 tickers)
     python scripts/backtest_technicals.py --sweep     # BUY_THRESH / HOLD_DAYS grid search
     python scripts/backtest_technicals.py --gate-sweep  # §59–§82 threshold sensitivity
+    python scripts/backtest_technicals.py --orats     # §111 ORATS options-flow alt-data tilt
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ socket.setdefaulttimeout(10)
 import warnings
 from datetime import datetime
 from multiprocessing import Pool
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -82,6 +84,7 @@ _alt_data_panels: dict[str, pd.DataFrame | None] = {
     "finra_ats": None,
     "wikipedia": None,
     "occ": None,
+    "orats": None,
 }
 
 
@@ -2360,6 +2363,18 @@ def simulate_ticker(
     _adaptive_profit_thresh = adaptive_profit_thresh_override if adaptive_profit_thresh_override is not None else 1.005
     _adaptive_rsi_thresh = adaptive_rsi_thresh_override if adaptive_rsi_thresh_override is not None else 45.0
 
+    def _orats_float(row: dict | None, key: str) -> float | None:
+        """Safely extract and round an ORATS feature value."""
+        if row is None:
+            return None
+        v = row.get(key)
+        if v is None:
+            return None
+        try:
+            return round(float(v), 4)
+        except Exception:
+            return None
+
     _trade_from_ts = pd.Timestamp(TRADE_FROM)
     for i in range(200, len(df)):
         row = df.iloc[i]
@@ -3100,6 +3115,10 @@ def simulate_ticker(
             # §87: multiply base size by consec-score conviction tier
             _size_mult *= _consec_size_mult
         _date_key = pd.Timestamp(str(date)[:10])
+        # §111: ORATS options-flow row lookup (near-EOD options snapshot)
+        _orats_row = None
+        if _alt_data_panels.get("orats") is not None:
+            _orats_row = _alt_data_panels["orats"].get(ticker.upper(), {}).get(_date_key.date())
         # §91: rising short-interest sizing tilt (squeeze-fuel thesis)
         if si_rising_map and is_buy_signal:
             _si_flag = si_rising_map.get(ticker, {}).get(_date_key)
@@ -3146,6 +3165,25 @@ def simulate_ticker(
                 # Negative tone at oversold = potential capitulation (size up)
                 if _tone_z < -1.5:
                     _size_mult *= 1.10
+        # §111: ORATS options-flow sizing tilt
+        if _orats_row is not None and is_buy_signal:
+            _orats_iv_rank = float(_orats_row.get("iv_rank_252") or np.nan)
+            _orats_skew = float(_orats_row.get("pc_iv_skew") or np.nan)
+            _orats_gex = float(_orats_row.get("gex") or 0.0)
+            _orats_pc_vol = float(_orats_row.get("pc_volume_ratio") or np.nan)
+            _orats_0dte_puts = float(_orats_row.get("zero_dte_put_volume") or 0.0)
+            # High IVR MR setups: dealer hedge unwind amplification
+            if not math.isnan(_orats_iv_rank) and _orats_iv_rank >= 50.0:
+                _size_mult *= 1.10
+            # Steep put skew: panic peak precision
+            if not math.isnan(_orats_skew) and _orats_skew > 0.10:
+                _size_mult *= 1.08
+            # Positive GEX: dealers net long gamma → mechanical support
+            if _orats_gex > 0:
+                _size_mult *= 1.05
+            # Extreme 0-DTE put volume: capitulation hedging / forced selling
+            if not math.isnan(_orats_pc_vol) and _orats_pc_vol > 1.5 and _orats_0dte_puts > 1000:
+                _size_mult *= 1.05
         # §88: calm-regime sleeve — 0.5× risk budget on relaxed low-VIX entries
         if calm_sleeve and is_buy_signal:
             _size_mult *= 0.5
@@ -3322,6 +3360,16 @@ def simulate_ticker(
                     if _alt_data_panels.get("gdelt") is not None
                     else None
                 ),
+                # ── §111: ORATS options-flow features at entry ───────────────────
+                "orats_iv_rank": _orats_float(_orats_row, "iv_rank_252"),
+                "orats_iv_pctile": _orats_float(_orats_row, "iv_pctile_252"),
+                "orats_atm_iv_30d": _orats_float(_orats_row, "atm_iv_30d"),
+                "orats_pc_iv_skew": _orats_float(_orats_row, "pc_iv_skew"),
+                "orats_gex": _orats_float(_orats_row, "gex"),
+                "orats_dex": _orats_float(_orats_row, "dex"),
+                "orats_pc_volume_ratio": _orats_float(_orats_row, "pc_volume_ratio"),
+                "orats_pc_oi_ratio": _orats_float(_orats_row, "pc_oi_ratio"),
+                "orats_zero_dte_put_volume": _orats_float(_orats_row, "zero_dte_put_volume"),
             }
         )
 
@@ -5085,6 +5133,23 @@ def main():
 
             _alt_data_panels["occ"] = load_occ_panel()
             print(f"ok ({len(_alt_data_panels['occ'])} rows)" if _alt_data_panels["occ"] is not None else "not found")
+        except Exception as e:
+            print(f"failed ({e})")
+
+    # ── §111: ORATS historical options panel ──────────────────────────────────
+    _orats_flag = "--orats" in sys.argv
+    if _orats_flag:
+        print("Loading ORATS options panel…", end=" ", flush=True)
+        try:
+            from services.orats_data import load_orats_panel
+
+            _orats_path = Path(__file__).resolve().parent.parent / "data" / "cache_orats" / "orats_panel.parquet"
+            _alt_data_panels["orats"] = load_orats_panel(_orats_path)
+            print(
+                f"ok ({len(_alt_data_panels['orats'])} rows, {_alt_data_panels['orats']['ticker'].nunique()} tickers)"
+                if _alt_data_panels["orats"] is not None
+                else "not found"
+            )
         except Exception as e:
             print(f"failed ({e})")
 
