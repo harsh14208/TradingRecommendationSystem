@@ -281,7 +281,7 @@ _DB_COLUMNS = [
 ]
 
 
-async def save_orats_panel_to_db(panel: pd.DataFrame, batch_size: int = 5000) -> int:
+async def save_orats_panel_to_db(panel: pd.DataFrame, batch_size: int = 1000) -> int:
     """Persist an ORATS feature panel to PostgreSQL.
 
     Uses ``on_conflict_do_nothing`` on (ticker, date) so re-running the builder

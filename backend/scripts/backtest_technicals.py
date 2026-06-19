@@ -5157,6 +5157,9 @@ def main():
                 print(f"\n  [db fallback: {_db_msg}…]", end=" ", flush=True)
                 _alt_data_panels["orats"] = load_orats_panel(_orats_path)
                 _orats_source = "parquet"
+            if _alt_data_panels["orats"] is None:
+                _alt_data_panels["orats"] = load_orats_panel(_orats_path)
+                _orats_source = "parquet"
             if _alt_data_panels["orats"] is not None:
                 print(
                     f"ok ({_orats_source}: {len(_alt_data_panels['orats'])} rows, "
