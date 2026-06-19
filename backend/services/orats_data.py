@@ -82,7 +82,7 @@ def _read_orats_csv(path: Path) -> pd.DataFrame:
 
     df["trade_date"] = _parse_orats_date(df["trade_date"])
     df["expirDate"] = _parse_orats_date(df["expirDate"])
-    df["yte_days"] = (df["expirDate"] - df["trade_date"]).dt.days
+    df["yte_days"] = (pd.to_datetime(df["expirDate"]) - pd.to_datetime(df["trade_date"])).dt.days
     return df
 
 
