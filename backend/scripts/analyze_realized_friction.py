@@ -17,7 +17,7 @@ import asyncio
 import logging
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -48,7 +48,7 @@ class FrictionSummary:
 
 async def _load_fills(days: int) -> pd.DataFrame:
     """Load fills joined to broker_orders from the last ``days`` calendar days."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.utcnow() - timedelta(days=days)
     query = sa.text(
         """
         SELECT
