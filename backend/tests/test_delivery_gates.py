@@ -213,6 +213,40 @@ async def test_gate_allows_intraday_above_floor_without_mr():
     assert reason is None
 
 
+class _SettingsShort:
+    """Settings with SELL delivery enabled (LONG_ONLY=false)."""
+
+    min_confidence = 40.0
+    long_only = False
+
+
+@pytest.mark.asyncio
+async def test_gate_blocks_intraday_sell_without_mr():
+    """2026-06-22: intraday SELL is NO LONGER exempt from the MR gate. The
+    MR-exempt intraday-SELL cohort resolved 0% WR / −6.46%/trade since 2026-06-15
+    (shorting momentum into a rising tape), so a SELL without an overbought setup
+    is blocked even at intraday style and above the 40% floor."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    sig = _sig(action="SELL", style="intraday", confidence=70.0)
+    sig.pop("hasMrSell", None)  # no overbought setup
+    reason, _ = await check_delivery_gates(sig, db, _SettingsShort())
+    assert reason is not None and "SELL MR setup" in reason
+
+
+@pytest.mark.asyncio
+async def test_gate_intraday_sell_with_mr_clears_mr_gate():
+    """An intraday SELL WITH an overbought setup (hasMrSell=True) is no longer
+    blocked by the MR gate specifically (other gates may still apply)."""
+    from services.delivery_gates import check_delivery_gates
+
+    db = await _db_no_sector_count()
+    sig = _sig(action="SELL", style="intraday", confidence=70.0, hasMrSell=True)
+    reason, _ = await check_delivery_gates(sig, db, _SettingsShort())
+    assert reason is None or "SELL MR setup" not in reason
+
+
 @pytest.mark.asyncio
 async def test_gate_blocks_swing_below_46():
     """Swing floor recalibrated to 46% post phantom-win correction (was 70% on old scale)."""

@@ -213,11 +213,13 @@ def structural_delivery_status(
 
     # MR-setup hard block — BUY needs ≥1 oversold condition (RSI/BB%B/IBS/VWAP%; reverted 2→1 2026-06-17).
     # SELL needs ≥1 overbought condition when long-only is disabled.
-    # Intraday is a momentum/breakout strategy (structurally non-mean-reverting),
-    # so it is exempt — it is gated by its own style floor instead.
+    # Intraday BUY is a momentum/breakout strategy (structurally non-mean-reverting),
+    # so it is exempt — gated by its own style floor instead. Intraday SELL is NOT
+    # exempt (2026-06-22): the MR-exempt intraday-SELL cohort resolved 0% WR /
+    # −6.46%/trade since 2026-06-15, so all SELLs require an overbought setup.
     if action == "BUY" and style != "intraday" and not has_mr:
         return False, "no mean-reversion setup — needs ≥1 oversold condition"
-    if action == "SELL" and style != "intraday" and not has_mr_sell:
+    if action == "SELL" and not has_mr_sell:
         return False, "no SELL mean-reversion setup — needs ≥1 overbought condition"
 
     # Blocked tickers (no confirmed 10-day MR edge, N≥30).
@@ -307,10 +309,13 @@ async def check_delivery_gates(
     # ── MR gate — hard block for BUY/SELL signals without a mean-reversion setup ──
     # Root-cause fix for live WR 42% vs backtest WR 68% gap (audit 2026-06-02).
     # BUY needs ≥1 oversold condition; SELL (when long_only=false) needs ≥1
-    # overbought condition. Intraday is momentum/breakout and exempt.
+    # overbought condition. Intraday BUY is momentum/breakout and exempt — but
+    # intraday SELL is NOT exempt as of 2026-06-22: the MR-exempt intraday-SELL
+    # cohort resolved at 0% WR / −6.46%/trade since 2026-06-15 (shorting momentum
+    # into a rising tape). All SELLs now require an overbought MR setup.
     if action == "BUY" and style != "intraday" and not sig_dict.get("hasMr", False):
         return "no MR setup — ≥1 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
-    if action == "SELL" and style != "intraday" and not sig_dict.get("hasMrSell", False):
+    if action == "SELL" and not sig_dict.get("hasMrSell", False):
         return "no SELL MR setup — ≥1 overbought condition required for SELL delivery", sig_dict
 
     # ── Ticker-adaptive confidence floor (checked before global floor) ─────────
