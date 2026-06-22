@@ -155,6 +155,66 @@ def _make_feed_signal(sid, ticker, action, confidence, style="swing", sector_etf
 
 
 @pytest.mark.skipif(router is None, reason="routers.signals import failed")
+def test_json_safe_replaces_non_finite_floats():
+    """NaN/±Inf (flat and nested) must become None so Starlette's
+    allow_nan=False JSONResponse can serialize the payload."""
+    import json
+    import math
+
+    from routers.signals import _json_safe
+
+    payload = {
+        "price": math.nan,
+        "stop": math.inf,
+        "target": -math.inf,
+        "confidence": 55.0,
+        "ticker": "AAPL",
+        "rationale": [{"meta": math.nan, "head": "x"}],
+        "optionLegs": [{"strike": math.inf}],
+    }
+    clean = _json_safe(payload)
+    assert clean["price"] is None
+    assert clean["stop"] is None
+    assert clean["target"] is None
+    assert clean["confidence"] == 55.0
+    assert clean["ticker"] == "AAPL"
+    assert clean["rationale"][0]["meta"] is None
+    assert clean["optionLegs"][0]["strike"] is None
+    # The whole point: this must not raise (Starlette uses allow_nan=False).
+    json.dumps(clean, allow_nan=False)
+
+
+@pytest.mark.skipif(router is None, reason="routers.signals import failed")
+def test_to_dict_sanitizes_nan_columns():
+    """A corrupt NaN/Inf DB column must not produce a non-JSON-compliant dict."""
+    import json
+
+    from routers.signals import _to_dict
+
+    s = _make_feed_signal(1, "AAPL", "BUY", 55.0)
+    s.price = float("nan")
+    s.stop = float("inf")
+    s.target = float("-inf")
+    for _f in (
+        "option_strategy",
+        "option_underlying_action",
+        "option_richness",
+        "option_impl_move",
+        "option_forecast_move",
+        "option_exp_gain",
+        "option_max_loss",
+        "option_days_to_earnings",
+    ):
+        setattr(s, _f, None)
+    s.option_legs = []
+    d = _to_dict(s)
+    assert d["price"] is None
+    assert d["stop"] is None
+    assert d["target"] is None
+    json.dumps(d, allow_nan=False)
+
+
+@pytest.mark.skipif(router is None, reason="routers.signals import failed")
 def test_signals_list_tags_delivery_status():
     """The feed shows the full BUY book, each tagged with deliverability.
 

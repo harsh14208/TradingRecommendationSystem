@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from models import SendLog, Signal, SignalDelivery, User
 from services.auth_svc import get_current_user
 from services.signal_quota_svc import apply_signal_quota, record_signal_views
+from services.backtest_research_svc import get_research_backtest
 from services.telegram_svc import format_signal
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,58 +66,79 @@ def _add_quota_headers(response: Response, quota: dict) -> None:
     )
 
 
+def _json_safe(obj):
+    """Recursively replace non-finite floats (NaN / ±Inf) with None.
+
+    Starlette's JSONResponse serializes with allow_nan=False, so a single
+    corrupt float anywhere in a signal row (e.g. a NaN outcome_pct/mae, or a
+    NaN nested in the rationale/optionLegs JSON) raises
+    "Out of range float values are not JSON compliant" and 500s the whole
+    /api/signals/history response. Sanitizing here makes every _to_dict
+    consumer robust to bad data rather than crashing the endpoint.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 def _to_dict(s: Signal) -> dict:
-    return {
-        "id": s.id,
-        "ticker": s.ticker,
-        "company": s.company or s.ticker,
-        "action": s.action,
-        "confidence": s.confidence,
-        "confidence_warning": bool(s.confidence_warning) if s.confidence_warning is not None else False,
-        "price": s.price,
-        "change": s.change or 0,
-        "changePct": s.change_pct or 0,
-        "entry": s.entry,
-        "stop": s.stop,
-        "target": s.target,
-        "rr": s.rr or "—",
-        "headline": s.headline,
-        "sentiment": s.sentiment or 0,
-        "style": s.style or "swing",
-        "sources": s.sources or [],
-        "rationale": s.rationale or [],
-        "ts": s.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if s.created_at else None,
-        "date": s.created_at.strftime("%Y-%m-%d") if s.created_at else "—",
-        "isSent": s.is_sent,
-        "isSkipped": s.is_skipped,
-        "reviewed": bool(s.reviewed) if s.reviewed is not None else False,
-        "notes": s.notes or "",
-        # Engine enrichment — stored at scan time
-        "plain_english": s.plain_english,
-        "session": s.session,
-        "daysToEarnings": s.days_to_earnings,
-        "nextEarningsDate": s.next_earnings_date,
-        "sectorEtf": s.sector_etf,
-        "rsVsSector": s.rs_vs_sector,
-        # Outcomes
-        "outcomePct": s.outcome_pct,
-        "outcome1d": s.outcome_1d,
-        "outcome3d": s.outcome_3d,
-        "outcome14d": s.outcome_14d,
-        "outcomeAt": s.outcome_at.strftime("%Y-%m-%d") if s.outcome_at else None,
-        # Expiry
-        "expiresAt": s.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if s.expires_at else None,
-        # Options VRP engine payload (additive, null when absent)
-        "optionStrategy": s.option_strategy,
-        "optionLegs": s.option_legs or [],
-        "optionUnderlyingAction": s.option_underlying_action,
-        "optionRichness": s.option_richness,
-        "optionImplMove": s.option_impl_move,
-        "optionForecastMove": s.option_forecast_move,
-        "optionExpGain": s.option_exp_gain,
-        "optionMaxLoss": s.option_max_loss,
-        "optionDaysToEarnings": s.option_days_to_earnings,
-    }
+    return _json_safe(
+        {
+            "id": s.id,
+            "ticker": s.ticker,
+            "company": s.company or s.ticker,
+            "action": s.action,
+            "confidence": s.confidence,
+            "confidence_warning": bool(s.confidence_warning) if s.confidence_warning is not None else False,
+            "price": s.price,
+            "change": s.change or 0,
+            "changePct": s.change_pct or 0,
+            "entry": s.entry,
+            "stop": s.stop,
+            "target": s.target,
+            "rr": s.rr or "—",
+            "headline": s.headline,
+            "sentiment": s.sentiment or 0,
+            "style": s.style or "swing",
+            "sources": s.sources or [],
+            "rationale": s.rationale or [],
+            "ts": s.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if s.created_at else None,
+            "date": s.created_at.strftime("%Y-%m-%d") if s.created_at else "—",
+            "isSent": s.is_sent,
+            "isSkipped": s.is_skipped,
+            "reviewed": bool(s.reviewed) if s.reviewed is not None else False,
+            "notes": s.notes or "",
+            # Engine enrichment — stored at scan time
+            "plain_english": s.plain_english,
+            "session": s.session,
+            "daysToEarnings": s.days_to_earnings,
+            "nextEarningsDate": s.next_earnings_date,
+            "sectorEtf": s.sector_etf,
+            "rsVsSector": s.rs_vs_sector,
+            # Outcomes
+            "outcomePct": s.outcome_pct,
+            "outcome1d": s.outcome_1d,
+            "outcome3d": s.outcome_3d,
+            "outcome14d": s.outcome_14d,
+            "outcomeAt": s.outcome_at.strftime("%Y-%m-%d") if s.outcome_at else None,
+            # Expiry
+            "expiresAt": s.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if s.expires_at else None,
+            # Options VRP engine payload (additive, null when absent)
+            "optionStrategy": s.option_strategy,
+            "optionLegs": s.option_legs or [],
+            "optionUnderlyingAction": s.option_underlying_action,
+            "optionRichness": s.option_richness,
+            "optionImplMove": s.option_impl_move,
+            "optionForecastMove": s.option_forecast_move,
+            "optionExpGain": s.option_exp_gain,
+            "optionMaxLoss": s.option_max_loss,
+            "optionDaysToEarnings": s.option_days_to_earnings,
+        }
+    )
 
 
 @router.get("")
@@ -620,6 +642,17 @@ async def backtest_stats(
     return _result
 
 
+@router.get("/backtest/research")
+async def backtest_research(_user: User = Depends(get_current_user)):
+    """Canonical 23-year in-sample research backtest artifacts.
+
+    Returns the pre-computed equity curve, monthly returns, trade list, and
+    summary statistics from scripts/backtest_technicals.py (v10.9 canon).
+    This endpoint does not query live signal outcomes or market data.
+    """
+    return get_research_backtest()
+
+
 @router.get("/backtest/oos")
 async def backtest_oos(
     db: AsyncSession = Depends(get_db),
@@ -889,19 +922,39 @@ async def track_record(
 async def backtest_simulate(
     slippage_pct: float = 0.15,
     commission_per_share: float = 0.0,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    max_signals: int = Query(200, ge=1, le=2000),
+    entry_policy: str = Query("market", pattern="^(market|limit|next_open)$"),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
     """
     Replay historical sent signals with realistic execution:
-    - Entry at next-day open ± slippage
+    - Entry at next-day open ± slippage (market), next-day open no slippage
+      (next_open), or the signal's recommended limit price (limit)
     - Exit when stop or target hit on daily High/Low, or 7 trading days elapsed
     - Commission applied both sides
+    - Optional date-range filter and trade cap
     Returns gross vs net comparison plus per-signal audit trail.
     """
     import asyncio
 
     from services.market_data import get_history
+
+    date_filters = []
+    if start_date:
+        try:
+            date_filters.append(Signal.created_at >= datetime.strptime(start_date, "%Y-%m-%d"))
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            date_filters.append(
+                Signal.created_at <= datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            )
+        except ValueError:
+            pass
 
     rows = (
         (
@@ -912,8 +965,9 @@ async def backtest_simulate(
                 .where(Signal.stop.isnot(None))
                 .where(Signal.target.isnot(None))
                 .where(Signal.created_at.isnot(None))
+                .where(*date_filters)
                 .order_by(desc(Signal.created_at))
-                .limit(200)
+                .limit(max_signals)
             )
         )
         .scalars()
@@ -921,7 +975,7 @@ async def backtest_simulate(
     )
 
     if not rows:
-        return {"simulated": 0, "signals": []}
+        return {"simulated": 0, "signals": [], "entry_policy": entry_policy}
 
     slip = slippage_pct / 100
 
@@ -936,11 +990,25 @@ async def backtest_simulate(
             if future.empty:
                 return None
 
-            # Simulate entry at next-day open + slippage
             first_row = future.iloc[0]
             raw_entry = float(first_row["Open"])
+            day_low = float(first_row["Low"])
+            day_high = float(first_row["High"])
             is_buy = sig.action == "BUY"
-            actual_entry = raw_entry * (1 + slip) if is_buy else raw_entry * (1 - slip)
+
+            # Entry-policy logic
+            if entry_policy == "next_open":
+                actual_entry = raw_entry
+            elif entry_policy == "limit":
+                # Try to fill at the signal's recommended entry price on day 1.
+                # If the limit is not touched, fall back to market-on-open.
+                limit_hit = (is_buy and day_low <= sig.entry) or (not is_buy and day_high >= sig.entry)
+                if limit_hit:
+                    actual_entry = float(sig.entry)
+                else:
+                    actual_entry = raw_entry * (1 + slip) if is_buy else raw_entry * (1 - slip)
+            else:  # market
+                actual_entry = raw_entry * (1 + slip) if is_buy else raw_entry * (1 - slip)
 
             # Recalculate stop/target relative to actual entry
             orig_risk = abs(sig.entry - sig.stop)
@@ -1010,6 +1078,7 @@ async def backtest_simulate(
                 "exit_price": round(exit_price, 2),
                 "exit_day": exit_day,
                 "exit_reason": exit_reason,
+                "entry_policy": entry_policy,
                 "slippage_pct": round(slip * 200, 3),  # both sides
                 "commission_pct": round(comm_pct, 3),
                 "gross_pct": round(gross_pct, 2),
@@ -1023,7 +1092,7 @@ async def backtest_simulate(
     signals = [r for r in results if r is not None]
 
     if not signals:
-        return {"simulated": 0, "signals": []}
+        return {"simulated": 0, "signals": [], "entry_policy": entry_policy}
 
     gross_returns = [s["gross_pct"] for s in signals]
     net_returns = [s["net_pct"] for s in signals]
@@ -1045,6 +1114,7 @@ async def backtest_simulate(
         "simulated": len(signals),
         "slippage_pct": slippage_pct,
         "commission_per_share": commission_per_share,
+        "entry_policy": entry_policy,
         "gross": agg(gross_returns),
         "net": agg(net_returns),
         "cost_drag_avg": round(sum(s["gross_pct"] - s["net_pct"] for s in signals) / len(signals), 3),
