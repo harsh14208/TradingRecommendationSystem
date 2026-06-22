@@ -463,6 +463,13 @@ The following fixes were implemented in response to this audit. The frontend bui
     - Removed the "Data sources" marketing feature group and docs/status copy that presented sources as a separate surface.
     - All upstream feeds are now always enabled; there is no user-facing source toggle.
 
+22. **Backtest page redesign — gave it a purpose as "Evidence Lab"**
+    - Added `GET /api/signals/backtest/research` backed by `services/backtest_research_svc.py` to serve the canonical 23-year IS equity curve and trade statistics.
+    - Added a **Research** tab to both the legacy `BacktestView` overlay (`app.views.jsx`) and the cinematic `PageBacktest` (`cin.backtest.jsx`) showing the v10.9 canon track record.
+    - Added a **Simulator** tab with date-range, entry-policy (market / next-open / limit), and max-signals controls.
+    - Kept existing diagnostic tabs (Summary, Sources, Tickers, Track, Correlation, Calibration, Alpha Decay, ML Model).
+    - Surfaced the honest IS/live gap disclosure directly on the page so the backtest answers "Why should I trust this?" instead of only showing thin live stats.
+
 ### Not addressed in this pass
 
 - Consolidating shared auth components into a single bundle (login/signup still separate for now).

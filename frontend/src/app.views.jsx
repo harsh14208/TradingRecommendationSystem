@@ -479,8 +479,70 @@ function MyPerformanceView({ open, onClose }) {
 // Cache TTL is 10 minutes — avoids 8 expensive GROUP BY queries on every open.
 const BT_CACHE_TTL_MS = 10 * 60 * 1000;
 
+function EquitySpark({ data, w = 720, h = 160 }) {
+  if (!data || data.length < 2) return null;
+  const min = Math.min(...data), max = Math.max(...data);
+  const rng = max - min || 1;
+  const pts = data.map((v, i) => [(i / (data.length - 1)) * w, h - 10 - ((v - min) / rng) * (h - 24)]);
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: "block", width: "100%", height: "auto" }}>
+      <defs>
+        <linearGradient id="espark" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--up)" stopOpacity="0.2"></stop>
+          <stop offset="100%" stopColor="var(--up)" stopOpacity="0"></stop>
+        </linearGradient>
+      </defs>
+      <path d={`${d} L${w},${h} L0,${h} Z`} fill="url(#espark)"></path>
+      <path d={d} fill="none" stroke="var(--up)" strokeWidth="1.8" strokeLinejoin="round"></path>
+    </svg>
+  );
+}
+
+function buildSimResult(sim) {
+  if (!sim || !Array.isArray(sim.signals) || sim.signals.length === 0) return null;
+  const sorted = [...sim.signals].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  const returns = sorted.map(s => s.net_pct ?? s.gross_pct ?? 0);
+  const start = 100000;
+  const curve = [start];
+  let peak = start, maxDD = 0;
+  for (const r of returns) {
+    const v = curve[curve.length - 1] * (1 + r / 100);
+    curve.push(v);
+    if (v > peak) peak = v;
+    const dd = (peak - v) / peak;
+    if (dd > maxDD) maxDD = dd;
+  }
+  const n = returns.length;
+  const mean = returns.reduce((a, b) => a + b, 0) / n;
+  const variance = returns.reduce((a, b) => a + b * b, 0) / n - mean * mean;
+  const sd = Math.sqrt(Math.max(0, variance));
+  const sharpe = sd > 0 ? (mean / sd) * Math.sqrt(52) : 0;
+  const total = curve[curve.length - 1] / start - 1;
+  const firstDate = sorted[0].date ? new Date(sorted[0].date) : null;
+  const lastDate = sorted[sorted.length - 1].date ? new Date(sorted[sorted.length - 1].date) : null;
+  const years = firstDate && lastDate ? Math.max(0.25, (lastDate - firstDate) / (365.25 * 24 * 3600 * 1000)) : n / 52;
+  const cagr = Math.pow(1 + total, 1 / years) - 1;
+  const wins = returns.filter(r => r > 0).length;
+  return {
+    curve,
+    metrics: {
+      cagr: cagr * 100,
+      sharpe,
+      winRate: (wins / n) * 100,
+      maxDD: maxDD * 100,
+      trades: n,
+      final: curve[curve.length - 1],
+      costDrag: sim.cost_drag_avg,
+      stopRate: sim.stop_hit_rate,
+      targetRate: sim.target_hit_rate,
+      timeoutRate: sim.timeout_rate,
+    },
+  };
+}
+
 function BacktestView({ open, onClose, online, btCache, onBtCache }) {
-  const [tab,       setTab]       = useState("summary");
+  const [tab,       setTab]       = useState("research");
   const [data,      setData]      = useState(null);
   const [horizons,  setHorizons]  = useState([]);
   const [accuracy,  setAccuracy]  = useState({ sources: null, tickers: null });
@@ -493,6 +555,13 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
   const [backfillResult, setBackfillResult] = useState(null);
   const [startDate, setStartDate] = useState("");
   const [endDate,   setEndDate]   = useState("");
+  const [research,  setResearch]  = useState(null);
+  const [sim,       setSim]       = useState(null);
+  const [simLoading,setSimLoading]= useState(false);
+  const [simStart,  setSimStart]  = useState("");
+  const [simEnd,    setSimEnd]    = useState("");
+  const [simPolicy, setSimPolicy] = useState("market");
+  const [simMax,    setSimMax]    = useState(200);
 
   const load = (sd, ed, force = false, signal) => {
     if (!online) return;
@@ -534,6 +603,9 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
     if (!open) return;
     const ctrl = new AbortController();
     load(startDate, endDate, false, ctrl.signal);
+    apiFetch("/api/signals/backtest/research", { signal: ctrl.signal })
+      .then(r => { if (r && typeof r === "object") setResearch(r); })
+      .catch(() => {});
     return () => ctrl.abort();
   }, [open, online, startDate, endDate, btCache, onBtCache]);
 
@@ -543,6 +615,18 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
       .then(r => r.json())
       .then(r => { setBackfillResult(r); setBackfilling(false); load(); })
       .catch(() => setBackfilling(false));
+  };
+
+  const runSimulation = () => {
+    setSimLoading(true);
+    const params = new URLSearchParams();
+    params.set("entry_policy", simPolicy);
+    params.set("max_signals", String(simMax));
+    if (simStart) params.set("start_date", simStart);
+    if (simEnd) params.set("end_date", simEnd);
+    apiFetch(`/api/signals/backtest/simulate?${params.toString()}`)
+      .then(r => { setSim(r); setSimLoading(false); })
+      .catch(() => setSimLoading(false));
   };
 
   const fmtPct = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
@@ -581,7 +665,7 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
         </div>
       </div>
       <div style={{ display:"flex", gap:0, borderBottom:"1px solid var(--line)", padding:"0 28px", background:"var(--bg-1)" }}>
-        {[["summary","Summary"],["sources","By Source"],["tickers","By Ticker"],["track","Track Record"],["corr","Correlation"],["calib","Calibration"],["decay","Alpha Decay"],["model","ML Model"]].map(([id,label]) => (
+        {[["research","Research"],["summary","Summary"],["sources","By Source"],["tickers","By Ticker"],["track","Track Record"],["corr","Correlation"],["calib","Calibration"],["decay","Alpha Decay"],["model","ML Model"],["sim","Simulator"]].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{ padding:"10px 14px", fontSize:11, fontFamily:"var(--font-mono)", fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", background:"none", border:"none", cursor:"pointer", borderBottom: tab===id ? "2px solid var(--accent)" : "2px solid transparent", color: tab===id ? "var(--accent)" : "var(--text-faint)", marginBottom:-1 }}>
             {label}
@@ -647,6 +731,46 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
             </button>
           </div>
         ))}
+
+        {tab === "research" && (
+          <div style={{ paddingTop:20 }}>
+            {!research ? (
+              <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>Loading research track record…</div>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+                <div style={{ fontSize:13, color:"var(--text-dim)", lineHeight:1.7 }}>
+                  Canonical <strong>{research.canon?.period || "23-year"}</strong> in-sample backtest ({research.canon?.version || ""}).
+                  This is the long-term historical evidence behind the live signals.
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:12 }}>
+                  {[
+                    ["Trades", research.summary?.total_trades ?? research.canon?.total_trades ?? "—", "var(--text)"],
+                    ["Win rate", fmtWr(research.summary?.win_rate ?? research.canon?.win_rate), wrColor(research.summary?.win_rate ?? research.canon?.win_rate)],
+                    ["Avg return", fmtPct(research.summary?.avg_return), retColor(research.summary?.avg_return)],
+                    ["Sharpe", research.summary?.sharpe ?? research.canon?.sharpe ?? "—", "var(--text)"],
+                    ["Max DD", fmtPct(research.summary?.max_drawdown_pct ?? research.canon?.max_drawdown_pct), "var(--down)"],
+                    ["CAGR", fmtPct(research.summary?.cagr_pct), retColor(research.summary?.cagr_pct)],
+                  ].map(([l,v,c]) => (
+                    <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px" }}>
+                      <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>{l}</div>
+                      <div style={{ fontSize:22, fontWeight:700, fontFamily:"var(--font-mono)", color:c }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+                {(research.equity_curve || []).length > 0 && (
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Equity curve</div>
+                    <EquitySpark data={research.equity_curve.map(p => p.value)} w={720} h={160} />
+                  </div>
+                )}
+                <div style={{ background:"rgba(251,191,36,0.08)", border:"1px solid rgba(251,191,36,0.25)", borderRadius:8, padding:"12px 14px", fontSize:12, color:"var(--text-dim)", lineHeight:1.6 }}>
+                  ⚠️ Live performance has run below the IS backtest (the "25.5pp gap"). The gap is driven by regime mismatch (2022+ rate hikes),
+                  delivery leaks fixed in v8.4, and the spent IS ceiling. Broker auto-execute should stay on paper until live WR is consistently &gt;55%.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {!loading && tab === "sources" && (
           <div style={{ paddingTop:20 }}>
@@ -759,6 +883,62 @@ function BacktestView({ open, onClose, online, btCache, onBtCache }) {
         )}
 
         {!loading && tab === "model" && <MLModelTab online={online}/>}
+
+        {tab === "sim" && (
+          <div style={{ paddingTop:20 }}>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:12, alignItems:"center", marginBottom:18 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:11, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>FROM</span>
+                <input type="date" value={simStart} onChange={e => setSimStart(e.target.value)} style={{ background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:4, color:"var(--text)", padding:"5px 8px", fontFamily:"var(--font-mono)", fontSize:11 }}/>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:11, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>TO</span>
+                <input type="date" value={simEnd} onChange={e => setSimEnd(e.target.value)} style={{ background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:4, color:"var(--text)", padding:"5px 8px", fontFamily:"var(--font-mono)", fontSize:11 }}/>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:11, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>ENTRY</span>
+                <select value={simPolicy} onChange={e => setSimPolicy(e.target.value)} style={{ background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:4, color:"var(--text)", padding:"5px 8px", fontFamily:"var(--font-mono)", fontSize:11 }}>
+                  <option value="market">Market</option>
+                  <option value="next_open">Next open</option>
+                  <option value="limit">Limit</option>
+                </select>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:11, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>MAX</span>
+                <input type="number" min={1} max={2000} value={simMax} onChange={e => setSimMax(Number(e.target.value))} style={{ width:70, background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:4, color:"var(--text)", padding:"5px 8px", fontFamily:"var(--font-mono)", fontSize:11 }}/>
+              </div>
+              <button className="btn primary" style={{ fontSize:11, padding:"5px 14px" }} onClick={runSimulation} disabled={simLoading || !online}>
+                {simLoading ? "Running…" : "Run"}
+              </button>
+            </div>
+            {sim && buildSimResult(sim) && (
+              <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:12 }}>
+                  {[
+                    ["Trades", buildSimResult(sim).metrics.trades, "var(--text)"],
+                    ["Win rate", fmtWr(buildSimResult(sim).metrics.winRate), wrColor(buildSimResult(sim).metrics.winRate)],
+                    ["CAGR", fmtPct(buildSimResult(sim).metrics.cagr), retColor(buildSimResult(sim).metrics.cagr)],
+                    ["Sharpe", buildSimResult(sim).metrics.sharpe.toFixed(2), "var(--text)"],
+                    ["Max DD", fmtPct(buildSimResult(sim).metrics.maxDD), "var(--down)"],
+                    ["Cost drag", fmtPct(buildSimResult(sim).metrics.costDrag, 3), "var(--text-faint)"],
+                  ].map(([l,v,c]) => (
+                    <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"12px 14px" }}>
+                      <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>{l}</div>
+                      <div style={{ fontSize:18, fontWeight:700, fontFamily:"var(--font-mono)", color:c }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+                <EquitySpark data={buildSimResult(sim).curve} w={720} h={140} />
+              </div>
+            )}
+            {(!sim || !buildSimResult(sim)) && !simLoading && (
+              <div style={{ textAlign:"center", color:"var(--text-faint)", fontSize:12, padding:"30px 0" }}>
+                Choose a date range and entry policy, then click Run.
+              </div>
+            )}
+            {simLoading && <div style={{ textAlign:"center", color:"var(--text-faint)", fontSize:12, padding:"30px 0" }}>Loading price history for every signal…</div>}
+          </div>
+        )}
       </div>
     </div>
   );

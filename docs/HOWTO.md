@@ -394,6 +394,12 @@ If live win rate drops below 50%, disable auto-execute and return to paper/analy
 
 Go to **Backtest** in the sidebar (requires Basic plan).
 
+**Research tab:** *(new in v8.9)*
+- Canonical 23-year in-sample backtest (v10.9 canon): N=217, WR=69.1%, Sharpe=0.24, MaxDD −2.31%
+- Monthly equity curve from `scripts/backtest_technicals.py`
+- Honest disclosure of the IS/live gap and why live results differ
+- API: `GET /api/signals/backtest/research`
+
 **Summary tab:**
 - Win rate, avg return, avg win/loss
 - Sharpe ratio, max drawdown, Calmar ratio, estimated annual return
@@ -417,12 +423,13 @@ Go to **Backtest** in the sidebar (requires Basic plan).
 - Up to 6 rolling 30-day windows showing per-period performance
 - API: `GET /api/signals/backtest/oos`
 
-**Simulated ✦ tab:**
-- Replay every sent signal with realistic execution
-- Next-day open entry, stop/target exit on daily H/L, configurable slippage
-- Shows gross vs net (after costs), exit reason breakdown, full audit trail
+**Simulator tab:** *(new in v8.9)*
+- Replay historical sent signals with realistic execution
+- Date-range filter, entry policy (market / next-open / limit), and trade cap
+- Equity curve, CAGR, Sharpe, max drawdown, cost drag, exit-reason breakdown
+- API: `GET /api/signals/backtest/simulate?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&entry_policy=market|limit|next_open&max_signals=200`
 
-> The backtest shows data as soon as any outcome (1d, 3d, 7d, or 14d) is resolved. You don't need to wait 7 days.
+> The backtest shows data as soon as any outcome (1d, 3d, 7d, or 14d) is resolved. You don't need to wait 7 days. If no live signals are resolved yet, the Research tab and Simulator still provide full historical evidence.
 
 ---
 
