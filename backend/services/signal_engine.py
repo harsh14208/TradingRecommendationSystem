@@ -466,7 +466,11 @@ async def generate_signal(
                 log.warning("ex-dividend lookup failed for %s", ticker, exc_info=True)
 
         tech = calculate_indicators(df)
-        if not tech or tech.get("price") is None:
+        # Reject non-finite price (NaN/Inf) as well as None: a corrupt OHLCV bar
+        # can make calculate_indicators return price=NaN, which then poisons
+        # change/change_pct and 500s JSON serialization downstream. A signal with
+        # no valid price is meaningless — skip the ticker.
+        if not tech or tech.get("price") is None or not _np.isfinite(tech["price"]):
             return None
 
         # ── Point-in-time momentum persistence (AR(1) on 126-day returns) ────────
@@ -558,7 +562,11 @@ async def generate_signal(
             log.warning("weekly OHLCV fetch failed for %s", ticker, exc_info=True)
 
         price = tech["price"]
-        atr = tech.get("atr") or price * 0.02
+        # `or` alone doesn't catch NaN (NaN is truthy), so a NaN ATR would flow
+        # into _levels and produce NaN stop/target. Fall back to 2% of price when
+        # atr is missing, zero, or non-finite.
+        _atr_raw = tech.get("atr")
+        atr = _atr_raw if (_atr_raw and _np.isfinite(_atr_raw)) else price * 0.02
         rsi = tech.get("rsi")
         hist = tech.get("macd_hist", 0) or 0
         hist_p = tech.get("macd_hist_prev", 0) or 0

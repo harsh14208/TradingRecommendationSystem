@@ -5,6 +5,7 @@ Extracted verbatim from ``signal_engine.py``. This module has no dependency on
 ``engines/assembler.py`` both import from here.
 """
 
+import math
 from datetime import datetime
 from datetime import time as dtime
 
@@ -129,7 +130,10 @@ def _score_to_action(score: float, agreement: int = 0) -> tuple[str, float]:
 
 
 def _levels(price: float, atr: float, action: str, style: str = "swing", rsi: float | None = None):
-    if action == "HOLD" or atr == 0:
+    # Non-finite atr/price (NaN/Inf) would propagate into stop/target — the
+    # `atr == 0` check alone misses NaN (NaN != 0). Guard defensively so callers
+    # never persist NaN levels even if a bad atr slips through upstream.
+    if action == "HOLD" or atr == 0 or not math.isfinite(atr) or not math.isfinite(price):
         return None, None, None, "—"
     entry = price
     atr_pct = atr / price if price > 0 else 0.02

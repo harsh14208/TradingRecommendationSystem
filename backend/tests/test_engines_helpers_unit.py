@@ -74,6 +74,26 @@ def test_score_to_action_agreement_bonus():
     assert conf4 >= conf0  # agreement bonus increases confidence
 
 
+def test_levels_non_finite_atr_returns_none():
+    """A NaN/Inf atr or price must not produce NaN stop/target (the
+    `atr == 0` guard misses NaN since NaN != 0)."""
+    from services.engines.helpers import _levels
+
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert _levels(157.92, bad, "BUY", "swing") == (None, None, None, "—")
+    assert _levels(float("nan"), 2.0, "BUY", "swing") == (None, None, None, "—")
+
+
+def test_levels_valid_atr_produces_finite_levels():
+    import math
+
+    from services.engines.helpers import _levels
+
+    entry, stop, target, rr = _levels(157.92, 2.0, "BUY", "swing")
+    assert all(math.isfinite(v) for v in (entry, stop, target))
+    assert stop < entry < target  # BUY: stop below, target above
+
+
 def test_score_to_action_agreement_capped():
     from services.engines.helpers import _score_to_action
 
