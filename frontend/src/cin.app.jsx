@@ -76,13 +76,21 @@ function toCinSignal(s) {
   const computedRR = entry != null && stop != null && target != null && Math.abs(entry - stop) > 1e-9
     ? Math.abs((target - entry) / (entry - stop)) : null;
   const rr = parseRR(s.rr) ?? computedRR ?? parseRR(mock?.rr) ?? 0;
-  const rationale = (s.rationale || []).map((r) => ({
-    src: r.src || r.source || "SRC",
-    head: r.head || r.headline || r.title || "",
-    body: r.body || r.summary || "",
-    meta: r.meta || r.time || "",
-    sentiment: r.sentiment || (r.score > 0 ? "pos" : r.score < 0 ? "neg" : "neu"),
-  }));
+  // Rationale items are usually objects ({src, head, body, ...}), but options-VRP
+  // signals store a single plain-string thesis ("No directional edge + rich
+  // options → harvest VRP"). Coerce strings so they render as a real evidence
+  // card instead of a blank "SRC" row.
+  const rationale = (s.rationale || []).map((r) =>
+    typeof r === "string"
+      ? { src: "VRP", head: r, body: "", meta: "", sentiment: "neu" }
+      : {
+          src: r.src || r.source || "SRC",
+          head: r.head || r.headline || r.title || "",
+          body: r.body || r.summary || "",
+          meta: r.meta || r.time || "",
+          sentiment: r.sentiment || (r.score > 0 ? "pos" : r.score < 0 ? "neg" : "neu"),
+        }
+  );
   return {
     id: s.id || tk,
     tk,
