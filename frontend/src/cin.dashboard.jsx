@@ -156,6 +156,11 @@ function WatchRow({ s, active, onClick }) {
             color: (s.conf || 0) >= 70 ? "var(--bull)" : (s.conf || 0) >= 50 ? "var(--neutral)" : "var(--text-dim)" }}>
           {Math.round(s.conf || 0)}%
         </span>
+        {!!s.optionStrategy && (
+          <span title="Options VRP" className="mono"
+            style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em", color: "var(--warn)",
+              border: "1px solid var(--warn)", borderRadius: 3, padding: "0 4px" }}>OPT</span>
+        )}
         {s.deliverable === false && (
           <span title={s.deliveryStatus ? deliveryLabel(s.deliveryStatus) + " — " + s.deliveryStatus : deliveryLabel(s.deliveryStatus)}
             className="mono" style={{ fontSize: 9, fontWeight: 700, color: "var(--text-dim)",
