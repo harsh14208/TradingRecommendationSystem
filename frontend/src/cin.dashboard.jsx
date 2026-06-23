@@ -1,6 +1,6 @@
 /* global React */
 // SIGNAL.TRADE cinematic — Signal Dashboard (real signals + rationale + Telegram preview).
-const { useState: dUseState, useEffect: dUseEffect, useRef: dUseRef } = React;
+const { useState: dUseState, useEffect: dUseEffect, useRef: dUseRef, useMemo: dUseMemo } = React;
 
 // Human, non-alarming label for why a signal isn't delivered. Most non-delivered
 // rows are simply below the confidence bar; lead with that framing rather than a
@@ -389,13 +389,13 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
   const [note, setNote] = dUseState("");
 
   const q = query.trim().toLowerCase();
-  const filtered = signalList.filter((s) => {
+  const filtered = dUseMemo(() => signalList.filter((s) => {
     if (q && !s.tk.toLowerCase().includes(q) && !(s.name || "").toLowerCase().includes(q)) return false;
     if (actionFilter !== "ALL" && s.signal !== actionFilter) return false;
     if (styleFilter !== "ALL" && s.style !== styleFilter) return false;
     if (s.conf < minConf) return false;
     return true;
-  });
+  }), [signalList, q, actionFilter, styleFilter, minConf]);
 
   dUseEffect(() => { if (filtered.length && !filtered.find((x) => x.tk === tk)) setTk(filtered[0].tk); }, [filtered]);
   dUseEffect(() => { const found = signalList.find((x) => x.tk === tk); if (found) setNote(found.notes || ""); }, [tk, signalList]);
@@ -526,10 +526,14 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
               <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>14-day horizon · Bayesian-smoothed</div>
             </CollapsiblePanel>
             <PaperTrade s={s}></PaperTrade>
-          </div>
 
-          {/* Options VRP — shown only when the options engine fired */}
-          <OptionsVRPPanel s={s}></OptionsVRPPanel>
+            {/* Options VRP — shown only when the options engine fired */}
+            {!!s.optionStrategy && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <OptionsVRPPanel s={s}></OptionsVRPPanel>
+              </div>
+            )}
+          </div>
 
           {/* AI Insight — under the center panel */}
           <CollapsiblePanel label="AI INSIGHT" labelColor="var(--bull)" right={<span className="kicker">WHY THIS FIRED</span>} defaultOpen={false} pad={20}>
