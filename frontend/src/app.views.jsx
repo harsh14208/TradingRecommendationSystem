@@ -1,9 +1,10 @@
 
 /* ─── Rules overlay ────────────────────────────────────────────────────────── */
 const STYLE_INFO = {
-  intraday: { label:"Intraday", hold:"Minutes to hours", horizon:"< 1 day",     chartTf:"1D / 5m" },
-  swing:    { label:"Swing",    hold:"Days to weeks",    horizon:"2–10 days",    chartTf:"1M / 1H" },
-  position: { label:"Position", hold:"Weeks to months",  horizon:"> 1 month",    chartTf:"1Y / 1D" },
+  intraday:   { label:"Intraday",   hold:"Minutes to hours", horizon:"< 1 day",     chartTf:"1D / 5m" },
+  swing:      { label:"Swing",      hold:"Days to weeks",    horizon:"2–10 days",    chartTf:"1M / 1H" },
+  position:   { label:"Position",   hold:"Weeks to months",  horizon:"> 1 month",    chartTf:"1Y / 1D" },
+  options_vrp:{ label:"Options VRP",hold:"2–5 days",         horizon:"2–5 days",     chartTf:"1M / 1H" },
 };
 
 function RulesView({ open, onClose, aggr, style, days, startTime, endTime, setTweak, customConf }) {

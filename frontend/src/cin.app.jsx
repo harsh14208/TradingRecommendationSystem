@@ -120,6 +120,16 @@ function toCinSignal(s) {
     // Default true so mock/legacy payloads (no field) aren't all flagged.
     deliverable: s.deliverable !== false,
     deliveryStatus: s.deliveryStatus || null,
+    // Options VRP payload (additive — only present when the options engine fired).
+    optionStrategy: s.optionStrategy || s.option_strategy || null,
+    optionLegs: s.optionLegs || s.option_legs || [],
+    optionUnderlyingAction: s.optionUnderlyingAction || s.option_underlying_action || null,
+    optionRichness: s.optionRichness != null ? toNum(s.optionRichness, null) : toNum(s.option_richness, null),
+    optionImplMove: s.optionImplMove != null ? toNum(s.optionImplMove, null) : toNum(s.option_impl_move, null),
+    optionForecastMove: s.optionForecastMove != null ? toNum(s.optionForecastMove, null) : toNum(s.option_forecast_move, null),
+    optionExpGain: s.optionExpGain != null ? toNum(s.optionExpGain, null) : toNum(s.option_exp_gain, null),
+    optionMaxLoss: s.optionMaxLoss != null ? toNum(s.optionMaxLoss, null) : toNum(s.option_max_loss, null),
+    optionDaysToEarnings: s.optionDaysToEarnings != null ? toNum(s.optionDaysToEarnings, null) : toNum(s.option_days_to_earnings, null),
   };
 }
 

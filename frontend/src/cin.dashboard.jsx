@@ -285,6 +285,54 @@ function PaperTrade({ s }) {
   );
 }
 
+function OptionsVRPPanel({ s }) {
+  const hasOptions = !!s.optionStrategy;
+  if (!hasOptions) return null;
+
+  const fmtPct = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+  const fmtMove = (v) => v == null ? "—" : `${(v * 100).toFixed(2)}%`;
+  const legs = Array.isArray(s.optionLegs) ? s.optionLegs : [];
+
+  return (
+    <CollapsiblePanel label="OPTIONS VRP" labelColor="var(--warn)" right={<span className="kicker">{s.optionStrategy.replace(/_/g, " ").toUpperCase()}</span>} defaultOpen={false} pad={18}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.55 }}>
+          This is an options-derived signal: the underlying {s.optionUnderlyingAction || s.signal} thesis is combined with an options volatility view.
+          Rich options = the market is pricing a larger move than the engine forecasts.
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
+          <div><div className="kicker" style={{ marginBottom: 3 }}>IMPLIED MOVE</div><span className="mono" style={{ fontSize: 13 }}>{fmtMove(s.optionImplMove)}</span></div>
+          <div><div className="kicker" style={{ marginBottom: 3 }}>FORECAST MOVE</div><span className="mono" style={{ fontSize: 13 }}>{fmtMove(s.optionForecastMove)}</span></div>
+          <div><div className="kicker" style={{ marginBottom: 3 }}>RICHNESS</div><span className="mono" style={{ fontSize: 13, color: s.optionRichness > 1 ? "var(--bull)" : "var(--neutral)" }}>{s.optionRichness?.toFixed(2) ?? "—"}</span></div>
+          <div><div className="kicker" style={{ marginBottom: 3 }}>EXP GAIN</div><span className="mono" style={{ fontSize: 13, color: "var(--bull)" }}>{fmtPct(s.optionExpGain)}</span></div>
+          <div><div className="kicker" style={{ marginBottom: 3 }}>MAX LOSS</div><span className="mono" style={{ fontSize: 13, color: "var(--bear)" }}>{fmtPct(s.optionMaxLoss)}</span></div>
+          <div><div className="kicker" style={{ marginBottom: 3 }}>EARNINGS</div><span className="mono" style={{ fontSize: 13 }}>{s.optionDaysToEarnings != null ? `${s.optionDaysToEarnings}d` : "—"}</span></div>
+        </div>
+
+        {legs.length > 0 && (
+          <div>
+            <div className="kicker" style={{ marginBottom: 8 }}>LEGS</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {legs.map((leg, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "var(--bg-2)", borderRadius: 6, border: "1px solid var(--line-soft)" }}>
+                  <SignalBadge signal={leg.side === "sell" || leg.position === "short" ? "SELL" : "BUY"} size="sm"></SignalBadge>
+                  <span className="mono" style={{ fontSize: 12 }}>{leg.option_type?.toUpperCase()} {leg.strike != null ? `$${leg.strike}` : ""} {leg.expiry ? `· ${leg.expiry}` : ""}</span>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--text-faint)", marginLeft: "auto" }}>{leg.quantity != null ? `${leg.quantity}×` : ""}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ fontSize: 10.5, color: "var(--text-ghost)", lineHeight: 1.5 }}>
+          Options VRP signals are informational only. Reward/risk can be attractive but tail risk is real — size accordingly.
+        </div>
+      </div>
+    </CollapsiblePanel>
+  );
+}
+
 function TelegramPreview({ log }) {
   return (
     <div className="glass" style={{ padding: 16, alignSelf: "start" }}>
@@ -378,7 +426,7 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
               ))}
               <select value={styleFilter} onChange={(e) => setStyleFilter(e.target.value)}
                 style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 6, color: "var(--text)", fontSize: 11, padding: "4px 8px" }}>
-                <option value="ALL">All styles</option><option value="intraday">Intraday</option><option value="swing">Swing</option><option value="position">Position</option>
+                <option value="ALL">All styles</option><option value="intraday">Intraday</option><option value="swing">Swing</option><option value="position">Position</option><option value="options_vrp">Options VRP</option>
               </select>
               <select value={minConf} onChange={(e) => setMinConf(Number(e.target.value))}
                 style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 6, color: "var(--text)", fontSize: 11, padding: "4px 8px" }}>
@@ -474,6 +522,9 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
             </CollapsiblePanel>
             <PaperTrade s={s}></PaperTrade>
           </div>
+
+          {/* Options VRP — shown only when the options engine fired */}
+          <OptionsVRPPanel s={s}></OptionsVRPPanel>
 
           {/* AI Insight — under the center panel */}
           <CollapsiblePanel label="AI INSIGHT" labelColor="var(--bull)" right={<span className="kicker">WHY THIS FIRED</span>} defaultOpen={false} pad={20}>

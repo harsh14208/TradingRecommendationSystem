@@ -86,6 +86,53 @@ function SignalQuotaBanner({ quota, user }) {
   );
 }
 
+/* ─── Options VRP collapsible detail panel ─────────────────────────────────── */
+function OptionsVRPCollapsible({ signal }) {
+  const [open, setOpen] = useState(false);
+  const legs = Array.isArray(signal.optionLegs) ? signal.optionLegs : [];
+  const fmtPct = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+  const fmtMove = (v) => v == null ? "—" : `${(v * 100).toFixed(2)}%`;
+  return (
+    <div style={{ background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:8, overflow:"hidden" }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 14px",
+          background:"none", border:"none", textAlign:"left", cursor:"pointer", color:"var(--text)" }}>
+        <span style={{ fontSize:10, fontFamily:"var(--font-mono)", color:"var(--warn)", textTransform:"uppercase", letterSpacing:"0.08em" }}>Options VRP</span>
+        <span style={{ fontSize:12, color:"var(--text-dim)", marginLeft:"auto" }}>{signal.optionStrategy.replace(/_/g," ").toUpperCase()}</span>
+        <span style={{ fontSize:12, color:"var(--text-faint)", transition:"transform 0.2s", transform: open ? "rotate(180deg)" : "none" }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ padding:"0 14px 14px", display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={{ fontSize:12, color:"var(--text-dim)", lineHeight:1.55 }}>
+            Options volatility view: the market is pricing a {fmtMove(signal.optionImplMove)} move,
+            but the engine forecasts {fmtMove(signal.optionForecastMove)}.
+            Richness {signal.optionRichness?.toFixed(2) ?? "—"}.
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(110px, 1fr))", gap:10 }}>
+            <div><div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.06em" }}>Exp Gain</div><div className="mono" style={{ fontSize:13, color:"var(--up)" }}>{fmtPct(signal.optionExpGain)}</div></div>
+            <div><div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.06em" }}>Max Loss</div><div className="mono" style={{ fontSize:13, color:"var(--down)" }}>{fmtPct(signal.optionMaxLoss)}</div></div>
+            <div><div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.06em" }}>Earnings</div><div className="mono" style={{ fontSize:13 }}>{signal.optionDaysToEarnings != null ? `${signal.optionDaysToEarnings}d` : "—"}</div></div>
+          </div>
+          {legs.length > 0 && (
+            <div>
+              <div style={{ fontSize:9, color:"var(--text-faint)", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>Legs</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                {legs.map((leg, i) => (
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 8px", background:"var(--bg-1)", borderRadius:4, fontSize:11 }}>
+                    <span style={{ color: leg.side === "sell" || leg.position === "short" ? "var(--down)" : "var(--up)", fontWeight:600 }}>{leg.side?.toUpperCase()}</span>
+                    <span className="mono">{leg.option_type?.toUpperCase()} {leg.strike != null ? `$${leg.strike}` : ""}</span>
+                    <span style={{ color:"var(--text-faint)", marginLeft:"auto" }}>{leg.quantity != null ? `${leg.quantity}×` : ""}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Disclaimer ─────────────────────────────────────────────────────────────── */
 const DISCLAIMER_KEY = "signal_trade_disclaimer_v1";
 const TOUR_KEY = "st_tour_seen_v1";
@@ -492,6 +539,7 @@ function App() {
     if (/\bswing\b/i.test(lq))    filters.style = "swing";
     if (/\bposition\b|\blong.term/i.test(lq)) filters.style = "position";
     if (/\bintraday\b|\bday.trade/i.test(lq)) filters.style = "intraday";
+    if (/\boptions?\b|\bvrp\b|\bvol\b/i.test(lq)) filters.style = "options_vrp";
 
     // Source/signal intent — match against rationale/sources
     if (/dark.pool|block.trade|finra|massive/i.test(lq)) filters.source = "Dark Pool";
@@ -1291,7 +1339,7 @@ function App() {
           <div className="style-strip">
             <span className="ss-label">STYLE</span>
             <div className="ss-seg">
-              {["intraday","swing","position"].map(s => (
+              {["intraday","swing","position","options_vrp"].map(s => (
                 <button key={s} className={`ss-btn ${tweakState.style===s?"on":""}`}
                   onClick={() => { setTweak({ style:s }); setFeedFilter("all"); }}
                   title={STYLE_INFO[s].hold}>
@@ -1821,6 +1869,13 @@ function App() {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* ── Options VRP collapsible section ── */}
+              {active.optionStrategy && (
+                <div className="section">
+                  <OptionsVRPCollapsible signal={active} />
                 </div>
               )}
 
