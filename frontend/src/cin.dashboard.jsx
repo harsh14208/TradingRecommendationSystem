@@ -387,6 +387,7 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
   const [styleFilter, setStyleFilter] = dUseState("ALL");
   const [minConf, setMinConf] = dUseState(0);
   const [note, setNote] = dUseState("");
+  const [optionsOpen, setOptionsOpen] = dUseState(true);
 
   const q = query.trim().toLowerCase();
   const filtered = dUseMemo(() => signalList.filter((s) => {
@@ -396,6 +397,9 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
     if (s.conf < minConf) return false;
     return true;
   }), [signalList, q, actionFilter, styleFilter, minConf]);
+
+  const liveSignals = filtered.filter((s) => !s.optionStrategy);
+  const optionsSignals = filtered.filter((s) => !!s.optionStrategy);
 
   dUseEffect(() => { if (filtered.length && !filtered.find((x) => x.tk === tk)) setTk(filtered[0].tk); }, [filtered]);
   dUseEffect(() => { const found = signalList.find((x) => x.tk === tk); if (found) setNote(found.notes || ""); }, [tk, signalList]);
@@ -420,7 +424,7 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
         <aside className="glass" style={{ padding: 0, overflow: "hidden", alignSelf: "start" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 14px", borderBottom: "1px solid var(--line)" }}>
             <span className="kicker">SIGNAL FEED</span>
-            <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> {filtered.length} LIVE</span>
+            <span className="kicker" style={{ marginLeft: "auto", color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> {liveSignals.length} LIVE</span>
           </div>
           <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, borderBottom: "1px solid var(--line-soft)" }}>
             <input type="text" placeholder="Search ticker or name…" value={query} onChange={(e) => setQuery(e.target.value)}
@@ -440,20 +444,50 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
             </div>
           </div>
           <Defer ms={500} skeleton={<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>{[0, 1, 2, 3, 4, 5].map((i) => <SkelBlock key={i} h={40}></SkelBlock>)}</div>}>
-            <div>{filtered.map((x, i) => (
-              <React.Fragment key={x.tk}>
-                {x.deliverable === false && (i === 0 || filtered[i - 1].deliverable !== false) && (
-                  <div className="kicker" style={{ display: "flex", alignItems: "center", gap: 8,
-                    padding: "8px 14px", color: "var(--text-faint)",
-                    borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)",
-                    background: "var(--panel-2)" }}>
-                    <span style={{ flex: "none" }}>BELOW DELIVERY THRESHOLD</span>
-                    <span style={{ flex: 1, height: 1, background: "var(--line)" }}></span>
-                  </div>
-                )}
-                <WatchRow s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
-              </React.Fragment>
-            ))}</div>
+            <div>
+              {liveSignals.map((x, i) => (
+                <React.Fragment key={x.tk}>
+                  {x.deliverable === false && (i === 0 || liveSignals[i - 1].deliverable !== false) && (
+                    <div className="kicker" style={{ display: "flex", alignItems: "center", gap: 8,
+                      padding: "8px 14px", color: "var(--text-faint)",
+                      borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)",
+                      background: "var(--panel-2)" }}>
+                      <span style={{ flex: "none" }}>BELOW DELIVERY THRESHOLD</span>
+                      <span style={{ flex: 1, height: 1, background: "var(--line)" }}></span>
+                    </div>
+                  )}
+                  <WatchRow s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
+                </React.Fragment>
+              ))}
+
+              {optionsSignals.length > 0 && (
+                <div style={{ borderTop: "1px solid var(--line)" }}>
+                  <button type="button" onClick={() => setOptionsOpen((o) => !o)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10,
+                      padding: "10px 14px", background: "var(--panel-2)", border: "none",
+                      borderBottom: optionsOpen ? "1px solid var(--line-soft)" : "none",
+                      textAlign: "left", cursor: "pointer" }}>
+                    <span className="kicker" style={{ color: "var(--warn)" }}>OPTIONS VRP</span>
+                    <span className="kicker" style={{ marginLeft: "auto", color: "var(--text-faint)" }}>{optionsSignals.length}</span>
+                    <Chevron open={optionsOpen}></Chevron>
+                  </button>
+                  {optionsOpen && optionsSignals.map((x, i) => (
+                    <React.Fragment key={x.tk}>
+                      {x.deliverable === false && (i === 0 || optionsSignals[i - 1].deliverable !== false) && (
+                        <div className="kicker" style={{ display: "flex", alignItems: "center", gap: 8,
+                          padding: "8px 14px", color: "var(--text-faint)",
+                          borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)",
+                          background: "var(--panel-2)" }}>
+                          <span style={{ flex: "none" }}>BELOW DELIVERY THRESHOLD</span>
+                          <span style={{ flex: 1, height: 1, background: "var(--line)" }}></span>
+                        </div>
+                      )}
+                      <WatchRow s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
+                    </React.Fragment>
+                  ))}
+                </div>
+              )}
+            </div>
           </Defer>
         </aside>
 
