@@ -22,6 +22,8 @@ option plan in dedicated nullable columns.
 
 from __future__ import annotations
 
+import math
+
 import asyncio
 import logging
 from datetime import date, datetime, timedelta
@@ -147,21 +149,25 @@ def _build_option_legs(
     a chain it falls back to the original nearest-monthly placeholder strikes.
     """
     action = row["action"]
-    px = float(row["stk_px"])
-    impl = float(row["impl_move"])
-    qty = max(1, int(round(row["units"])))
+    px = float(row["stk_px"]) if math.isfinite(float(row["stk_px"])) else 0.0
+    impl = float(row["impl_move"]) if math.isfinite(float(row["impl_move"])) else 0.0
+    try:
+        qty = max(1, int(round(float(row["units"]))))
+    except (ValueError, TypeError):
+        qty = 1
     ticker = row["ticker"]
 
     def _placeholder_leg(option_type: str, strike: float, position: str) -> dict[str, Any]:
         side_letter = "C" if option_type == "call" else "P"
-        sym = f"O:{ticker}{expiry.strftime('%y%m%d')}{side_letter}{int(round(float(strike) * 1000)):08d}"
+        strike_f = float(strike) if math.isfinite(float(strike)) else 0.0
+        sym = f"O:{ticker}{expiry.strftime('%y%m%d')}{side_letter}{int(round(strike_f * 1000)):08d}"
         return {
             "option_type": option_type,
             "side": "buy" if position == "long" else "sell",
             "position": position,
             "option_symbol": sym,
             "quantity": int(qty),
-            "strike": round(float(strike), 2),
+            "strike": round(strike_f, 2),
             "expiry": expiry.isoformat(),
             "premium": round(float(row["exp_gain"]) / int(qty), 4) if qty else 0.0,
             "midpoint": None,

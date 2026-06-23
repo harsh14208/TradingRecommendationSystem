@@ -22,6 +22,7 @@ _sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
 if _sentry_dsn:
     import sentry_sdk
     from fastapi import HTTPException
+    from sentry_sdk.integrations.asyncio import AsyncioIntegration
     from sentry_sdk.integrations.fastapi import FastApiIntegration
     from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
     from sentry_sdk.integrations.starlette import StarletteIntegration
@@ -37,8 +38,31 @@ if _sentry_dsn:
                     if exc_value.status_code == 503 and "OAuth not configured" in detail:
                         return None
         except Exception:
-            pass
+            logging.warning("Sentry before_send hook failed", exc_info=True)
         return event
+
+    def scrub_sensitive_event(event, hint):
+        if event.get("request", {}).get("data"):
+            event["request"]["data"] = "[REDACTED]"
+        for crumb in event.get("breadcrumbs", {}).get("values", []):
+            if crumb.get("category") == "http":
+                url = crumb.get("data", {}).get("url", "")
+                if "api_key" in url or "secret" in url:
+                    crumb["data"]["url"] = "[REDACTED]"
+        return event
+
+    def scrub_sensitive_breadcrumb(crumb, hint):
+        if crumb.get("category") == "http":
+            url = crumb.get("data", {}).get("url", "")
+            if "api_key" in url or "secret" in url:
+                crumb["data"]["url"] = "[REDACTED]"
+        return crumb
+
+    def _before_send(event, hint):
+        event = scrub_sensitive_event(event, hint)
+        if event is None:
+            return None
+        return _ignore_expected_oauth_error(event, hint)
 
     sentry_sdk.init(
         dsn=_sentry_dsn,
@@ -46,12 +70,15 @@ if _sentry_dsn:
             StarletteIntegration(),
             FastApiIntegration(),
             SqlalchemyIntegration(),
+            AsyncioIntegration(),
         ],
-        before_send=_ignore_expected_oauth_error,
+        before_send=_before_send,
+        before_breadcrumb=scrub_sensitive_breadcrumb,
         traces_sample_rate=0.1,  # 10% of requests profiled — adjust up/down by cost
         profiles_sample_rate=0.05,
         environment="production" if not os.environ.get("DEBUG") else "development",
         release=os.environ.get("GIT_SHA", "unknown"),
+        send_default_pii=False,
     )
 
     # yfinance logs expected/transient conditions at ERROR level — ETF
@@ -76,7 +103,7 @@ try:
     if _target > _soft:
         resource.setrlimit(resource.RLIMIT_NOFILE, (_target, _hard))
 except Exception:
-    pass
+    logging.warning("Could not raise NOFILE limit", exc_info=True)
 
 import json as _json
 
@@ -295,15 +322,21 @@ async def _periodic_scan():
                 _scan_fail_streak = 0
             except asyncio.CancelledError:
                 raise
-            except BaseException as e:
+            except Exception as e:
                 _scan_fail_streak += 1
-                print(f"[scanner] periodic error (streak {_scan_fail_streak}): {type(e).__name__}: {e}")
+                log.error(
+                    "[scanner] periodic error (streak %d): %s: %s",
+                    _scan_fail_streak,
+                    type(e).__name__,
+                    e,
+                    exc_info=True,
+                )
                 if _scan_fail_streak == 1 or _scan_fail_streak % 5 == 0:
                     await _alert_telegram(
                         f"⚠️ Scanner error (streak {_scan_fail_streak})\n{type(e).__name__}: {str(e)[:200]}"
                     )
-            await asyncio.sleep(60)
-        return  # unreachable but satisfies linter
+                await asyncio.sleep(60)
+            return  # unreachable but satisfies linter
 
     # ── Continuous market-hours path ──────────────────────────────────────────
     while True:
@@ -343,9 +376,15 @@ async def _periodic_scan():
             _scan_fail_streak = 0
         except asyncio.CancelledError:
             raise
-        except BaseException as e:
+        except Exception as e:
             _scan_fail_streak += 1
-            print(f"[scanner] error (streak {_scan_fail_streak}): {type(e).__name__}: {e}")
+            log.error(
+                "[scanner] error (streak %d): %s: %s",
+                _scan_fail_streak,
+                type(e).__name__,
+                e,
+                exc_info=True,
+            )
             if _scan_fail_streak == 1 or _scan_fail_streak % 5 == 0:
                 await _alert_telegram(
                     f"⚠️ Scanner error (streak {_scan_fail_streak})\n{type(e).__name__}: {str(e)[:200]}"
@@ -756,7 +795,7 @@ async def _nightly_reflection_learning():
                         store_reflection(sig.ticker, sig.action, sig.outcome_pct, features, lesson[:500])
                         reflected += 1
                 except Exception:
-                    pass
+                    log.warning("Reflection failed for signal %s", sig.ticker, exc_info=True)
 
             if reflected:
                 log.info(f"[reflection] Stored {reflected} loss lessons in vector store")
@@ -966,7 +1005,7 @@ async def _run_weekly_digest(force: bool = False):
             if not spy_data.empty and len(spy_data) >= 2:
                 spy_ret = (spy_data["Close"].iloc[-1] / spy_data["Close"].iloc[0] - 1) * 100
         except Exception:
-            pass
+            log.warning("SPY benchmark fetch failed", exc_info=True)
 
         lines = [
             "📊 *Signal.Trade — Weekly Digest*",
@@ -1437,7 +1476,7 @@ async def _warm_indicator_cache():
                 try:
                     await get_indicators(t)
                 except Exception:
-                    pass
+                    log.warning("Indicator cache warm failed for %s", t, exc_info=True)
 
         await asyncio.gather(*[_fetch_one(t) for t in tickers])
         log.info("[startup] indicator cache warm complete (%d tickers)", len(tickers))
@@ -1673,6 +1712,9 @@ def _async_exception_handler(loop, context):
             exc,
             exc_info=exc,
         )
+        import sentry_sdk
+
+        sentry_sdk.capture_exception(exc)
     else:
         log.error("[async] Async error in task %r: %s", name or "<unknown>", context.get("message"))
 
@@ -1771,6 +1813,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Signal.Trade API", version="1.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
+from pydantic import ValidationError
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    log.warning("IntegrityError on %s: %s", request.url.path, exc)
+    return JSONResponse(status_code=409, content={"detail": "Conflict — resource already exists"})
+
+
+@app.exception_handler(ValidationError)
+async def validation_error_handler(request: Request, exc: ValidationError):
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
 # ── HTTPS redirect middleware ─────────────────────────────────────────────────

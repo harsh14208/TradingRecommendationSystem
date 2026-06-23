@@ -14,8 +14,11 @@ log = logging.getLogger("signal.trade.delivery")
 
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 
+# Bounded concurrency for background delivery tasks (prevents unbounded task
+# growth during high-volume scan bursts).
+_DELIVERY_SEM = asyncio.Semaphore(100)
 
-@asynccontextmanager
+
 def _parse_allowed_hosts(setting: str) -> set[str]:
     return {h.strip().lower() for h in setting.split(",") if h.strip()}
 
@@ -89,7 +92,12 @@ async def queue_delivery(signal_id: int, user_id: int, channel: str, payload: di
     """
     Queue a delivery attempt in the background (TSYS-3b).
     """
-    asyncio.create_task(deliver_with_retry(signal_id, user_id, channel, payload, max_retries))
+
+    async def _bounded_deliver():
+        async with _DELIVERY_SEM:
+            await deliver_with_retry(signal_id, user_id, channel, payload, max_retries)
+
+    asyncio.create_task(_bounded_deliver())
 
 
 async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload: dict, max_retries: int = 5):

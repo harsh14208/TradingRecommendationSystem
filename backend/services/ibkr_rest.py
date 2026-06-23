@@ -4,10 +4,11 @@ Supports paper/live routing via local gateway connection.
 """
 
 import ssl
+import os
 import uuid
 import logging
 import certifi
-from services.http_client import shared_session
+from services.http_client import retry_with_backoff, shared_session
 
 log = logging.getLogger("ibkr_rest")
 
@@ -27,54 +28,63 @@ def _headers(api_key: str) -> dict:
     }
 
 
-def _ssl_ctx() -> ssl.SSLContext | bool:
+def _ssl_ctx() -> ssl.SSLContext:
     base = _base()
-    if "localhost" in base or "127.0.0.1" in base:
-        return False
+    # NEVER disable TLS verification in production. If a local IBKR gateway
+    # uses a self-signed cert, the operator should mount the CA cert into the
+    # container and set IBKR_CA_CERT env var.
+    ca_cert = os.getenv("IBKR_CA_CERT")
+    if ca_cert and os.path.exists(ca_cert):
+        ctx = ssl.create_default_context(cafile=ca_cert)
+        return ctx
     return ssl.create_default_context(cafile=certifi.where())
 
 
 async def get_account(api_key: str, api_secret: str = "", live: bool = False) -> dict:
     base_url = _base()
-    async with shared_session() as s:
-        # Get list of accounts
-        async with s.get(
-            f"{base_url}/portfolio/accounts",
-            headers=_headers(api_key),
-            ssl=_ssl_ctx(),
-        ) as r:
-            r.raise_for_status()
-            accounts = await r.json()
-            if not accounts:
-                raise ValueError("No IBKR accounts found")
-            account_id = accounts[0].get("id") or accounts[0].get("accountId")
 
-        # Get ledger for that account to extract equity / buying power
-        async with s.get(
-            f"{base_url}/portfolio/{account_id}/ledger",
-            headers=_headers(api_key),
-            ssl=_ssl_ctx(),
-        ) as r:
-            r.raise_for_status()
-            ledger = await r.json()
-            currency = accounts[0].get("currency", "USD")
-            curr_data = ledger.get(currency, {})
-            if not curr_data and ledger:
-                first_key = list(ledger.keys())[0]
-                curr_data = ledger.get(first_key, {})
+    async def _call():
+        async with shared_session() as s:
+            # Get list of accounts
+            async with s.get(
+                f"{base_url}/portfolio/accounts",
+                headers=_headers(api_key),
+                ssl=_ssl_ctx(),
+            ) as r:
+                r.raise_for_status()
+                accounts = await r.json()
+                if not accounts:
+                    raise ValueError("No IBKR accounts found")
+                account_id = accounts[0].get("id") or accounts[0].get("accountId")
 
-            equity = curr_data.get("netliquidationvalue", 0.0)
-            buying_power = curr_data.get("buyingpower", 0.0)
-            unrealized_pl = curr_data.get("unrealizedpnl", 0.0)
+            # Get ledger for that account to extract equity / buying power
+            async with s.get(
+                f"{base_url}/portfolio/{account_id}/ledger",
+                headers=_headers(api_key),
+                ssl=_ssl_ctx(),
+            ) as r:
+                r.raise_for_status()
+                ledger = await r.json()
+                currency = accounts[0].get("currency", "USD")
+                curr_data = ledger.get(currency, {})
+                if not curr_data and ledger:
+                    first_key = list(ledger.keys())[0]
+                    curr_data = ledger.get(first_key, {})
 
-            return {
-                "id": account_id,
-                "status": "ACTIVE",
-                "equity": str(equity),
-                "buying_power": str(buying_power),
-                "currency": currency,
-                "unrealized_pl": str(unrealized_pl),
-            }
+                equity = curr_data.get("netliquidationvalue", 0.0)
+                buying_power = curr_data.get("buyingpower", 0.0)
+                unrealized_pl = curr_data.get("unrealizedpnl", 0.0)
+
+                return {
+                    "id": account_id,
+                    "status": "ACTIVE",
+                    "equity": str(equity),
+                    "buying_power": str(buying_power),
+                    "currency": currency,
+                    "unrealized_pl": str(unrealized_pl),
+                }
+
+    return await retry_with_backoff(_call)
 
 
 async def search_conid(symbol: str, api_key: str) -> int:
@@ -97,30 +107,38 @@ async def get_positions(api_key: str, api_secret: str = "", live: bool = False) 
     base_url = _base()
     acct = await get_account(api_key, api_secret, live)
     acct_id = acct["id"]
-    async with shared_session() as s:
-        async with s.get(
-            f"{base_url}/portfolio/{acct_id}/positions",
-            headers=_headers(api_key),
-            ssl=_ssl_ctx(),
-        ) as r:
-            r.raise_for_status()
-            return await r.json()
+
+    async def _call():
+        async with shared_session() as s:
+            async with s.get(
+                f"{base_url}/portfolio/{acct_id}/positions",
+                headers=_headers(api_key),
+                ssl=_ssl_ctx(),
+            ) as r:
+                r.raise_for_status()
+                return await r.json()
+
+    return await retry_with_backoff(_call)
 
 
 async def get_orders(
     api_key: str, api_secret: str = "", status: str = "all", limit: int = 50, live: bool = False
 ) -> list:
     base_url = _base()
-    async with shared_session() as s:
-        async with s.get(
-            f"{base_url}/iserver/account/orders",
-            headers=_headers(api_key),
-            ssl=_ssl_ctx(),
-        ) as r:
-            r.raise_for_status()
-            res = await r.json()
-            orders = res.get("orders", [])
-            return orders[:limit]
+
+    async def _call():
+        async with shared_session() as s:
+            async with s.get(
+                f"{base_url}/iserver/account/orders",
+                headers=_headers(api_key),
+                ssl=_ssl_ctx(),
+            ) as r:
+                r.raise_for_status()
+                res = await r.json()
+                orders = res.get("orders", [])
+                return orders[:limit]
+
+    return await retry_with_backoff(_call)
 
 
 async def place_order(
@@ -155,29 +173,32 @@ async def place_order(
     if ib_order_type == "LMT" and limit_price is not None:
         order_payload["price"] = float(limit_price)
 
-    async with shared_session() as s:
-        async with s.post(
-            f"{base_url}/iserver/account/{acct_id}/orders",
-            headers=_headers(api_key),
-            json={"orders": [order_payload]},
-            ssl=_ssl_ctx(),
-        ) as r:
-            r.raise_for_status()
-            res = await r.json()
-            if isinstance(res, list) and len(res) > 0:
-                first = res[0]
-                if "replyId" in first:
-                    reply_id = first["replyId"]
-                    async with s.post(
-                        f"{base_url}/iserver/reply/{reply_id}",
-                        headers=_headers(api_key),
-                        json={"confirmed": True},
-                        ssl=_ssl_ctx(),
-                    ) as reply_r:
-                        reply_res = await reply_r.json()
-                        return reply_res[0] if isinstance(reply_res, list) and reply_res else reply_res
-                return first
-            return res
+    async def _call():
+        async with shared_session() as s:
+            async with s.post(
+                f"{base_url}/iserver/account/{acct_id}/orders",
+                headers=_headers(api_key),
+                json={"orders": [order_payload]},
+                ssl=_ssl_ctx(),
+            ) as r:
+                r.raise_for_status()
+                res = await r.json()
+                if isinstance(res, list) and len(res) > 0:
+                    first = res[0]
+                    if "replyId" in first:
+                        reply_id = first["replyId"]
+                        async with s.post(
+                            f"{base_url}/iserver/reply/{reply_id}",
+                            headers=_headers(api_key),
+                            json={"confirmed": True},
+                            ssl=_ssl_ctx(),
+                        ) as reply_r:
+                            reply_res = await reply_r.json()
+                            return reply_res[0] if isinstance(reply_res, list) and reply_res else reply_res
+                    return first
+                return res
+
+    return await retry_with_backoff(_call)
 
 
 async def place_notional_order(
@@ -369,14 +390,18 @@ async def cancel_order(api_key: str, api_secret: str, order_id: str, live: bool 
     acct = await get_account(api_key, api_secret, live)
     acct_id = acct["id"]
     base_url = _base()
-    async with shared_session() as s:
-        async with s.delete(
-            f"{base_url}/iserver/account/{acct_id}/order/{order_id}",
-            headers=_headers(api_key),
-            ssl=_ssl_ctx(),
-        ) as r:
-            r.raise_for_status()
-            return await r.json()
+
+    async def _call():
+        async with shared_session() as s:
+            async with s.delete(
+                f"{base_url}/iserver/account/{acct_id}/order/{order_id}",
+                headers=_headers(api_key),
+                ssl=_ssl_ctx(),
+            ) as r:
+                r.raise_for_status()
+                return await r.json()
+
+    return await retry_with_backoff(_call)
 
 
 async def get_portfolio_value(api_key: str, api_secret: str = "", live: bool = False) -> float:

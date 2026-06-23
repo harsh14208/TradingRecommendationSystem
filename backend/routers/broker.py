@@ -88,8 +88,11 @@ class AutoExecuteSettingsIn(BaseModel):
     @field_validator("qty_dollars")
     @classmethod
     def _valid_qty(cls, v: float | None) -> float | None:
-        if v is not None and v < 1.0:
-            raise ValueError("qty_dollars must be at least $1")
+        if v is not None:
+            if v < 1.0:
+                raise ValueError("qty_dollars must be at least $1")
+            if v > 100_000.0:
+                raise ValueError("qty_dollars cannot exceed $100,000 per signal")
         return v
 
 

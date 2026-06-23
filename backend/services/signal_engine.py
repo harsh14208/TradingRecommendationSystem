@@ -566,7 +566,7 @@ async def generate_signal(
         # into _levels and produce NaN stop/target. Fall back to 2% of price when
         # atr is missing, zero, or non-finite.
         _atr_raw = tech.get("atr")
-        atr = _atr_raw if (_atr_raw and _np.isfinite(_atr_raw)) else price * 0.02
+        atr = _atr_raw if (_atr_raw is not None and _np.isfinite(_atr_raw)) else price * 0.02
         rsi = tech.get("rsi")
         hist = tech.get("macd_hist", 0) or 0
         hist_p = tech.get("macd_hist_prev", 0) or 0
@@ -1284,9 +1284,14 @@ async def generate_signal(
         spy_1m = macro.get("spy_1m_ret")
         if spy_1m is not None and len(df) >= 21:
             close_arr = df["Close"].astype(float)
-            ticker_1m = (float(close_arr.iloc[-1]) / float(close_arr.iloc[-21]) - 1) * 100
-            rel_strength = round(ticker_1m - spy_1m, 2)
-            if rel_strength > 8:
+            _c21 = float(close_arr.iloc[-21])
+            if not _c21 or not _np.isfinite(_c21) or abs(_c21) < 1e-9:
+                log.warning("[signal_engine] %s: skipping 1m RS — 21-day close is zero/NaN/inf (%s)", ticker, _c21)
+                rel_strength = None
+            else:
+                ticker_1m = (float(close_arr.iloc[-1]) / _c21 - 1) * 100
+                rel_strength = round(ticker_1m - spy_1m, 2)
+            if rel_strength is not None and rel_strength > 8:
                 if not liquidity_ceiling:
                     score += 12
                     sources.add("Relative Strength")
@@ -1302,10 +1307,10 @@ async def generate_signal(
                             "meta": f"1M: {ticker_1m:+.1f}% | SPY: {spy_1m:+.1f}%",
                         }
                     )
-            elif rel_strength > 2:
+            elif rel_strength is not None and rel_strength > 2:
                 if not liquidity_ceiling:
                     score += 4  # mild outperformance still a positive signal
-            elif rel_strength < -8:
+            elif rel_strength is not None and rel_strength < -8:
                 if not liquidity_ceiling:
                     score -= 12
                 sources.add("Relative Strength")
@@ -1321,13 +1326,13 @@ async def generate_signal(
                         "meta": f"1M: {ticker_1m:+.1f}% | SPY: {spy_1m:+.1f}%",
                     }
                 )
-            elif rel_strength < -2:
+            elif rel_strength is not None and rel_strength < -2:
                 if not liquidity_ceiling:
                     score -= 5  # mild underperformance is a negative signal
             # Confidence penalty only for persistent underperformers (> -5% vs SPY).
             # The -2% to -5% band is already captured by the score -= 5 above; the
             # confidence penalty here is reserved for meaningful sustained lagging.
-            if rel_strength < -5 and score > 0:
+            if rel_strength is not None and rel_strength < -5 and score > 0:
                 rs_confidence_penalty = 0.08
 
         # ── Fear & Greed (market-wide, passed from scanner) ─────────────

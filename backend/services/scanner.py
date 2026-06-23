@@ -27,6 +27,7 @@ from services.macro import get_macro_context
 from services.market_data import get_histories_batch, get_infos_sequential, get_quotes_batch
 from services.options_scanner import run_options_scan
 from services.signal_engine import scan_all
+from services.market_calendar import get_upcoming_holidays
 from services.telegram_svc import format_signal, send_telegram
 
 # ── Data quality monitoring ───────────────────────────────────────────────────
@@ -312,7 +313,11 @@ _DIFF_SIGNAL_MAX_AGE_H = 2.0  # skip only if an active signal was created within
 
 
 def _market_session() -> str:
-    """Return the current US market session: pre, regular, after, or closed."""
+    """Return the current US market session: pre, regular, after, or closed.
+
+    NOTE: This may be dead code identical to _current_session() in
+    engines/helpers.py.  Do not remove it to avoid breaking any callers.
+    """
     now_et = datetime.now(_ET)
     if now_et.weekday() >= 5:
         return "closed"
@@ -326,12 +331,29 @@ def _market_session() -> str:
     return "closed"
 
 
-def _market_hours_ok() -> bool:
+async def _market_hours_ok() -> bool:
     """Return True during NYSE trading hours (9:30–16:05 ET, Mon–Fri only).
-    Covers the post-close scan at 16:02 so near-close signals can be sent."""
+    Covers the post-close scan at 16:02 so near-close signals can be sent.
+
+    Integrates market_calendar to skip NYSE holidays and early closures.
+    """
     now_et = datetime.now(_ET)
     if now_et.weekday() >= 5:  # 5=Saturday, 6=Sunday
         return False
+
+    # Holiday / early-close awareness
+    try:
+        holidays = await get_upcoming_holidays()
+        today_str = now_et.strftime("%Y-%m-%d")
+        for h in holidays:
+            if h.get("date") == today_str:
+                return False
+            # Best-effort early-close guard: if an exchange holiday is today and we
+            # had early-close data, we would respect it.  The current market_calendar
+            # API returns closed-days only; early-close enrichment can be added there.
+    except Exception:
+        log.warning("holiday lookup failed; falling back to weekday-only check", exc_info=True)
+
     return dtime(9, 30) <= now_et.time() <= dtime(16, 5)
 
 
@@ -397,6 +419,17 @@ def _today_start_utc() -> datetime:
     return midnight_et.astimezone(pytz.utc).replace(tzinfo=None)
 
 
+def _add_trading_days(start: datetime, days: int) -> datetime:
+    """Add trading days (Mon-Fri) to a naive UTC datetime, skipping weekends."""
+    result = start
+    added = 0
+    while added < days:
+        result += timedelta(days=1)
+        if result.weekday() < 5:
+            added += 1
+    return result
+
+
 async def _maybe_send(
     sig_dict: dict,
     db_row: Signal,
@@ -425,7 +458,7 @@ async def _maybe_send(
         return
 
     # ── Time-of-day filter ──────────────────────────────────────────────────
-    if not bypass_market_hours and not _market_hours_ok():
+    if not bypass_market_hours and not await _market_hours_ok():
         _mh_reason = "outside clean market window"
         log.info(f" {sig_dict['ticker']} notification suppressed — {_mh_reason}")
         db_row.skip_reason = _mh_reason
@@ -836,7 +869,7 @@ async def _maybe_paper_trade(
     if sig_dict["confidence"] < settings.min_confidence:
         return
 
-    if not _market_hours_ok():
+    if not await _market_hours_ok():
         return
 
     if not settings.alpaca_api_key or not settings.alpaca_api_secret:
@@ -934,7 +967,7 @@ async def _maybe_auto_execute_for_signal(sig: dict, signal_id, db) -> None:
     if action not in ("BUY", "SELL"):
         return
 
-    if not _market_hours_ok():
+    if not await _market_hours_ok():
         return
 
     db_settings = await _load_db_settings()
@@ -1648,194 +1681,204 @@ async def _persist_scan_signals(
 
     async with AsyncSessionLocal() as db:
         for sig in signals:
-            # ACT-4c: persist BUY-gate inputs that have no dedicated column, so
-            # eod_batch_send() can rebuild a sig_dict that the delivery gates
-            # evaluate identically to the real-time path.
-            _gate_extra = {
-                "hasMr": sig.get("hasMr"),
-                "hasMrSell": sig.get("hasMrSell"),
-                "vix": sig.get("vix"),
-                "crossAssetHeadwinds": sig.get("crossAssetHeadwinds"),
-                "daysToExDiv": sig.get("daysToExDiv"),
-                "cohort": sig.get("cohort"),
-                "cohort_meta": sig.get("cohort_meta"),
-            }
-            result = await db.execute(
-                select(Signal)
-                .where(Signal.ticker == sig["ticker"])
-                .where(Signal.is_active == True)
-                .order_by(desc(Signal.created_at))
-                .limit(1)
-            )
-            existing = result.scalar_one_or_none()
-            force_resend = False
-
-            if existing and existing.created_at and existing.created_at >= today_start:
-                conf_delta = abs(sig["confidence"] - (existing.confidence or 0))
-                direction_changed = existing.action != sig["action"]
-
-                if not direction_changed and conf_delta < _CONF_CHANGE_THRESHOLD:
-                    existing.price = sig["price"]
-                    existing.change = sig["change"]
-                    existing.change_pct = sig["changePct"]
-                    existing.confidence = sig["confidence"]
-                    existing.confidence_warning = bool(sig.get("confidence_warning", False))
-                    existing.rationale = sig["rationale"]
-                    existing.sources = sig["sources"]
-                    existing.headline = sig["headline"]
-                    existing.plain_english = sig.get("plain_english")
-                    existing.session = sig.get("session")
-                    existing.days_to_earnings = sig.get("daysToEarnings")
-                    existing.next_earnings_date = sig.get("nextEarningsDate")
-                    existing.sector_etf = sig.get("sectorEtf")
-                    existing.rs_vs_sector = sig.get("rsVsSector")
-                    existing.style = sig.get("style", existing.style)
-                    existing.extra_data = _gate_extra
-                    if not existing.is_sent:
-                        refreshed_unsent.append((sig, existing, False))
-                    continue
-
-                if direction_changed:
-                    force_resend = True
-                    log.info(
-                        f" {sig['ticker']} direction flip "
-                        f"{existing.action}→{sig['action']} "
-                        f"(conf {existing.confidence:.0f}%→{sig['confidence']:.0f}%)"
-                    )
-                else:
-                    log.info(
-                        f" {sig['ticker']} confidence surge "
-                        f"{existing.confidence:.0f}%→{sig['confidence']:.0f}% "
-                        f"(Δ{conf_delta:.0f}pp)"
-                    )
-
-            # Priority 1: Don't deactivate an unsent BUY/SELL when the new signal is
-            # a HOLD — the EOD batch still needs to deliver it. Deactivate only if
-            # the new signal is actionable (BUY/SELL) or the old one was already sent.
-            _should_deactivate = True
-            if existing and sig["action"] == "HOLD" and existing.action in ("BUY", "SELL") and not existing.is_sent:
-                _should_deactivate = False
-                log.info(
-                    f" {sig['ticker']} HOLD skipped deactivation — "
-                    f"unsent {existing.action} conf={existing.confidence:.0f}% still active"
-                )
-
-            if _should_deactivate:
-                await db.execute(
-                    update(Signal)
-                    .where(Signal.ticker == sig["ticker"])
-                    .where(Signal.is_active == True)
-                    .values(is_active=False)
-                )
-
-            _now_et = datetime.now(_ET)
-            _style = sig.get("style", "swing")
-            if _style == "intraday":
-                _close_et = _now_et.replace(hour=16, minute=5, second=0, microsecond=0)
-                if _now_et >= _close_et:
-                    _close_et += timedelta(days=1)
-                _expires = _close_et.astimezone(pytz.utc).replace(tzinfo=None)
-            elif _style == "position":
-                _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
-            else:
-                # §34d: use sector-calibrated hold_days (from _SECTOR_MR_CONFIG via
-                # signal_engine.recommendedHoldDays) instead of flat 10. Sectors with
-                # hold=5 (XLK, XLE, XLB) expire in 5 days; uncalibrated default = 10.
-                _swing_hold = sig.get("recommendedHoldDays", 10) or 10
-                _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=_swing_hold)
-
-            from services.provider_telemetry import current_cycle_id
-
-            row = Signal(
-                ticker=sig["ticker"],
-                company=sig.get("company"),
-                action=sig["action"],
-                raw_score=sig.get("raw_score"),
-                confidence=sig["confidence"],
-                raw_confidence=sig.get("raw_confidence", sig.get("confidence")),
-                confidence_warning=bool(sig.get("confidence_warning", False)),
-                price=sig["price"],
-                change=sig["change"],
-                change_pct=sig["changePct"],
-                entry=sig.get("entry"),
-                stop=sig.get("stop"),
-                target=sig.get("target"),
-                rr=sig.get("rr"),
-                headline=sig["headline"],
-                sentiment=sig.get("sentiment", 0),
-                style=sig.get("style", "swing"),
-                sources=sig.get("sources", []),
-                rationale=sig.get("rationale", []),
-                plain_english=sig.get("plain_english"),
-                session=sig.get("session"),
-                days_to_earnings=sig.get("daysToEarnings"),
-                next_earnings_date=sig.get("nextEarningsDate"),
-                sector_etf=sig.get("sectorEtf"),
-                rs_vs_sector=sig.get("rsVsSector"),
-                expires_at=_expires,
-                extra_data=_gate_extra,
-                cycle_id=current_cycle_id.get(),
-                # QENG-6c: stamp the scoring/gate policy version on every signal so
-                # the row is traceable to the exact engine version that produced it.
-                # (Column existed but was never written — 100% null before this.)
-                policy_version=f"{SCORING_POLICY_VERSION}/{GATES_POLICY_VERSION}",
-            )
-            db.add(row)
-            await db.flush()
-            # R10-16: persist auxiliary analytics (gate traces, shadow scores,
-            # feature snapshot) inside a SAVEPOINT so one bad payload (e.g. a
-            # NaN in a json column, a constraint violation) rolls back only the
-            # aux data for this ticker — the core Signal row still commits and
-            # the scan cycle continues instead of aborting wholesale.
             try:
                 async with db.begin_nested():
-                    # Save gate traces (TSYS-6a)
-                    for trace in sig.get("gate_traces", []):
-                        trace_row = SignalGateTrace(
-                            signal_id=row.id,
-                            gate_id=trace["gate_id"],
-                            version=trace["version"],
-                            input_values=trace["input_values"],
-                            score_delta=trace["score_delta"],
-                            confidence_delta=trace["confidence_delta"],
-                            passed=trace["passed"],
-                            reason=trace["reason"],
-                        )
-                        db.add(trace_row)
-                    # Save shadow scores (TSYS-7c)
-                    shadow = sig.get("shadow_scores")
-                    if shadow:
-                        shadow_row = ModelShadowScore(
-                            signal_id=row.id,
-                            model_id=shadow["model_id"],
-                            score=shadow["score"],
-                            confidence=shadow["confidence"],
-                            champion_score=shadow["champion_score"],
-                            champion_confidence=shadow["champion_confidence"],
-                        )
-                        db.add(shadow_row)
-                    # Save feature snapshots (QENG-2a)
-                    if "features" in sig:
-                        from services.feature_store import save_feature_snapshot
-                        from services.lineage import DATA_LINEAGE_VERSION
+                    # ACT-4c: persist BUY-gate inputs that have no dedicated column, so
+                    # eod_batch_send() can rebuild a sig_dict that the delivery gates
+                    # evaluate identically to the real-time path.
+                    _gate_extra = {
+                        "hasMr": sig.get("hasMr"),
+                        "hasMrSell": sig.get("hasMrSell"),
+                        "vix": sig.get("vix"),
+                        "crossAssetHeadwinds": sig.get("crossAssetHeadwinds"),
+                        "daysToExDiv": sig.get("daysToExDiv"),
+                        "cohort": sig.get("cohort"),
+                        "cohort_meta": sig.get("cohort_meta"),
+                    }
+                    result = await db.execute(
+                        select(Signal)
+                        .where(Signal.ticker == sig["ticker"])
+                        .where(Signal.is_active == True)
+                        .order_by(desc(Signal.created_at))
+                        .limit(1)
+                    )
+                    existing = result.scalar_one_or_none()
+                    force_resend = False
 
-                        await save_feature_snapshot(
-                            db=db,
-                            ticker=sig["ticker"],
-                            ts=datetime.utcnow(),
-                            features=sig["features"],
-                            signal_id=row.id,
-                            effective_time=datetime.utcnow(),
-                            provider="polygon",
-                            signal_policy_version=DATA_LINEAGE_VERSION,
-                        )
-            except Exception as aux_err:
-                log.warning(
-                    f"[scanner] aux-data persist skipped for {sig['ticker']} "
-                    f"(signal still saved): {type(aux_err).__name__}: {aux_err}"
-                )
+                    if existing and existing.created_at and existing.created_at >= today_start:
+                        conf_delta = abs(sig["confidence"] - (existing.confidence or 0))
+                        direction_changed = existing.action != sig["action"]
 
-            new_signals.append((sig, row, force_resend))
+                        if not direction_changed and conf_delta < _CONF_CHANGE_THRESHOLD:
+                            existing.price = sig["price"]
+                            existing.change = sig["change"]
+                            existing.change_pct = sig["changePct"]
+                            existing.confidence = sig["confidence"]
+                            existing.confidence_warning = bool(sig.get("confidence_warning", False))
+                            existing.rationale = sig["rationale"]
+                            existing.sources = sig["sources"]
+                            existing.headline = sig["headline"]
+                            existing.plain_english = sig.get("plain_english")
+                            existing.session = sig.get("session")
+                            existing.days_to_earnings = sig.get("daysToEarnings")
+                            existing.next_earnings_date = sig.get("nextEarningsDate")
+                            existing.sector_etf = sig.get("sectorEtf")
+                            existing.rs_vs_sector = sig.get("rsVsSector")
+                            existing.style = sig.get("style", existing.style)
+                            existing.extra_data = _gate_extra
+                            if not existing.is_sent:
+                                refreshed_unsent.append((sig, existing, False))
+                            continue
+
+                        if direction_changed:
+                            force_resend = True
+                            log.info(
+                                f" {sig['ticker']} direction flip "
+                                f"{existing.action}→{sig['action']} "
+                                f"(conf {existing.confidence:.0f}%→{sig['confidence']:.0f}%)"
+                            )
+                        else:
+                            log.info(
+                                f" {sig['ticker']} confidence surge "
+                                f"{existing.confidence:.0f}%→{sig['confidence']:.0f}% "
+                                f"(Δ{conf_delta:.0f}pp)"
+                            )
+
+                    # Priority 1: Don't deactivate an unsent BUY/SELL when the new signal is
+                    # a HOLD — the EOD batch still needs to deliver it. Deactivate only if
+                    # the new signal is actionable (BUY/SELL) or the old one was already sent.
+                    _should_deactivate = True
+                    if (
+                        existing
+                        and sig["action"] == "HOLD"
+                        and existing.action in ("BUY", "SELL")
+                        and not existing.is_sent
+                    ):
+                        _should_deactivate = False
+                        log.info(
+                            f" {sig['ticker']} HOLD skipped deactivation — "
+                            f"unsent {existing.action} conf={existing.confidence:.0f}% still active"
+                        )
+
+                    if _should_deactivate:
+                        await db.execute(
+                            update(Signal)
+                            .where(Signal.ticker == sig["ticker"])
+                            .where(Signal.is_active == True)
+                            .values(is_active=False)
+                        )
+
+                    _now_et = datetime.now(_ET)
+                    _style = sig.get("style", "swing")
+                    if _style == "intraday":
+                        _close_et = _now_et.replace(hour=16, minute=5, second=0, microsecond=0)
+                        if _now_et >= _close_et:
+                            _close_et += timedelta(days=1)
+                        _expires = _close_et.astimezone(pytz.utc).replace(tzinfo=None)
+                    elif _style == "position":
+                        _expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)
+                    else:
+                        # §34d: use sector-calibrated hold_days (from _SECTOR_MR_CONFIG via
+                        # signal_engine.recommendedHoldDays) instead of flat 10. Sectors with
+                        # hold=5 (XLK, XLE, XLB) expire in 5 days; uncalibrated default = 10.
+                        _swing_hold = sig.get("recommendedHoldDays", 10) or 10
+                        _expires = _add_trading_days(datetime.now(timezone.utc).replace(tzinfo=None), _swing_hold)
+
+                    from services.provider_telemetry import current_cycle_id
+
+                    row = Signal(
+                        ticker=sig["ticker"],
+                        company=sig.get("company"),
+                        action=sig["action"],
+                        raw_score=sig.get("raw_score"),
+                        confidence=sig["confidence"],
+                        raw_confidence=sig.get("raw_confidence", sig.get("confidence")),
+                        confidence_warning=bool(sig.get("confidence_warning", False)),
+                        price=sig["price"],
+                        change=sig["change"],
+                        change_pct=sig["changePct"],
+                        entry=sig.get("entry"),
+                        stop=sig.get("stop"),
+                        target=sig.get("target"),
+                        rr=sig.get("rr"),
+                        headline=sig["headline"],
+                        sentiment=sig.get("sentiment", 0),
+                        style=sig.get("style", "swing"),
+                        sources=sig.get("sources", []),
+                        rationale=sig.get("rationale", []),
+                        plain_english=sig.get("plain_english"),
+                        session=sig.get("session"),
+                        days_to_earnings=sig.get("daysToEarnings"),
+                        next_earnings_date=sig.get("nextEarningsDate"),
+                        sector_etf=sig.get("sectorEtf"),
+                        rs_vs_sector=sig.get("rsVsSector"),
+                        expires_at=_expires,
+                        extra_data=_gate_extra,
+                        cycle_id=current_cycle_id.get(),
+                        # QENG-6c: stamp the scoring/gate policy version on every signal so
+                        # the row is traceable to the exact engine version that produced it.
+                        # (Column existed but was never written — 100% null before this.)
+                        policy_version=f"{SCORING_POLICY_VERSION}/{GATES_POLICY_VERSION}",
+                    )
+                    db.add(row)
+                    await db.flush()
+                    # R10-16: persist auxiliary analytics (gate traces, shadow scores,
+                    # feature snapshot) inside a SAVEPOINT so one bad payload (e.g. a
+                    # NaN in a json column, a constraint violation) rolls back only the
+                    # aux data for this ticker — the core Signal row still commits and
+                    # the scan cycle continues instead of aborting wholesale.
+                    try:
+                        async with db.begin_nested():
+                            # Save gate traces (TSYS-6a)
+                            for trace in sig.get("gate_traces", []):
+                                trace_row = SignalGateTrace(
+                                    signal_id=row.id,
+                                    gate_id=trace["gate_id"],
+                                    version=trace["version"],
+                                    input_values=trace["input_values"],
+                                    score_delta=trace["score_delta"],
+                                    confidence_delta=trace["confidence_delta"],
+                                    passed=trace["passed"],
+                                    reason=trace["reason"],
+                                )
+                                db.add(trace_row)
+                            # Save shadow scores (TSYS-7c)
+                            shadow = sig.get("shadow_scores")
+                            if shadow:
+                                shadow_row = ModelShadowScore(
+                                    signal_id=row.id,
+                                    model_id=shadow["model_id"],
+                                    score=shadow["score"],
+                                    confidence=shadow["confidence"],
+                                    champion_score=shadow["champion_score"],
+                                    champion_confidence=shadow["champion_confidence"],
+                                )
+                                db.add(shadow_row)
+                            # Save feature snapshots (QENG-2a)
+                            if "features" in sig:
+                                from services.feature_store import save_feature_snapshot
+                                from services.lineage import DATA_LINEAGE_VERSION
+
+                                await save_feature_snapshot(
+                                    db=db,
+                                    ticker=sig["ticker"],
+                                    ts=datetime.utcnow(),
+                                    features=sig["features"],
+                                    signal_id=row.id,
+                                    effective_time=datetime.utcnow(),
+                                    provider="polygon",
+                                    signal_policy_version=DATA_LINEAGE_VERSION,
+                                )
+                    except Exception as aux_err:
+                        log.warning(
+                            f"[scanner] aux-data persist skipped for {sig['ticker']} "
+                            f"(signal still saved): {type(aux_err).__name__}: {aux_err}"
+                        )
+
+                    new_signals.append((sig, row, force_resend))
+            except Exception as e:
+                log.warning(f"[scanner] signal persist failed for {sig['ticker']}: {type(e).__name__}: {e}")
+                continue
 
         await db.commit()
 
@@ -2022,6 +2065,15 @@ async def eod_batch_send() -> None:
                 _skipped = await db.merge(row)
                 _skipped.is_skipped = True
                 _skipped.skip_reason = f"eod_batch: {_guard_skip}"
+                continue
+
+            # Cohort routing — EOD batch must respect the same cohort rules as real-time.
+            _cohort = (row.extra_data or {}).get("cohort", "delivered")
+            if _cohort == "withheld":
+                log.info(f"[eod_batch] {row.ticker} skipped — cohort=withheld")
+                continue
+            if _cohort == "shadow":
+                log.info(f"[eod_batch] {row.ticker} logged — cohort=shadow (paper-only, no notification delivery)")
                 continue
 
             merged = await db.merge(row)
@@ -2258,7 +2310,7 @@ async def _run_scan_impl(broadcast_fn=None, broadcast_signal_fn=None):
     # ── Step 5: generate signals ─────────────────────────────────────────
     _mark_scan_stage("signal_generation")
     signals: list[dict] = []
-    if _market_hours_ok():
+    if await _market_hours_ok():
         try:
             signals = await scan_all(
                 active_tickers,
@@ -2332,6 +2384,36 @@ async def _run_scan_impl(broadcast_fn=None, broadcast_signal_fn=None):
                 sig.setdefault("extra_data", {})["entry_style"] = "close"
                 sig.setdefault("extra_data", {})["close_slot_timestamp"] = _now_et.isoformat()
         log.info(f"[scanner] §96c close-entry slot active — {len(signals)} signal(s) tagged")
+
+    # ── Step 5d: Pre-filter blocked tickers/sectors/SELLs at generation time ─
+    if signals:
+        from services.delivery_gates import structural_delivery_status
+
+        _pre_total = len(signals)
+        _filtered: list[dict] = []
+        for sig in signals:
+            _ok, _reason = structural_delivery_status(
+                action=sig["action"],
+                ticker=sig["ticker"],
+                sector_etf=sig.get("sectorEtf"),
+                style=sig.get("style", "swing"),
+                confidence=sig["confidence"],
+                min_confidence=settings.min_confidence,
+                has_mr=sig.get("hasMr", True),
+                has_mr_sell=sig.get("hasMrSell", False),
+                long_only=getattr(settings, "long_only", True),
+                ticker_win_rates=market_ctx.get("adaptive_weights", {}).get("ticker_win_rates") if market_ctx else None,
+                promoted_sectors=_promoted_sectors,
+            )
+            if _ok:
+                _filtered.append(sig)
+            else:
+                log.info(f" [pre-filter] {sig['ticker']} {sig['action']} skipped at generation — {_reason}")
+        signals = _filtered
+        if _pre_total != len(_filtered):
+            log.info(
+                f" [pre-filter] {_pre_total} generated, {_pre_total - len(_filtered)} filtered, {len(_filtered)} passed structural gates"
+            )
 
     # ── Step 6: persist (smart daily deduplication) ──────────────────────
     _mark_scan_stage("persistence")

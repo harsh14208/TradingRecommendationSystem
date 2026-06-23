@@ -11,15 +11,15 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # ── Existing ──────────────────────────────────────────────────────────────
-    finnhub_api_key: str = ""
+    finnhub_api_key: SecretStr = Field(default=SecretStr(""))
     watchlist: str = "NVDA,TSLA,AAPL,AMD,META,MSFT,PLTR,SMCI,QQQ,SPY,IWM,GLD,XLK,XLF,XLE"
     scan_interval: int = 60  # legacy fallback, unused
     scan_times: str = ""  # legacy fixed-slot override (leave empty for continuous mode)
     # Continuous market-hours scanning: fire every N minutes from 09:30 to 16:00 ET.
     # Set to 0 to fall back to legacy scan_times fixed slots.
     scan_interval_min: int = 15
-    fred_api_key: str = ""
-    alpaca_api_key: str = ""
+    fred_api_key: SecretStr = Field(default=SecretStr(""))
+    alpaca_api_key: SecretStr = Field(default=SecretStr(""))
     alpaca_api_secret: SecretStr = Field(default=SecretStr(""))
     auto_send_notifications: bool = True
     min_confidence: float = 40.0  # recalibrated 57→40 post phantom-win correction (2026-05-31).
@@ -76,11 +76,11 @@ class Settings(BaseSettings):
     smtp_from_name: str = "Signal.Trade"
 
     # ── Monetisation / Premium APIs ───────────────────────────────────────────
-    unusual_whales_api_key: str = ""
-    massive_api_key: str = ""  # Massive.com API key (dark pool, options, financials)
+    unusual_whales_api_key: SecretStr = Field(default=SecretStr(""))
+    massive_api_key: SecretStr = Field(default=SecretStr(""))  # Massive.com API key (dark pool, options, financials)
 
     # Polygon (optional, but .env may contain POLYGON_API_KEY)
-    polygon_api_key: str = ""
+    polygon_api_key: SecretStr = Field(default=SecretStr(""))
 
     # ── Frontend analytics sink ───────────────────────────────────────────────
     analytics_enabled: bool = True

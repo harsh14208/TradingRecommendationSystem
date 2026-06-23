@@ -1,10 +1,9 @@
 """
-Broker execution service — per-user Alpaca credential management and
+Broker execution service — per-user Alpaca/IBKR credential management and
 auto-execution of signals.
 
-Credentials are stored Fernet-encrypted in the users table. The
-encryption key is derived from JWT_SECRET so no extra env var is needed;
-if the JWT secret rotates, users will need to re-enter credentials.
+Credentials are encrypted using scrypt KDF v2 with a random 16-byte per-credential
+salt, then Fernet-AES-encrypted. The scrypt password is derived from JWT_SECRET.
 """
 
 import base64
@@ -550,6 +549,35 @@ async def execute_signal_for_user(
 
     broker_type = user.auto_execute_broker or "alpaca"
 
+    # Defense-in-depth: auto-execute must be enabled
+    if not user.auto_execute:
+        log.info("broker_svc: user=%d — auto-execute disabled, skipping", user.id)
+        return
+
+    # Defense-in-depth: risk acknowledgement for live accounts
+    live = user.alpaca_account_type == "live"
+    if live and not getattr(user, "risk_acknowledged", False):
+        log.warning("broker_svc: user=%d — live execution blocked (risk ack missing)", user.id)
+        return
+
+    # Defense-in-depth: confidence floor
+    conf = sig.get("confidence", 0)
+    min_conf = user.auto_execute_min_conf or 75.0
+    if conf < min_conf:
+        log.info("broker_svc: user=%d — confidence %.1f < %.1f, skipping", user.id, conf, min_conf)
+        return
+
+    # Defense-in-depth: kill-switch check
+    from services.redis_cache import redis_get
+
+    try:
+        ks = await redis_get("execution_paused")
+        if ks and ks.lower() == "true":
+            log.info("broker_svc: execution paused by kill switch")
+            return
+    except Exception:
+        pass
+
     # IBKR authenticates with a single bearer token (no secret); Alpaca needs both.
     # Mirror broker_connect/broker_status, which store/treat the secret as optional for IBKR.
     if not user.alpaca_key_enc:
@@ -628,6 +656,8 @@ async def execute_signal_for_user(
         cycle_id=current_cycle_id.get(),
         arrival_price=entry_price,
     )
+    db.add(order_record)
+    await db.flush()
 
     try:
         # RISK-1: Use bracket stop order when stopPrice is available
@@ -690,7 +720,6 @@ async def execute_signal_for_user(
 
         inc("order_error_total", broker=broker_type)
 
-    db.add(order_record)
     # Caller is responsible for committing the session.
 
 

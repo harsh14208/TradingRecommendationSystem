@@ -21,6 +21,7 @@ from services.options_chain_resolver import (
     natural_fill_price,
 )
 from services.massive_options_data import _parse_opra
+from services.options_engine import _is_leveraged
 
 log = logging.getLogger("signal.options_paper")
 
@@ -55,6 +56,10 @@ async def simulate_fill(
     Fills are simulated at the natural side of the spread.  The resulting
     ``BrokerOrder`` has ``broker='paper_options'`` and ``status='filled'``.
     """
+    if _is_leveraged(order.underlying):
+        log.warning("paper_options: leveraged ETF %s blocked from simulation", order.underlying)
+        raise ValueError(f"Leveraged ETF {order.underlying} is not eligible for options paper simulation")
+
     leg_fills: list[dict[str, Any]] = []
     total_qty = 0
     entry_premium = 0.0  # per-share premium sum across legs

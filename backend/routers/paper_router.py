@@ -1,18 +1,22 @@
 from config import get_settings
+from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
-from models import User
+from models import BrokerOrder, User
 from pydantic import BaseModel
 from services import alpaca_rest
 from services.auth_svc import get_current_user
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/paper", tags=["paper"])
 
 
 def _require_keys():
     s = get_settings()
-    if not s.alpaca_api_key or not s.alpaca_api_secret:
+    raw_key = s.alpaca_api_key.get_secret_value() if s.alpaca_api_key else ""
+    raw_secret = s.alpaca_api_secret.get_secret_value() if s.alpaca_api_secret else ""
+    if not raw_key or not raw_secret:
         raise HTTPException(403, "Alpaca API keys not configured — set ALPACA_API_KEY and ALPACA_API_SECRET in .env")
-    return s.alpaca_api_key, s.alpaca_api_secret.get_secret_value()
+    return raw_key, raw_secret
 
 
 def _require_paper_user(user: User):
@@ -34,45 +38,67 @@ class OrderRequest(BaseModel):
 
 @router.get("/account")
 async def account(user: User = Depends(get_current_user)):
+    _require_paper_user(user)
     key, secret = _require_keys()
     try:
         return await alpaca_rest.get_account(key, secret)
+    except alpaca_rest.AlpacaAuthError as e:
+        raise HTTPException(401, f"Alpaca authentication failed: {e}")
+    except alpaca_rest.AlpacaRateLimitError as e:
+        raise HTTPException(429, f"Alpaca rate limit exceeded: {e}")
     except Exception as e:
         raise HTTPException(502, "Broker request failed")
 
 
 @router.get("/positions")
 async def positions(user: User = Depends(get_current_user)):
-    s = get_settings()
-    if not s.alpaca_api_key:
-        return []
+    _require_paper_user(user)
+    key, secret = _require_keys()
     try:
-        return await alpaca_rest.get_positions(s.alpaca_api_key, s.alpaca_api_secret.get_secret_value())
+        return await alpaca_rest.get_positions(key, secret)
     except Exception as e:
         raise HTTPException(502, "Broker request failed")
 
 
 @router.get("/orders")
 async def orders(status: str = "all", user: User = Depends(get_current_user)):
-    s = get_settings()
-    if not s.alpaca_api_key:
-        return []
+    _require_paper_user(user)
+    key, secret = _require_keys()
     try:
-        return await alpaca_rest.get_orders(s.alpaca_api_key, s.alpaca_api_secret.get_secret_value(), status)
+        return await alpaca_rest.get_orders(key, secret, status)
     except Exception as e:
         raise HTTPException(502, "Broker request failed")
 
 
 @router.post("/orders")
-async def place_order(req: OrderRequest, user: User = Depends(get_current_user)):
+async def place_order(
+    req: OrderRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     _require_paper_user(user)
     key, secret = _require_keys()
     if req.side not in ("buy", "sell"):
         raise HTTPException(400, "side must be 'buy' or 'sell'")
     if req.qty <= 0:
         raise HTTPException(400, "qty must be positive")
+    if req.qty > 10_000:
+        raise HTTPException(400, "qty cannot exceed 10,000 shares in paper mode")
+
+    order_record = BrokerOrder(
+        user_id=user.id,
+        broker="alpaca",
+        account_type="paper",
+        symbol=req.symbol.upper(),
+        notional=0.0,
+        side=req.side.lower(),
+        status="submitted",
+    )
+    db.add(order_record)
+    await db.flush()
+
     try:
-        return await alpaca_rest.place_order(
+        result = await alpaca_rest.place_order(
             key,
             secret,
             req.symbol,
@@ -81,12 +107,20 @@ async def place_order(req: OrderRequest, user: User = Depends(get_current_user))
             req.order_type,
             req.limit_price,
         )
+        order_record.status = result.get("status", "submitted")
+        order_record.alpaca_order_id = result.get("id")
     except Exception as e:
+        order_record.status = "error"
+        order_record.error_msg = str(e)[:500]
         raise HTTPException(502, "Broker request failed")
+    finally:
+        await db.commit()
+    return result
 
 
 @router.delete("/positions/{symbol}")
 async def close_position(symbol: str, user: User = Depends(get_current_user)):
+    _require_paper_user(user)
     key, secret = _require_keys()
     try:
         return await alpaca_rest.close_position(key, secret, symbol)
@@ -96,6 +130,7 @@ async def close_position(symbol: str, user: User = Depends(get_current_user)):
 
 @router.delete("/orders/{order_id}")
 async def cancel_order(order_id: str, user: User = Depends(get_current_user)):
+    _require_paper_user(user)
     key, secret = _require_keys()
     try:
         return await alpaca_rest.cancel_order(key, secret, order_id)
@@ -109,16 +144,25 @@ async def portfolio_risk(user: User = Depends(get_current_user)):
     Aggregate risk metrics across all open paper positions:
     Sharpe ratio, max drawdown, beta vs SPY, total exposure.
     """
+    _require_paper_user(user)
     import math
 
     from services.alpaca_rest import get_account, get_positions
     from services.market_data import get_histories_batch
 
     key, secret = _require_keys()
+    positions = []
+    account = None
+    account_error = None
     try:
         positions = await get_positions(key, secret)
+    except Exception as e:
+        account_error = str(e)
+    try:
         account = await get_account(key, secret)
     except Exception as e:
+        account_error = str(e)
+    if account_error and not positions and not account:
         raise HTTPException(502, "Broker request failed")
 
     if not positions:
@@ -132,7 +176,7 @@ async def portfolio_risk(user: User = Depends(get_current_user)):
         }
 
     tickers = [p["symbol"] for p in positions]
-    equity = float(account.get("equity") or 1)
+    equity = float(account.get("equity") or 1) if account else 1.0
     histories = await get_histories_batch(tickers + ["SPY"], period="3mo", interval="1d")
 
     spy_df = histories.get("SPY")

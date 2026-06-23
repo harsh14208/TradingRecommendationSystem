@@ -16,8 +16,10 @@ Two latency bugs motivated this module:
 
 import asyncio
 import logging
+import random
 import ssl
 from contextlib import asynccontextmanager
+from typing import Any
 
 import aiohttp
 import certifi
@@ -136,3 +138,58 @@ async def close_sessions() -> None:
             except Exception as exc:  # pragma: no cover - best-effort cleanup
                 log.debug("[http] session close failed: %s", exc)
     _sessions.clear()
+
+
+async def retry_with_backoff(
+    coro_fn,
+    max_retries: int = 3,
+    base_delay: float = 0.5,
+    max_delay: float = 8.0,
+    retryable_statuses: frozenset[int] = frozenset({429, 500, 502, 503, 504}),
+    retryable_exceptions: tuple[type[Exception], ...] = (
+        aiohttp.ClientConnectorError,
+        aiohttp.ServerTimeoutError,
+        asyncio.TimeoutError,
+    ),
+) -> Any:
+    """Execute an async callable with exponential-backoff retries on transient failures.
+
+    Retries on:
+      - HTTP 429 (rate-limit) or 5xx server errors
+      - Network-level errors (connection refused, timeout, DNS failure)
+
+    Jitter is added to each delay to avoid thundering-herd after a shared outage.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await coro_fn()
+        except aiohttp.ClientResponseError as e:
+            if e.status not in retryable_statuses or attempt == max_retries:
+                raise
+            delay = min(base_delay * (2**attempt) + random.uniform(0, 0.5), max_delay)
+            log.warning(
+                "[http] Transient %s from %s, retrying in %.2f s (attempt %d/%d)",
+                e.status,
+                getattr(e.request_info, "url", "unknown"),
+                delay,
+                attempt + 1,
+                max_retries,
+            )
+            await asyncio.sleep(delay)
+            last_exc = e
+        except retryable_exceptions as e:
+            if attempt == max_retries:
+                raise
+            delay = min(base_delay * (2**attempt) + random.uniform(0, 0.5), max_delay)
+            log.warning(
+                "[http] Network error %s, retrying in %.2f s (attempt %d/%d)",
+                type(e).__name__,
+                delay,
+                attempt + 1,
+                max_retries,
+            )
+            await asyncio.sleep(delay)
+            last_exc = e
+    # Should never reach here, but satisfies type checker
+    raise last_exc  # type: ignore[return-value]

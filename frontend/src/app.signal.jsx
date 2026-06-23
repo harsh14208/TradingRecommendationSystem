@@ -63,7 +63,7 @@ function SignalRow({ s, active, expanded, onToggle, onOpen, onFullDetail, onSend
           </div>
           <div className="signal-head">{s.headline}</div>
           {/* Entry / Stop / Target chips — visible without expanding */}
-          {s.entry && !suppressed && (
+          {s.entry != null && !suppressed && (
             <div style={{ display:"flex", gap:5, marginTop:3, flexWrap:"wrap" }}>
               <span style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--text-faint)",
                 padding:"1px 5px", background:"var(--bg-3)", borderRadius:3, letterSpacing:"0.04em" }}>
@@ -175,10 +175,11 @@ function TelegramPane({ log, online, onOpenAccount, onClose }) {
   const [view, setView] = useState("log");
   const sent    = (log||[]).filter(l => l.status === "sent");
   const failed  = (log||[]).filter(l => l.status === "fail");
-  const today   = (log||[]).filter(l => {
+  const todayStr = useMemo(() => new Date().toDateString(), []);
+  const today   = useMemo(() => (log||[]).filter(l => {
     if (!l.created_at) return false;
-    return new Date(l.created_at).toDateString() === new Date().toDateString();
-  });
+    return new Date(l.created_at).toDateString() === todayStr;
+  }), [log, todayStr]);
 
   return (
     <div className="pane">

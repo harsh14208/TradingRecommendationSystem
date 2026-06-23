@@ -10,8 +10,12 @@ For cross-ticker vectorisation call batch_calculate_indicators(histories)
 which stacks all tickers into a single numpy matrix and returns {ticker: dict}.
 """
 
+import logging
+import math
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 # ── NumPy fast-path helpers ───────────────────────────────────────────────────
 
@@ -40,8 +44,12 @@ def _np_atr(h: np.ndarray, l: np.ndarray, c: np.ndarray, period: int = 14) -> fl
     Average True Range via numpy — eliminates pd.concat overhead.
     Returns the most recent ATR value only.
     """
+    if len(c) < 2:
+        return 0.0
     prev_c = c[:-1]
     tr = np.maximum(h[1:] - l[1:], np.maximum(np.abs(h[1:] - prev_c), np.abs(l[1:] - prev_c)))
+    if len(tr) == 0:
+        return 0.0
     # Wilder smoothing (EWM with com=period-1)
     alpha = 1.0 / period
     atr = tr[0]
@@ -53,13 +61,15 @@ def _np_atr(h: np.ndarray, l: np.ndarray, c: np.ndarray, period: int = 14) -> fl
 def _safe(series, idx=-1):
     try:
         v = series.iloc[idx]
-        return None if pd.isna(v) else float(v)
+        if pd.isna(v) or not math.isfinite(v):
+            return None
+        return float(v)
     except Exception:
         return None
 
 
 def calculate_indicators(df: pd.DataFrame) -> dict:
-    if df is None or len(df) < 30:
+    if df is None or len(df) < 30 or df["Close"].isna().sum() > 5:
         return {}
 
     close = df["Close"].astype(float)
@@ -75,7 +85,9 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
         out["price"] = round(float(close.iloc[-1]), 4)
         prev = float(close.iloc[-2]) if len(close) > 1 else out["price"]
         out["change"] = round(out["price"] - prev, 4)
-        out["change_pct"] = round(out["change"] / prev * 100, 4) if prev else 0
+        out["change_pct"] = (
+            round(out["change"] / prev * 100, 4) if prev and math.isfinite(prev) and abs(prev) > 1e-9 else 0
+        )
 
         # ── RSI(14) ─────────────────────────────────────────────────────
         delta = close.diff()
@@ -175,7 +187,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             out["adx"] = _safe(adx_s)
             out["adx_plus_di"] = _safe(plus_di)
             out["adx_minus_di"] = _safe(minus_di)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             out["adx"] = None
 
         # ── CCI(20) ─────────────────────────────────────────────────────
@@ -186,7 +199,7 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
         out["cci"] = _safe(cci_s)
 
         # ── Rate of Change ROC(10) ───────────────────────────────────────
-        roc = (close / close.shift(10) - 1) * 100
+        roc = (close / close.shift(10).replace(0, np.nan) - 1) * 100
         out["roc10"] = _safe(roc)
 
         # ── 52-Week High / Low ───────────────────────────────────────────
@@ -302,7 +315,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                 and curr_rsi > 50
             ):
                 out["rsi_divergence"] = "bearish"
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Ichimoku Cloud ───────────────────────────────────────────────
@@ -329,7 +343,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                     if len(close) > chikou_lag + 1
                     else None
                 )
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Chaikin Money Flow (CMF-20) ──────────────────────────────────
@@ -341,7 +356,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             out["cmf_prev"] = (
                 round(float(cmf_s.iloc[-2]), 4) if len(cmf_s) > 1 and not pd.isna(cmf_s.iloc[-2]) else None
             )
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Donchian Channel (20-day) ────────────────────────────────────
@@ -352,7 +368,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             out["donchian_low"] = round(float(dc_low.iloc[-1]), 4)
             out["donchian_high_p"] = round(float(dc_high.iloc[-2]), 4) if len(dc_high) > 1 else None
             out["donchian_low_p"] = round(float(dc_low.iloc[-2]), 4) if len(dc_low) > 1 else None
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Price structure: Higher Highs / Lower Lows ───────────────────
@@ -370,16 +387,18 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                     out["price_structure"] = "lh_ll"
                 else:
                     out["price_structure"] = "neutral"
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Gap analysis (today open vs yesterday close) ─────────────────
         try:
             if len(close) > 1:
                 prev_c = float(close.iloc[-2])
-                gap_pct = (float(open_.iloc[-1]) - prev_c) / prev_c * 100 if prev_c else 0
+                gap_pct = (float(open_.iloc[-1]) - prev_c) / prev_c * 100 if prev_c and abs(prev_c) > 1e-9 else 0
                 out["gap_pct"] = round(gap_pct, 3)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Relative Volume (RVOL) ───────────────────────────────────────
@@ -392,7 +411,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                 avg20 = float(hist_vols.mean())
                 out["avg_volume"] = int(avg20)  # overwrite with cleaner value
                 out["rvol"] = round(today_vol / max(avg20, 1), 2)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Average Daily Range % (ADR) and compression ──────────────────
@@ -404,7 +424,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                 adr_6m_high = float(adr_pct_s.rolling(20).mean().rolling(100).max().iloc[-1])
                 out["adr_6m_high"] = round(adr_6m_high, 3)
                 out["adr_compression"] = bool(adr20 <= adr_6m_high * 0.55)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Supertrend(7, 3) ─────────────────────────────────────────────
@@ -445,21 +466,23 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             out["supertrend_dir"] = dirs[-1]
             out["supertrend_dir_prev"] = dirs[-2] if len(dirs) > 1 else 0
             out["supertrend_val"] = round(float(f_lower.iloc[-1]) if dirs[-1] == 1 else float(f_upper.iloc[-1]), 4)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Hurst Exponent (variance-scaling method, 100-bar window) ─────
         try:
             n = min(100, len(close))
             if n >= 30:
-                log_prices = np.log(close.iloc[-n:].values.astype(float))
+                log_prices = np.log(np.maximum(close.iloc[-n:].values.astype(float), 1e-10))
                 lags = [l for l in [2, 4, 8, 16, 32] if l < n // 2]
                 taus = [np.std(log_prices[lag:] - log_prices[:-lag]) for lag in lags]
                 valid = [(l, t) for l, t in zip(lags, taus) if t > 0]
                 if len(valid) >= 3:
                     hurst = float(np.polyfit([np.log(l) for l, _ in valid], [np.log(t) for _, t in valid], 1)[0])
                     out["hurst"] = round(max(0.0, min(1.0, hurst)), 3)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Keltner Channels(20, 2 × ATR) ────────────────────────────────
@@ -468,7 +491,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             out["kc_upper"] = round(float((kc_mid + 2.0 * atr_s).iloc[-1]), 4)
             out["kc_lower"] = round(float((kc_mid - 2.0 * atr_s).iloc[-1]), 4)
             out["kc_mid"] = round(float(kc_mid.iloc[-1]), 4)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Fractal Dimension Index (Ehlers formula, 30-bar) ─────────────
@@ -491,7 +515,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                     if steps > 0:
                         fdi_val = 1.0 + np.log(steps) / np.log(2 * (n - 1))
                         out["fdi"] = round(float(np.clip(fdi_val, 1.0, 2.0)), 3)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Rolling 20-day VWAP ───────────────────────────────────────
@@ -529,7 +554,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                         out["vwap_band1_lower"] = round(vwap_val - vwap_std, 4)
                         out["vwap_band2_upper"] = round(vwap_val + 2 * vwap_std, 4)
                         out["vwap_band2_lower"] = round(vwap_val - 2 * vwap_std, 4)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── IBS — Internal Bar Strength ──────────────────────────────────
@@ -542,7 +568,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             rng_ibs = h0_ibs - l0_ibs
             if rng_ibs > 0:
                 out["ibs"] = round((c0_ibs - l0_ibs) / rng_ibs, 4)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── ATR Expansion / Contraction tracking ─────────────────────────
@@ -570,7 +597,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                 n_rank = min(252, len(atr_clean))
                 atr_window = atr_clean.iloc[-n_rank:].values
                 out["atr_pct_rank"] = round(float(np.mean(atr_window < atr_window[-1])) * 100, 1)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Volume Profile (POC / VAH / VAL) — daily OHLCV approximation ─
@@ -618,7 +646,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                         break
                 out["vp_vah"] = round(float(bins[hi_i + 1]), 4)
                 out["vp_val"] = round(float(bins[lo_i]), 4)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Market Structure — BOS / MSS ─────────────────────────────────
@@ -667,7 +696,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                 if struct:
                     out["market_struct"] = struct
                     out["ms_level"] = round(float(ms_lvl), 4)
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # ── Elliott Wave & Gann Analysis (Simplified) ─────────────────────
@@ -721,7 +751,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                     out["elliott_wave_phase"] = "wave_c_down"
                 elif is_new_low and macd_val < 0 and macd_hist < macd_hist_p:
                     out["elliott_wave_phase"] = "wave_3_down"
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
     except Exception as e:
@@ -736,7 +767,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             _x = _lp[:-1]
             _b = float(np.polyfit(_x, _y, 1)[0])
             out["ou_halflife"] = round(-np.log(2) / _b, 1) if _b < 0 else None
-    except Exception:
+    except Exception as e:
+        log.warning("Indicator block failed: %s", e)
         pass
 
     # §60 Hurst exponent
@@ -763,7 +795,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
                 _xh = np.array([v[0] for v in _rs_pts])
                 _yh = np.array([v[1] for v in _rs_pts])
                 out["hurst"] = round(float(max(0.0, min(1.0, np.polyfit(_xh, _yh, 1)[0]))), 3)
-    except Exception:
+    except Exception as e:
+        log.warning("Indicator block failed: %s", e)
         pass
 
     return out
@@ -816,7 +849,8 @@ def batch_calculate_indicators(
                 "atr_v": round(atr, 4),
                 "rsi_v": round(float(rsi_val), 2),
             }
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
     return results
 
@@ -872,7 +906,8 @@ def compute_cointegration_zscore(
             adf_p = float(adfuller(residuals, maxlag=1, autolag=None)[1])
             if adf_p >= _COINT_ADF_PMAX:
                 return None  # not cointegrated → no §63 signal
-        except Exception:
+        except Exception as e:
+            log.warning("Indicator block failed: %s", e)
             pass
 
         # Z-score of latest residual vs residual distribution

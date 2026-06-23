@@ -568,7 +568,7 @@ async def test_scanner_skips_execution_when_kill_switch_active():
 
     # Patch _load_db_settings to return paused=True and _market_hours_ok to True
     with (
-        patch("services.scanner._market_hours_ok", return_value=True),
+        patch("services.scanner._market_hours_ok", new=AsyncMock(return_value=True)),
         patch("services.scanner._load_db_settings", new_callable=AsyncMock, return_value={"execution_paused": True}),
     ):
         from services.scanner import _maybe_auto_execute_for_signal

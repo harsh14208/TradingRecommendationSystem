@@ -11,6 +11,9 @@ const DEFAULTS = {
   weight_overrides: {},
 };
 
+const MAX_SIGNALS = 500;
+const MAX_LOG = 200;
+
 /* ─── Owner kill-switch control ─────────────────────────────────────────────── */
 function KillSwitch({ currentUser }) {
   const [paused, setPaused] = useState(null);
@@ -27,9 +30,17 @@ function KillSwitch({ currentUser }) {
 
   const toggle = async () => {
     setLoading(true);
-    const d = await apiFetch("/api/admin/execution-kill-switch", { method: "POST" });
-    if (d) setPaused(d.execution_paused);
-    setLoading(false);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const d = await apiFetch("/api/admin/execution-kill-switch", { method: "POST", signal: ctrl.signal });
+      clearTimeout(t);
+      if (d) setPaused(d.execution_paused);
+    } catch {
+      clearTimeout(t);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (!currentUser?.is_owner || paused === null) return null;
@@ -48,6 +59,39 @@ function KillSwitch({ currentUser }) {
       <span className="btn-text">{paused ? "RESUME AUTO-EXEC" : "KILL SWITCH"}</span>
     </button>
   );
+}
+
+/* ─── Live clock (isolated subtree) ─────────────────────────────────────────── */
+function LiveClock({ variant = "chip" }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const etClock = _etFmt(now, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const etAbbr = (() => {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", timeZoneName: "short", hour: "numeric" }).formatToParts(now);
+      return parts.find(p => p.type === "timeZoneName")?.value || "ET";
+    } catch { return "ET"; }
+  })();
+  const etOffset = (() => {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", timeZoneName: "shortOffset", hour: "numeric" }).formatToParts(now);
+      const gmt = parts.find(p => p.type === "timeZoneName")?.value || "GMT-4";
+      return gmt.replace("GMT", "UTC");
+    } catch {
+      const nyMs = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" })).getTime();
+      const diff = Math.round((nyMs - now.getTime()) / 3600000);
+      return `UTC${diff >= 0 ? "+" : ""}${diff}`;
+    }
+  })();
+  const localClock = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (variant === "chip") {
+    return <span className="chip mono" title={`Your local time: ${localClock} (${localTz})`}>{etClock} {etAbbr}</span>;
+  }
+  return <span title={`Your local time: ${localClock} (${localTz})`}>{etOffset} {etAbbr}</span>;
 }
 
 /* ─── Signal quota banner ────────────────────────────────────────────────────── */
@@ -176,11 +220,15 @@ function App() {
   // Guard rapid setTweak calls so overlapping PUTs don't race
   const tweakSaving = useRef(false);
   const pendingTweak = useRef(null);
+  const tweakDebounce = useRef(null);
   const setTweak = patch => {
     const next = { ...tweakState, ...patch };
     setTweakState(next);
     setTweakSaveError(""); // clear on new save attempt
-    try { localStorage.setItem("st_tweaks", JSON.stringify(next)); } catch {}
+    if (tweakDebounce.current) clearTimeout(tweakDebounce.current);
+    tweakDebounce.current = setTimeout(() => {
+      try { localStorage.setItem("st_tweaks", JSON.stringify(next)); } catch {}
+    }, 300);
     // Persist to DB with simple in-flight guard
     pendingTweak.current = next;
     if (tweakSaving.current) return;
@@ -221,11 +269,11 @@ function App() {
   const [accountOpen,    setAccountOpen]    = useState(false);
   const [pricingOpen,    setPricingOpen]    = useState(false);
   const [pricingContext, setPricingContext]  = useState("");
-  const [now,            setNow]            = useState(() => new Date());
   const [predictive,     setPredictive]     = useState(null);
   const [predLoading,    setPredLoading]    = useState(false);
   const [paperTradeFlash,setPaperTradeFlash]= useState(false);
   const [paperSubmitting, setPaperSubmitting] = useState(false);
+  const paperCtrl = useRef(null);
   const [searchQuery,    setSearchQuery]    = useState("");
   const [searchInput,    setSearchInput]    = useState("");
   const searchTimeoutRef = useRef(null);
@@ -451,7 +499,7 @@ function App() {
         try {
           const data = JSON.parse(e.data);
           if (data.type === "new_signal") {
-            setSignals(prev => [data.signal, ...prev.filter(s => s.id !== data.signal.id)]);
+            setSignals(prev => [data.signal, ...prev.filter(s => s.id !== data.signal.id)].slice(0, MAX_SIGNALS));
             setAriaLiveMsg(`New ${data.signal.action} signal for ${data.signal.ticker} at $${fmt(data.signal.price)}`);
             setTimeout(() => setAriaLiveMsg(""), 3000);
           } else if (data.type === "price_update") {
@@ -506,12 +554,6 @@ function App() {
     document.documentElement.setAttribute("data-density", tweakState.density);
     document.documentElement.style.setProperty("--accent", tweakState.accent);
   }, [tweakState]);
-
-  /* Clock */
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   /* Derived */
   // customConf (set via RulesView input) overrides the aggressiveness preset
@@ -602,6 +644,13 @@ function App() {
     signals.filter(s => (s.confidence || 0) < threshold && matchesSearch(s) && (!s.style || s.style === styleFilter)),
     [signals, threshold, matchesSearch, styleFilter]
   );
+
+  const filterCounts = useMemo(() => ({
+    all:   signals.filter(s => (s.confidence||0) >= threshold && (!s.style || s.style===styleFilter)).length,
+    buy:   signals.filter(s => (s.confidence||0) >= threshold && s.action==="BUY"  && (!s.style || s.style===styleFilter)).length,
+    sell:  signals.filter(s => (s.confidence||0) >= threshold && s.action==="SELL" && (!s.style || s.style===styleFilter)).length,
+    high:  signals.filter(s => (s.confidence||0) >= 75 && (!s.style || s.style===styleFilter)).length,
+  }), [signals, threshold, styleFilter]);
 
   // ── DOM Load-More pagination ──────────────────────────────────────────────
   // Render 30 cards initially; each "Show more" reveals 20 more.
@@ -723,25 +772,33 @@ function App() {
           setPricingOpen(true);
           return;
         }
-        // Execute paper trade
+        if (paperSubmitting || paperCtrl.current) return;
+        setPaperSubmitting(true);
+        const ctrl = new AbortController();
+        paperCtrl.current = ctrl;
+        const t = setTimeout(() => { ctrl.abort(); paperCtrl.current = null; }, 15000);
         const side = active.action === "BUY" ? "buy" : "sell";
-        const qty = 1; // Default 1 share for paper trade
         authFetch("/api/paper/orders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: ctrl.signal,
           body: JSON.stringify({
             symbol: active.ticker,
-            qty,
+            qty: 1,
             side,
             type: "market",
             time_in_force: "day",
           }),
         }).then(res => {
+          clearTimeout(t);
           if (res && res.ok) {
-            // Show success feedback via React state (no DOM mutation)
             setPaperTradeFlash(true);
             setTimeout(() => setPaperTradeFlash(false), 1500);
           }
+        }).catch(() => {}).finally(() => {
+          clearTimeout(t);
+          paperCtrl.current = null;
+          setPaperSubmitting(false);
         });
         return;
       }
@@ -755,42 +812,6 @@ function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [active, activeId, currentUser, tweakState.density, filteredSignals, hkOpen, tourOpen, navMenuOpen]);
-
-  /* ── Clock state — always New York time, DST-aware ── */
-  // "16:32:07"
-  const etClock = _etFmt(now, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-
-  // "EDT" or "EST" — parse from the formatted timezone name part
-  const etAbbr = (() => {
-    try {
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/New_York", timeZoneName: "short",
-        hour: "numeric",
-      }).formatToParts(now);
-      return parts.find(p => p.type === "timeZoneName")?.value || "ET";
-    } catch { return "ET"; }
-  })();
-
-  // "UTC-4" (EDT) or "UTC-5" (EST) — computed from actual NY vs UTC offset
-  const etOffset = (() => {
-    try {
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/New_York", timeZoneName: "shortOffset",
-        hour: "numeric",
-      }).formatToParts(now);
-      const gmt = parts.find(p => p.type === "timeZoneName")?.value || "GMT-4";
-      return gmt.replace("GMT", "UTC");
-    } catch {
-      // Fallback: compute numerically
-      const nyMs  = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" })).getTime();
-      const diff  = Math.round((nyMs - now.getTime()) / 3600000);
-      return `UTC${diff >= 0 ? "+" : ""}${diff}`;
-    }
-  })();
-
-  // User's local time for hover tooltip
-  const localClock = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-  const localTz    = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const [refreshing,   setRefreshing]   = useState(false);
   const [countdown,    setCountdown]    = useState(30);
@@ -808,6 +829,11 @@ function App() {
   };
 
   const loadData = useCallback(async (showSpinner = false, opts = {}) => {
+    const pruneSignals = (sigs) => sigs.slice(0, 300).map(s => ({
+      id: s.id, ticker: s.ticker, action: s.action, confidence: s.confidence,
+      price: s.price, changePct: s.changePct, headline: s.headline,
+      ts: s.ts, style: s.style, entry: s.entry, stop: s.stop, target: s.target,
+    }));
     if (showSpinner) setRefreshing(true);
     const signal = opts.signal;
 
@@ -817,7 +843,7 @@ function App() {
       const sigs = sigsRaw.json;
       if (Array.isArray(sigs)) {
         setSignals(sigs);
-        try { localStorage.setItem("st_signals_cache", JSON.stringify(sigs)); } catch {}
+        try { localStorage.setItem("st_signals_cache", JSON.stringify(pruneSignals(sigs))); } catch {}
       }
       if (sigsRaw.ok) setSignalQuota(_parseQuotaHeaders(sigsRaw.headers));
       setOnline(true);
@@ -895,40 +921,53 @@ function App() {
   }, [activeId, filteredSignals]);
 
   const up = active ? (active.change || 0) >= 0 : true;
+  const sentCount = useMemo(() => log.filter(l => l.status === "sent").length, [log]);
 
   /* Actions */
+  const actionGuard = useRef(new Set());
+  const guardedAction = async (id, fn) => {
+    if (actionGuard.current.has(id)) return;
+    actionGuard.current.add(id);
+    try { await fn(); } finally { actionGuard.current.delete(id); }
+  };
+
   const sendToTelegram = async (id) => {
     const sig = signals.find(s => s.id === id) || active;
     if (!sig) return;
-    try {
-      const raw = await authFetch(`/api/signals/${sig.id}/send`, { method:"POST" });
-      const data = await raw.json();
-      if (!raw.ok) {
-        // Show the server's error message (e.g. "Telegram not linked")
-        alert(data.detail || "Could not send to Telegram.");
-        return;
+    await guardedAction(id, async () => {
+      try {
+        const raw = await authFetch(`/api/signals/${sig.id}/send`, { method:"POST" });
+        const data = await raw.json();
+        if (!raw.ok) {
+          alert(data.detail || "Could not send to Telegram.");
+          return;
+        }
+        if (data.success) {
+          const _etNow = _etFmt(new Date(), { hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false });
+          setLog(prev => [{ time:_etNow, status:"sent", message:`✓ ${sig.action} ${sig.ticker} @ ${fmt(sig.price)} (Conf ${(sig.confidence||0).toFixed(0)}%)`, created_at: new Date().toISOString() }, ...prev].slice(0, MAX_LOG));
+        } else {
+          alert(data.detail || "Telegram delivery failed. Check your bot token.");
+        }
+      } catch {
+        alert("Network error — could not reach the server.");
       }
-      if (data.success) {
-        const _etNow = _etFmt(new Date(), { hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false });
-        setLog(prev => [{ time:_etNow, status:"sent", message:`✓ ${sig.action} ${sig.ticker} @ ${fmt(sig.price)} (Conf ${(sig.confidence||0).toFixed(0)}%)`, created_at: new Date().toISOString() }, ...prev]);
-      } else {
-        alert(data.detail || "Telegram delivery failed. Check your bot token.");
-      }
-    } catch {
-      alert("Network error — could not reach the server.");
-    }
+    });
   };
 
   const skipSignal = async (id) => {
-    await apiFetch(`/api/signals/${id}/skip`, { method:"POST" });
-    setSignals(prev => prev.filter(s => s.id !== id));
-    if (activeId === id) setActiveId(null);
-    if (expandedId === id) setExpandedId(null);
+    await guardedAction(id, async () => {
+      await apiFetch(`/api/signals/${id}/skip`, { method:"POST" });
+      setSignals(prev => prev.filter(s => s.id !== id));
+      if (activeId === id) setActiveId(null);
+      if (expandedId === id) setExpandedId(null);
+    });
   };
 
   const reviewSignal = async (id) => {
-    await apiFetch(`/api/signals/${id}/review`, { method:"POST" });
-    setSignals(prev => prev.map(s => s.id === id ? { ...s, reviewed: true } : s));
+    await guardedAction(id, async () => {
+      await apiFetch(`/api/signals/${id}/review`, { method:"POST" });
+      setSignals(prev => prev.map(s => s.id === id ? { ...s, reviewed: true } : s));
+    });
   };
 
   const saveNote = async (id, note) => {
@@ -1056,9 +1095,7 @@ function App() {
               NYSE {marketCtx?.macro?.market_open !== false ? "OPEN" : "CLOSED"}
             </span>
           )}
-          <span className="chip mono" title={`Your local time: ${localClock} (${localTz})`}>
-            {etClock} {etAbbr}
-          </span>
+          <LiveClock variant="chip" />
           <button className="iconbtn hamburger-btn"
             onClick={() => {
               // Mobile: open the full navigation drawer (the bottom bar only shows
@@ -1292,7 +1329,7 @@ function App() {
               {/* TSYS-11b: last-refresh + stale-data indicator (live-ticks via `now`) */}
               {(() => {
                 if (!lastRefresh) return null;
-                const ageS = Math.max(0, Math.round((now - lastRefresh) / 1000));
+                const ageS = Math.max(0, Math.round((Date.now() - lastRefresh) / 1000));
                 const stale = ageS > 120;
                 const ageLabel = ageS < 60 ? `${ageS}s` : `${Math.round(ageS / 60)}m`;
                 return (
@@ -1329,12 +1366,7 @@ function App() {
           <FilterChips
             filter={feedFilter}
             setFilter={setFeedFilter}
-            counts={{
-              all:   signals.filter(s => (s.confidence||0) >= threshold && (!s.style || s.style===styleFilter)).length,
-              buy:   signals.filter(s => (s.confidence||0) >= threshold && s.action==="BUY"  && (!s.style || s.style===styleFilter)).length,
-              sell:  signals.filter(s => (s.confidence||0) >= threshold && s.action==="SELL" && (!s.style || s.style===styleFilter)).length,
-              high:  signals.filter(s => (s.confidence||0) >= 75 && (!s.style || s.style===styleFilter)).length,
-            }}
+            counts={filterCounts}
           />
           <div className="style-strip">
             <span className="ss-label">STYLE</span>
@@ -1504,7 +1536,7 @@ function App() {
                   </div>
                   <div style={{ marginLeft:"auto", textAlign:"right" }}>
                     {/* Live WebSocket price — updates in real time from tick messages */}
-                    {livePrice && livePrice !== active.price ? (
+                    {livePrice != null && livePrice !== active.price ? (
                       <>
                         <div className="detail-price mono" style={{ fontSize:18 }}>${fmt(livePrice)}</div>
                         <div style={{ fontSize:9, fontFamily:"var(--font-mono)", color:"var(--text-faint)" }}>
@@ -1676,13 +1708,27 @@ function App() {
                   </div>
                 ) : (
                 <PositionCalc signal={active} onPaperTrade={() => {
+                  if (paperCtrl.current) return;
+                  const ctrl = new AbortController();
+                  paperCtrl.current = ctrl;
+                  const t = setTimeout(() => { ctrl.abort(); paperCtrl.current = null; }, 15000);
                   authFetch("/api/paper/orders", {
                     method:"POST",
                     headers:{"Content-Type":"application/json"},
+                    signal: ctrl.signal,
                     body:JSON.stringify({ symbol:active.ticker, qty:1,
                       side: active.action === "BUY" ? "buy" : "sell",
                       type:"market", time_in_force:"day" }),
-                  }).catch(()=>{});
+                  }).then(res => {
+                    clearTimeout(t);
+                    if (res && res.ok) {
+                      setPaperTradeFlash(true);
+                      setTimeout(() => setPaperTradeFlash(false), 1500);
+                    }
+                  }).catch(() => {}).finally(() => {
+                    clearTimeout(t);
+                    paperCtrl.current = null;
+                  });
                 }}/>
               ))}
 
@@ -1951,19 +1997,28 @@ function App() {
                     className="btn"
                     style={{ background: paperTradeFlash ? "var(--up)" : undefined, color: paperTradeFlash ? "#fff" : undefined, transition:"all 0.2s" }}
                     onClick={() => {
-                      if (paperSubmitting) return;
+                      if (paperSubmitting || paperCtrl.current) return;
                       setPaperSubmitting(true);
+                      const ctrl = new AbortController();
+                      paperCtrl.current = ctrl;
+                      const t = setTimeout(() => { ctrl.abort(); paperCtrl.current = null; }, 15000);
                       const side = active.action === "BUY" ? "buy" : "sell";
                       authFetch("/api/paper/orders", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
+                        signal: ctrl.signal,
                         body: JSON.stringify({ symbol: active.ticker, qty: 1, side, type: "market", time_in_force: "day" }),
                       }).then(res => {
+                        clearTimeout(t);
                         if (res && res.ok) {
                           setPaperTradeFlash(true);
                           setTimeout(() => setPaperTradeFlash(false), 1500);
                         }
-                      }).finally(() => setPaperSubmitting(false));
+                      }).catch(() => {}).finally(() => {
+                        clearTimeout(t);
+                        paperCtrl.current = null;
+                        setPaperSubmitting(false);
+                      });
                     }}
                     disabled={paperSubmitting}
                     title="Paper Trade (P)">
@@ -2075,9 +2130,9 @@ function App() {
         {marketCtx?.macro?.vix != null && <span>VIX <span className="mono">{marketCtx.macro.vix.toFixed(2)}</span></span>}
         {marketCtx?.macro?.yield_10y != null && <span>10Y <span className="mono">{marketCtx.macro.yield_10y.toFixed(2)}%</span></span>}
         {marketCtx?.macro?.spx_1m != null && <span>SPX <span className="mono" style={{ color: marketCtx.macro.spx_1m>=0?"var(--up)":"var(--down)" }}>{marketCtx.macro.spx_1m>=0?"+":""}{marketCtx.macro.spx_1m.toFixed(1)}%</span></span>}
-        <span>SENT <span className="mono">{log.filter(l=>l.status==="sent").length}</span> TODAY</span>
+        <span>SENT <span className="mono">{sentCount}</span> TODAY</span>
         <span style={{ marginLeft:"auto" }}>MODE · {(tweakState.aggressiveness||"balanced").toUpperCase()}</span>
-        <span title={`Your local time: ${localClock} (${localTz})`}>{etOffset} {etAbbr}</span>
+        <LiveClock variant="offset" />
       </div>
 
       {/* ── Disclaimer footer ── */}

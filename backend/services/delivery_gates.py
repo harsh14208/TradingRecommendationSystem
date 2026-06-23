@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 log = logging.getLogger("scanner")
 
 # ── §67 FOMC meeting dates (scheduled announcement days) ─────────────────────
-_FOMC_DATES_2026 = frozenset(
+_FOMC_DATES: frozenset[str] = frozenset(
     {
         "2026-01-28",
         "2026-03-18",
@@ -29,6 +29,15 @@ _FOMC_DATES_2026 = frozenset(
         "2026-09-16",
         "2026-10-28",
         "2026-12-16",
+        # 2027 dates — update quarterly
+        "2027-01-27",
+        "2027-03-17",
+        "2027-04-28",
+        "2027-06-16",
+        "2027-07-28",
+        "2027-09-15",
+        "2027-10-27",
+        "2027-12-15",
     }
 )
 
@@ -38,7 +47,7 @@ def _days_to_nearest_fomc(today_str: str) -> int:
 
     today = _date.fromisoformat(today_str)
     min_days = 999
-    for ds in _FOMC_DATES_2026:
+    for ds in _FOMC_DATES:
         d = _date.fromisoformat(ds)
         diff = abs((d - today).days)
         min_days = min(min_days, diff)
@@ -298,8 +307,13 @@ async def check_delivery_gates(
     if action not in ("BUY", "SELL"):
         return f"action={action} not BUY/SELL", sig_dict
 
-    # Options VRP signals are additive and bypass stock MR/long-only gates.
+    # Options VRP signals are additive and bypass stock MR/long-only gates,
+    # but they still must clear their own confidence floor and risk limits.
     if sig_dict.get("option_strategy"):
+        opt_conf = sig_dict.get("confidence", 0)
+        opt_min = getattr(settings, "option_min_confidence", 50.0)
+        if opt_conf < opt_min:
+            return f"option confidence {opt_conf:.0f}% < floor {opt_min:.0f}%", sig_dict
         return None, sig_dict
 
     # Item 3: SELL delivery controlled by LONG_ONLY setting.
@@ -313,7 +327,11 @@ async def check_delivery_gates(
     # intraday SELL is NOT exempt as of 2026-06-22: the MR-exempt intraday-SELL
     # cohort resolved at 0% WR / −6.46%/trade since 2026-06-15 (shorting momentum
     # into a rising tape). All SELLs now require an overbought MR setup.
-    if action == "BUY" and style != "intraday" and not sig_dict.get("hasMr", False):
+    # NOTE: default missing hasMr to True for pre-field rows (aligns with structural_delivery_status).
+    _has_mr = sig_dict.get("hasMr")
+    if _has_mr is None:
+        _has_mr = True
+    if action == "BUY" and style != "intraday" and not _has_mr:
         return "no MR setup — ≥1 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
     if action == "SELL" and not sig_dict.get("hasMrSell", False):
         return "no SELL MR setup — ≥1 overbought condition required for SELL delivery", sig_dict

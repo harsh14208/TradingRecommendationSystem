@@ -13,7 +13,7 @@ at module level so the file can be imported without real infrastructure.
 import os
 import sys
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytz
@@ -75,6 +75,7 @@ def _mock_scanner_imports():
         "services.cot": MagicMock(),
         "services.fear_greed": MagicMock(),
         "services.macro": MagicMock(),
+        "services.market_calendar": MagicMock(),
         "services.market_data": MagicMock(),
         "services.signal_engine": MagicMock(),
         "services.telegram_svc": MagicMock(),
@@ -83,6 +84,9 @@ def _mock_scanner_imports():
     # config needs TIERS attribute
     mocks["config"].TIERS = ["free", "basic", "pro"]
     mocks["config"].get_settings = MagicMock(return_value=MagicMock())
+    # market_calendar.get_upcoming_holidays needs to be awaitable
+    mocks["services.market_calendar"].get_upcoming_holidays = AsyncMock(return_value=[])
+    mocks["services.market_calendar"].is_pre_long_weekend = MagicMock(return_value=(False, ""))
 
     with patch.dict("sys.modules", mocks):
         # Remove scanner from cache so it re-imports with mocks
@@ -167,53 +171,61 @@ class TestMarketSession:
 
 
 class TestMarketHoursOk:
-    def _call_hours_ok(self, scanner, et_dt):
+    async def _call_hours_ok(self, scanner, et_dt):
         with patch.object(scanner, "datetime") as mock_dt_cls:
             mock_dt_cls.now.return_value = et_dt
-            return scanner._market_hours_ok()
+            return await scanner._market_hours_ok()
 
-    def test_before_open_returns_false(self, _mock_scanner_imports):
+    @pytest.mark.asyncio
+    async def test_before_open_returns_false(self, _mock_scanner_imports):
         """9:29 ET → not market hours."""
-        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(9, 29))
+        result = await self._call_hours_ok(_mock_scanner_imports, _et_dt(9, 29))
         assert result is False
 
-    def test_at_open_returns_true(self, _mock_scanner_imports):
+    @pytest.mark.asyncio
+    async def test_at_open_returns_true(self, _mock_scanner_imports):
         """9:30 ET → market is open."""
-        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(9, 30))
+        result = await self._call_hours_ok(_mock_scanner_imports, _et_dt(9, 30))
         assert result is True
 
-    def test_mid_day_returns_true(self, _mock_scanner_imports):
+    @pytest.mark.asyncio
+    async def test_mid_day_returns_true(self, _mock_scanner_imports):
         """13:00 ET → market is open."""
-        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(13, 0))
+        result = await self._call_hours_ok(_mock_scanner_imports, _et_dt(13, 0))
         assert result is True
 
-    def test_at_close_boundary_returns_true(self, _mock_scanner_imports):
+    @pytest.mark.asyncio
+    async def test_at_close_boundary_returns_true(self, _mock_scanner_imports):
         """16:05 ET is still in range (extended window covers post-close scan)."""
-        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(16, 5))
+        result = await self._call_hours_ok(_mock_scanner_imports, _et_dt(16, 5))
         assert result is True
 
-    def test_after_close_boundary_returns_false(self, _mock_scanner_imports):
+    @pytest.mark.asyncio
+    async def test_after_close_boundary_returns_false(self, _mock_scanner_imports):
         """16:06 ET → past the 16:05 extended close window."""
-        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(16, 6))
+        result = await self._call_hours_ok(_mock_scanner_imports, _et_dt(16, 6))
         assert result is False
 
-    def test_after_hours_returns_false(self, _mock_scanner_imports):
+    @pytest.mark.asyncio
+    async def test_after_hours_returns_false(self, _mock_scanner_imports):
         """17:00 ET → not market hours."""
-        result = self._call_hours_ok(_mock_scanner_imports, _et_dt(17, 0))
+        result = await self._call_hours_ok(_mock_scanner_imports, _et_dt(17, 0))
         assert result is False
 
-    def test_saturday_during_trading_time_returns_false(self, _mock_scanner_imports):
+    @pytest.mark.asyncio
+    async def test_saturday_during_trading_time_returns_false(self, _mock_scanner_imports):
         """Saturday 10:00 ET → closed even though time is within 9:30–15:55."""
         ET = pytz.timezone("America/New_York")
         saturday = ET.localize(datetime(2024, 1, 13, 10, 0))  # 2024-01-13 is a Saturday
-        result = self._call_hours_ok(_mock_scanner_imports, saturday)
+        result = await self._call_hours_ok(_mock_scanner_imports, saturday)
         assert result is False
 
-    def test_sunday_during_trading_time_returns_false(self, _mock_scanner_imports):
+    @pytest.mark.asyncio
+    async def test_sunday_during_trading_time_returns_false(self, _mock_scanner_imports):
         """Sunday 13:00 ET → closed even though time is within 9:30–15:55."""
         ET = pytz.timezone("America/New_York")
         sunday = ET.localize(datetime(2024, 1, 14, 13, 0))  # 2024-01-14 is a Sunday
-        result = self._call_hours_ok(_mock_scanner_imports, sunday)
+        result = await self._call_hours_ok(_mock_scanner_imports, sunday)
         assert result is False
 
 

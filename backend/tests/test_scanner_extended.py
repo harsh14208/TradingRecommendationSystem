@@ -107,7 +107,7 @@ class TestMaybeSend:
         row = _db_row()
         settings = _settings()
 
-        with patch.object(scanner, "_market_hours_ok", return_value=True):
+        with patch.object(scanner, "_market_hours_ok", new=AsyncMock(return_value=True)):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
                 with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=(False, None, None))):
                     await scanner._maybe_send(_sig(action="HOLD"), row, settings, db, "test")
@@ -121,7 +121,7 @@ class TestMaybeSend:
         row = _db_row()
         settings = _settings(min_confidence=80.0)
 
-        with patch.object(scanner, "_market_hours_ok", return_value=True):
+        with patch.object(scanner, "_market_hours_ok", new=AsyncMock(return_value=True)):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
                 await scanner._maybe_send(_sig(confidence=60.0), row, settings, db, "test")
             mock_send.assert_not_called()
@@ -137,7 +137,7 @@ class TestMaybeSend:
 
         sig = _sig(entry=100.0, target=101.0, stop=98.0, confidence=70.0)
 
-        with patch.object(scanner, "_market_hours_ok", return_value=True):
+        with patch.object(scanner, "_market_hours_ok", new=AsyncMock(return_value=True)):
             with patch("services.market_calendar.get_upcoming_holidays", new=AsyncMock(return_value=[])):
                 with patch("services.market_calendar.is_pre_long_weekend", return_value=(False, "")):
                     with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
@@ -152,7 +152,7 @@ class TestMaybeSend:
         row = _db_row()
         settings = _settings()
 
-        with patch.object(scanner, "_market_hours_ok", return_value=False):
+        with patch.object(scanner, "_market_hours_ok", new=AsyncMock(return_value=False)):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
                 await scanner._maybe_send(_sig(confidence=70.0), row, settings, db, "test")
             mock_send.assert_not_called()
@@ -188,7 +188,7 @@ class TestMaybeSend:
         row = _db_row()
         settings = _settings(max_sends_per_ticker_per_day=0)
 
-        with patch.object(scanner, "_market_hours_ok", return_value=True):
+        with patch.object(scanner, "_market_hours_ok", new=AsyncMock(return_value=True)):
             with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))) as mock_send:
                 with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=(False, None, None))):
                     with patch("services.market_calendar.get_upcoming_holidays", new=AsyncMock(return_value=[])):
@@ -236,7 +236,7 @@ class TestMaybeSend:
         row = _db_row()
         settings = _settings(max_sends_per_ticker_per_day=0)
 
-        with patch.object(scanner, "_market_hours_ok", return_value=True):
+        with patch.object(scanner, "_market_hours_ok", new=AsyncMock(return_value=True)):
             with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=(True, "12345", None))):
                 with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "99"))):
                     with patch("services.market_calendar.get_upcoming_holidays", new=AsyncMock(return_value=[])):
@@ -279,7 +279,7 @@ class TestMaybeSend:
 
         from models import SendLog
 
-        with patch.object(scanner, "_market_hours_ok", return_value=True):
+        with patch.object(scanner, "_market_hours_ok", new=AsyncMock(return_value=True)):
             with patch.object(scanner, "_fanout_to_subscribers", new=AsyncMock(return_value=(True, "12345", None))):
                 with patch.object(scanner, "send_telegram", new=AsyncMock(return_value=(True, "1"))):
                     with patch("services.market_calendar.get_upcoming_holidays", new=AsyncMock(return_value=[])):

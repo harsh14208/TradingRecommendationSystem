@@ -11,7 +11,7 @@ import ssl
 import time
 from typing import Any, Optional
 
-from services.http_client import get_ssl_context, shared_session
+from services.http_client import get_ssl_context, retry_with_backoff, shared_session
 
 PAPER_BASE = "https://paper-api.alpaca.markets"
 LIVE_BASE = "https://api.alpaca.markets"
@@ -160,15 +160,19 @@ async def place_order(
     }
     if order_type == "limit" and limit_price is not None:
         body["limit_price"] = str(round(limit_price, 2))
-    async with shared_session() as s:
-        async with s.post(
-            f"{_base(live)}/v2/orders",
-            headers=_headers(api_key, api_secret),
-            json=body,
-            ssl=_ssl_ctx(),
-        ) as r:
-            r.raise_for_status()
-            return await r.json()
+
+    async def _call():
+        async with shared_session() as s:
+            async with s.post(
+                f"{_base(live)}/v2/orders",
+                headers=_headers(api_key, api_secret),
+                json=body,
+                ssl=_ssl_ctx(),
+            ) as r:
+                r.raise_for_status()
+                return await r.json()
+
+    return await retry_with_backoff(_call)
 
 
 async def place_notional_order(
@@ -194,15 +198,19 @@ async def place_notional_order(
         "type": "market",
         "time_in_force": "day",  # fractional orders require "day"
     }
-    async with shared_session() as s:
-        async with s.post(
-            f"{_base(live)}/v2/orders",
-            headers=_headers(api_key, api_secret),
-            json=body,
-            ssl=_ssl_ctx(),
-        ) as r:
-            r.raise_for_status()
-            return await r.json()
+
+    async def _call():
+        async with shared_session() as s:
+            async with s.post(
+                f"{_base(live)}/v2/orders",
+                headers=_headers(api_key, api_secret),
+                json=body,
+                ssl=_ssl_ctx(),
+            ) as r:
+                r.raise_for_status()
+                return await r.json()
+
+    return await retry_with_backoff(_call)
 
 
 async def place_bracket_order(
@@ -248,29 +256,35 @@ async def place_bracket_order(
 
 
 async def close_position(api_key: str, api_secret: str, symbol: str, live: bool = False) -> dict:
-    async with shared_session() as s:
-        async with s.delete(
-            f"{_base(live)}/v2/positions/{symbol.upper()}",
-            headers=_headers(api_key, api_secret),
-            ssl=_ssl_ctx(),
-        ) as r:
-            if r.status == 204:
-                return {"status": "closed"}
-            r.raise_for_status()
-            return await r.json()
+    async def _call():
+        async with shared_session() as s:
+            async with s.delete(
+                f"{_base(live)}/v2/positions/{symbol.upper()}",
+                headers=_headers(api_key, api_secret),
+                ssl=_ssl_ctx(),
+            ) as r:
+                if r.status == 204:
+                    return {"status": "closed"}
+                r.raise_for_status()
+                return await r.json()
+
+    return await retry_with_backoff(_call)
 
 
 async def cancel_order(api_key: str, api_secret: str, order_id: str, live: bool = False) -> dict:
-    async with shared_session() as s:
-        async with s.delete(
-            f"{_base(live)}/v2/orders/{order_id}",
-            headers=_headers(api_key, api_secret),
-            ssl=_ssl_ctx(),
-        ) as r:
-            if r.status == 204:
-                return {"status": "cancelled"}
-            r.raise_for_status()
-            return await r.json()
+    async def _call():
+        async with shared_session() as s:
+            async with s.delete(
+                f"{_base(live)}/v2/orders/{order_id}",
+                headers=_headers(api_key, api_secret),
+                ssl=_ssl_ctx(),
+            ) as r:
+                if r.status == 204:
+                    return {"status": "cancelled"}
+                r.raise_for_status()
+                return await r.json()
+
+    return await retry_with_backoff(_call)
 
 
 async def submit_bracket_stop_order(
@@ -313,15 +327,18 @@ async def submit_bracket_stop_order(
     if take_profit_price is not None:
         body["take_profit"] = {"limit_price": str(round(take_profit_price, 2))}
 
-    async with shared_session() as s:
-        async with s.post(
-            f"{_base(live)}/v2/orders",
-            headers=_headers(api_key, api_secret),
-            json=body,
-            ssl=_ssl_ctx(),
-        ) as r:
-            r.raise_for_status()
-            return await r.json()
+    async def _call():
+        async with shared_session() as s:
+            async with s.post(
+                f"{_base(live)}/v2/orders",
+                headers=_headers(api_key, api_secret),
+                json=body,
+                ssl=_ssl_ctx(),
+            ) as r:
+                r.raise_for_status()
+                return await r.json()
+
+    return await retry_with_backoff(_call)
 
 
 async def get_portfolio_value(api_key: str, api_secret: str, live: bool = False) -> float:

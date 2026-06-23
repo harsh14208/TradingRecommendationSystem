@@ -18,7 +18,8 @@ const DEFAULTS = {
   weight_overrides: {},
 };
 
-const DISCLAIMER_KEY = "signal_trade_disclaimer_v1";
+const MAX_SIGNALS = 500;
+const MAX_LOG = 200;
 
 /* ─── Helpers ──────────────────────────────────────────────────────────────── */
 function fmtPrice(v, dp = 2) {
@@ -324,9 +325,17 @@ function KillSwitch({ currentUser }) {
 
   const toggle = async () => {
     setLoading(true);
-    const d = await apiFetch("/api/admin/execution-kill-switch", { method: "POST" });
-    if (d) setPaused(d.execution_paused);
-    setLoading(false);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const d = await apiFetch("/api/admin/execution-kill-switch", { method: "POST", signal: ctrl.signal });
+      clearTimeout(t);
+      if (d) setPaused(d.execution_paused);
+    } catch {
+      clearTimeout(t);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (!currentUser?.is_owner || paused === null) return null;
@@ -345,35 +354,50 @@ function KillSwitch({ currentUser }) {
 
 /* ─── Signal actions shared with Dashboard ──────────────────────────────────── */
 function useSignalActions({ signals, setSignals, setLog }) {
+  const actionGuard = useRef(new Set());
+  const guardedAction = async (id, fn) => {
+    if (actionGuard.current.has(id)) return;
+    actionGuard.current.add(id);
+    try { await fn(); } finally { actionGuard.current.delete(id); }
+  };
+
   const sendToTelegram = useCallback(async (id) => {
     const sig = signals.find((s) => s.id === id);
     if (!sig) return;
-    try {
-      const raw = await authFetch(`/api/signals/${sig.id}/send`, { method: "POST" });
-      const data = await raw.json();
-      if (!raw.ok) { alert(data.detail || "Could not send to Telegram."); return; }
-      if (data.success) {
-        const t = fmtTime(new Date().toISOString());
-        setLog((prev) => [{ t, s: "sent", m: `✓ ${sig.action || sig.signal} ${sig.ticker || sig.tk} @ ${fmtPrice(sig.price || sig.px)} (Conf ${Math.round(sig.confidence || sig.conf || 0)}%)`, col: "var(--bull)" }, ...prev]);
-      } else {
-        alert(data.detail || "Telegram delivery failed.");
-      }
-    } catch { alert("Network error — could not reach the server."); }
+    await guardedAction(id, async () => {
+      try {
+        const raw = await authFetch(`/api/signals/${sig.id}/send`, { method: "POST" });
+        const data = await raw.json();
+        if (!raw.ok) { alert(data.detail || "Could not send to Telegram."); return; }
+        if (data.success) {
+          const t = fmtTime(new Date().toISOString());
+          setLog((prev) => [{ t, s: "sent", m: `✓ ${sig.action || sig.signal} ${sig.ticker || sig.tk} @ ${fmtPrice(sig.price || sig.px)} (Conf ${Math.round(sig.confidence || sig.conf || 0)}%)`, col: "var(--bull)" }, ...prev].slice(0, MAX_LOG));
+        } else {
+          alert(data.detail || "Telegram delivery failed.");
+        }
+      } catch { alert("Network error — could not reach the server."); }
+    });
   }, [signals, setLog]);
 
   const skipSignal = useCallback(async (id) => {
-    await apiFetch(`/api/signals/${id}/skip`, { method: "POST" });
-    setSignals((prev) => prev.filter((s) => s.id !== id));
+    await guardedAction(id, async () => {
+      await apiFetch(`/api/signals/${id}/skip`, { method: "POST" });
+      setSignals((prev) => prev.filter((s) => s.id !== id));
+    });
   }, [setSignals]);
 
   const reviewSignal = useCallback(async (id) => {
-    await apiFetch(`/api/signals/${id}/review`, { method: "POST" });
-    setSignals((prev) => prev.map((s) => s.id === id ? { ...s, reviewed: true } : s));
+    await guardedAction(id, async () => {
+      await apiFetch(`/api/signals/${id}/review`, { method: "POST" });
+      setSignals((prev) => prev.map((s) => s.id === id ? { ...s, reviewed: true } : s));
+    });
   }, [setSignals]);
 
   const saveNote = useCallback(async (id, note) => {
-    await apiFetch(`/api/signals/${id}/notes`, { method: "PATCH", body: JSON.stringify({ notes: note }) });
-    setSignals((prev) => prev.map((s) => s.id === id ? { ...s, notes: note } : s));
+    await guardedAction(`note-${id}`, async () => {
+      await apiFetch(`/api/signals/${id}/notes`, { method: "PATCH", body: JSON.stringify({ notes: note }) });
+      setSignals((prev) => prev.map((s) => s.id === id ? { ...s, notes: note } : s));
+    });
   }, [setSignals]);
 
   return { sendToTelegram, skipSignal, reviewSignal, saveNote };
@@ -402,6 +426,7 @@ function App() {
   const [online, setOnline] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const wsReconnectDelay = useRef(1000);
 
   /* UI / settings */
   const [page, setPage] = useState(() => { try { return localStorage.getItem("st_cin_page") || "dashboard"; } catch { return "dashboard"; } });
@@ -414,10 +439,14 @@ function App() {
   });
   const tweakSaving = useRef(false);
   const pendingTweak = useRef(null);
+  const tweakDebounce = useRef(null);
   const setTweak = useCallback((patch) => {
     const next = { ...tweakState, ...patch };
     setTweakState(next);
-    try { localStorage.setItem("st_tweaks", JSON.stringify(next)); } catch {}
+    if (tweakDebounce.current) clearTimeout(tweakDebounce.current);
+    tweakDebounce.current = setTimeout(() => {
+      try { localStorage.setItem("st_tweaks", JSON.stringify(next)); } catch {}
+    }, 300);
     pendingTweak.current = next;
     if (tweakSaving.current) return;
     const run = async () => {
@@ -528,7 +557,16 @@ function App() {
     try {
       const sigsRaw = await apiFetchRaw("/api/signals", { signal });
       const sigs = sigsRaw.json;
-      if (Array.isArray(sigs)) { setSignals(sigs); try { localStorage.setItem("st_signals_cache", JSON.stringify(sigs)); } catch {} }
+      if (Array.isArray(sigs)) {
+        setSignals(sigs);
+        try {
+          localStorage.setItem("st_signals_cache", JSON.stringify(sigs.slice(0, 300).map((s) => ({
+            id: s.id, ticker: s.ticker, action: s.action, confidence: s.confidence,
+            price: s.price, changePct: s.changePct, headline: s.headline,
+            ts: s.ts, style: s.style, entry: s.entry, stop: s.stop, target: s.target,
+          }))));
+        } catch {}
+      }
       if (sigsRaw.ok) setSignalQuota(_parseQuotaHeaders(sigsRaw.headers));
       setOnline(true);
     } catch { setOnline(false); } finally { setLoading(false); if (showSpinner) setRefreshing(false); }
@@ -566,22 +604,54 @@ function App() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const token = getToken();
     const wsUrl = `${protocol}//${window.location.host}/ws`;
-    let ws = token ? new WebSocket(wsUrl, ["token", token]) : new WebSocket(wsUrl);
-    ws.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.type === "new_signal") setSignals((prev) => [data.signal, ...prev.filter((s) => s.id !== data.signal.id)]);
-        else if (data.type === "price_update") { if (data.quotes) setTickerTape(data.quotes); }
-        else if (data.type === "tick") {
-          setTickerTape((prev) => {
-            const idx = prev.findIndex((t) => (t.t || t.ticker) === data.ticker);
-            if (idx === -1) return prev;
-            const next = [...prev]; next[idx] = { ...next[idx], p: data.price }; return next;
-          });
-        } else if (data.type === "market_context") setMarketCtx(data.data);
-      } catch {}
+    let ws = null;
+    let reconnectTimer = null;
+    let alive = true;
+
+    const connect = () => {
+      if (!alive) return;
+      ws = token ? new WebSocket(wsUrl, ["token", token]) : new WebSocket(wsUrl);
+      ws.onopen = () => { wsReconnectDelay.current = 1000; };
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === "new_signal") {
+            setSignals((prev) => {
+              const next = [data.signal, ...prev.filter((s) => s.id !== data.signal.id)];
+              return next.slice(0, MAX_SIGNALS);
+            });
+          } else if (data.type === "price_update") { if (data.quotes) setTickerTape(data.quotes); }
+          else if (data.type === "tick") {
+            setTickerTape((prev) => {
+              const idx = prev.findIndex((t) => (t.t || t.ticker) === data.ticker);
+              if (idx === -1) return prev;
+              const next = [...prev]; next[idx] = { ...next[idx], p: data.price }; return next;
+            });
+          } else if (data.type === "market_context") setMarketCtx(data.data);
+        } catch {}
+      };
+      ws.onerror = () => {};
+      ws.onclose = () => {
+        if (!alive) return;
+        const delay = wsReconnectDelay.current;
+        wsReconnectDelay.current = Math.min(wsReconnectDelay.current * 1.5, 30000);
+        reconnectTimer = setTimeout(connect, delay);
+      };
     };
-    return () => { ws.onmessage = null; ws.onerror = null; ws.onclose = null; ws.close(); };
+
+    connect();
+
+    return () => {
+      alive = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        ws.close();
+      }
+    };
   }, [authReady, currentUser]);
 
   const { sendToTelegram, skipSignal, reviewSignal, saveNote } = useSignalActions({ signals, setSignals, setLog });

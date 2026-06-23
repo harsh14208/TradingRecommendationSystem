@@ -5,6 +5,7 @@ gates, calibrates confidence, derives style, and builds the final signal dict.
 """
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -1284,7 +1285,10 @@ def _assemble_signal(
     # Thresholds recalibrated to IS p67/p33: High(≥43) Sh=0.51 | Mid(35–43) Sh=0.31 | Low(<35) Sh=0.17
     # All three inputs are already in tech dict — zero extra API cost.
     _ou_hl_qs = float(tech.get("ou_halflife") or 12.5)
-    _hurst_qs = float(tech.get("hurst") or 0.65)
+    _hurst_qs_raw = tech.get("hurst")
+    _hurst_qs = (
+        float(_hurst_qs_raw) if isinstance(_hurst_qs_raw, (int, float)) and math.isfinite(_hurst_qs_raw) else 0.65
+    )
     _quality_score = min(
         100.0,
         max(

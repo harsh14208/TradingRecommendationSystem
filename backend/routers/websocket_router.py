@@ -1,3 +1,4 @@
+import asyncio
 import json
 import math
 
@@ -76,6 +77,7 @@ class _Connection:
 class ConnectionManager:
     def __init__(self):
         self._connections: list[_Connection] = []
+        self._lock = asyncio.Lock()
 
     async def connect(
         self,
@@ -85,32 +87,38 @@ class ConnectionManager:
     ):
         await ws.accept(subprotocol=subprotocol)
         eligible = _user_can_receive_signals(user)
-        self._connections.append(_Connection(ws, user.id if user else None, eligible))
+        async with self._lock:
+            self._connections.append(_Connection(ws, user.id if user else None, eligible))
 
-    def disconnect(self, ws: WebSocket):
-        self._connections = [c for c in self._connections if c.ws is not ws]
+    async def disconnect(self, ws: WebSocket):
+        async with self._lock:
+            self._connections = [c for c in self._connections if c.ws is not ws]
 
     async def broadcast(self, data: dict):
         """Broadcast a non-signal message to every connected client."""
         if not self._connections:
             return
         text = json.dumps(data, default=_json_default)
+        async with self._lock:
+            conns = list(self._connections)
         dead = []
-        for conn in self._connections:
+        for conn in conns:
             try:
                 await conn.ws.send_text(text)
             except Exception:
                 dead.append(conn.ws)
         for ws in dead:
-            self.disconnect(ws)
+            await self.disconnect(ws)
 
     async def broadcast_signal(self, data: dict):
         """Broadcast a new_signal only to clients eligible for live signals."""
         if not self._connections:
             return
         text = json.dumps(data, default=_json_default)
+        async with self._lock:
+            conns = list(self._connections)
         dead = []
-        for conn in self._connections:
+        for conn in conns:
             if not conn.eligible_for_signals:
                 continue
             try:
@@ -118,7 +126,7 @@ class ConnectionManager:
             except Exception:
                 dead.append(conn.ws)
         for ws in dead:
-            self.disconnect(ws)
+            await self.disconnect(ws)
 
 
 manager = ConnectionManager()
@@ -147,4 +155,4 @@ async def websocket_endpoint(
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        await manager.disconnect(websocket)
