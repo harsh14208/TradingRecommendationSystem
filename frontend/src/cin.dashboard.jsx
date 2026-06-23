@@ -213,6 +213,21 @@ function Chevron({ open }) {
   );
 }
 
+function ThresholdToggle({ count, open, onToggle }) {
+  return (
+    <button type="button" onClick={onToggle}
+      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10,
+        padding: "8px 14px", background: "var(--panel-2)", border: "none",
+        borderBottom: open ? "1px solid var(--line-soft)" : "none",
+        textAlign: "left", cursor: "pointer" }}>
+      <span className="kicker" style={{ color: "var(--text-faint)" }}>BELOW DELIVERY THRESHOLD</span>
+      <span style={{ flex: 1, height: 1, background: "var(--line)" }}></span>
+      <span className="kicker" style={{ color: "var(--text-ghost)" }}>{count}</span>
+      <Chevron open={open}></Chevron>
+    </button>
+  );
+}
+
 // Panel that collapses on mobile (≤860px) via a tappable header; always open on
 // desktop. Lets the dashboard keep the main chart panel visible while the
 // secondary panels fold away on small screens.
@@ -388,6 +403,8 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
   const [minConf, setMinConf] = dUseState(0);
   const [note, setNote] = dUseState("");
   const [optionsOpen, setOptionsOpen] = dUseState(true);
+  const [liveBdtOpen, setLiveBdtOpen] = dUseState(false);
+  const [optionsBdtOpen, setOptionsBdtOpen] = dUseState(false);
 
   const q = query.trim().toLowerCase();
   const filtered = dUseMemo(() => signalList.filter((s) => {
@@ -400,6 +417,10 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
 
   const liveSignals = filtered.filter((s) => !s.optionStrategy);
   const optionsSignals = filtered.filter((s) => !!s.optionStrategy);
+  const liveDeliverable = liveSignals.filter((s) => s.deliverable !== false);
+  const liveThreshold = liveSignals.filter((s) => s.deliverable === false);
+  const optionsDeliverable = optionsSignals.filter((s) => s.deliverable !== false);
+  const optionsThreshold = optionsSignals.filter((s) => s.deliverable === false);
 
   dUseEffect(() => { if (filtered.length && !filtered.find((x) => x.tk === tk)) setTk(filtered[0].tk); }, [filtered]);
   dUseEffect(() => { const found = signalList.find((x) => x.tk === tk); if (found) setNote(found.notes || ""); }, [tk, signalList]);
@@ -445,20 +466,17 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
           </div>
           <Defer ms={500} skeleton={<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>{[0, 1, 2, 3, 4, 5].map((i) => <SkelBlock key={i} h={40}></SkelBlock>)}</div>}>
             <div>
-              {liveSignals.map((x, i) => (
-                <React.Fragment key={x.tk}>
-                  {x.deliverable === false && (i === 0 || liveSignals[i - 1].deliverable !== false) && (
-                    <div className="kicker" style={{ display: "flex", alignItems: "center", gap: 8,
-                      padding: "8px 14px", color: "var(--text-faint)",
-                      borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)",
-                      background: "var(--panel-2)" }}>
-                      <span style={{ flex: "none" }}>BELOW DELIVERY THRESHOLD</span>
-                      <span style={{ flex: 1, height: 1, background: "var(--line)" }}></span>
-                    </div>
-                  )}
-                  <WatchRow s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
-                </React.Fragment>
+              {liveDeliverable.map((x) => (
+                <WatchRow key={x.tk} s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
               ))}
+              {liveThreshold.length > 0 && (
+                <div style={{ borderTop: "1px solid var(--line)" }}>
+                  <ThresholdToggle count={liveThreshold.length} open={liveBdtOpen} onToggle={() => setLiveBdtOpen((o) => !o)}></ThresholdToggle>
+                  {liveBdtOpen && liveThreshold.map((x) => (
+                    <WatchRow key={x.tk} s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
+                  ))}
+                </div>
+              )}
 
               {optionsSignals.length > 0 && (
                 <div style={{ borderTop: "1px solid var(--line)" }}>
@@ -471,20 +489,21 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
                     <span className="kicker" style={{ marginLeft: "auto", color: "var(--text-faint)" }}>{optionsSignals.length}</span>
                     <Chevron open={optionsOpen}></Chevron>
                   </button>
-                  {optionsOpen && optionsSignals.map((x, i) => (
-                    <React.Fragment key={x.tk}>
-                      {x.deliverable === false && (i === 0 || optionsSignals[i - 1].deliverable !== false) && (
-                        <div className="kicker" style={{ display: "flex", alignItems: "center", gap: 8,
-                          padding: "8px 14px", color: "var(--text-faint)",
-                          borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)",
-                          background: "var(--panel-2)" }}>
-                          <span style={{ flex: "none" }}>BELOW DELIVERY THRESHOLD</span>
-                          <span style={{ flex: 1, height: 1, background: "var(--line)" }}></span>
+                  {optionsOpen && (
+                    <React.Fragment>
+                      {optionsDeliverable.map((x) => (
+                        <WatchRow key={x.tk} s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
+                      ))}
+                      {optionsThreshold.length > 0 && (
+                        <div style={{ borderTop: "1px solid var(--line-soft)" }}>
+                          <ThresholdToggle count={optionsThreshold.length} open={optionsBdtOpen} onToggle={() => setOptionsBdtOpen((o) => !o)}></ThresholdToggle>
+                          {optionsBdtOpen && optionsThreshold.map((x) => (
+                            <WatchRow key={x.tk} s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
+                          ))}
                         </div>
                       )}
-                      <WatchRow s={x} active={x.tk === tk} onClick={() => setTk(x.tk)}></WatchRow>
                     </React.Fragment>
-                  ))}
+                  )}
                 </div>
               )}
             </div>
