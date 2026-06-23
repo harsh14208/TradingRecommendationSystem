@@ -430,7 +430,13 @@ function App() {
   const wsReconnectDelay = useRef(1000);
 
   /* UI / settings */
-  const [page, setPage] = useState(() => { try { return localStorage.getItem("st_cin_page") || "dashboard"; } catch { return "dashboard"; } });
+  const [page, setPage] = useState(() => {
+    try {
+      const saved = localStorage.getItem("st_cin_page");
+      const valid = NAV.some(([id]) => id === saved);
+      return valid ? saved : "dashboard";
+    } catch { return "dashboard"; }
+  });
   const pageHistoryRef = useRef([page]);
   useEffect(() => { pageHistoryRef.current = [page]; }, []);
 
@@ -706,7 +712,7 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div data-screen-label={NAV.find(([id]) => id === page)[1]}>
+      <div data-screen-label={NAV.find(([id]) => id === page)?.[1] ?? "App"}>
         <TopNav page={page} go={go} onBack={goBack} currentUser={currentUser} onLogout={handleLogout} hideBack={Object.values(modals).some(Boolean)} />
         {/* Kill switch — only on the dashboard, and only while auto-trading is enabled. */}
         {page === "dashboard" && currentUser?.auto_execute && (
