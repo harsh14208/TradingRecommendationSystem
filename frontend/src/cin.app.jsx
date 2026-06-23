@@ -20,6 +20,7 @@ const DEFAULTS = {
 
 const MAX_SIGNALS = 500;
 const MAX_LOG = 200;
+const DISCLAIMER_KEY = "signal_trade_disclaimer_v1";
 
 /* ─── Helpers ──────────────────────────────────────────────────────────────── */
 function fmtPrice(v, dp = 2) {
