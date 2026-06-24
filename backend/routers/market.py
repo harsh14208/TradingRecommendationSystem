@@ -184,6 +184,53 @@ async def option_chain_endpoint(ticker: str, price: float = 0.0):
 _ticker_sector_cache: dict[str, dict] = {}
 
 
+def _ret(closes, days: int) -> float | None:
+    """Return % change over the last `days` trading days, or None if insufficient data."""
+    if closes is None or len(closes) < 2:
+        return None
+    n = min(days, len(closes) - 1)
+    base = float(closes.iloc[-n - 1])
+    if base == 0:
+        return None
+    return round((float(closes.iloc[-1]) / base - 1) * 100, 2)
+
+
+def _ytd_ret(df) -> float | None:
+    """Return % change from the first trading day of the current calendar year."""
+    if df is None or df.empty:
+        return None
+    from datetime import date
+
+    jan1 = date.today().replace(month=1, day=1)
+    ytd_df = df[df.index.date >= jan1]
+    if ytd_df.empty or len(ytd_df) < 2:
+        return None
+    base = float(ytd_df["Close"].iloc[0])
+    if base == 0:
+        return None
+    return round((float(ytd_df["Close"].iloc[-1]) / base - 1) * 100, 2)
+
+
+async def _sector_returns(etf: str) -> dict[str, float | None]:
+    """Fetch a single sector ETF history and compute performance metrics."""
+    from services.market_data import get_history
+
+    try:
+        df = await get_history(etf, period="1y", interval="1d")
+    except Exception:
+        df = None
+    if df is None or df.empty or len(df) < 2:
+        return {"ret_1d": None, "ret_1w": None, "ret_1m": None, "ret_3m": None, "ret_ytd": None}
+    closes = df["Close"].astype(float)
+    return {
+        "ret_1d": _ret(closes, 1),
+        "ret_1w": _ret(closes, 5),
+        "ret_1m": _ret(closes, 21),
+        "ret_3m": _ret(closes, 63),
+        "ret_ytd": _ytd_ret(df),
+    }
+
+
 @router.get("/sector/{ticker}")
 async def ticker_sector_endpoint(ticker: str):
     """
@@ -191,7 +238,7 @@ async def ticker_sector_endpoint(ticker: str):
 
     1. Uses the static SECTOR_MAP for known names.
     2. Falls back to yfinance company info for unknown tickers.
-    3. Returns the matching sector ETF performance from the sector heatmap.
+    3. Computes/fills sector ETF returns so the dashboard card never blanks.
 
     The result is cached per ticker for 1 hour to keep the dashboard snappy.
     """
@@ -222,17 +269,14 @@ async def ticker_sector_endpoint(ticker: str):
 
     sectors = await sector_heatmap()
     sec = next((s for s in sectors if s.get("etf") == etf), None)
-    if sec is None:
+    if sec is None or sec.get("ret_1m") is None:
         meta = _SECTOR_META.get(etf, {"name": etf, "weight": 2.0})
+        returns = await _sector_returns(etf)
         sec = {
             "etf": etf,
             "name": meta["name"],
             "weight": meta["weight"],
-            "ret_1d": None,
-            "ret_1w": None,
-            "ret_1m": None,
-            "ret_3m": None,
-            "ret_ytd": None,
+            **returns,
             "flow_1w": 0,
         }
 
@@ -241,7 +285,7 @@ async def ticker_sector_endpoint(ticker: str):
         "ticker": ticker,
         **sec,
         "rank": rank,
-        "total": len(sectors),
+        "total": len(sectors) or 11,
     }
     _ticker_sector_cache[ticker] = {**result, "_ts": now}
     return result

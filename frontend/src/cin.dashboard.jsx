@@ -285,11 +285,12 @@ function _fetchTickerSector(tk) {
   if (!tk) return Promise.resolve(null);
   const key = tk.toUpperCase();
   const cached = _tickerSectorCache[key];
-  if (cached && Date.now() - cached.ts < 3600000) return Promise.resolve(cached.data);
+  // Cache successful lookups for 1 hour; failed lookups retry after 30 seconds.
+  if (cached && Date.now() - cached.ts < (cached.ok ? 3600000 : 30000)) return Promise.resolve(cached.data);
   if (cached?.promise) return cached.promise;
   const promise = apiFetch(`/api/market/sector/${encodeURIComponent(key)}`)
-    .then((d) => { _tickerSectorCache[key] = { data: d, ts: Date.now() }; return d; })
-    .catch(() => { _tickerSectorCache[key] = { data: null, ts: Date.now() }; return null; });
+    .then((d) => { _tickerSectorCache[key] = { data: d, ts: Date.now(), ok: true }; return d; })
+    .catch(() => { _tickerSectorCache[key] = { data: null, ts: Date.now(), ok: false }; return null; });
   _tickerSectorCache[key] = { data: null, ts: 0, promise };
   return promise;
 }
@@ -299,16 +300,17 @@ function SectorContextPanel({ s }) {
   const [lookup, setLookup] = dUseState(null);
   dUseEffect(() => { let mounted = true; _fetchSectors().then((d) => { if (mounted) setSectors(d); }); return () => { mounted = false; }; }, []);
   dUseEffect(() => {
-    if (s.sectorEtf) { setLookup(null); return; }
     let mounted = true;
     _fetchTickerSector(s.tk).then((d) => { if (mounted) setLookup(d); });
     return () => { mounted = false; };
-  }, [s.tk, s.sectorEtf]);
+  }, [s.tk]);
 
   const fallbackEtf = _TICKER_TO_SECTOR[s.tk?.toUpperCase()];
   const etf = s.sectorEtf || fallbackEtf || lookup?.etf || null;
   const idx = etf ? sectors.findIndex((x) => x.etf === etf) : -1;
-  const sec = idx >= 0 ? sectors[idx] : lookup;
+  const heatmapSec = idx >= 0 ? sectors[idx] : null;
+  const hasValidReturns = heatmapSec && heatmapSec.ret_1m != null;
+  const sec = hasValidReturns ? heatmapSec : lookup;
   const rank = sec?.rank || (idx >= 0 ? idx + 1 : null);
   const total = sec?.total || sectors.length;
   const fmt = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
