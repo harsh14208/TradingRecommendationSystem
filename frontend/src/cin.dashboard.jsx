@@ -595,26 +595,17 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
               <button className="btn sm" onClick={() => onPriceAlert(s)}>🚨 Alert</button>
             </div>
             <Defer ms={700} skeleton={<SkelBlock h={260}></SkelBlock>}><DashChart s={s}></DashChart></Defer>
-            {/* Trade plan */}
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line-soft)" }}>
-              {s.entry ? (
-                <React.Fragment>
-                  {s.rr != null && Number(s.rr) > 0 && <PlanStat label="R : R" value={Number(s.rr).toFixed(1)} color="var(--bull)"></PlanStat>}
-                  <PlanStat label="ENTRY" value={`$${s.entry}`}></PlanStat>
-                  {s.stop != null && <PlanStat label="STOP" value={`$${s.stop}`} color="var(--bear)"></PlanStat>}
-                  {s.target != null && <PlanStat label="TARGET" value={`$${s.target}`} color="var(--bull)"></PlanStat>}
-                  <PlanStat label="MKT CAP" value={s.mcap}></PlanStat>
-                  <PlanStat label="P/E" value={s.pe}></PlanStat>
-                </React.Fragment>
-              ) : (
-                <React.Fragment>
-                  <PlanStat label="STATUS" value="No trade" color="var(--neutral)"></PlanStat>
-                  <PlanStat label="MKT CAP" value={s.mcap}></PlanStat>
-                  <PlanStat label="VOLUME" value={s.vol}></PlanStat>
-                  <PlanStat label="P/E" value={s.pe}></PlanStat>
-                </React.Fragment>
-              )}
-            </div>
+            {/* Trade plan — only show for complete, actionable setups */}
+            {s.entry && s.stop != null && s.target != null && (
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line-soft)" }}>
+                {s.rr != null && Number(s.rr) > 0 && <PlanStat label="R : R" value={Number(s.rr).toFixed(1)} color="var(--bull)"></PlanStat>}
+                <PlanStat label="ENTRY" value={`$${s.entry}`}></PlanStat>
+                <PlanStat label="STOP" value={`$${s.stop}`} color="var(--bear)"></PlanStat>
+                <PlanStat label="TARGET" value={`$${s.target}`} color="var(--bull)"></PlanStat>
+                <PlanStat label="MKT CAP" value={s.mcap}></PlanStat>
+                <PlanStat label="P/E" value={s.pe}></PlanStat>
+              </div>
+            )}
           </div>
 
           <div className="dash-sub">
