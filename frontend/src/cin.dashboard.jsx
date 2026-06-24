@@ -251,6 +251,51 @@ function CollapsiblePanel({ label, labelColor, right, defaultOpen = true, hover 
   );
 }
 
+function SetupQualityPanel({ s }) {
+  const styleInfo = STYLE_INFO[s.style] || STYLE_INFO.swing;
+  const confColor = s.conf >= 70 ? "var(--bull)" : s.conf >= 50 ? "var(--neutral)" : "var(--text-faint)";
+  return (
+    <CollapsiblePanel label="SETUP QUALITY" hover defaultOpen={false}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <span className="kicker">CONFIDENCE</span>
+            <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: confColor }}>{Math.round(s.conf)}%</span>
+          </div>
+          <div style={{ height: 6, background: "var(--bg-2)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, Math.max(0, s.conf))}%`, height: "100%", background: confColor, borderRadius: 3 }}></div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <div className="kicker" style={{ marginBottom: 3 }}>R : R</div>
+            <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: s.rr >= 2 ? "var(--bull)" : "var(--text)" }}>{s.rr.toFixed(1)}</span>
+          </div>
+          <div>
+            <div className="kicker" style={{ marginBottom: 3 }}>SOURCES</div>
+            <span className="mono" style={{ fontSize: 15, fontWeight: 700 }}>{s.sources.length}</span>
+          </div>
+          <div>
+            <div className="kicker" style={{ marginBottom: 3 }}>STYLE</div>
+            <span className="mono" style={{ fontSize: 13 }}>{styleInfo.label}</span>
+          </div>
+          <div>
+            <div className="kicker" style={{ marginBottom: 3 }}>HORIZON</div>
+            <span className="mono" style={{ fontSize: 13 }}>{styleInfo.horizon}</span>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {s.sources.slice(0, 4).map((src) => (
+            <span key={src} className="mono" style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", color: "var(--text-dim)", border: "1px solid var(--line)", borderRadius: 4, padding: "2px 6px" }}>{src}</span>
+          ))}
+        </div>
+      </div>
+    </CollapsiblePanel>
+  );
+}
+
 function OptionsVRPPanel({ s }) {
   const hasOptions = !!s.optionStrategy;
   if (!hasOptions) return null;
@@ -516,13 +561,16 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
             </div>
           </div>
 
-          <CollapsiblePanel label={`WIN RATE · ${s.tk} HISTORY`} hover defaultOpen={false}>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
-              <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: s.win >= 65 ? "var(--bull)" : "var(--neutral)" }}><Num value={s.win} dp={0}></Num>%</span>
-              <Spark data={winSpark} w={130} h={40} color={s.win >= 65 ? "bull" : "neutral"}></Spark>
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>14-day horizon · Bayesian-smoothed</div>
-          </CollapsiblePanel>
+          <div className="dash-sub">
+            <CollapsiblePanel label={`WIN RATE · ${s.tk} HISTORY`} hover defaultOpen={false}>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
+                <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: s.win >= 65 ? "var(--bull)" : "var(--neutral)" }}><Num value={s.win} dp={0}></Num>%</span>
+                <Spark data={winSpark} w={130} h={40} color={s.win >= 65 ? "bull" : "neutral"}></Spark>
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>14-day horizon · Bayesian-smoothed</div>
+            </CollapsiblePanel>
+            <SetupQualityPanel s={s}></SetupQualityPanel>
+          </div>
 
           {/* Options VRP — shown only when the options engine fired */}
           <OptionsVRPPanel s={s}></OptionsVRPPanel>
