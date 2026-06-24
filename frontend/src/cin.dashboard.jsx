@@ -309,8 +309,11 @@ function SectorContextPanel({ s }) {
   const etf = s.sectorEtf || fallbackEtf || lookup?.etf || null;
   const idx = etf ? sectors.findIndex((x) => x.etf === etf) : -1;
   const heatmapSec = idx >= 0 ? sectors[idx] : null;
-  const hasValidReturns = heatmapSec && heatmapSec.ret_1m != null;
-  const sec = hasValidReturns ? heatmapSec : lookup;
+  // Prefer the ticker-specific lookup (always computes returns) over the broad
+  // heatmap (which can have stale/null cells).  Use heatmap only for rank context.
+  const hasLookupReturns = lookup && lookup.ret_1m != null;
+  const hasHeatmapReturns = heatmapSec && heatmapSec.ret_1m != null;
+  const sec = hasLookupReturns ? lookup : heatmapSec;
   const rank = sec?.rank || (idx >= 0 ? idx + 1 : null);
   const total = sec?.total || sectors.length;
   const fmt = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
