@@ -1790,7 +1790,10 @@ async def lifespan(app: FastAPI):
     _supervise("prewarm_sectors", _prewarm_sectors, restart=False)
     if settings.alpaca_api_key and settings.alpaca_api_secret:
         alpaca_ws.start(
-            settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), settings.tickers, manager.broadcast
+            settings.alpaca_api_key.get_secret_value(),
+            settings.alpaca_api_secret.get_secret_value(),
+            settings.tickers,
+            manager.broadcast,
         )
     from services.dark_pool import start_dark_pool_stream
 
