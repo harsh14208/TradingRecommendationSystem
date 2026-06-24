@@ -461,6 +461,7 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
   const [volLoading, setVolLoading] = useState(false);
   const [loading,   setLoading]   = useState(false);
   const [err,       setErr]       = useState(null);
+  const [tab,       setTab]       = useState("equity");  // "equity" | "options"
 
   useEffect(() => {
     if (!open) return;
@@ -521,6 +522,14 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
           <BackButton onClick={onClose}></BackButton>
         </div>
       )}
+      <div style={{ display:"flex", gap:8, padding:"0 28px", marginTop:14 }}>
+        {[["equity","Equity"],["options","Options"]].map(([k,l]) => (
+          <button key={k} className={`btn ${tab===k ? "primary" : "ghost"}`} style={{ fontSize:12 }} onClick={() => setTab(k)}>{l}</button>
+        ))}
+      </div>
+      {tab === "options" ? (
+        <OptionsPaperPanel online={online} />
+      ) : (
       <div style={{ padding:"20px 28px", overflowY: isPage ? "visible" : "auto", maxHeight: isPage ? undefined : "calc(100vh - 100px)", display:"flex", flexDirection:"column", gap:20 }}>
         {err === "upgrade"  && <UpgradePrompt feature="Paper Portfolio" minTier="basic"/>}
         {err === "offline"  && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline or Alpaca API keys not configured.</div>}
@@ -689,6 +698,126 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
           <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>
             Paper account not configured. Set Alpaca API keys in .env to enable paper trading.
           </div>
+        )}
+      </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Options paper account (separate Alpaca account) ────────────────────────── */
+function OptionsPaperPanel({ online }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    if (!online) { setErr("offline"); return; }
+    setErr(null); setLoading(true);
+    const ctrl = new AbortController();
+    authFetch("/api/paper/options", { signal: ctrl.signal })
+      .then(r => r.status === 402 ? (setErr("upgrade"), null) : r.json())
+      .then(d => { if (d) setData(d); })
+      .catch(() => setErr("offline"))
+      .finally(() => setLoading(false));
+    return () => ctrl.abort();
+  }, [online]);
+
+  const fmtMoney = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 })}`;
+  const fmtPct = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${Number(v).toFixed(2)}%`;
+  const rc = v => v == null ? "var(--text-faint)" : v >= 0 ? "var(--up)" : "var(--down)";
+
+  const wrap = { padding:"20px 28px", display:"flex", flexDirection:"column", gap:20 };
+  if (err === "upgrade") return <div style={wrap}><UpgradePrompt feature="Options Paper" minTier="basic"/></div>;
+  if (err === "offline") return <div style={wrap}><div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline.</div></div>;
+  if (loading || !data) return <div style={wrap}><div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading options account…</div></div>;
+  if (!data.configured) return (
+    <div style={wrap}><div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>
+      {data.message || "Options paper account not configured."}
+    </div></div>
+  );
+
+  const acct = data.account || {};
+  const positions = data.positions || [];
+  const orders = data.orders || [];
+  const history = data.history || [];
+  const equity = parseFloat(acct.equity);
+  const openPl = positions.reduce((s,p) => s + (parseFloat(p.unrealized_pl)||0), 0);
+  const start = history.length ? parseFloat(history[0].equity) : 1000000;
+  const totalPl = Number.isFinite(equity) ? equity - start : null;
+
+  return (
+    <div style={wrap}>
+      <div style={{ fontSize:11, color:"var(--text-faint)" }}>Dedicated Alpaca options paper account · VRP option-strategy orders submit at market open.</div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:12 }}>
+        {[
+          ["Equity", fmtMoney(acct.equity), "var(--text)"],
+          ["Cash", fmtMoney(acct.cash), "var(--text)"],
+          ["Buying Power", fmtMoney(acct.buying_power), "var(--text)"],
+          ["Open P&L", positions.length ? fmtMoney(openPl) : "—", positions.length ? rc(openPl) : "var(--text-faint)"],
+          ["Total P&L", totalPl == null ? "—" : fmtMoney(totalPl), rc(totalPl)],
+        ].map(([l,v,c]) => (
+          <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px" }}>
+            <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>{l}</div>
+            <div style={{ fontSize:18, fontWeight:700, fontFamily:"var(--font-mono)", color:c }}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {positions.length > 0 ? (
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Open option positions ({positions.length})</div>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"var(--font-mono)" }}>
+            <thead><tr style={{ borderBottom:"1px solid var(--line)", color:"var(--text-faint)", fontSize:9, textTransform:"uppercase" }}>
+              {["Symbol","Qty","Avg Cost","Mkt Value","P&L"].map(h => <th key={h} style={{ padding:"6px 8px", textAlign: h==="Symbol"?"left":"right", fontWeight:500 }}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {positions.map((p,i) => {
+                const pl = parseFloat(p.unrealized_pl||0);
+                return (
+                  <tr key={i} style={{ borderBottom:"1px solid var(--line)" }}>
+                    <td style={{ padding:"6px 8px", fontWeight:600 }}>{p.symbol}</td>
+                    <td style={{ padding:"6px 8px", textAlign:"right" }}>{p.qty}</td>
+                    <td style={{ padding:"6px 8px", textAlign:"right" }}>{p.avg_entry_price ? fmtMoney(p.avg_entry_price) : "—"}</td>
+                    <td style={{ padding:"6px 8px", textAlign:"right" }}>{p.market_value ? fmtMoney(p.market_value) : "—"}</td>
+                    <td style={{ padding:"6px 8px", textAlign:"right", color:rc(pl), fontWeight:600 }}>{fmtMoney(pl)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div style={{ padding:"24px 0", textAlign:"center", color:"var(--text-faint)", fontSize:12 }}>
+          No open option positions yet. VRP orders submit at the next market open.
+        </div>
+      )}
+
+      <div>
+        <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Order history ({orders.length})</div>
+        {orders.length === 0 ? (
+          <div style={{ color:"var(--text-faint)", fontSize:12 }}>No option orders submitted yet.</div>
+        ) : (
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"var(--font-mono)" }}>
+            <thead><tr style={{ borderBottom:"1px solid var(--line)", color:"var(--text-faint)", fontSize:9, textTransform:"uppercase" }}>
+              {["Symbol","Strategy","Side","Qty","Status","When"].map(h => <th key={h} style={{ padding:"6px 8px", textAlign: h==="Symbol"||h==="Strategy"?"left":"right", fontWeight:500 }}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {orders.slice(0,40).map((o,i) => {
+                const sc = o.status==="filled"||o.status==="accepted"||o.status==="submitted" ? "var(--up)" : o.status==="rejected"||o.status==="error" ? "var(--down)" : "var(--warn)";
+                return (
+                  <tr key={i} style={{ borderBottom:"1px solid var(--line)" }} title={o.reject_reason || ""}>
+                    <td style={{ padding:"6px 8px", fontWeight:600 }}>{o.symbol}</td>
+                    <td style={{ padding:"6px 8px", color:"var(--text-dim)" }}>{(o.strategy||"").replace(/_/g," ").toLowerCase() || "—"}</td>
+                    <td style={{ padding:"6px 8px", textAlign:"right", color: o.side==="buy"?"var(--up)":"var(--down)", textTransform:"uppercase" }}>{o.side}</td>
+                    <td style={{ padding:"6px 8px", textAlign:"right" }}>{o.qty}</td>
+                    <td style={{ padding:"6px 8px", textAlign:"right", color:sc, textTransform:"uppercase", fontSize:9 }}>{o.status}</td>
+                    <td style={{ padding:"6px 8px", textAlign:"right", color:"var(--text-faint)" }}>{o.created_at ? fmtETTime(o.created_at) : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         )}
       </div>
     </div>
