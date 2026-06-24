@@ -764,6 +764,25 @@ function OptionsPaperPanel({ online }) {
         ))}
       </div>
 
+      {history.length > 1 && (() => {
+        const eq = history.map(h => parseFloat(h.equity)).filter(Number.isFinite);
+        if (eq.length < 2) return null;
+        const min = Math.min(...eq), max = Math.max(...eq), rng = (max - min) || 1;
+        const W = 600, H = 90;
+        const pts = eq.map((v,i) => `${(i/(eq.length-1))*W},${(H-4) - ((v-min)/rng)*(H-8)}`).join(" ");
+        const up = eq[eq.length-1] >= eq[0];
+        const col = up ? "var(--up)" : "var(--down)";
+        return (
+          <div>
+            <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:8 }}>Equity curve ({eq.length}d)</div>
+            <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width:"100%", height:90, background:"var(--bg-2)", borderRadius:8 }}>
+              <polyline points={`0,${H} ${pts} ${W},${H}`} fill={col} fillOpacity="0.08" stroke="none" />
+              <polyline points={pts} fill="none" stroke={col} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            </svg>
+          </div>
+        );
+      })()}
+
       {positions.length > 0 ? (
         <div>
           <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Open option positions ({positions.length})</div>
