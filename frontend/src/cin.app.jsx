@@ -77,7 +77,7 @@ function toCinSignal(s) {
   const target = s.target != null ? toNum(s.target, null) : (mock?.target ?? null);
   const computedRR = entry != null && stop != null && target != null && Math.abs(entry - stop) > 1e-9
     ? Math.abs((target - entry) / (entry - stop)) : null;
-  const rr = parseRR(s.rr) ?? computedRR ?? parseRR(mock?.rr) ?? 0;
+  const rr = parseRR(s.rr) ?? computedRR ?? parseRR(mock?.rr) ?? null;
   // Rationale items are usually objects ({src, head, body, ...}), but options-VRP
   // signals store a single plain-string thesis ("No directional edge + rich
   // options → harvest VRP"). Coerce strings so they render as a real evidence

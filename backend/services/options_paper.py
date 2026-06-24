@@ -289,6 +289,21 @@ async def submit_paper_option_order(
     order = _order_from_signal(sig)
     if order is None:
         return None
+
+    # Skip malformed multi-leg structures (mismatched expiries / duplicate
+    # contracts from independent chain resolution) — Alpaca 422s otherwise. Guards
+    # pre-existing signals built before the options_engine fix.
+    if len(order.legs) > 1:
+        _syms = [leg.option_symbol for leg in order.legs]
+        _exps = {leg.expiry for leg in order.legs}
+        if len(set(_syms)) != len(_syms) or len(_exps) != 1:
+            log.info(
+                "options paper: skipping malformed %s legs for %s (expiries=%s)",
+                order.strategy,
+                order.underlying,
+                sorted(_exps),
+            )
+            return None
     symbol = order.underlying
     first_sym = order.legs[0].option_symbol
 

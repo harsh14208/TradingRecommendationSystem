@@ -207,6 +207,31 @@ def _build_option_legs(
     def _leg(option_type: str, strike: float, position: str) -> dict[str, Any]:
         return _resolve_leg(option_type, strike, position) or _placeholder_leg(option_type, strike, position)
 
+    def _finalize(legs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sanity-check a multi-leg structure before it can reach the broker.
+
+        ``select_contract`` resolves each leg independently against the chain, so
+        it can return the SAME contract for two legs (degenerate spread) or pick
+        DIFFERENT expiries for the call vs put (calendar, not a straddle/condor).
+        Such structures get rejected by Alpaca (422 'leg duplicated' / invalid).
+        Drop them so only well-formed orders (single expiry, distinct contracts)
+        are persisted/submitted.
+        """
+        if len(legs) <= 1:
+            return legs
+        symbols = [leg["option_symbol"] for leg in legs]
+        expiries = {leg["expiry"] for leg in legs}
+        if len(set(symbols)) != len(symbols) or len(expiries) != 1:
+            log.warning(
+                "options_engine: dropping malformed %s legs for %s — duplicate=%s, expiries=%s",
+                action,
+                ticker,
+                len(set(symbols)) != len(symbols),
+                sorted(expiries),
+            )
+            return []
+        return legs
+
     if action == "SELL_CASH_SEC_PUT":
         strike = px * (1.0 - impl * 0.5)
         return [_leg("put", strike, "short")]
@@ -224,11 +249,11 @@ def _build_option_legs(
                     _leg("put", long_put_strike, "long"),
                 ]
             )
-        return legs
+        return _finalize(legs)
 
     if action == "LONG_STRADDLE":
         strike = px
-        return [_leg("call", strike, "long"), _leg("put", strike, "long")]
+        return _finalize([_leg("call", strike, "long"), _leg("put", strike, "long")])
 
     return []
 

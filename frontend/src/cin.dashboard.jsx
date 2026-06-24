@@ -599,10 +599,10 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line-soft)" }}>
               {s.entry ? (
                 <React.Fragment>
-                  <PlanStat label="R : R" value={s.rr.toFixed(1)} color="var(--bull)"></PlanStat>
+                  {s.rr != null && Number(s.rr) > 0 && <PlanStat label="R : R" value={Number(s.rr).toFixed(1)} color="var(--bull)"></PlanStat>}
                   <PlanStat label="ENTRY" value={`$${s.entry}`}></PlanStat>
-                  <PlanStat label="STOP" value={`$${s.stop}`} color="var(--bear)"></PlanStat>
-                  <PlanStat label="TARGET" value={`$${s.target}`} color="var(--bull)"></PlanStat>
+                  {s.stop != null && <PlanStat label="STOP" value={`$${s.stop}`} color="var(--bear)"></PlanStat>}
+                  {s.target != null && <PlanStat label="TARGET" value={`$${s.target}`} color="var(--bull)"></PlanStat>}
                   <PlanStat label="MKT CAP" value={s.mcap}></PlanStat>
                   <PlanStat label="P/E" value={s.pe}></PlanStat>
                 </React.Fragment>
@@ -641,7 +641,7 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
                 {s.rationale.map((r, i) => <RationaleItem key={tk + i} r={r}></RationaleItem>)}
                 <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 8, background: "var(--bull-soft)", border: "1px solid rgba(34,211,238,0.18)" }}>
                   <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--text)" }}>
-                    {s.tk} signals have closed <span className="bull" style={{ fontWeight: 700 }}>{s.win}% green</span> on the 14-day horizon historically, with risk-reward of {s.rr.toFixed(1)} on this setup.
+                    {s.tk} signals have closed <span className="bull" style={{ fontWeight: 700 }}>{s.win}% green</span> on the 14-day horizon historically{s.rr != null && Number(s.rr) > 0 ? `, with risk-reward of ${Number(s.rr).toFixed(1)} on this setup` : ""}.
                   </div>
                 </div>
                 {/* Journal note */}
