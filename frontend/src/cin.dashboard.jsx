@@ -453,7 +453,12 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
   }), [signalList, q, actionFilter, styleFilter, minConf]);
 
   const liveSignals = filtered.filter((s) => !s.optionStrategy);
-  const optionsSignals = filtered.filter((s) => !!s.optionStrategy);
+  const optionsSignals = filtered
+    .filter((s) => !!s.optionStrategy)
+    .reduce((acc, s) => {
+      if (!acc.find((x) => x.tk === s.tk)) acc.push(s);
+      return acc;
+    }, []);
   const liveDeliverable = liveSignals.filter((s) => s.deliverable !== false);
   const liveThreshold = liveSignals.filter((s) => s.deliverable === false);
   const optionsDeliverable = optionsSignals.filter((s) => s.deliverable !== false);
