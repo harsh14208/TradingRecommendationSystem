@@ -251,60 +251,6 @@ function CollapsiblePanel({ label, labelColor, right, defaultOpen = true, hover 
   );
 }
 
-function PaperTrade({ s }) {
-  const [pos, setPos] = dUseState(null);
-  const [mark, setMark] = dUseState(s.px);
-  const rndRef = dUseRef(null);
-  dUseEffect(() => { setPos(null); setMark(s.px); rndRef.current = mulberry32(s.seed * 777); }, [s.tk]);
-  dUseEffect(() => {
-    if (!pos) return;
-    const id = setInterval(() => {
-      const rnd = rndRef.current || Math.random;
-      const driftSign = s.signal === "SELL" ? -1 : 1;
-      setMark((m) => m * (1 + driftSign * 0.0004 + (rnd() - 0.5) * 0.0024));
-    }, 900);
-    return () => clearInterval(id);
-  }, [pos, s]);
-  const dir = s.signal === "SELL" ? "SHORT" : "LONG";
-  const disabled = s.signal === "HOLD";
-  const pnl = pos ? (dir === "LONG" ? mark - pos.entry : pos.entry - mark) * pos.qty : 0;
-  const pnlPct = pos ? (pnl / (pos.entry * pos.qty)) * 100 : 0;
-  const right = pos ? <span className="kicker" style={{ color: "var(--bull)", display: "inline-flex", gap: 6, alignItems: "center" }}><LiveDot></LiveDot> SIMULATING</span> : null;
-  return (
-    <CollapsiblePanel label="PAPER TRADE" right={right} hover defaultOpen={false}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {disabled ? (
-        <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-faint)", lineHeight: 1.55 }}>
-          No trade on a HOLD. The engine sees no exploitable edge — capital is better deployed elsewhere.
-        </p>
-      ) : !pos ? (
-        <React.Fragment>
-          <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.55 }}>
-            Test this signal with zero risk. One click opens a simulated {dir.toLowerCase()} at the live mark, sized to ~$10k.
-          </p>
-          <button className="btn primary" onClick={() => setPos({ entry: s.px, qty: Math.max(1, Math.round(10000 / s.px)) })}>
-            Paper trade {s.tk} · {dir}
-          </button>
-        </React.Fragment>
-      ) : (
-        <React.Fragment>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-            <div><div className="kicker" style={{ marginBottom: 3 }}>ENTRY</div><span className="mono" style={{ fontSize: 13 }}>${pos.entry.toFixed(2)}</span></div>
-            <div><div className="kicker" style={{ marginBottom: 3 }}>MARK</div><Num value={mark} dp={2} prefix="$"></Num></div>
-            <div><div className="kicker" style={{ marginBottom: 3 }}>SIZE</div><span className="mono" style={{ fontSize: 13 }}>{pos.qty} sh</span></div>
-          </div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span className={`mono ${pnl >= 0 ? "bull" : "bear"}`} style={{ fontSize: 22, fontWeight: 700 }}>{pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)}</span>
-            <span className={`mono ${pnl >= 0 ? "bull" : "bear"}`} style={{ fontSize: 12 }}>{pnl >= 0 ? "+" : "−"}{Math.abs(pnlPct).toFixed(2)}%</span>
-          </div>
-          <button className="btn sm" onClick={() => setPos(null)}>Close position</button>
-        </React.Fragment>
-      )}
-      </div>
-    </CollapsiblePanel>
-  );
-}
-
 function OptionsVRPPanel({ s }) {
   const hasOptions = !!s.optionStrategy;
   if (!hasOptions) return null;
@@ -570,16 +516,13 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
             </div>
           </div>
 
-          <div className="dash-sub">
-            <CollapsiblePanel label={`WIN RATE · ${s.tk} HISTORY`} hover defaultOpen={false}>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
-                <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: s.win >= 65 ? "var(--bull)" : "var(--neutral)" }}><Num value={s.win} dp={0}></Num>%</span>
-                <Spark data={winSpark} w={130} h={40} color={s.win >= 65 ? "bull" : "neutral"}></Spark>
-              </div>
-              <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>14-day horizon · Bayesian-smoothed</div>
-            </CollapsiblePanel>
-            <PaperTrade s={s}></PaperTrade>
-          </div>
+          <CollapsiblePanel label={`WIN RATE · ${s.tk} HISTORY`} hover defaultOpen={false}>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
+              <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: s.win >= 65 ? "var(--bull)" : "var(--neutral)" }}><Num value={s.win} dp={0}></Num>%</span>
+              <Spark data={winSpark} w={130} h={40} color={s.win >= 65 ? "bull" : "neutral"}></Spark>
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>14-day horizon · Bayesian-smoothed</div>
+          </CollapsiblePanel>
 
           {/* Options VRP — shown only when the options engine fired */}
           <OptionsVRPPanel s={s}></OptionsVRPPanel>
