@@ -122,10 +122,11 @@ async def test_submit_paper_option_order_submits_and_dedupes() -> None:
     session, engine = await _in_memory_session()
     async with session:
         with patch("services.brokers.alpaca_options.AlpacaOptionsBroker", return_value=fake_broker):
-            first = await submit_paper_option_order(sig, 11, session, "k", "s")
+            first = await submit_paper_option_order(sig, 11, session, "k", "s", 33)
             assert first is not None
             assert first.broker == "alpaca_options"
             assert first.account_type == "paper"
+            assert first.user_id == 33
             assert first.symbol == "AAPL"
             assert first.side == "sell"  # SELL_STRANGLE
             assert first.alpaca_order_id == "abc123"
@@ -133,7 +134,7 @@ async def test_submit_paper_option_order_submits_and_dedupes() -> None:
             assert len(first.option_legs) == 2
 
             # Re-emit of the same signal must NOT submit a second order.
-            dup = await submit_paper_option_order(sig, 12, session, "k", "s")
+            dup = await submit_paper_option_order(sig, 12, session, "k", "s", 33)
             assert dup is None
 
         count = len(
@@ -142,7 +143,7 @@ async def test_submit_paper_option_order_submits_and_dedupes() -> None:
         assert count == 1  # dedup held
 
         # Missing legs / strategy → no-op (no broker call).
-        assert await submit_paper_option_order({"ticker": "X"}, None, session, "k", "s") is None
+        assert await submit_paper_option_order({"ticker": "X"}, None, session, "k", "s", 33) is None
     await engine.dispose()
 
 

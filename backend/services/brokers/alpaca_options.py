@@ -32,6 +32,13 @@ def _headers(api_key: str, api_secret: str) -> dict[str, str]:
     }
 
 
+def _alpaca_symbol(option_symbol: str) -> str:
+    """Alpaca uses bare OCC option symbols (e.g. AAPL260717C00170000); strip the
+    Polygon-style ``O:`` prefix that our chain resolver attaches."""
+    s = (option_symbol or "").upper().strip()
+    return s[2:] if s.startswith("O:") else s
+
+
 def _position_intent(leg: OptionLeg, opening: bool = True) -> str:
     """Map our side/position to Alpaca's position_intent enum value."""
     if opening:
@@ -68,7 +75,7 @@ class AlpacaOptionsBroker(OptionsBroker):
             leg = order.legs[0]
             body.update(
                 {
-                    "symbol": leg.option_symbol.upper(),
+                    "symbol": _alpaca_symbol(leg.option_symbol),
                     "qty": str(int(leg.quantity)),
                     "side": leg.side,
                     "position_intent": _position_intent(leg, opening=True),
@@ -81,7 +88,7 @@ class AlpacaOptionsBroker(OptionsBroker):
                 {
                     "side": leg.side,
                     "position_intent": _position_intent(leg, opening=True),
-                    "symbol": leg.option_symbol.upper(),
+                    "symbol": _alpaca_symbol(leg.option_symbol),
                     "ratio_qty": str(int(leg.quantity)),
                 }
                 for leg in order.legs
@@ -95,7 +102,17 @@ class AlpacaOptionsBroker(OptionsBroker):
                     headers=_headers(self.api_key, self.api_secret),
                     json=body,
                 ) as resp:
-                    resp.raise_for_status()
+                    if resp.status >= 400:
+                        # Capture Alpaca's actual rejection reason (not just the status code).
+                        detail = (await resp.text())[:500]
+                        log.warning(
+                            "Alpaca options order rejected for %s (%d): %s", order.underlying, resp.status, detail
+                        )
+                        return {
+                            "status": "rejected" if resp.status == 422 else "error",
+                            "reason": f"{resp.status}: {detail}",
+                            "client_order_id": client_order_id,
+                        }
                     data = await resp.json()
         except Exception as exc:
             log.warning("Alpaca options order failed for %s: %s", order.underlying, exc)

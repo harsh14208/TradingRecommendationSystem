@@ -183,16 +183,27 @@ async def resolve_paper_pnl(db: AsyncSession) -> None:
     log.info("Resolved paper P&L for %d option position(s)", updated)
 
 
-async def options_paper_active(db: AsyncSession, settings) -> tuple[str, str] | None:
-    """Return options Alpaca paper creds when ``auto_paper_options`` is enabled in
-    app settings AND the separate options keys are configured; else None."""
-    from models import AppSettings
+async def options_paper_active(db: AsyncSession, settings) -> tuple[str, str, int] | None:
+    """Return (api_key, api_secret, owner_user_id) when ``auto_paper_options`` is
+    enabled AND the separate options keys are configured; else None.
+
+    The owner user id is the bookkeeping account holder for the BrokerOrder rows
+    (broker_orders.user_id is NOT NULL in the DB); the *trading* account is the
+    separate Alpaca credentials.
+    """
+    from models import AppSettings, User
 
     srow = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
     data = (srow.data or {}) if srow else {}
     if not data.get("auto_paper_options"):
         return None
-    return options_paper_credentials(settings)
+    creds = options_paper_credentials(settings)
+    if not creds:
+        return None
+    owner_id = (await db.execute(select(User.id).where(User.is_owner == True).order_by(User.id))).scalars().first()
+    if owner_id is None:
+        return None
+    return creds[0], creds[1], owner_id
 
 
 # BrokerOrder.status CheckConstraint allows only this set; Alpaca returns richer
@@ -262,6 +273,7 @@ async def submit_paper_option_order(
     db: AsyncSession,
     api_key: str,
     api_secret: str,
+    account_user_id: int,
 ) -> BrokerOrder | None:
     """Submit one VRP signal to the dedicated Alpaca options PAPER account.
 
@@ -299,7 +311,7 @@ async def submit_paper_option_order(
 
     order_record = BrokerOrder(
         signal_id=signal_id,
-        user_id=None,  # dedicated options account, not a user
+        user_id=account_user_id,  # bookkeeping holder; trading account = options creds
         broker="alpaca_options",
         account_type="paper",
         symbol=symbol,

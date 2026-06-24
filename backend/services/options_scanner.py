@@ -174,8 +174,12 @@ async def _persist_option_signals(
         # each new VRP signal is submitted there as a real option order.
         from config import get_settings
         from services.options_paper import options_paper_active, submit_paper_option_order
+        from services.scanner import _market_hours_ok
 
-        _opt_creds = await options_paper_active(db, get_settings())
+        # Only submit during market hours — Alpaca rejects option MARKET orders
+        # outside RTH ("market orders only allowed during market hours"). The
+        # scanner runs RTH-only anyway; this guards manual/edge after-hours runs.
+        _opt_creds = await options_paper_active(db, get_settings()) if await _market_hours_ok() else None
 
         # Deactivate any existing active option signals for tickers we are about
         # to refresh.  Option VRP is a daily view — a ticker should only ever have
@@ -230,7 +234,7 @@ async def _persist_option_signals(
 
             if _opt_creds:
                 try:
-                    await submit_paper_option_order(sig, row.id, db, _opt_creds[0], _opt_creds[1])
+                    await submit_paper_option_order(sig, row.id, db, _opt_creds[0], _opt_creds[1], _opt_creds[2])
                 except Exception:
                     log.warning("options paper order failed for %s", sig.get("ticker"), exc_info=True)
         await db.commit()
