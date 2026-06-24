@@ -245,3 +245,17 @@ def test_ticker_sector_unresolvable(client):
         resp = client.get("/api/market/sector/UNKNOWN")
     assert resp.status_code == 200
     assert resp.json()["etf"] is None
+
+
+def test_ticker_sector_non_equity_etf(client):
+    import routers.market as m
+
+    m._ticker_sector_cache.clear()
+    resp = client.get("/api/market/sector/DBC")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["etf"] == "DBC"
+    assert data["name"] == "Commodities"
+    assert data["ret_1m"] is not None
+    assert data["rank"] is None
+    assert data["total"] is None

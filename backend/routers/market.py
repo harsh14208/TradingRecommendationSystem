@@ -183,6 +183,32 @@ async def option_chain_endpoint(ticker: str, price: float = 0.0):
 # we don't want the dashboard card to re-hit them on every signal click.
 _ticker_sector_cache: dict[str, dict] = {}
 
+# Non-equity ETFs / alternative assets that don't fit the SPDR sector map.
+# Mapped to a human-readable label and a proxy ticker for performance.
+_NON_EQUITY_MAP: dict[str, dict[str, str]] = {
+    "DBC": {"name": "Commodities", "proxy": "DBC"},
+    "DBA": {"name": "Agriculture", "proxy": "DBA"},
+    "DBB": {"name": "Base Metals", "proxy": "DBB"},
+    "DBE": {"name": "Energy", "proxy": "DBE"},
+    "DBP": {"name": "Precious Metals", "proxy": "DBP"},
+    "GLD": {"name": "Gold", "proxy": "GLD"},
+    "IAU": {"name": "Gold", "proxy": "IAU"},
+    "SLV": {"name": "Silver", "proxy": "SLV"},
+    "USO": {"name": "Oil", "proxy": "USO"},
+    "UNG": {"name": "Natural Gas", "proxy": "UNG"},
+    "TLT": {"name": "Long-Term Treasuries", "proxy": "TLT"},
+    "IEF": {"name": "Intermediate Treasuries", "proxy": "IEF"},
+    "SHY": {"name": "Short-Term Treasuries", "proxy": "SHY"},
+    "BIL": {"name": "Short-Term Treasuries", "proxy": "BIL"},
+    "HYG": {"name": "High Yield Bonds", "proxy": "HYG"},
+    "LQD": {"name": "Investment Grade Bonds", "proxy": "LQD"},
+    "EMB": {"name": "Emerging Markets Bonds", "proxy": "EMB"},
+    "AGG": {"name": "US Aggregate Bonds", "proxy": "AGG"},
+    "BND": {"name": "Total Bond Market", "proxy": "BND"},
+    "TIP": {"name": "TIPS", "proxy": "TIP"},
+    "MUB": {"name": "Municipal Bonds", "proxy": "MUB"},
+}
+
 
 def _ret(closes, days: int) -> float | None:
     """Return % change over the last `days` trading days, or None if insufficient data."""
@@ -234,11 +260,12 @@ async def _sector_returns(etf: str) -> dict[str, float | None]:
 @router.get("/sector/{ticker}")
 async def ticker_sector_endpoint(ticker: str):
     """
-    Resolve a single ticker's SPDR sector ETF and current performance.
+    Resolve a single ticker's sector / asset-class context and performance.
 
-    1. Uses the static SECTOR_MAP for known names.
-    2. Falls back to yfinance company info for unknown tickers.
-    3. Computes/fills sector ETF returns so the dashboard card never blanks.
+    1. Uses the static SECTOR_MAP for equity names.
+    2. Checks non-equity alternatives (commodities, bonds, precious metals).
+    3. Falls back to yfinance company info for unknown tickers.
+    4. Computes/fills ETF returns so the dashboard card never blanks.
 
     The result is cached per ticker for 1 hour to keep the dashboard snappy.
     """
@@ -252,9 +279,10 @@ async def ticker_sector_endpoint(ticker: str):
     if cached and (now - cached.get("_ts", 0)) < 3600:
         return {k: v for k, v in cached.items() if not k.startswith("_")}
 
+    non_equity = _NON_EQUITY_MAP.get(ticker)
     etf = SECTOR_MAP.get(ticker)
 
-    if not etf:
+    if not etf and not non_equity:
         try:
             import yfinance as yf
 
@@ -264,8 +292,24 @@ async def ticker_sector_endpoint(ticker: str):
         except Exception:
             etf = None
 
-    if not etf:
+    if not etf and not non_equity:
         return {"ticker": ticker, "etf": None, "name": None}
+
+    if non_equity:
+        proxy = non_equity["proxy"]
+        returns = await _sector_returns(proxy)
+        result = {
+            "ticker": ticker,
+            "etf": proxy,
+            "name": non_equity["name"],
+            "weight": 2.0,
+            **returns,
+            "flow_1w": 0,
+            "rank": None,
+            "total": None,
+        }
+        _ticker_sector_cache[ticker] = {**result, "_ts": now}
+        return result
 
     sectors = await sector_heatmap()
     sec = next((s for s in sectors if s.get("etf") == etf), None)
