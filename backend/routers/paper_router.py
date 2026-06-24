@@ -50,6 +50,66 @@ async def account(user: User = Depends(get_current_user)):
         raise HTTPException(502, "Broker request failed")
 
 
+@router.get("/options")
+async def options_account(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Dedicated options paper account: live account + positions (Alpaca), recent
+    submitted orders (broker_orders), and the rolling equity history."""
+    _require_paper_user(user)
+    from sqlalchemy import desc, select
+
+    from models import AppSettings, Signal
+    from services.options_account import fetch_options_account, options_pnl_history
+
+    settings = get_settings()
+    snap = await fetch_options_account(settings)
+    if snap is None:
+        return {
+            "configured": False,
+            "message": "Options paper account not configured — set ALPACA_OPTIONS_API_KEY/SECRET in .env.",
+            "account": None,
+            "positions": [],
+            "orders": [],
+            "history": [],
+        }
+
+    # Recent options orders + the originating signal's strategy.
+    rows = (
+        await db.execute(
+            select(BrokerOrder, Signal.option_strategy)
+            .outerjoin(Signal, Signal.id == BrokerOrder.signal_id)
+            .where(BrokerOrder.broker == "alpaca_options")
+            .order_by(desc(BrokerOrder.created_at))
+            .limit(100)
+        )
+    ).all()
+    orders = [
+        {
+            "id": o.id,
+            "symbol": o.symbol,
+            "strategy": strat,
+            "side": o.side,
+            "status": o.status,
+            "qty": o.requested_qty,
+            "alpaca_order_id": o.alpaca_order_id,
+            "reject_reason": o.reject_reason,
+            "legs": o.option_legs or [],
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        }
+        for o, strat in rows
+    ]
+
+    srow = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+    history = options_pnl_history(srow.data if srow else None)
+
+    return {
+        "configured": True,
+        "account": snap["account"],
+        "positions": snap["positions"],
+        "orders": orders,
+        "history": history,
+    }
+
+
 @router.get("/positions")
 async def positions(user: User = Depends(get_current_user)):
     _require_paper_user(user)

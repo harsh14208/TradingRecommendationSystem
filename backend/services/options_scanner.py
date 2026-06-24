@@ -303,6 +303,17 @@ async def run_options_scan(
         len(OPTIONS_UNIVERSE),
     )
 
-    # P&L for the options paper account is tracked by Alpaca on the dedicated
-    # account (positions / unrealized_pl), not marked locally.
-    return await _persist_option_signals(all_option_signals, today_start)
+    persisted = await _persist_option_signals(all_option_signals, today_start)
+
+    # Daily equity snapshot for the options paper account (rolling P&L curve).
+    try:
+        from config import get_settings
+
+        async with AsyncSessionLocal() as db:
+            from services.options_account import snapshot_options_pnl
+
+            await snapshot_options_pnl(db, get_settings())
+    except Exception:
+        log.warning("options pnl snapshot failed", exc_info=True)
+
+    return persisted
