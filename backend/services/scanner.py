@@ -862,6 +862,12 @@ async def _maybe_paper_trade(
     if not db_settings.get("auto_paper_trade"):
         return
 
+    # Option (VRP) signals are NOT equity trades — they're simulated as option
+    # spreads in the separate options paper account (services.options_paper),
+    # not bought/sold as the underlying stock here.
+    if sig_dict.get("option_strategy") or sig_dict.get("optionStrategy"):
+        return
+
     action = sig_dict.get("action")
     if action not in ("BUY", "SELL"):
         return

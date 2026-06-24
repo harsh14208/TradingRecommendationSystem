@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     fred_api_key: SecretStr = Field(default=SecretStr(""))
     alpaca_api_key: SecretStr = Field(default=SecretStr(""))
     alpaca_api_secret: SecretStr = Field(default=SecretStr(""))
+    # Separate Alpaca paper account dedicated to options (VRP) auto-paper trading.
+    # Distinct from the equity account above so options P&L is isolated. When unset,
+    # the options auto-paper path is inert (it does NOT fall back to the equity keys).
+    alpaca_options_api_key: SecretStr = Field(default=SecretStr(""))
+    alpaca_options_api_secret: SecretStr = Field(default=SecretStr(""))
     auto_send_notifications: bool = True
     min_confidence: float = 40.0  # recalibrated 57→40 post phantom-win correction (2026-05-31).
     telegram_bot_token: SecretStr = Field(default=SecretStr(""))

@@ -83,6 +83,70 @@ async def test_simulate_fill_records_broker_order() -> None:
 
 
 @pytest.mark.asyncio
+async def test_submit_paper_option_order_submits_and_dedupes() -> None:
+    from sqlalchemy import select
+
+    from services.options_paper import submit_paper_option_order
+
+    sig = {
+        "ticker": "AAPL",
+        "option_strategy": "SELL_STRANGLE",
+        "price": 170.0,
+        "entry": 170.0,
+        "option_max_loss": 150.0,
+        "option_exp_gain": 10.0,
+        "option_legs": [
+            {
+                "option_symbol": "O:AAPL260717C00180000",
+                "position": "short",
+                "side": "sell",
+                "quantity": 1,
+                "strike": 180.0,
+                "expiry": "2026-07-17",
+            },
+            {
+                "option_symbol": "O:AAPL260717P00160000",
+                "position": "short",
+                "side": "sell",
+                "quantity": 1,
+                "strike": 160.0,
+                "expiry": "2026-07-17",
+            },
+        ],
+    }
+    fake_broker = type(
+        "FB",
+        (),
+        {"place_option_order": AsyncMock(return_value={"status": "accepted", "alpaca_order_id": "abc123"})},
+    )()
+    session, engine = await _in_memory_session()
+    async with session:
+        with patch("services.brokers.alpaca_options.AlpacaOptionsBroker", return_value=fake_broker):
+            first = await submit_paper_option_order(sig, 11, session, "k", "s")
+            assert first is not None
+            assert first.broker == "alpaca_options"
+            assert first.account_type == "paper"
+            assert first.symbol == "AAPL"
+            assert first.side == "sell"  # SELL_STRANGLE
+            assert first.alpaca_order_id == "abc123"
+            assert first.status == "submitted"  # Alpaca "accepted" normalized to allowed set
+            assert len(first.option_legs) == 2
+
+            # Re-emit of the same signal must NOT submit a second order.
+            dup = await submit_paper_option_order(sig, 12, session, "k", "s")
+            assert dup is None
+
+        count = len(
+            (await session.execute(select(BrokerOrder).where(BrokerOrder.broker == "alpaca_options"))).scalars().all()
+        )
+        assert count == 1  # dedup held
+
+        # Missing legs / strategy → no-op (no broker call).
+        assert await submit_paper_option_order({"ticker": "X"}, None, session, "k", "s") is None
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_resolve_paper_pnl_marks_to_market() -> None:
     session, engine = await _in_memory_session()
     async with session:

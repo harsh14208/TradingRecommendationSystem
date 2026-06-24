@@ -147,27 +147,49 @@ async def _persist_option_signals(
     option_signals: list[dict[str, Any]],
     today_start: datetime,
 ) -> list[tuple[dict, Signal, bool]]:
-    """Persist option signals with ticker+strategy daily deduplication.
+    """Persist option signals with one-active-signal-per-ticker deduplication.
 
-    Deactivates prior active option signals for the same ticker and strategy
-    created today, then inserts new rows.  Returns the same (sig_dict, row,
-    force_resend) tuple shape ``_deliver_scan_signals`` expects.
+    The options engine may emit the same ticker from multiple universes or with
+    multiple strategies.  We keep the highest-ranked signal per ticker (the book
+    is already sorted by reward/risk) and deactivate any prior active option
+    signal for those tickers before inserting the new rows.
     """
     if not option_signals:
         return []
 
+    # Keep the first (best-ranked) option signal per ticker.
+    seen_tickers: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for sig in option_signals:
+        tk = sig["ticker"]
+        if tk in seen_tickers:
+            continue
+        seen_tickers.add(tk)
+        deduped.append(sig)
+
     persisted: list[tuple[dict, Signal, bool]] = []
     async with AsyncSessionLocal() as db:
-        for sig in option_signals:
+        # Dedicated options paper account (separate Alpaca paper account with its
+        # own credentials): when auto_paper_options is on AND options keys are set,
+        # each new VRP signal is submitted there as a real option order.
+        from config import get_settings
+        from services.options_paper import options_paper_active, submit_paper_option_order
+
+        _opt_creds = await options_paper_active(db, get_settings())
+
+        # Deactivate any existing active option signals for tickers we are about
+        # to refresh.  Option VRP is a daily view — a ticker should only ever have
+        # one active option signal at a time.
+        if seen_tickers:
             await db.execute(
                 update(Signal)
                 .where(Signal.is_active.is_(True))
-                .where(Signal.ticker == sig["ticker"])
-                .where(Signal.option_strategy == sig["option_strategy"])
-                .where(Signal.created_at >= today_start)
+                .where(Signal.option_strategy.isnot(None))
+                .where(Signal.ticker.in_(list(seen_tickers)))
                 .values(is_active=False)
             )
 
+        for sig in deduped:
             row = Signal(
                 ticker=sig["ticker"],
                 company=sig.get("company"),
@@ -205,6 +227,12 @@ async def _persist_option_signals(
             db.add(row)
             await db.flush()
             persisted.append((sig, row, False))
+
+            if _opt_creds:
+                try:
+                    await submit_paper_option_order(sig, row.id, db, _opt_creds[0], _opt_creds[1])
+                except Exception:
+                    log.warning("options paper order failed for %s", sig.get("ticker"), exc_info=True)
         await db.commit()
 
     log.info("Persisted %d option signals", len(persisted))
@@ -258,4 +286,6 @@ async def run_options_scan(
             log.exception("Options scan failed for universe %s", universe)
             continue
 
+    # P&L for the options paper account is tracked by Alpaca on the dedicated
+    # account (positions / unrealized_pl), not marked locally.
     return await _persist_option_signals(all_option_signals, today_start)

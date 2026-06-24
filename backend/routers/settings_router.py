@@ -29,6 +29,10 @@ _DEFAULTS = {
     "endTime": "16:00",
     "auto_paper_trade": False,
     "paper_trade_notional": 1000.0,
+    # Separate options paper account: auto-simulate VRP option spreads (broker=
+    # 'paper_options') under the owner account, distinct from the equity Alpaca
+    # paper account above.
+    "auto_paper_options": False,
 }
 
 
