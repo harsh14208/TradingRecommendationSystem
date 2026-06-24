@@ -108,6 +108,7 @@ function toCinSignal(s) {
     mcap: s.mcap || mock?.mcap || "—",
     vol: s.vol || mock?.vol || "—",
     pe: s.pe || mock?.pe || "—",
+    sectorEtf: s.sectorEtf || s.sector_etf || mock?.sectorEtf || null,
     ts: s.ts || fmtTime(s.created_at) || (mock?.ts || "—"),
     style: s.style || mock?.style || "swing",
     win: toNum(s.win, mock?.win ?? 60),

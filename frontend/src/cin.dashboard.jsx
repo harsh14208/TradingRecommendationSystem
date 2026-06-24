@@ -251,47 +251,58 @@ function CollapsiblePanel({ label, labelColor, right, defaultOpen = true, hover 
   );
 }
 
-function SetupQualityPanel({ s }) {
-  const styleInfo = STYLE_INFO[s.style] || STYLE_INFO.swing;
-  const confColor = s.conf >= 70 ? "var(--bull)" : s.conf >= 50 ? "var(--neutral)" : "var(--text-faint)";
+const _sectorCache = { data: null, ts: 0, loading: false, promise: null };
+function _fetchSectors() {
+  const now = Date.now();
+  if (_sectorCache.data && now - _sectorCache.ts < 600000) return Promise.resolve(_sectorCache.data);
+  if (_sectorCache.promise) return _sectorCache.promise;
+  _sectorCache.loading = true;
+  _sectorCache.promise = apiFetch("/api/market/sectors")
+    .then((d) => { _sectorCache.data = Array.isArray(d) ? d : []; _sectorCache.ts = Date.now(); return _sectorCache.data; })
+    .catch(() => { _sectorCache.data = _sectorCache.data || []; return _sectorCache.data; })
+    .finally(() => { _sectorCache.loading = false; _sectorCache.promise = null; });
+  return _sectorCache.promise;
+}
+
+function SectorContextPanel({ s }) {
+  const [sectors, setSectors] = dUseState(_sectorCache.data || []);
+  dUseEffect(() => { let mounted = true; _fetchSectors().then((d) => { if (mounted) setSectors(d); }); return () => { mounted = false; }; }, []);
+
+  const etf = s.sectorEtf;
+  const idx = etf ? sectors.findIndex((x) => x.etf === etf) : -1;
+  const sec = idx >= 0 ? sectors[idx] : null;
+  const fmt = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+  const color = (v) => v == null ? "var(--text-faint)" : v >= 0 ? "var(--bull)" : "var(--bear)";
+
   return (
-    <CollapsiblePanel label="SETUP QUALITY" hover defaultOpen={false}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <span className="kicker">CONFIDENCE</span>
-            <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: confColor }}>{Math.round(s.conf)}%</span>
-          </div>
-          <div style={{ height: 6, background: "var(--bg-2)", borderRadius: 3, overflow: "hidden" }}>
-            <div style={{ width: `${Math.min(100, Math.max(0, s.conf))}%`, height: "100%", background: confColor, borderRadius: 3 }}></div>
-          </div>
+    <CollapsiblePanel label="SECTOR CONTEXT" hover defaultOpen={false}>
+      {!sec ? (
+        <div style={{ fontSize: 12.5, color: "var(--text-faint)", lineHeight: 1.55 }}>
+          {etf ? `Loading ${etf} context…` : "No sector data for this ticker."}
         </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{sec.name}</div>
+              <div className="mono" style={{ fontSize: 12, color: "var(--text-dim)" }}>{sec.etf}</div>
+            </div>
+            <span className="mono" style={{ fontSize: 11, color: "var(--text-faint)", border: "1px solid var(--line)", borderRadius: 4, padding: "2px 6px" }}>#{idx + 1} of {sectors.length}</span>
+          </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <div>
-            <div className="kicker" style={{ marginBottom: 3 }}>R : R</div>
-            <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: s.rr >= 2 ? "var(--bull)" : "var(--text)" }}>{s.rr.toFixed(1)}</span>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
+            <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: color(sec.ret_1m) }}>{fmt(sec.ret_1m)}</span>
+            <span className="kicker" style={{ marginBottom: 4 }}>1 MONTH</span>
           </div>
-          <div>
-            <div className="kicker" style={{ marginBottom: 3 }}>SOURCES</div>
-            <span className="mono" style={{ fontSize: 15, fontWeight: 700 }}>{s.sources.length}</span>
-          </div>
-          <div>
-            <div className="kicker" style={{ marginBottom: 3 }}>STYLE</div>
-            <span className="mono" style={{ fontSize: 13 }}>{styleInfo.label}</span>
-          </div>
-          <div>
-            <div className="kicker" style={{ marginBottom: 3 }}>HORIZON</div>
-            <span className="mono" style={{ fontSize: 13 }}>{styleInfo.horizon}</span>
-          </div>
-        </div>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {s.sources.slice(0, 4).map((src) => (
-            <span key={src} className="mono" style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", color: "var(--text-dim)", border: "1px solid var(--line)", borderRadius: 4, padding: "2px 6px" }}>{src}</span>
-          ))}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div><div className="kicker" style={{ marginBottom: 3 }}>1 DAY</div><span className="mono" style={{ fontSize: 13, color: color(sec.ret_1d) }}>{fmt(sec.ret_1d)}</span></div>
+            <div><div className="kicker" style={{ marginBottom: 3 }}>1 WEEK</div><span className="mono" style={{ fontSize: 13, color: color(sec.ret_1w) }}>{fmt(sec.ret_1w)}</span></div>
+            <div><div className="kicker" style={{ marginBottom: 3 }}>3 MONTH</div><span className="mono" style={{ fontSize: 13, color: color(sec.ret_3m) }}>{fmt(sec.ret_3m)}</span></div>
+            <div><div className="kicker" style={{ marginBottom: 3 }}>YTD</div><span className="mono" style={{ fontSize: 13, color: color(sec.ret_ytd) }}>{fmt(sec.ret_ytd)}</span></div>
+          </div>
         </div>
-      </div>
+      )}
     </CollapsiblePanel>
   );
 }
@@ -569,7 +580,7 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
               </div>
               <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>14-day horizon · Bayesian-smoothed</div>
             </CollapsiblePanel>
-            <SetupQualityPanel s={s}></SetupQualityPanel>
+            <SectorContextPanel s={s}></SectorContextPanel>
           </div>
 
           {/* Options VRP — shown only when the options engine fired */}
