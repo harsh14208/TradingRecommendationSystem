@@ -579,14 +579,10 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
               <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>14-day horizon · Bayesian-smoothed</div>
             </CollapsiblePanel>
             <PaperTrade s={s}></PaperTrade>
-
-            {/* Options VRP — shown only when the options engine fired */}
-            {!!s.optionStrategy && (
-              <div style={{ gridColumn: "1 / -1" }}>
-                <OptionsVRPPanel s={s}></OptionsVRPPanel>
-              </div>
-            )}
           </div>
+
+          {/* Options VRP — shown only when the options engine fired */}
+          <OptionsVRPPanel s={s}></OptionsVRPPanel>
 
           {/* AI Insight — under the center panel */}
           <CollapsiblePanel label="AI INSIGHT" labelColor="var(--bull)" right={<span className="kicker">WHY THIS FIRED</span>} defaultOpen={false} pad={20}>
