@@ -451,7 +451,8 @@ function SimulatedReturnsPanel({ signal, onClose }) {
 }
 
 /* ─── PaperView ──────────────────────────────────────────────────────────────── */
-function PaperView({ open, onClose, online }) {
+function PaperView({ open, onClose, online, variant = "modal" }) {
+  const isPage = variant === "page";
   const [account,   setAccount]   = useState(null);
   const [positions, setPositions] = useState([]);
   const [orders,    setOrders]    = useState([]);
@@ -508,12 +509,19 @@ function PaperView({ open, onClose, online }) {
   };
 
   return (
-    <div className={`overlay ${open ? "open" : ""}`}>
-      <div className="overlay-head">
-        <div><div className="crumb">PAPER PORTFOLIO</div><h2>Simulated trading account</h2></div>
-        <BackButton onClick={onClose}></BackButton>
-      </div>
-      <div style={{ padding:"20px 28px", overflowY:"auto", maxHeight:"calc(100vh - 100px)", display:"flex", flexDirection:"column", gap:20 }}>
+    <div className={isPage ? "page wrap" : `overlay ${open ? "open" : ""}`} style={isPage ? { paddingTop: 24, paddingBottom: 56 } : undefined}>
+      {isPage ? (
+        <div className="glass" style={{ padding: "18px 20px", marginBottom: 14 }}>
+          <div className="crumb">PAPER PORTFOLIO</div>
+          <h2 style={{ margin: "4px 0 0" }}>Simulated trading account</h2>
+        </div>
+      ) : (
+        <div className="overlay-head">
+          <div><div className="crumb">PAPER PORTFOLIO</div><h2>Simulated trading account</h2></div>
+          <BackButton onClick={onClose}></BackButton>
+        </div>
+      )}
+      <div style={{ padding:"20px 28px", overflowY: isPage ? "visible" : "auto", maxHeight: isPage ? undefined : "calc(100vh - 100px)", display:"flex", flexDirection:"column", gap:20 }}>
         {err === "upgrade"  && <UpgradePrompt feature="Paper Portfolio" minTier="basic"/>}
         {err === "offline"  && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline or Alpaca API keys not configured.</div>}
         {loading && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading paper account…</div>}

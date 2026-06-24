@@ -17,11 +17,8 @@ function ToolCard({ title, desc, onClick }) {
   );
 }
 
-function PageTools({ openAccount, openWatchlist, openAlerts, openScreener, openPaper, openMarket, openSector, openCalendar,
+function PageTools({ openAccount, openWatchlist, openAlerts, openScreener, openMarket, openSector, openCalendar,
   openHistory, openRules, openPerformance, openPricing, openTweaks, currentUser }) {
-  const isOwner = currentUser?.is_owner;
-  const tier = currentUser?.subscription_tier || "free";
-  const pro = tier === "pro" || isOwner;
   return (
     <div className="page wrap" style={{ paddingTop: 32, paddingBottom: 64 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 22, flexWrap: "wrap" }}>
@@ -34,7 +31,6 @@ function PageTools({ openAccount, openWatchlist, openAlerts, openScreener, openP
         <ToolCard title="Watchlist" desc="Tickers you follow, price alerts, and related signals." onClick={openWatchlist} />
         <ToolCard title="Alerts" desc="Create and manage signal alert rules." onClick={openAlerts} />
         <ToolCard title="Screener" desc="Build custom screens and save screen presets." onClick={openScreener} />
-        {pro && <ToolCard title="Paper Trading" desc="Alpaca paper account, positions, orders, risk dashboard." onClick={openPaper} />}
         <ToolCard title="Market Overview" desc="Breadth, volatility, and macro snapshot." onClick={openMarket} />
         <ToolCard title="Sector Heatmap" desc="Sector rotation, relative strength, and ETF flows." onClick={openSector} />
         <ToolCard title="Earnings Calendar" desc="Upcoming earnings and macro events." onClick={openCalendar} />

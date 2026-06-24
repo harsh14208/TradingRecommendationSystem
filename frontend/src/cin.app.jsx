@@ -178,6 +178,7 @@ const NAV = [
   ["market", "Market"],
   ["backtest", "Backtest"],
   ["track", "Track Record"],
+  ["paper", "Paper Trading"],
   ["tools", "Tools"],
   ["settings", "Settings"],
 ];
@@ -188,6 +189,7 @@ const NAV_ICONS = {
   market: <path d="M4 17l5-6 4 3 7-9M4 21h16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"></path>,
   track: <path d="M5 21V5m14 16V11M12 21V3" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"></path>,
   backtest: <path d="M4 17l5-6 4 3 7-9M4 21h16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"></path>,
+  paper: <path d="M20 7H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zM16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"></path>,
   settings: <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8-3a8 8 0 0 1-.2 1.8l2 1.5-2 3.4-2.3-1a8 8 0 0 1-3 1.8L14 22h-4l-.4-2.5a8 8 0 0 1-3-1.8l-2.4 1-2-3.4 2-1.5A8 8 0 0 1 4 12c0-.6.1-1.2.2-1.8l-2-1.5 2-3.4 2.3 1a8 8 0 0 1 3-1.8L10 2h4l.4 2.5a8 8 0 0 1 3 1.8l2.4-1 2 3.4-2 1.5c.1.6.2 1.2.2 1.8z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"></path>,
   tools: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.6-3.6a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0l-3.6 3.6zM2 17.2V21h3.8l11-11.1L13 6.1 2 17.2z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"></path>,
 };
@@ -679,7 +681,7 @@ function App() {
   const common = { currentUser, setTweak, tweakState, hasTierAccess };
 
   /* Legacy tool modals */
-  const [modals, setModals] = useState({ account: false, watchlist: false, alerts: false, screener: false, paper: false, market: false, sector: false, calendar: false, pricing: false, history: false, rules: false, performance: false, tweaks: false, alert: false });
+  const [modals, setModals] = useState({ account: false, watchlist: false, alerts: false, screener: false, market: false, sector: false, calendar: false, pricing: false, history: false, rules: false, performance: false, tweaks: false, alert: false });
   const openModal = (k) => () => setModals((m) => ({ ...m, [k]: true }));
   const closeModal = (k) => () => setModals((m) => ({ ...m, [k]: false }));
 
@@ -725,11 +727,12 @@ function App() {
         {page === "market" && <PageMarket key="mkt" marketCtx={marketCtx} log={cinLog} {...common} />}
         {page === "backtest" && <PageBacktest key="bt" {...common} />}
         {page === "track" && <PageTrack key="trk" histSignals={histSignals} {...common} />}
+        {page === "paper" && <PaperView key="paper" open={true} variant="page" online={online} />}
         {page === "settings" && <PageSettings key="set" currentUser={currentUser} settings={tweakState} setSettings={setTweak} {...common} />}
         {page === "tools" && <PageTools key="tools" currentUser={currentUser}
           openAccount={openModal("account")} openWatchlist={openModal("watchlist")}
           openAlerts={openModal("alerts")} openScreener={openModal("screener")}
-          openPaper={openModal("paper")} openMarket={openModal("market")}
+          openMarket={openModal("market")}
           openSector={openModal("sector")} openCalendar={openModal("calendar")}
           openHistory={openModal("history")} openRules={openModal("rules")}
           openPerformance={openModal("performance")}
@@ -742,7 +745,6 @@ function App() {
         <WatchlistView open={modals.watchlist} onClose={closeModal("watchlist")} quotes={tickerTape} histSignals={histSignals} />
         <AlertsView open={modals.alerts} onClose={closeModal("alerts")} />
         <ScreenerView open={modals.screener} onClose={closeModal("screener")} />
-        <PaperView open={modals.paper} onClose={closeModal("paper")} online={online} />
         <MarketOverviewView open={modals.market} onClose={closeModal("market")} online={online} />
         <SectorView open={modals.sector} onClose={closeModal("sector")} online={online} />
         <CalendarView open={modals.calendar} onClose={closeModal("calendar")} />
