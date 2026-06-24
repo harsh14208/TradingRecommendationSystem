@@ -231,12 +231,12 @@ function ThresholdToggle({ count, open, onToggle }) {
 // Panel that collapses on mobile (≤860px) via a tappable header; always open on
 // desktop. Lets the dashboard keep the main chart panel visible while the
 // secondary panels fold away on small screens.
-function CollapsiblePanel({ label, labelColor, right, defaultOpen = true, hover = false, pad = 18, children }) {
+function CollapsiblePanel({ label, labelColor, right, defaultOpen = true, hover = false, pad = 18, stretch = false, children }) {
   const mobile = useIsMobile();
   const [open, setOpen] = dUseState(defaultOpen);
   const isOpen = mobile ? open : true;
   return (
-    <div className={`glass ${hover ? "glass-hover" : ""}`} style={{ overflow: "hidden", alignSelf: "start" }}>
+    <div className={`glass ${hover ? "glass-hover" : ""}`} style={{ overflow: "hidden", alignSelf: stretch ? "stretch" : "start", height: stretch ? "100%" : undefined }}>
       <button type="button" onClick={() => mobile && setOpen((o) => !o)}
         style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: `${pad}px ${pad}px ${isOpen ? 12 : pad}px`,
           background: "none", border: "none", textAlign: "left", cursor: mobile ? "pointer" : "default" }}>
@@ -250,6 +250,23 @@ function CollapsiblePanel({ label, labelColor, right, defaultOpen = true, hover 
     </div>
   );
 }
+
+/* Fallback sector mapping for tickers that don't carry sector_etf from the
+   backend. Covers the most liquid names so the sector context card rarely blanks. */
+const _TICKER_TO_SECTOR = {
+  AAPL:"XLK", MSFT:"XLK", NVDA:"XLK", AVGO:"XLK", AMD:"XLK", INTC:"XLK", QCOM:"XLK", CRM:"XLK", ADBE:"XLK", ORCL:"XLK", IBM:"XLK", CSCO:"XLK", ACN:"XLK", PYPL:"XLK", SHOP:"XLK", NFLX:"XLK", AMAT:"XLK", LRCX:"XLK", KLAC:"XLK", MRVL:"XLK", PANW:"XLK", SNOW:"XLK", PLTR:"XLK", CRWD:"XLK", DDOG:"XLK", NET:"XLK", TEAM:"XLK", ZM:"XLK", UBER:"XLK", LYFT:"XLK", ABNB:"XLK", DKNG:"XLK", RBLX:"XLK", SNAP:"XLK", PINS:"XLK", TWLO:"XLK", SQ:"XLK", HOOD:"XLK", COIN:"XLK", MSTR:"XLK", SMCI:"XLK",
+  JNJ:"XLV", PFE:"XLV", UNH:"XLV", LLY:"XLV", ABBV:"XLV", TMO:"XLV", ABT:"XLV", MRK:"XLV", DHR:"XLV", AMGN:"XLV", GILD:"XLV", BMY:"XLV", CI:"XLV", ELV:"XLV", CVS:"XLV", HUM:"XLV", REGN:"XLV", VRTX:"XLV", BIIB:"XLV", ZTS:"XLV", ISRG:"XLV", BSX:"XLV", SYK:"XLV", EW:"XLV", MDT:"XLV", BDX:"XLV", A:"XLV", DXCM:"XLV",
+  JPM:"XLF", BAC:"XLF", WFC:"XLF", GS:"XLF", MS:"XLF", C:"XLF", BLK:"XLF", AXP:"XLF", SPGI:"XLF", PNC:"XLF", USB:"XLF", TFC:"XLF", COF:"XLF", SCHW:"XLF", BK:"XLF", STT:"XLF", CME:"XLF", ICE:"XLF", MCO:"XLF", AON:"XLF", CB:"XLF", MMC:"XLF", PGR:"XLF", TRV:"XLF", ALL:"XLF", MET:"XLF", AIG:"XLF", WTW:"XLF", RJF:"XLF", RF:"XLF", KEY:"XLF", HBAN:"XLF", FITB:"XLF", CFG:"XLF", JEF:"XLF", NLY:"XLF",
+  AMZN:"XLY", TSLA:"XLY", HD:"XLY", MCD:"XLY", NKE:"XLY", SBUX:"XLY", LOW:"XLY", BKNG:"XLY", TJX:"XLY", F:"XLY", GM:"XLY", MAR:"XLY", RCL:"XLY", CCL:"XLY", LULU:"XLY", ETSY:"XLY", ORLY:"XLY", AZO:"XLY", AAP:"XLY", DG:"XLY", DLTR:"XLY", KMX:"XLY", BBY:"XLY", YUM:"XLY", DPZ:"XLY", CMG:"XLY", DRI:"XLY", NCLH:"XLY", CZR:"XLY", WYNN:"XLY", MGM:"XLY", LVS:"XLY", PENN:"XLY",
+  GOOGL:"XLC", GOOG:"XLC", META:"XLC", VZ:"XLC", T:"XLC", CMCSA:"XLC", DIS:"XLC", TMUS:"XLC", CHTR:"XLC", FOXA:"XLC", WBD:"XLC", PARA:"XLC", EA:"XLC", ATVI:"XLC", TTWO:"XLC", MTCH:"XLC", IAC:"XLC", LYV:"XLC", SPOT:"XLC",
+  GE:"XLI", HON:"XLI", UNP:"XLI", BA:"XLI", CAT:"XLI", RTX:"XLI", LMT:"XLI", UPS:"XLI", ABB:"XLI", DE:"XLI", ETN:"XLI", ITW:"XLI", GD:"XLI", NOC:"XLI", CSX:"XLI", NSC:"XLI", WM:"XLI", RSG:"XLI", URI:"XLI", CMI:"XLI", PH:"XLI", PCAR:"XLI", OTIS:"XLI", CAR:"XLI",
+  WMT:"XLP", PG:"XLP", KO:"XLP", PEP:"XLP", COST:"XLP", MO:"XLP", EL:"XLP", GIS:"XLP", KMB:"XLP", CL:"XLP", KHC:"XLP", STZ:"XLP", MDLZ:"XLP", MNST:"XLP", KR:"XLP", SYY:"XLP", ADM:"XLP", KDP:"XLP", CHD:"XLP", CLX:"XLP", HSY:"XLP", MKC:"XLP", CAG:"XLP", CPB:"XLP", TSN:"XLP", HRL:"XLP", BFb:"XLP", TAP:"XLP",
+  XOM:"XLE", CVX:"XLE", COP:"XLE", EOG:"XLE", SLB:"XLE", OXY:"XLE", MPC:"XLE", VLO:"XLE", PSX:"XLE", WMB:"XLE", KMI:"XLE", OKE:"XLE", TRGP:"XLE", LNG:"XLE", MRO:"XLE", DVN:"XLE", FANG:"XLE", PXD:"XLE", HAL:"XLE", BKR:"XLE", AM:"XLE", CEQP:"XLE", ET:"XLE", EPd:"XLE",
+  NEE:"XLU", SO:"XLU", DUK:"XLU", D:"XLU", AEP:"XLU", SRE:"XLU", EXC:"XLU", XEL:"XLU", ED:"XLU", PPL:"XLU", ES:"XLU", WEC:"XLU", DTE:"XLU", AEE:"XLU", FE:"XLU", EIX:"XLU", PCG:"XLU", CNP:"XLU", NI:"XLU", NRG:"XLU",
+  PLD:"XLRE", AMT:"XLRE", EQIX:"XLRE", CCI:"XLRE", PSA:"XLRE", O:"XLRE", SPG:"XLRE", VICI:"XLRE", WELL:"XLRE", DLR:"XLRE", AVB:"XLRE", EQR:"XLRE", UDR:"XLRE", MAA:"XLRE", CPT:"XLRE", BXP:"XLRE", VTR:"XLRE", HST:"XLRE", ESS:"XLRE", ARE:"XLRE",
+  LIN:"XLB", SHW:"XLB", FCX:"XLB", NEM:"XLB", ECL:"XLB", APD:"XLB", DOW:"XLB", DD:"XLB", NUE:"XLB", VMC:"XLB", MLM:"XLB", CTVA:"XLB", FMC:"XLB", MOS:"XLB", CF:"XLB", PXD:"XLB", OKE:"XLB", STLD:"XLB", RS:"XLB", CMC:"XLB", NEM:"XLB", GOLD:"XLB", FNV:"XLB", WPM:"XLB",
+  SPY:"SPY", QQQ:"QQQ", DIA:"DIA", IWM:"IWM", VOO:"VOO", IVV:"IVV", VTI:"VTI", VEA:"VEA", VWO:"VWO", IEFA:"IEFA", EFA:"EFA",
+};
 
 const _sectorCache = { data: null, ts: 0, loading: false, promise: null };
 function _fetchSectors() {
@@ -268,38 +285,33 @@ function SectorContextPanel({ s }) {
   const [sectors, setSectors] = dUseState(_sectorCache.data || []);
   dUseEffect(() => { let mounted = true; _fetchSectors().then((d) => { if (mounted) setSectors(d); }); return () => { mounted = false; }; }, []);
 
-  const etf = s.sectorEtf;
+  const etf = s.sectorEtf || _TICKER_TO_SECTOR[s.tk?.toUpperCase()] || null;
   const idx = etf ? sectors.findIndex((x) => x.etf === etf) : -1;
   const sec = idx >= 0 ? sectors[idx] : null;
   const fmt = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
   const color = (v) => v == null ? "var(--text-faint)" : v >= 0 ? "var(--bull)" : "var(--bear)";
 
   return (
-    <CollapsiblePanel label="SECTOR CONTEXT" hover defaultOpen={false}>
+    <CollapsiblePanel label="SECTOR CONTEXT" hover defaultOpen={false} stretch>
       {!sec ? (
         <div style={{ fontSize: 12.5, color: "var(--text-faint)", lineHeight: 1.55 }}>
           {etf ? `Loading ${etf} context…` : "No sector data for this ticker."}
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700 }}>{sec.name}</div>
-              <div className="mono" style={{ fontSize: 12, color: "var(--text-dim)" }}>{sec.etf}</div>
-            </div>
-            <span className="mono" style={{ fontSize: 11, color: "var(--text-faint)", border: "1px solid var(--line)", borderRadius: 4, padding: "2px 6px" }}>#{idx + 1} of {sectors.length}</span>
-          </div>
-
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
             <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: color(sec.ret_1m) }}>{fmt(sec.ret_1m)}</span>
-            <span className="kicker" style={{ marginBottom: 4 }}>1 MONTH</span>
+            <div style={{ marginBottom: 4 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{sec.name}</div>
+              <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>{sec.etf} · #{idx + 1} of {sectors.length}</div>
+            </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div><div className="kicker" style={{ marginBottom: 3 }}>1 DAY</div><span className="mono" style={{ fontSize: 13, color: color(sec.ret_1d) }}>{fmt(sec.ret_1d)}</span></div>
-            <div><div className="kicker" style={{ marginBottom: 3 }}>1 WEEK</div><span className="mono" style={{ fontSize: 13, color: color(sec.ret_1w) }}>{fmt(sec.ret_1w)}</span></div>
-            <div><div className="kicker" style={{ marginBottom: 3 }}>3 MONTH</div><span className="mono" style={{ fontSize: 13, color: color(sec.ret_3m) }}>{fmt(sec.ret_3m)}</span></div>
-            <div><div className="kicker" style={{ marginBottom: 3 }}>YTD</div><span className="mono" style={{ fontSize: 13, color: color(sec.ret_ytd) }}>{fmt(sec.ret_ytd)}</span></div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11 }}>
+            <span className="mono"><span style={{ color: "var(--text-faint)" }}>1D</span> <span style={{ color: color(sec.ret_1d) }}>{fmt(sec.ret_1d)}</span></span>
+            <span className="mono"><span style={{ color: "var(--text-faint)" }}>1W</span> <span style={{ color: color(sec.ret_1w) }}>{fmt(sec.ret_1w)}</span></span>
+            <span className="mono"><span style={{ color: "var(--text-faint)" }}>3M</span> <span style={{ color: color(sec.ret_3m) }}>{fmt(sec.ret_3m)}</span></span>
+            <span className="mono"><span style={{ color: "var(--text-faint)" }}>YTD</span> <span style={{ color: color(sec.ret_ytd) }}>{fmt(sec.ret_ytd)}</span></span>
           </div>
         </div>
       )}
@@ -573,7 +585,7 @@ function PageDashboard({ signals: propSignals, tickerTape, log: propLog, loading
           </div>
 
           <div className="dash-sub">
-            <CollapsiblePanel label={`WIN RATE · ${s.tk} HISTORY`} hover defaultOpen={false}>
+            <CollapsiblePanel label={`WIN RATE · ${s.tk} HISTORY`} hover defaultOpen={false} stretch>
               <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
                 <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: s.win >= 65 ? "var(--bull)" : "var(--neutral)" }}><Num value={s.win} dp={0}></Num>%</span>
                 <Spark data={winSpark} w={130} h={40} color={s.win >= 65 ? "bull" : "neutral"}></Spark>
