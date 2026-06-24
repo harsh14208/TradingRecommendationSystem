@@ -204,10 +204,21 @@ async def _fetch_ticker_meta(tickers: list[str], concurrency: int = 30) -> dict[
     return meta
 
 
-def apply_universe_filter(df: pd.DataFrame, allowed_types: set[str], min_cap: float, label: str) -> pd.DataFrame:
+def apply_universe_filter(
+    df: pd.DataFrame,
+    allowed_types: set[str],
+    min_cap: float,
+    label: str,
+    allowlist: frozenset[str] | set[str] | None = None,
+) -> pd.DataFrame:
     """Restrict to the requested Polygon security types with point-in-time
     market cap / AUM (shares × stk_px) ≥ min_cap. Keeps companies and ETFs as
-    separate, non-overlapping cross-sections so each gets its own model."""
+    separate, non-overlapping cross-sections so each gets its own model.
+
+    ``allowlist`` names of the right type are kept regardless of the cap floor,
+    so high-options-volume sub-cap names (e.g. MARA/RIOT) still score in the VRP
+    universe.
+    """
     meta = asyncio.run(_fetch_ticker_meta(sorted(df["ticker"].unique())))
     df = df.copy()
     df["shares_outstanding"] = df["ticker"].map(lambda t: (meta.get(t) or {}).get("shares"))
@@ -217,7 +228,10 @@ def apply_universe_filter(df: pd.DataFrame, allowed_types: set[str], min_cap: fl
 
     df = df[df["sec_type"].isin(allowed_types)]
     if min_cap > 0:
-        df = df[df["market_cap"] >= min_cap]
+        keep_cap = df["market_cap"] >= min_cap
+        if allowlist:
+            keep_cap = keep_cap | df["ticker"].isin(allowlist)
+        df = df[keep_cap]
     df = df.reset_index(drop=True)
     log.info(
         "Universe filter (types=%s, %s≥$%.1fB): %d → %d tickers, %d rows",
@@ -746,13 +760,17 @@ def get_vol_view(
     refit: int = 5,
     min_opt_volume: float = 500.0,
     min_market_cap: float | None = None,
+    allowlist: frozenset[str] | set[str] | None = None,
 ) -> tuple[dict, pd.DataFrame]:
     """End-to-end: load ORATS panel → filter universe → engineer features → train/score
-    → return (summary, live_df). Used by the standalone recommendation engine."""
+    → return (summary, live_df). Used by the standalone recommendation engine.
+
+    ``allowlist`` (if given) keeps those tickers regardless of the cap floor.
+    """
     allowed_types, default_cap, label = _UNIVERSES[universe]
     cap = default_cap if min_market_cap is None else min_market_cap
     panel = load_panel()
-    panel = apply_universe_filter(panel, allowed_types, cap, label)
+    panel = apply_universe_filter(panel, allowed_types, cap, label, allowlist=allowlist)
     feat_df = engineer_features(panel, horizon)
     return _vol_compute(feat_df, horizon, model_name, min_train, refit, min_opt_volume)
 

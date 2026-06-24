@@ -343,11 +343,16 @@ def score_options_universe(
     vol_universe = "etf" if universe == "index" else universe
 
     log.info("Scoring options universe=%s (vol_universe=%s, horizon=%d)", universe, vol_universe, horizon)
+    # Keep the dedicated options universe (incl. high-options sub-cap names) past
+    # the market-cap floor so they score in the VRP book.
+    from services.options_universe import OPTIONS_UNIVERSE
+
     summary, vol = get_vol_view(
         universe=vol_universe,
         horizon=horizon,
         model_name=model_name,
         min_opt_volume=min_opt_volume,
+        allowlist=OPTIONS_UNIVERSE,
     )
     latest = pd.Timestamp(summary["latest_date"]).date()
     if as_of is None:

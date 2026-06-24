@@ -32,6 +32,7 @@ from services.options_engine import (
     _nearest_monthly_expiry,
     book_to_signal_dicts,
 )
+from services.options_universe import OPTIONS_UNIVERSE
 
 log = logging.getLogger("signal.options_scanner")
 
@@ -42,134 +43,6 @@ _last_options_scan_date: date | None = None
 
 _OPTIONS_UNIVERSES = ["companies", "etf", "index"]
 
-# Dedicated options-trading universe: the ~100 highest options-volume underlyings,
-# restricted to names that are tradable in the Alpaca options paper account.
-#   - EXCLUDES cash-settled index options (SPX/NDX/RUT/VIX) — Alpaca trades only
-#     equity/ETF options, so index exposure is via the ETF proxies (SPY/QQQ/IWM/DIA).
-#   - EXCLUDES leveraged/inverse ETFs (TQQQ/SQQQ/SOXL/UVXY/VXX/…) — blocked by the
-#     options engine (_is_leveraged) due to vol-decay; orders would be rejected.
-# Options signals are filtered to this set in run_options_scan so the VRP book is
-# concentrated in liquid, listed contracts (fixes illiquid "asset not found" 422s).
-OPTIONS_UNIVERSE: frozenset[str] = frozenset(
-    {
-        # Broad-market & international ETFs (index proxies)
-        "SPY",
-        "QQQ",
-        "IWM",
-        "DIA",
-        "EEM",
-        "EFA",
-        "FXI",
-        "EWZ",
-        "KWEB",
-        "VEA",
-        "VWO",
-        # Sector & thematic ETFs
-        "XLF",
-        "XLE",
-        "XLK",
-        "XLV",
-        "XLI",
-        "XLY",
-        "XLP",
-        "XLU",
-        "XLB",
-        "XLC",
-        "XLRE",
-        "SMH",
-        "KRE",
-        "XBI",
-        "IBB",
-        "GDX",
-        "XOP",
-        "XRT",
-        "ARKK",
-        # Commodity / rate ETFs
-        "GLD",
-        "SLV",
-        "TLT",
-        "HYG",
-        "LQD",
-        "USO",
-        # Mega-cap tech & semis
-        "AAPL",
-        "MSFT",
-        "NVDA",
-        "AMZN",
-        "GOOGL",
-        "GOOG",
-        "META",
-        "TSLA",
-        "AVGO",
-        "AMD",
-        "NFLX",
-        "INTC",
-        "MU",
-        "QCOM",
-        "ORCL",
-        "CRM",
-        "ADBE",
-        "CSCO",
-        "TXN",
-        "AMAT",
-        # Financials
-        "JPM",
-        "BAC",
-        "WFC",
-        "C",
-        "GS",
-        "MS",
-        "V",
-        "MA",
-        "AXP",
-        # High options-volume / momentum / retail names
-        "PLTR",
-        "COIN",
-        "MSTR",
-        "MARA",
-        "RIOT",
-        "SOFI",
-        "NIO",
-        "F",
-        "GM",
-        "PYPL",
-        "SHOP",
-        "UBER",
-        "ABNB",
-        "SNAP",
-        "ROKU",
-        "DKNG",
-        "HOOD",
-        "SMCI",
-        "GME",
-        "AMC",
-        # Consumer / health / energy / industrial blue chips
-        "DIS",
-        "BA",
-        "T",
-        "VZ",
-        "KO",
-        "PEP",
-        "WMT",
-        "COST",
-        "HD",
-        "NKE",
-        "MCD",
-        "SBUX",
-        "XOM",
-        "CVX",
-        "OXY",
-        "PFE",
-        "MRNA",
-        "JNJ",
-        "LLY",
-        "UNH",
-        "CAT",
-        "DE",
-        "GE",
-        "CVS",
-    }
-)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _BACKEND_DIR = _PROJECT_ROOT / "backend"
 _PYTHON = _PROJECT_ROOT / ".venv311" / "bin" / "python"
