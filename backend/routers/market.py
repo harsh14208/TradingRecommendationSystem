@@ -177,3 +177,71 @@ async def option_chain_endpoint(ticker: str, price: float = 0.0):
     from services.massive_options import get_option_chain_signals
 
     return await get_option_chain_signals(ticker.upper(), price)
+
+
+# In-memory cache for ticker → sector lookups. yfinance info calls are slow and
+# we don't want the dashboard card to re-hit them on every signal click.
+_ticker_sector_cache: dict[str, dict] = {}
+
+
+@router.get("/sector/{ticker}")
+async def ticker_sector_endpoint(ticker: str):
+    """
+    Resolve a single ticker's SPDR sector ETF and current performance.
+
+    1. Uses the static SECTOR_MAP for known names.
+    2. Falls back to yfinance company info for unknown tickers.
+    3. Returns the matching sector ETF performance from the sector heatmap.
+
+    The result is cached per ticker for 1 hour to keep the dashboard snappy.
+    """
+    from routers.quotes import _SECTOR_META, sector_heatmap
+    from services.market_data import _session
+    from services.sector import SECTOR_MAP, YFINANCE_TO_ETF
+
+    ticker = ticker.upper()
+    now = time.monotonic()
+    cached = _ticker_sector_cache.get(ticker)
+    if cached and (now - cached.get("_ts", 0)) < 3600:
+        return {k: v for k, v in cached.items() if not k.startswith("_")}
+
+    etf = SECTOR_MAP.get(ticker)
+
+    if not etf:
+        try:
+            import yfinance as yf
+
+            info = yf.Ticker(ticker, session=_session).info or {}
+            sector = info.get("sector") or info.get("sectorDisp") or ""
+            etf = YFINANCE_TO_ETF.get(sector)
+        except Exception:
+            etf = None
+
+    if not etf:
+        return {"ticker": ticker, "etf": None, "name": None}
+
+    sectors = await sector_heatmap()
+    sec = next((s for s in sectors if s.get("etf") == etf), None)
+    if sec is None:
+        meta = _SECTOR_META.get(etf, {"name": etf, "weight": 2.0})
+        sec = {
+            "etf": etf,
+            "name": meta["name"],
+            "weight": meta["weight"],
+            "ret_1d": None,
+            "ret_1w": None,
+            "ret_1m": None,
+            "ret_3m": None,
+            "ret_ytd": None,
+            "flow_1w": 0,
+        }
+
+    rank = next((i for i, s in enumerate(sectors) if s.get("etf") == etf), -1) + 1
+    result = {
+        "ticker": ticker,
+        **sec,
+        "rank": rank,
+        "total": len(sectors),
+    }
+    _ticker_sector_cache[ticker] = {**result, "_ts": now}
+    return result

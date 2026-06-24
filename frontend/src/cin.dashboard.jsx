@@ -268,26 +268,49 @@ const _TICKER_TO_SECTOR = {
   SPY:"SPY", QQQ:"QQQ", DIA:"DIA", IWM:"IWM", VOO:"VOO", IVV:"IVV", VTI:"VTI", VEA:"VEA", VWO:"VWO", IEFA:"IEFA", EFA:"EFA",
 };
 
-const _sectorCache = { data: null, ts: 0, loading: false, promise: null };
+const _sectorCache = { data: null, ts: 0, promise: null };
 function _fetchSectors() {
   const now = Date.now();
   if (_sectorCache.data && now - _sectorCache.ts < 600000) return Promise.resolve(_sectorCache.data);
   if (_sectorCache.promise) return _sectorCache.promise;
-  _sectorCache.loading = true;
   _sectorCache.promise = apiFetch("/api/market/sectors")
     .then((d) => { _sectorCache.data = Array.isArray(d) ? d : []; _sectorCache.ts = Date.now(); return _sectorCache.data; })
     .catch(() => { _sectorCache.data = _sectorCache.data || []; return _sectorCache.data; })
-    .finally(() => { _sectorCache.loading = false; _sectorCache.promise = null; });
+    .finally(() => { _sectorCache.promise = null; });
   return _sectorCache.promise;
+}
+
+const _tickerSectorCache = {};
+function _fetchTickerSector(tk) {
+  if (!tk) return Promise.resolve(null);
+  const key = tk.toUpperCase();
+  const cached = _tickerSectorCache[key];
+  if (cached && Date.now() - cached.ts < 3600000) return Promise.resolve(cached.data);
+  if (cached?.promise) return cached.promise;
+  const promise = apiFetch(`/api/market/sector/${encodeURIComponent(key)}`)
+    .then((d) => { _tickerSectorCache[key] = { data: d, ts: Date.now() }; return d; })
+    .catch(() => { _tickerSectorCache[key] = { data: null, ts: Date.now() }; return null; });
+  _tickerSectorCache[key] = { data: null, ts: 0, promise };
+  return promise;
 }
 
 function SectorContextPanel({ s }) {
   const [sectors, setSectors] = dUseState(_sectorCache.data || []);
+  const [lookup, setLookup] = dUseState(null);
   dUseEffect(() => { let mounted = true; _fetchSectors().then((d) => { if (mounted) setSectors(d); }); return () => { mounted = false; }; }, []);
+  dUseEffect(() => {
+    if (s.sectorEtf) { setLookup(null); return; }
+    let mounted = true;
+    _fetchTickerSector(s.tk).then((d) => { if (mounted) setLookup(d); });
+    return () => { mounted = false; };
+  }, [s.tk, s.sectorEtf]);
 
-  const etf = s.sectorEtf || _TICKER_TO_SECTOR[s.tk?.toUpperCase()] || null;
+  const fallbackEtf = _TICKER_TO_SECTOR[s.tk?.toUpperCase()];
+  const etf = s.sectorEtf || fallbackEtf || lookup?.etf || null;
   const idx = etf ? sectors.findIndex((x) => x.etf === etf) : -1;
-  const sec = idx >= 0 ? sectors[idx] : null;
+  const sec = idx >= 0 ? sectors[idx] : lookup;
+  const rank = sec?.rank || (idx >= 0 ? idx + 1 : null);
+  const total = sec?.total || sectors.length;
   const fmt = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
   const color = (v) => v == null ? "var(--text-faint)" : v >= 0 ? "var(--bull)" : "var(--bear)";
 
@@ -295,15 +318,15 @@ function SectorContextPanel({ s }) {
     <CollapsiblePanel label="SECTOR CONTEXT" hover defaultOpen={false} stretch>
       {!sec ? (
         <div style={{ fontSize: 12.5, color: "var(--text-faint)", lineHeight: 1.55 }}>
-          {etf ? `Loading ${etf} context…` : "No sector data for this ticker."}
+          {s.tk ? `Looking up ${s.tk} sector…` : "No ticker selected."}
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
             <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: color(sec.ret_1m) }}>{fmt(sec.ret_1m)}</span>
             <div style={{ marginBottom: 4 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{sec.name}</div>
-              <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>{sec.etf} · #{idx + 1} of {sectors.length}</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{sec.name || sec.etf}</div>
+              <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>{sec.etf}{rank ? ` · #${rank} of ${total || sectors.length}` : ""}</div>
             </div>
           </div>
 

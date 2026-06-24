@@ -172,3 +172,76 @@ def test_options_endpoint(client):
     ):
         resp = client.get("/api/market/options/NVDA?price=150.0")
     assert resp.status_code == 200
+
+
+def test_ticker_sector_known(client):
+    import routers.market as m
+
+    m._ticker_sector_cache.clear()
+    with patch(
+        "routers.quotes.sector_heatmap",
+        new_callable=AsyncMock,
+        return_value=[
+            {
+                "etf": "XLK",
+                "name": "Technology",
+                "ret_1m": 5.0,
+                "ret_1d": 0.1,
+                "ret_1w": 1.0,
+                "ret_3m": 8.0,
+                "ret_ytd": 12.0,
+                "flow_1w": 0,
+            },
+            {"etf": "XLV", "name": "Health Care", "ret_1m": 2.0},
+        ],
+    ):
+        resp = client.get("/api/market/sector/AAPL")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["etf"] == "XLK"
+    assert data["name"] == "Technology"
+    assert data["rank"] == 1
+    assert data["total"] == 2
+
+
+def test_ticker_sector_unknown(client):
+    import routers.market as m
+
+    m._ticker_sector_cache.clear()
+    fake_info = {"sector": "Energy"}
+    with (
+        patch("yfinance.Ticker") as mock_yf,
+        patch(
+            "routers.quotes.sector_heatmap",
+            new_callable=AsyncMock,
+            return_value=[
+                {
+                    "etf": "XLE",
+                    "name": "Energy",
+                    "ret_1m": 3.0,
+                    "ret_1d": 0.2,
+                    "ret_1w": 1.5,
+                    "ret_3m": 6.0,
+                    "ret_ytd": 9.0,
+                    "flow_1w": 0,
+                }
+            ],
+        ),
+    ):
+        mock_yf.return_value.info = fake_info
+        resp = client.get("/api/market/sector/ZZZZ")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["etf"] == "XLE"
+    assert data["name"] == "Energy"
+
+
+def test_ticker_sector_unresolvable(client):
+    import routers.market as m
+
+    m._ticker_sector_cache.clear()
+    with patch("yfinance.Ticker") as mock_yf:
+        mock_yf.return_value.info = {}
+        resp = client.get("/api/market/sector/UNKNOWN")
+    assert resp.status_code == 200
+    assert resp.json()["etf"] is None
