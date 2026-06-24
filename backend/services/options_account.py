@@ -92,3 +92,64 @@ async def snapshot_options_pnl(db: AsyncSession, settings) -> None:
 def options_pnl_history(app_data: dict | None) -> list[dict]:
     """Extract the stored equity history from app_settings data."""
     return list((app_data or {}).get(_HISTORY_KEY) or [])
+
+
+async def _fetch_greeks(occ_symbol: str, key: str) -> dict | None:
+    """delta/gamma/theta/vega for one OCC option symbol (Polygon snapshot)."""
+    import aiohttp
+
+    from services.http_client import shared_session
+    from services.massive_options_data import _parse_opra
+
+    poly_sym = occ_symbol if occ_symbol.startswith("O:") else f"O:{occ_symbol}"
+    parsed = _parse_opra(poly_sym)
+    if not parsed:
+        return None
+    underlying = parsed[0]
+    url = f"https://api.polygon.io/v3/snapshot/options/{underlying}/{poly_sym}"
+    try:
+        async with shared_session() as s:
+            async with s.get(url, params={"apiKey": key}, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status != 200:
+                    return None
+                return ((await r.json()).get("results") or {}).get("greeks") or {}
+    except Exception:
+        return None
+
+
+async def compute_options_risk(positions: list[dict], equity: float) -> dict:
+    """Net portfolio Greeks + gross exposure across open option legs.
+
+    Options are non-linear, so stock-style beta/Sharpe don't apply — the relevant
+    risks are net delta (directional), theta (daily decay/income), vega (vol), and
+    gross exposure. Greeks come from Polygon snapshots; qty is signed (short<0) and
+    scaled by the 100-share contract multiplier.
+    """
+    if not positions:
+        return {}
+    from services.options_chain_resolver import _api_key
+
+    key = _api_key()
+    net = {"delta": 0.0, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
+    gross = 0.0
+    have_greeks = False
+    for p in positions:
+        try:
+            qty = float(p.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        gross += abs(_num(p.get("market_value")))
+        g = await _fetch_greeks(p.get("symbol") or "", key) if key else None
+        if g:
+            have_greeks = True
+            for k in net:
+                if g.get(k) is not None:
+                    net[k] += _num(g.get(k)) * qty * 100.0
+    return {
+        "net_delta": round(net["delta"], 1) if have_greeks else None,
+        "net_gamma": round(net["gamma"], 2) if have_greeks else None,
+        "net_theta": round(net["theta"], 2) if have_greeks else None,
+        "net_vega": round(net["vega"], 2) if have_greeks else None,
+        "gross_market_value": round(gross, 2),
+        "exposure_pct": round(gross / equity * 100.0, 2) if equity > 0 else None,
+    }

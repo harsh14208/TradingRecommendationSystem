@@ -741,6 +741,7 @@ function OptionsPaperPanel({ online }) {
   const positions = data.positions || [];
   const orders = data.orders || [];
   const history = data.history || [];
+  const risk = data.risk || {};
   const equity = parseFloat(acct.equity);
   const openPl = positions.reduce((s,p) => s + (parseFloat(p.unrealized_pl)||0), 0);
   const start = history.length ? parseFloat(history[0].equity) : 1000000;
@@ -763,6 +764,28 @@ function OptionsPaperPanel({ online }) {
           </div>
         ))}
       </div>
+
+      {positions.length > 0 && (
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:2 }}>Risk metrics</div>
+          <div style={{ fontSize:10, color:"var(--text-faint)", marginBottom:10 }}>Net position Greeks across open option legs — options are non-linear, so stock beta/Sharpe don't apply</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10 }}>
+            {[
+              ["Net Delta", risk.net_delta == null ? "—" : risk.net_delta.toLocaleString(), "directional · share-equiv", rc(risk.net_delta)],
+              ["Net Theta", risk.net_theta == null ? "—" : fmtMoney(risk.net_theta) + "/day", "time decay · +income", rc(risk.net_theta)],
+              ["Net Vega", risk.net_vega == null ? "—" : fmtMoney(risk.net_vega), "per 1% vol", rc(risk.net_vega)],
+              ["Net Gamma", risk.net_gamma == null ? "—" : risk.net_gamma.toLocaleString(), "Δ convexity", "var(--text)"],
+              ["Gross Exposure", risk.exposure_pct == null ? "—" : fmtPct(risk.exposure_pct), risk.gross_market_value != null ? fmtMoney(risk.gross_market_value) : "", "var(--text)"],
+            ].map(([l,v,sub,c]) => (
+              <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"12px 14px", border:"1px solid var(--line)" }}>
+                <div style={{ fontSize:9, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>{l}</div>
+                <div style={{ fontSize:16, fontWeight:700, fontFamily:"var(--font-mono)", color:c }}>{v}</div>
+                <div style={{ fontSize:9, color:"var(--text-faint)", marginTop:3 }}>{sub}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {history.length > 1 && (() => {
         const eq = history.map(h => parseFloat(h.equity)).filter(Number.isFinite);

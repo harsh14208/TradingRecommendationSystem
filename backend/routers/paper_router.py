@@ -58,7 +58,7 @@ async def options_account(user: User = Depends(get_current_user), db: AsyncSessi
     from sqlalchemy import desc, select
 
     from models import AppSettings, Signal
-    from services.options_account import fetch_options_account, options_pnl_history
+    from services.options_account import compute_options_risk, fetch_options_account, options_pnl_history
 
     settings = get_settings()
     snap = await fetch_options_account(settings)
@@ -101,12 +101,19 @@ async def options_account(user: User = Depends(get_current_user), db: AsyncSessi
     srow = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
     history = options_pnl_history(srow.data if srow else None)
 
+    try:
+        _equity = float((snap["account"] or {}).get("equity") or 0.0)
+    except (TypeError, ValueError):
+        _equity = 0.0
+    risk = await compute_options_risk(snap["positions"], _equity)
+
     return {
         "configured": True,
         "account": snap["account"],
         "positions": snap["positions"],
         "orders": orders,
         "history": history,
+        "risk": risk,
     }
 
 
