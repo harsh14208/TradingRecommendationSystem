@@ -2425,15 +2425,20 @@ async def _run_scan_impl(broadcast_fn=None, broadcast_signal_fn=None):
     _mark_scan_stage("persistence")
     new_signals, refreshed_unsent = await _persist_scan_signals(signals, _today_start_utc())
 
-    # ── Step 6b: daily options VRP scan (additive, does not touch stock flow) ──
-    _mark_scan_stage("options_scan")
-    try:
-        option_signals = await run_options_scan(signals, _today_start_utc())
-        if option_signals:
-            new_signals.extend(option_signals)
-            log.info("Appended %d option signals to delivery queue", len(option_signals))
-    except Exception as e:
-        log.warning("[scanner] options VRP scan failed: %s", e, exc_info=True)
+    # ── Step 6b: daily options VRP scan — MARKET HOURS ONLY ───────────────────
+    # Gated on RTH so the once/day slot is consumed during market hours (not by an
+    # off-hours nightly restart, which would skip the only market-hours run and
+    # leave zero option signals for the day). Also gives the VRP scorer the live
+    # directional view from step 5 instead of an empty one.
+    if await _market_hours_ok():
+        _mark_scan_stage("options_scan")
+        try:
+            option_signals = await run_options_scan(signals, _today_start_utc())
+            if option_signals:
+                new_signals.extend(option_signals)
+                log.info("Appended %d option signals to delivery queue", len(option_signals))
+        except Exception as e:
+            log.warning("[scanner] options VRP scan failed: %s", e, exc_info=True)
 
     # ── Step 6c: submit active VRP option orders to the options paper account ──
     # The VRP scan runs after-hours (EOD panel), but Alpaca only accepts option

@@ -232,14 +232,32 @@ async def _persist_option_signals(
     return persisted
 
 
+_options_scan_attempt_date: date | None = None
+_options_scan_attempts = 0
+_OPTIONS_SCAN_MAX_ATTEMPTS = 4
+
+
 def _should_run_options_scan() -> bool:
-    """Throttle to once per calendar day."""
-    global _last_options_scan_date
+    """Run at most once/day on success, but allow a few retries within the day if a
+    run produced nothing (transient scorer/panel failure) so one bad run doesn't
+    cost the whole day's option signals. The slot is marked done only after a
+    productive run (see _mark_options_scan_complete)."""
+    global _options_scan_attempt_date, _options_scan_attempts
     today = datetime.now(timezone.utc).date()
     if _last_options_scan_date == today:
         return False
-    _last_options_scan_date = today
+    if _options_scan_attempt_date != today:
+        _options_scan_attempt_date = today
+        _options_scan_attempts = 0
+    if _options_scan_attempts >= _OPTIONS_SCAN_MAX_ATTEMPTS:
+        return False
+    _options_scan_attempts += 1
     return True
+
+
+def _mark_options_scan_complete() -> None:
+    global _last_options_scan_date
+    _last_options_scan_date = datetime.now(timezone.utc).date()
 
 
 async def run_options_scan(
@@ -291,6 +309,10 @@ async def run_options_scan(
     )
 
     persisted = await _persist_option_signals(all_option_signals, today_start)
+    if persisted:
+        # Only consume the daily slot once we've actually produced signals; an
+        # empty/failed run is retried (up to the attempt cap) on the next scan.
+        _mark_options_scan_complete()
 
     # Daily equity snapshot for the options paper account (rolling P&L curve).
     try:
