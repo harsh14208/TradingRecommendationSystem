@@ -171,17 +171,10 @@ async def _persist_option_signals(
 
     persisted: list[tuple[dict, Signal, bool]] = []
     async with AsyncSessionLocal() as db:
-        # Dedicated options paper account (separate Alpaca paper account with its
-        # own credentials): when auto_paper_options is on AND options keys are set,
-        # each new VRP signal is submitted there as a real option order.
-        from config import get_settings
-        from services.options_paper import options_paper_active, submit_paper_option_order
-        from services.scanner import _market_hours_ok
-
-        # Only submit during market hours — Alpaca rejects option MARKET orders
-        # outside RTH ("market orders only allowed during market hours"). The
-        # scanner runs RTH-only anyway; this guards manual/edge after-hours runs.
-        _opt_creds = await options_paper_active(db, get_settings()) if await _market_hours_ok() else None
+        # NOTE: option orders are NOT submitted here. The VRP scan runs after-hours
+        # (EOD panel) and Alpaca rejects option market orders outside RTH, so
+        # submission is decoupled to scanner._run_scan_impl (step 6c), which runs
+        # during market hours against the active VRP signals.
 
         # Deactivate any existing active option signals for tickers we are about
         # to refresh.  Option VRP is a daily view — a ticker should only ever have
@@ -233,12 +226,6 @@ async def _persist_option_signals(
             db.add(row)
             await db.flush()
             persisted.append((sig, row, False))
-
-            if _opt_creds:
-                try:
-                    await submit_paper_option_order(sig, row.id, db, _opt_creds[0], _opt_creds[1], _opt_creds[2])
-                except Exception:
-                    log.warning("options paper order failed for %s", sig.get("ticker"), exc_info=True)
         await db.commit()
 
     log.info("Persisted %d option signals", len(persisted))

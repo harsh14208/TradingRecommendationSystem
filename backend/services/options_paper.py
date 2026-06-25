@@ -282,7 +282,6 @@ async def submit_paper_option_order(
     covers the same first leg for this underlying (re-emit / restart guard).
     Returns the BrokerOrder or None when skipped/ineligible.
     """
-    from sqlalchemy import or_
 
     from services.brokers.alpaca_options import AlpacaOptionsBroker
 
@@ -307,22 +306,25 @@ async def submit_paper_option_order(
     symbol = order.underlying
     first_sym = order.legs[0].option_symbol
 
+    from datetime import datetime, timezone
+
+    today = datetime.now(timezone.utc).date()
     existing = (
         (
             await db.execute(
-                select(BrokerOrder).where(
-                    BrokerOrder.broker == "alpaca_options",
-                    BrokerOrder.symbol == symbol,
-                    or_(BrokerOrder.status.is_(None), BrokerOrder.status != "rejected"),
-                )
+                select(BrokerOrder).where(BrokerOrder.broker == "alpaca_options", BrokerOrder.symbol == symbol)
             )
         )
         .scalars()
         .all()
     )
     for o in existing:
-        if any((lf or {}).get("option_symbol") == first_sym for lf in (o.option_legs or [])):
-            return None  # already holding this position
+        if not any((lf or {}).get("option_symbol") == first_sym for lf in (o.option_legs or [])):
+            continue
+        # Skip if we already hold this position (non-rejected order) OR already
+        # attempted it today (don't spam-retry rejections across 15-min scans).
+        if o.status not in ("rejected", "error") or (o.created_at and o.created_at.date() == today):
+            return None
 
     order_record = BrokerOrder(
         signal_id=signal_id,
@@ -356,6 +358,42 @@ async def submit_paper_option_order(
     db.add(order_record)
     await db.flush()
     return order_record
+
+
+async def submit_active_option_orders(db: AsyncSession, api_key: str, api_secret: str, account_user_id: int) -> int:
+    """Submit every active VRP signal to the options paper account (dedup: one
+    attempt/day per leg-set). Call this DURING MARKET HOURS — the VRP scan runs
+    after-hours on the EOD panel, but Alpaca only accepts option market orders in
+    RTH, so submission is decoupled from generation. Returns # newly submitted.
+    """
+    from models import Signal
+
+    rows = (
+        (await db.execute(select(Signal).where(Signal.option_strategy.isnot(None), Signal.is_active == True)))
+        .scalars()
+        .all()
+    )
+    submitted = 0
+    for row in rows:
+        sig = {
+            "ticker": row.ticker,
+            "option_strategy": row.option_strategy,
+            "option_legs": row.option_legs,
+            "price": row.price,
+            "entry": row.entry,
+            "option_max_loss": row.option_max_loss,
+            "option_exp_gain": row.option_exp_gain,
+        }
+        try:
+            order = await submit_paper_option_order(sig, row.id, db, api_key, api_secret, account_user_id)
+            if order is not None and order.status not in ("rejected", "error"):
+                submitted += 1
+        except Exception:
+            log.warning("submit_active_option_orders: failed for %s", row.ticker, exc_info=True)
+    await db.commit()
+    if submitted:
+        log.info("options paper: submitted %d active VRP order(s)", submitted)
+    return submitted
 
 
 async def close_paper_position(

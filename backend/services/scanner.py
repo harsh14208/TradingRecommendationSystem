@@ -2435,6 +2435,23 @@ async def _run_scan_impl(broadcast_fn=None, broadcast_signal_fn=None):
     except Exception as e:
         log.warning("[scanner] options VRP scan failed: %s", e, exc_info=True)
 
+    # ── Step 6c: submit active VRP option orders to the options paper account ──
+    # The VRP scan runs after-hours (EOD panel), but Alpaca only accepts option
+    # market orders during RTH — so submission is decoupled and run here, in
+    # market hours, against the active VRP signals (dedup: one attempt/day).
+    if await _market_hours_ok():
+        try:
+            from config import get_settings as _gs
+
+            from services.options_paper import options_paper_active, submit_active_option_orders
+
+            async with AsyncSessionLocal() as _odb:
+                _creds = await options_paper_active(_odb, _gs())
+                if _creds:
+                    await submit_active_option_orders(_odb, _creds[0], _creds[1], _creds[2])
+        except Exception as e:
+            log.warning("[scanner] options paper submission failed: %s", e, exc_info=True)
+
     # ── Step 7: auto-send + auto paper trade ────────────────────────────
     _mark_scan_stage("delivery")
     db_settings = await _load_db_settings()
