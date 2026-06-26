@@ -628,7 +628,11 @@ async def execute_signal_for_user(
             expected_slip,
         )
         return
-    if suggested_notional != notional:
+    # Capacity/slippage limits may only SHRINK an order, never inflate it. The
+    # slippage branch can return a large allowed_qty for a SMALL order whose
+    # expected slippage exceeds the threshold via spread/realized-slip (not size);
+    # applying that unconditionally once inflated a $100 order to $247k.
+    if suggested_notional < notional:
         log.info(
             "broker_svc: user=%d — order sized down from %.2f to %.2f due to capacity limits",
             user.id,

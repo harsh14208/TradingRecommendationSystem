@@ -238,7 +238,9 @@ async def check_capacity_limits(
                     f"Capacity check: {ticker} BLOCKED. Expected slippage ({expected_slip:.1f} bps) exceeds limit."
                 )
             else:
-                suggested_notional = round(allowed_qty * arrival_price, 2)
+                # Only ever shrink — the allowed_qty formula can exceed the input
+                # notional for a small order whose slip is spread/history-driven.
+                suggested_notional = min(notional, round(allowed_qty * arrival_price, 2))
                 log.info(
                     f"Capacity check: {ticker} sized down from ${notional:.2f} to ${suggested_notional:.2f} due to expected slippage ({expected_slip:.1f} bps)."
                 )
