@@ -382,9 +382,21 @@ async def submit_active_option_orders(db: AsyncSession, api_key: str, api_secret
     RTH, so submission is decoupled from generation. Returns # newly submitted.
     """
     from models import Signal
+    from services.options_universe import OPTIONS_UNIVERSE
 
+    # Only trade the curated, liquid options universe — never stale/pre-filter
+    # signals (e.g. low-vol income ETFs or illiquid names where long straddles
+    # just bleed theta). Mirrors the generation-time universe filter.
     rows = (
-        (await db.execute(select(Signal).where(Signal.option_strategy.isnot(None), Signal.is_active == True)))
+        (
+            await db.execute(
+                select(Signal).where(
+                    Signal.option_strategy.isnot(None),
+                    Signal.is_active == True,
+                    Signal.ticker.in_(OPTIONS_UNIVERSE),
+                )
+            )
+        )
         .scalars()
         .all()
     )

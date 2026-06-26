@@ -90,7 +90,7 @@ async def test_submit_paper_option_order_submits_and_dedupes() -> None:
 
     sig = {
         "ticker": "AAPL",
-        "option_strategy": "SELL_STRANGLE",
+        "option_strategy": "SELL_DEFINED_RISK",
         "price": 170.0,
         "entry": 170.0,
         "option_max_loss": 150.0,
@@ -130,7 +130,7 @@ async def test_submit_paper_option_order_submits_and_dedupes() -> None:
             assert first.account_type == "paper"
             assert first.user_id == 33
             assert first.symbol == "AAPL"
-            assert first.side == "sell"  # SELL_STRANGLE
+            assert first.side == "sell"  # SELL_DEFINED_RISK
             assert first.alpaca_order_id == "abc123"
             assert first.status == "submitted"  # Alpaca "accepted" normalized to allowed set
             assert len(first.option_legs) == 2
