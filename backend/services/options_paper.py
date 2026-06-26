@@ -289,6 +289,14 @@ async def submit_paper_option_order(
     if order is None:
         return None
 
+    # Skip unresolved (placeholder) legs — when chain resolution fails the engine
+    # falls back to computed strikes (e.g. 70.782) that aren't listed contracts, so
+    # Alpaca 422s "asset not found". Only submit legs resolved from the real chain.
+    raw_legs = sig.get("option_legs") or []
+    if any(not (leg or {}).get("resolved", False) for leg in raw_legs):
+        log.info("options paper: skipping %s %s — unresolved placeholder legs", order.underlying, order.strategy)
+        return None
+
     # Skip malformed multi-leg structures (mismatched expiries / duplicate
     # contracts from independent chain resolution) — Alpaca 422s otherwise. Guards
     # pre-existing signals built before the options_engine fix.

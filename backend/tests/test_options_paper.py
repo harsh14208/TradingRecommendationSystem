@@ -103,6 +103,7 @@ async def test_submit_paper_option_order_submits_and_dedupes() -> None:
                 "quantity": 1,
                 "strike": 180.0,
                 "expiry": "2026-07-17",
+                "resolved": True,
             },
             {
                 "option_symbol": "O:AAPL260717P00160000",
@@ -111,6 +112,7 @@ async def test_submit_paper_option_order_submits_and_dedupes() -> None:
                 "quantity": 1,
                 "strike": 160.0,
                 "expiry": "2026-07-17",
+                "resolved": True,
             },
         ],
     }
