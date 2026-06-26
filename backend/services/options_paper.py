@@ -289,6 +289,13 @@ async def submit_paper_option_order(
     if order is None:
         return None
 
+    # Naked short strangles are uncovered — Alpaca rejects them at every options
+    # level ("not eligible to trade uncovered"). The engine converts these to
+    # SELL_DEFINED_RISK (iron condor); guard here against any stale SELL_STRANGLE.
+    if order.strategy == "SELL_STRANGLE":
+        log.info("options paper: skipping %s SELL_STRANGLE — naked, broker-ineligible", order.underlying)
+        return None
+
     # Skip unresolved (placeholder) legs — when chain resolution fails the engine
     # falls back to computed strikes (e.g. 70.782) that aren't listed contracts, so
     # Alpaca 422s "asset not found". Only submit legs resolved from the real chain.

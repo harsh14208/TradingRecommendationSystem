@@ -409,14 +409,17 @@ def score_options_universe(
     df["action"] = [a for a, _ in actions]
     df["rationale"] = [w for _, w in actions]
 
-    if universe == "index":
-        m = df["action"] == "SELL_STRANGLE"
-        df.loc[m, "action"] = "SELL_DEFINED_RISK"
-        df.loc[m, "rationale"] = df.loc[m, "rationale"].str.replace(
-            "→ harvest VRP",
-            "→ sell DEFINED-RISK premium (iron condor / put spread), never naked — index tail is undiversifiable",
-            regex=False,
-        )
+    # Convert ALL naked short strangles to defined-risk spreads (iron condors).
+    # Alpaca caps options at Level 3 (spreads) — uncovered/naked short options are
+    # never eligible ("account not eligible to trade uncovered option contracts"),
+    # so SELL_STRANGLE always 403s. SELL_DEFINED_RISK adds protective long wings.
+    m = df["action"] == "SELL_STRANGLE"
+    df.loc[m, "action"] = "SELL_DEFINED_RISK"
+    df.loc[m, "rationale"] = df.loc[m, "rationale"].str.replace(
+        "→ harvest VRP",
+        "→ sell DEFINED-RISK premium (iron condor), never naked — broker requires defined risk",
+        regex=False,
+    )
 
     # Additional safety filters beyond what the scripts already do.
     # 1) Never sell premium on leveraged/inverse names (their IV is often stale/dislocated).
