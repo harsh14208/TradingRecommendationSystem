@@ -157,10 +157,13 @@ def _build_option_legs(
         qty = 1
     ticker = row["ticker"]
 
-    def _placeholder_leg(option_type: str, strike: float, position: str) -> dict[str, Any]:
+    def _placeholder_leg(
+        option_type: str, strike: float, position: str, pin_expiry: date | None = None
+    ) -> dict[str, Any]:
+        exp = pin_expiry or expiry
         side_letter = "C" if option_type == "call" else "P"
         strike_f = float(strike) if math.isfinite(float(strike)) else 0.0
-        sym = f"O:{ticker}{expiry.strftime('%y%m%d')}{side_letter}{int(round(strike_f * 1000)):08d}"
+        sym = f"O:{ticker}{exp.strftime('%y%m%d')}{side_letter}{int(round(strike_f * 1000)):08d}"
         return {
             "option_type": option_type,
             "side": "buy" if position == "long" else "sell",
@@ -168,7 +171,7 @@ def _build_option_legs(
             "option_symbol": sym,
             "quantity": int(qty),
             "strike": round(strike_f, 2),
-            "expiry": expiry.isoformat(),
+            "expiry": exp.isoformat(),
             "premium": round(float(row["exp_gain"]) / int(qty), 4) if qty else 0.0,
             "midpoint": None,
             "bid": None,
@@ -176,16 +179,21 @@ def _build_option_legs(
             "resolved": False,
         }
 
-    def _resolve_leg(option_type: str, strike: float, position: str) -> dict[str, Any] | None:
+    def _resolve_leg(
+        option_type: str, strike: float, position: str, pin_expiry: date | None = None
+    ) -> dict[str, Any] | None:
         if not chain or select_contract is None:
             return None
         target_delta = target_delta_for_leg(action, option_type, position)
         contract = select_contract(
             chain,
             ctype=option_type,
-            target_expiry=expiry,
+            target_expiry=pin_expiry or expiry,
             target_strike=strike,
             target_delta=target_delta,
+            # Pin every leg of a spread to the first leg's exact expiry so the
+            # structure shares one expiry (no calendar/mixed-expiry drops).
+            expiry_window_days=0 if pin_expiry else 14,
         )
         if contract is None:
             return None
@@ -204,8 +212,10 @@ def _build_option_legs(
             "resolved": True,
         }
 
-    def _leg(option_type: str, strike: float, position: str) -> dict[str, Any]:
-        return _resolve_leg(option_type, strike, position) or _placeholder_leg(option_type, strike, position)
+    def _leg(option_type: str, strike: float, position: str, pin_expiry: date | None = None) -> dict[str, Any]:
+        return _resolve_leg(option_type, strike, position, pin_expiry) or _placeholder_leg(
+            option_type, strike, position, pin_expiry
+        )
 
     def _finalize(legs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Sanity-check a multi-leg structure before it can reach the broker.
@@ -239,21 +249,29 @@ def _build_option_legs(
     if action in ("SELL_STRANGLE", "SELL_DEFINED_RISK"):
         call_strike = px * (1.0 + impl)
         put_strike = px * (1.0 - impl)
-        legs = [_leg("call", call_strike, "short"), _leg("put", put_strike, "short")]
+        # Resolve the short call first to fix the expiry, then pin every other leg
+        # to it so the whole spread shares one expiry (was producing calendars that
+        # _finalize dropped → empty legs).
+        short_call = _resolve_leg("call", call_strike, "short")
+        pin = date.fromisoformat(short_call["expiry"]) if short_call else None
+        legs = [
+            short_call or _placeholder_leg("call", call_strike, "short"),
+            _leg("put", put_strike, "short", pin),
+        ]
         if action == "SELL_DEFINED_RISK":
-            long_call_strike = call_strike * 1.05
-            long_put_strike = put_strike * 0.95
             legs.extend(
                 [
-                    _leg("call", long_call_strike, "long"),
-                    _leg("put", long_put_strike, "long"),
+                    _leg("call", call_strike * 1.05, "long", pin),
+                    _leg("put", put_strike * 0.95, "long", pin),
                 ]
             )
         return _finalize(legs)
 
     if action == "LONG_STRADDLE":
         strike = px
-        return _finalize([_leg("call", strike, "long"), _leg("put", strike, "long")])
+        call = _resolve_leg("call", strike, "long")
+        pin = date.fromisoformat(call["expiry"]) if call else None
+        return _finalize([call or _placeholder_leg("call", strike, "long"), _leg("put", strike, "long", pin)])
 
     return []
 

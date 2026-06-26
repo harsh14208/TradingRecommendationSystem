@@ -125,11 +125,17 @@ def _parse_contract(raw: dict[str, Any]) -> OptionContract | None:
     )
 
 
-async def fetch_option_chain(underlying: str, api_key: str | None = None) -> list[OptionContract]:
-    """Fetch and parse the full options chain snapshot for an underlying.
+async def fetch_option_chain(
+    underlying: str, api_key: str | None = None, expiry: date | None = None
+) -> list[OptionContract]:
+    """Fetch and parse the options chain snapshot for an underlying.
 
-    Returns an empty list on any failure so callers can fall back to placeholder
-    leg building.
+    ``expiry``, when given, filters the snapshot to a window around that date
+    (``expiration_date.gte/lte`` ±14d). This is essential for high-strike-count
+    names (SPY/UNH/…): the unfiltered snapshot returns near-term contracts first
+    and the target monthly gets paged off the end, so resolution finds no
+    candidates. Returns an empty list on any failure (callers fall back to
+    placeholder legs).
     """
     key = api_key or _api_key()
     if not key:
@@ -138,6 +144,9 @@ async def fetch_option_chain(underlying: str, api_key: str | None = None) -> lis
 
     url = f"{_POLYGON_BASE}/v3/snapshot/options/{underlying.upper()}"
     params: dict[str, Any] = {"apiKey": key, "limit": _PAGE_SIZE}
+    if expiry is not None:
+        params["expiration_date.gte"] = (expiry - timedelta(days=14)).isoformat()
+        params["expiration_date.lte"] = (expiry + timedelta(days=14)).isoformat()
     raw: list[dict[str, Any]] = []
     try:
         async with shared_session() as session:
@@ -299,14 +308,19 @@ async def resolve_chain(
 
 
 def target_delta_for_leg(strategy: str, ctype: str, position: str) -> float | None:
-    """Return a sensible target delta for a leg when chain greeks are available."""
+    """Return a sensible target delta for a leg when chain greeks are available.
+
+    Position-aware: in an iron condor (SELL_DEFINED_RISK) the long protective
+    wings must sit FURTHER out-of-the-money than the short legs (lower delta) —
+    otherwise they resolve to the same contract as the short and the spread is
+    degenerate (dropped as a duplicate).
+    """
     if strategy == "SELL_CASH_SEC_PUT" and ctype == "put":
         return -0.30
     if strategy in ("SELL_STRANGLE", "SELL_DEFINED_RISK"):
-        if ctype == "call":
-            return 0.30
-        if ctype == "put":
-            return -0.30
+        # Short legs ~0.30 delta; long wings ~0.15 (further OTM).
+        mag = 0.30 if position == "short" else 0.15
+        return mag if ctype == "call" else -mag
     if strategy == "LONG_STRADDLE":
         if ctype == "call":
             return 0.50

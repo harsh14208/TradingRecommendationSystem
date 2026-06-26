@@ -127,7 +127,7 @@ async def _resolve_book_legs(book: pd.DataFrame, summary: dict) -> pd.DataFrame:
 
     async def _fetch(ticker: str) -> None:
         try:
-            chain_map[ticker] = await fetch_option_chain(ticker)
+            chain_map[ticker] = await fetch_option_chain(ticker, expiry=expiry)
         except Exception:
             log.exception("Failed to fetch option chain for %s", ticker)
             chain_map[ticker] = []
