@@ -123,7 +123,12 @@ async def test_submit_paper_option_order_submits_and_dedupes() -> None:
     )()
     session, engine = await _in_memory_session()
     async with session:
-        with patch("services.brokers.alpaca_options.AlpacaOptionsBroker", return_value=fake_broker):
+        with (
+            patch("services.brokers.alpaca_options.AlpacaOptionsBroker", return_value=fake_broker),
+            patch(
+                "services.options_paper.fetch_contract_snapshot", new_callable=AsyncMock, return_value=_contract(2.0)
+            ),
+        ):
             first = await submit_paper_option_order(sig, 11, session, "k", "s", 33)
             assert first is not None
             assert first.broker == "alpaca_options"

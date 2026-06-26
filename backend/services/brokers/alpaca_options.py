@@ -59,17 +59,26 @@ class AlpacaOptionsBroker(OptionsBroker):
         self.paper = paper
         self.base_url = _base_url(paper)
 
-    async def place_option_order(self, order: OptionOrder) -> dict[str, Any]:
-        """Submit an option order to Alpaca and return a normalized status dict."""
+    async def place_option_order(self, order: OptionOrder, limit_price: float | None = None) -> dict[str, Any]:
+        """Submit an option order to Alpaca and return a normalized status dict.
+
+        ``limit_price`` (net premium per spread, a positive magnitude) sends a DAY
+        LIMIT order — preferred over market so we don't pay the wide bid/ask at the
+        open. Omit it (None) for a market order.
+        """
         if not order.legs:
             return {"status": "rejected", "reason": "no legs in option order"}
 
         client_order_id = f"sig-opt-{uuid.uuid4().hex[:12]}"
         body: dict[str, Any] = {
-            "type": "market",
             "time_in_force": "day",
             "client_order_id": client_order_id,
         }
+        if limit_price is not None and limit_price > 0:
+            body["type"] = "limit"
+            body["limit_price"] = str(round(float(limit_price), 2))
+        else:
+            body["type"] = "market"
 
         if len(order.legs) == 1:
             leg = order.legs[0]

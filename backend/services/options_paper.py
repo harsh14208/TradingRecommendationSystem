@@ -351,13 +351,33 @@ async def submit_paper_option_order(
         side="sell" if order.strategy.startswith("SELL") else "buy",
         status="submitted",
         arrival_price=float(sig.get("entry") or sig.get("price") or 0.0),
-        route_order_type="market",
+        route_order_type="limit",
         requested_qty=sum(leg.quantity for leg in order.legs),
         option_legs=[leg.__dict__ for leg in order.legs],
     )
+    # Net mid limit (per spread) from CURRENT snapshots — submit a DAY LIMIT near
+    # mid instead of a market order, so we don't pay the wide open-bell spread. A
+    # small marketability buffer (debit +5% / credit −5%) keeps fills reasonable
+    # while capping the price well below the ask. Falls back to market if any leg
+    # mid is unavailable.
+    limit_price: float | None = None
+    net = 0.0
+    have_mids = True
+    for leg in order.legs:
+        contract = await fetch_contract_snapshot(
+            _underlying_from_symbol(leg.option_symbol) or symbol, leg.option_symbol
+        )
+        mid = contract.midpoint if contract else None
+        if not mid or mid <= 0:
+            have_mids = False
+            break
+        net += mid * leg.quantity * (1.0 if leg.position == "long" else -1.0)
+    if have_mids and net != 0:
+        limit_price = round(abs(net) * (1.05 if net > 0 else 0.95), 2)
+        order_record.nbbo_mid = round(abs(net), 2)
     try:
         broker = AlpacaOptionsBroker(api_key=api_key, api_secret=api_secret, paper=True)
-        result = await broker.place_option_order(order)
+        result = await broker.place_option_order(order, limit_price=limit_price)
         order_record.alpaca_order_id = result.get("alpaca_order_id")
         order_record.status = _normalize_status(result.get("status"))
         if order_record.status in ("error", "rejected"):
