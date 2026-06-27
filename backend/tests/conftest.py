@@ -32,6 +32,28 @@ def _set_test_database_url():
     mp.undo()
 
 
+@pytest.fixture(autouse=True)
+def _neutralize_cohort_gate():
+    """Make the self-calibrating cohort-EV gate inert by default in tests.
+
+    The gate reads a process-global snapshot (cache → disk). Without this, every
+    test of an unrelated gate would be coupled to whatever ``data/cohort_edges.json``
+    happens to hold locally. We disable disk loading and clear the cache so the gate
+    is in cold-start passthrough (deliver-everything) unless a test explicitly installs
+    its own snapshot via ``cache_snapshot(...)`` (see test_cohort_edge_gate.py).
+    """
+    try:
+        from services import cohort_edge_gate as _ceg
+
+        _ceg.set_disk_load_enabled(False)
+        _ceg.cache_snapshot(None)
+        yield
+        _ceg.cache_snapshot(None)
+        _ceg.set_disk_load_enabled(True)
+    except Exception:
+        yield
+
+
 @contextlib.contextmanager
 def override_deps(app, **deps):
     """Temporarily override FastAPI dependencies and restore them on exit.
