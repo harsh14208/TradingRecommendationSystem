@@ -46,9 +46,12 @@ sufficient sample size (`n >= 5` to block, `n >= 3` to caution).  Auto-retiremen
 is built in: when forward performance improves, the gate unblocks automatically.
 
 In Stage B the gate runs in **shadow mode** inside `assembler.py`; the legacy
-static blocklist still governs delivery.  Disagreements are logged as
-`[ticker_perf_shadow]`.  After 30 days of shadow logs show parity or improvement,
-the static list will be removed and the gate will become the hard block.
+static blocklist still governs delivery.  Both decisions are persisted to
+`ticker_perf_shadow_decisions`.  After signals resolve, run
+`scripts/analyze_ticker_perf_shadow.py` to compare overlap, forward WR, missed
+winners, saved losers, volume impact, sector skew, and outcome-horizon alignment.
+After 30 days of shadow logs show parity or improvement, the static list will be
+removed and the gate will become the hard block.
 
 The legacy `confidence` key is retained as an alias for `displayConfidence` so
 existing consumers continue to work.

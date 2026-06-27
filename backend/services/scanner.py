@@ -15,7 +15,17 @@ log = logging.getLogger("scanner")
 import aiohttp
 from config import TIERS, get_settings
 from database import AsyncSessionLocal
-from models import AppSettings, SendLog, Signal, SignalAlert, SignalDelivery, User, SignalGateTrace, ModelShadowScore
+from models import (
+    AppSettings,
+    SendLog,
+    Signal,
+    SignalAlert,
+    SignalDelivery,
+    User,
+    SignalGateTrace,
+    ModelShadowScore,
+    TickerPerfShadowDecision,
+)
 from sqlalchemy import desc, func, select, update
 
 from services.aaii import get_aaii_sentiment
@@ -389,6 +399,15 @@ async def _update_outcomes(quotes: list[dict]):
             .scalars()
             .all()
         )
+        signal_ids = [sig.id for sig in rows]
+        shadow_rows = {}
+        if signal_ids:
+            shadow_result = await db.execute(
+                select(TickerPerfShadowDecision).where(TickerPerfShadowDecision.signal_id.in_(signal_ids))
+            )
+            for sd in shadow_result.scalars().all():
+                shadow_rows[sd.signal_id] = sd
+
         for sig in rows:
             current = price_map.get(sig.ticker)
             if not current or not sig.entry or sig.entry <= 0:
@@ -403,6 +422,16 @@ async def _update_outcomes(quotes: list[dict]):
                 sig.outcome_at = now
             if age_days >= 14 and sig.outcome_14d is None:
                 sig.outcome_14d = _pct(current, sig.entry, sig.action)
+
+            # Backfill ticker-performance shadow decision outcomes.
+            sd = shadow_rows.get(sig.id)
+            if sd is not None:
+                pct = _pct(current, sig.entry, sig.action)
+                if age_days >= 7 and sd.outcome_pct_7d is None:
+                    sd.outcome_pct_7d = pct
+                    sd.outcome_at = now
+                if sd.hold_days is not None and age_days >= sd.hold_days and sd.outcome_pct_hold is None:
+                    sd.outcome_pct_hold = pct
         await db.commit()
 
 
@@ -1853,6 +1882,26 @@ async def _persist_scan_signals(
                                     reason=trace["reason"],
                                 )
                                 db.add(trace_row)
+                            # Save ticker-performance shadow decisions (Stage B A/B)
+                            _tp_shadow = sig.get("_ticker_perf_shadow")
+                            if _tp_shadow:
+                                db.add(
+                                    TickerPerfShadowDecision(
+                                        signal_id=row.id,
+                                        ticker=_tp_shadow["ticker"],
+                                        action=_tp_shadow["action"],
+                                        sector_etf=_tp_shadow.get("sector_etf"),
+                                        scan_ts=row.created_at or datetime.now(timezone.utc).replace(tzinfo=None),
+                                        static_blocked=bool(_tp_shadow["static_blocked"]),
+                                        dynamic_decision=_tp_shadow["dynamic_decision"],
+                                        dynamic_reason=_tp_shadow.get("dynamic_reason"),
+                                        dynamic_n=_tp_shadow.get("dynamic_n"),
+                                        dynamic_decay_wr=_tp_shadow.get("dynamic_decay_wr"),
+                                        dynamic_raw_wr=_tp_shadow.get("dynamic_raw_wr"),
+                                        dynamic_size_mult=_tp_shadow.get("dynamic_size_mult"),
+                                        hold_days=_tp_shadow.get("hold_days"),
+                                    )
+                                )
                             # Save shadow scores (TSYS-7c)
                             shadow = sig.get("shadow_scores")
                             if shadow:

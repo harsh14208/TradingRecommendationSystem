@@ -33,7 +33,11 @@ the overloaded `confidence` field into separate objects:
   and backtest-derived exclusions.  Backtest-derived ticker bans encode
   look-ahead selection bias and temporary regimes.  Stage B replaces the
   blocklist with `TickerPerformanceGate`, which uses decay-weighted forward
-  performance, minimum sample guards, and auto-retirement.
+  performance, minimum sample guards, and auto-retirement.  The transition is
+  being run as a 30-day controlled experiment: every signal records both the
+  static and dynamic decisions, and `scripts/analyze_ticker_perf_shadow.py`
+  computes overlap, forward WR, missed winners, saved losers, volume impact,
+  and sector skew before promotion.
 - **Rule for future gates:**
   - Probability changes only when evidence changes expected win rate.
   - Sizing changes when risk, liquidity, correlation, concentration, or portfolio context changes.

@@ -492,10 +492,31 @@ def _assemble_signal(
     # 30 days of shadow logs show parity or improvement, the static list above
     # will be removed and this gate will become the hard block.
     _ticker_perf_enabled = os.getenv("TICKER_PERF_GATE_ENABLED", "").lower() in {"1", "true", "yes"}
-    TickerPerformanceGate(enabled=_ticker_perf_enabled).apply(_sig_ctx)
-    _ticker_decision = TickerPerformanceGate(enabled=_ticker_perf_enabled)._decide(_sig_ctx)
+    _ticker_gate = TickerPerformanceGate(enabled=_ticker_perf_enabled)
+    _ticker_gate.apply(_sig_ctx)
+    _ticker_decision = _ticker_gate._decide(_sig_ctx)
     if _ticker_perf_enabled:
         action = _sig_ctx.action
+
+    # Structured shadow-decision payload for the 30-day static-vs-dynamic A/B.
+    # This is persisted by scanner.py into ticker_perf_shadow_decisions.
+    _ticker_perf_shadow: dict | None = None
+    if action in ("BUY", "SELL") or _static_blocked or _ticker_decision.block or _ticker_decision.size_mult < 1.0:
+        _ticker_perf_shadow = {
+            "ticker": ticker,
+            "action": "BUY" if _static_blocked or _sig_ctx.action == "BUY" else action,
+            "sector_etf": _se_sector_etf_ctx,
+            "static_blocked": _static_blocked,
+            "dynamic_decision": "block"
+            if _ticker_decision.block
+            else ("caution" if _ticker_decision.size_mult < 1.0 else "pass"),
+            "dynamic_reason": _ticker_decision.reason,
+            "dynamic_n": _ticker_decision.n,
+            "dynamic_decay_wr": _ticker_decision.win_rate,
+            "dynamic_raw_wr": _ticker_decision.raw_wr,
+            "dynamic_size_mult": _ticker_decision.size_mult,
+            "hold_days": None,  # filled later by scanner.py once style is finalized
+        }
     if _static_blocked and not _ticker_decision.block:
         log.info(
             "[ticker_perf_shadow] %s: static blocklist blocked, ticker gate would NOT block (%s)",
@@ -1623,6 +1644,20 @@ def _assemble_signal(
             else "calm"
             if vix is not None
             else "unknown"
+        ),
+        "_ticker_perf_shadow": (
+            {
+                **_ticker_perf_shadow,
+                "hold_days": (
+                    _SECTOR_MR_CONFIG.get(
+                        (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper(), ""), {}
+                    ).get("hold_days", 10)
+                    if _has_mr
+                    else 10
+                ),
+            }
+            if _ticker_perf_shadow is not None
+            else None
         ),
         "gate_traces": _sig_ctx.gate_traces,
         "shadow_scores": _shadow_scores,

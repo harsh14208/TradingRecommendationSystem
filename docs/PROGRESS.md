@@ -91,11 +91,24 @@ persist long after a ticker regime changes.
   shadow mode.
 - Gate can be promoted to a hard block by setting `TICKER_PERF_GATE_ENABLED=1`.
 
-**Rollout plan:** keep shadow mode active; after 30 days of shadow logs show
-parity or improvement vs. the static blocklist, delete `_DEFENSIVE_BUY_BLOCK`
-and default `TickerPerformanceGate` to `enabled=True`.
+**Rollout plan (treated as an experiment):**
+- Keep shadow mode active for 30 days.
+- Every scan persists both decisions to `ticker_perf_shadow_decisions`.
+- After signals resolve, run `scripts/analyze_ticker_perf_shadow.py` to compare:
+  - Static vs dynamic decision overlap matrix
+  - Forward WR and avg return for each disagreement bucket
+  - Missed winners / saved losers from each gate
+  - Volume impact
+  - Sector skew introduced by the dynamic gate
+  - Outcome-horizon alignment (`outcome_pct_7d` vs `recommendedHoldDays`)
+- Promotion criteria: dynamic gate must not materially increase missed winners,
+  must show comparable or better saved-loser rate, and must not introduce
+  meaningful sector skew.  If criteria are met, delete `_DEFENSIVE_BUY_BLOCK`
+  and default `TickerPerformanceGate` to `enabled=True`.
+- Static list may be retained as a temporary emergency denylist with explicit
+  expiry dates if needed, but it should not be the primary gate.
 
-**Tests:** 87 signal-engine / gate tests pass; no new regressions.
+**Tests:** signal-engine / gate tests pass; no new regressions.
 
 ### v8.8.7 (2026-06-18) — Backtest Realism, QA Hardening, Entry-Score Relaxation, Sources Removal, Elite Tier, aiohttp CVE Patch
 

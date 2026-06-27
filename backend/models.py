@@ -836,6 +836,36 @@ class SignalGateTrace(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class TickerPerfShadowDecision(Base):
+    """Shadow-decision log for the static vs dynamic ticker-performance gate A/B.
+
+    One row per directional signal during the 30-day shadow period.  After the
+    signal resolves, outcome columns are backfilled and the row is used by
+    scripts/analyze_ticker_perf_shadow.py to compute gate parity metrics.
+    """
+
+    __tablename__ = "ticker_perf_shadow_decisions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=True, index=True)
+    ticker = Column(String(10), nullable=False, index=True)
+    action = Column(String(4), nullable=False)
+    sector_etf = Column(String(10), nullable=True)
+    scan_ts = Column(DateTime, nullable=False, index=True)
+    static_blocked = Column(Boolean, nullable=False)
+    dynamic_decision = Column(String(10), nullable=False)  # block | caution | pass
+    dynamic_reason = Column(Text, nullable=True)
+    dynamic_n = Column(Integer, nullable=True)
+    dynamic_decay_wr = Column(Float, nullable=True)
+    dynamic_raw_wr = Column(Float, nullable=True)
+    dynamic_size_mult = Column(Float, nullable=True)
+    hold_days = Column(Integer, nullable=True)
+    # Backfilled after resolution.
+    outcome_pct_7d = Column(Float, nullable=True)
+    outcome_pct_hold = Column(Float, nullable=True)
+    outcome_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class GateRegistry(Base):
     """Registry of technical signal/scoring gates (TSYS-6b)."""
 

@@ -162,3 +162,70 @@ def test_snapshot_case_insensitive_ticker():
     ctx = _ctx(ticker="AAPL")
     TickerPerformanceGate(enabled=True).apply(ctx)
     assert ctx.action == "HOLD"
+
+
+def test_assembler_returns_ticker_perf_shadow_for_static_blocklist():
+    from services.engines.assembler import _assemble_signal
+
+    cache_snapshot(None)  # no dynamic snapshot -> dynamic passes
+    sig = _assemble_signal(
+        ticker="KO",
+        info={"company": "Coca-Cola"},
+        tech={"price": 60.0, "atr": 0.6, "atr_pct_rank": 25},
+        score=55.0,
+        rationale=[{"head": "RSI Oversold", "sentiment": "pos", "src": "Technical"}],
+        sources={"Technical"},
+        _force_hold=False,
+        _is_low_atr=False,
+        _atr_pct_pre=0.01,
+        total_confidence_penalty=0.0,
+        avg_sent=0.5,
+        price=60.0,
+        atr=0.6,
+        market_ctx={"macro": {"sp500_trend": "up"}},
+        earnings_cal={},
+        sector_rs=None,
+        days_to_earnings=15,
+    )
+    assert sig is not None
+    assert sig["action"] == "HOLD"
+    shadow = sig.get("_ticker_perf_shadow")
+    assert shadow is not None
+    assert shadow["ticker"] == "KO"
+    assert shadow["static_blocked"] is True
+    assert shadow["dynamic_decision"] == "pass"  # no snapshot
+    assert shadow["hold_days"] is not None
+
+
+def test_assembler_returns_ticker_perf_shadow_for_dynamic_block():
+    from services.engines.assembler import _assemble_signal
+
+    rows = [("AAPL", "BUY", -1.0, _dt(i)) for i in range(5, 0, -1)]
+    cache_snapshot(compute_snapshot(rows, decay_halflife_days=30.0))
+    sig = _assemble_signal(
+        ticker="AAPL",
+        info={"company": "Apple"},
+        tech={"price": 100.0, "atr": 2.0, "atr_pct_rank": 25},
+        score=55.0,
+        rationale=[{"head": "RSI Oversold", "sentiment": "pos", "src": "Technical"}],
+        sources={"Technical"},
+        _force_hold=False,
+        _is_low_atr=False,
+        _atr_pct_pre=0.02,
+        total_confidence_penalty=0.0,
+        avg_sent=0.5,
+        price=100.0,
+        atr=2.0,
+        market_ctx={"macro": {"sp500_trend": "up"}},
+        earnings_cal={},
+        sector_rs=None,
+        days_to_earnings=15,
+    )
+    assert sig is not None
+    shadow = sig.get("_ticker_perf_shadow")
+    assert shadow is not None
+    assert shadow["ticker"] == "AAPL"
+    assert shadow["static_blocked"] is False
+    assert shadow["dynamic_decision"] == "block"
+    assert shadow["dynamic_n"] == 5
+    assert shadow["dynamic_decay_wr"] < 0.5
