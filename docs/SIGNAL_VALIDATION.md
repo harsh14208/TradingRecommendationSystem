@@ -12,6 +12,34 @@
 
 ---
 
+## Confidence Ontology (2026-06-27)
+
+The signal engine no longer treats every score-like quantity as a single
+`confidence` value.  The field is split into explicit roles so that probability,
+alpha, sizing, and ranking do not bleed into one another:
+
+| Field | Meaning | Mutated by |
+|---|---|---|
+| `alphaScore` | Raw composite score before probability mapping. | Scoring families, macro overlays, ML blend. |
+| `rawConfidence` | Pre-calibration probability estimate. | Macro overlays, warning deconfliction, hard ceiling. |
+| `calibratedProbability` | **Calibrated probability of winning.** | `CalibrationGate` only. |
+| `displayConfidence` | User-facing confidence; may include peer/ranking context tilts. | Post-scan peer, Polygon, supply-chain, cross-sectional ranking. |
+| `positionSizeScale` | Sizing multiplier for risk, liquidity, correlation, concentration. | Sizing stack, correlation penalty, regime dampeners. |
+| `rankScore` / `rankPercentile` | Cross-sectional ordering metadata; never changes probability. | Universe ranking step. |
+
+**Invariant:** `calibratedProbability` is the last probability-mutating step in
+`_assemble_signal()` and is never changed by `scan_all()` post-processing.  Any
+violation of this invariant is a bug.  The invariant is enforced by
+`tests/test_confidence_invariants.py`.
+
+Rule of thumb for future gates:
+- **Probability** changes only when evidence changes expected win rate.
+- **Sizing** changes when risk, liquidity, correlation, concentration, or portfolio context changes.
+- **Ranking** changes only display/order, not probability.
+
+The legacy `confidence` key is retained as an alias for `displayConfidence` so
+existing consumers continue to work.
+
 ## Live Trading Validation Criteria
 
 A gate may be kept in the live engine, but **that does not mean the engine is ready to trade real money**.

@@ -26,6 +26,12 @@ class Signal(Base):
     action = Column(String(4), nullable=False)
     confidence = Column(Float, nullable=False)
     raw_confidence = Column(Float, nullable=True)
+    # Confidence ontology split (2026-06-27): confidence is now display confidence.
+    calibrated_probability = Column(Float, nullable=True)
+    display_confidence = Column(Float, nullable=True)
+    alpha_score = Column(Float, nullable=True)
+    rank_score = Column(Float, nullable=True)
+    rank_percentile = Column(Float, nullable=True)
     price = Column(Float, nullable=False)
     change = Column(Float, default=0)
     change_pct = Column(Float, default=0)

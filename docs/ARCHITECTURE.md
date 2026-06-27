@@ -101,6 +101,34 @@ Key components:
 - **Models / Database** (`backend/models.py`, `backend/database.py`) define the
   schema and provide sessions. `get_db()` yields only.
 
+## Signal Engine Architecture
+
+The signal engine lives in `backend/services/signal_engine.py` and
+`backend/services/engines/assembler.py`.  It follows a strict ontology for
+confidence-related fields so that probability, alpha, sizing, and ranking do
+not bleed into one another:
+
+| Field | File(s) | Responsibility |
+|---|---|---|
+| `alphaScore` | `assembler.py` | Raw composite score before probability mapping. |
+| `rawConfidence` | `assembler.py` | Pre-calibration probability estimate. |
+| `calibratedProbability` | `assembler.py` | Calibrated probability of winning; immutable after calibration. |
+| `displayConfidence` | `assembler.py`, `signal_engine.py` | User-facing confidence; may absorb peer/ranking context tilts. |
+| `positionSizeScale` | `assembler.py`, `signal_engine.py` | Sizing multiplier for risk, liquidity, correlation, concentration. |
+| `rankScore` / `rankPercentile` | `signal_engine.py` | Cross-sectional ordering metadata only. |
+
+**Calibration invariant:** `_assemble_signal()` applies calibration as the last
+probability-mutating step.  `scan_all()` may adjust `displayConfidence`,
+`positionSizeScale`, and rank fields, but it must never mutate
+`calibratedProbability`.  This contract is tested in
+`tests/test_confidence_invariants.py`.
+
+Gates are being migrated from inline assembler code into `GateBase` subclasses
+(`backend/services/gates/`).  Each gate records telemetry (`gate_traces`)
+including `gate_id`, `version`, inputs, and deltas.  Future gates must declare
+`expected_impact` (`probability`, `sizing`, `ranking`, or `block`) and a
+`retirement_rule`.
+
 ## Transaction Policy
 
 > **"Services commit, routers don't; `get_db()` yields only."**

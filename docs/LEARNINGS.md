@@ -14,6 +14,35 @@
 
 ---
 
+## LXX. Confidence Ontology Split (2026-06-27)
+
+The single most important fix to the live engine's quant hygiene was splitting
+the overloaded `confidence` field into separate objects:
+
+- **Problem:** `confidence` had become five different concepts in one number:
+  raw model score, calibrated win probability, risk adjustment, peer
+  confirmation, and scan-relative ranking.  Post-scan steps in
+  `signal_engine.py` were mutating the value after calibration, breaking the
+  promise that stored confidence was a calibrated probability.
+- **Fix:** introduce `alphaScore`, `rawConfidence`, `calibratedProbability`,
+  `displayConfidence`, `positionSizeScale`, and `rankScore`/`rankPercentile`.
+  Calibration produces `calibratedProbability`; only `displayConfidence` and
+  sizing/rank fields may be adjusted afterwards.
+- **Static ticker blocklists are dangerous.** The defensive BUY blocklist
+  (`KO`, `PEP`, `ABBV`, `MRK`, `LLY`, `NKE`, `V`, etc.) mixed live-validated
+  and backtest-derived exclusions.  Backtest-derived ticker bans encode
+  look-ahead selection bias and temporary regimes.  Stage A keeps the blocklist
+  but adds the scaffolding to replace it with a decay-weighted, point-in-time
+  `TickerPerformanceGate` in Stage B.
+- **Rule for future gates:**
+  - Probability changes only when evidence changes expected win rate.
+  - Sizing changes when risk, liquidity, correlation, concentration, or portfolio context changes.
+  - Ranking changes only display/order, not probability.
+
+**Implemented in:** `services/engines/assembler.py`, `services/signal_engine.py`,
+`services/gates/warning.py`, `models.py`, plus
+`tests/test_confidence_invariants.py`.
+
 ## The Core Hypothesis (validated)
 
 Large-cap stocks that become oversold via a specific set of conditions (RSI<42, BB%B<0.22, IBS<0.15, VWAP%<−0.75%) exhibit a statistically reliable mean-reversion bounce over 5-10 days.

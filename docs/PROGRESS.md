@@ -22,6 +22,53 @@
 > **Tests: 2615 passed, 33 skipped (ex-e2e) · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.8: N=155, WR=67.1%, Sharpe=0.25 with L7 score-band sizing + MR-count=2 (survivorship-corrected + §63 ADF gate)**
 > **v8.2 (2026-06-09) — Sharpe improvement sweep + live engine updates.** v10.8 backtest sweep: 12 candidate approaches on 100-ticker/23yr IS. Score-band sizing (+0.05 Sharpe, zero trade impact), MR-count=2 (+0.01 Sharpe, −1 trade), and dynamic RSI stops all validated and shipped live. IS Sharpe 0.23→0.25. See `docs/Stats.md §83`.
 > **v8.1 (2026-06-09) — Survivorship correction + new live gates + correctness fixes + open-source quant-library audit.** Survivorship bias corrected via free PIT S&P constituents (the #1 named ceiling); new live gates (§14 FRED macro-regime, Polygon short-volume, dynamic sector limits + XLI ML); live correctness fixes (`sector_etf` decouple — was nulling ~81% of signals; cohort-enrichment restore; dark_pool restart-storm); §63 cointegration ADF correctness fix + macro-regime HMM→hmmlearn (both live); cross-sectional model net-positive at h=21 (net +0.347, borrow-robust) deployed in **SHADOW**. **Overall 8.8/10 product · 8.6/10 quality** (+0.1 from v8.0.1; shadow/research work excluded per "implemented ≠ working live"). See Stats.md §15.
+### v8.8.8 (2026-06-27) — Signal Engine Confidence Ontology Refactor
+
+**Why this matters:** the live engine had overloaded `confidence` with at least
+five different concepts (raw score, calibrated probability, risk overlay, peer
+confirmation, scan-relative ranking).  Post-scan steps were mutating the value
+after calibration, so the stored "calibrated" confidence was no longer a true
+probability.  This made attribution, model training, and user communication
+ambiguous.
+
+**Changes (Stage A):**
+- `services/engines/assembler.py`: split signal dict into `alphaScore`,
+  `rawConfidence`, `calibratedProbability`, `displayConfidence`,
+  `rankScore`, and `rankPercentile`.  `calibratedProbability` is produced by
+  calibration and never mutated afterwards.  Legacy `confidence` is retained as
+  an alias for `displayConfidence`.
+- `services/signal_engine.py`: post-scan peer confirmation, Polygon related
+  companies, supply-chain propagation, and cross-sectional ranking now mutate
+  only `displayConfidence`, `rankScore`/`rankPercentile`, or
+  `positionSizeScale`; `calibratedProbability` is preserved.
+- `services/gates/warning.py`: extracted the final overbought/oversold warning
+  deconfliction into a pure, tested function; replaced the inline replication
+  in `assembler.py`.
+- `models.py` + Alembic migration `700fef99ff87`: added
+  `calibrated_probability`, `display_confidence`, `alpha_score`, `rank_score`,
+  `rank_percentile` columns to `signals`.
+- `services/scanner.py` and `services/options_scanner.py`: persist the new
+  ontology columns.
+- `tests/test_signal_engine_confidence.py`: now tests the real production
+  function, not a local replica.
+- `tests/test_confidence_invariants.py`: new invariant tests proving
+  calibration is last, `calibratedProbability` is immutable post-assembly,
+  bounds hold, and HOLD signals have no levels.
+
+**Stage B pending:** replace the static defensive-ticker BUY blocklist with a
+decay-weighted, point-in-time `TickerPerformanceGate` and remove the hardcoded
+blocklist after a 30-day shadow comparison.
+
+**Ratings impact:** no score move yet — the refactor is structural and
+forward-protective.  Live win-rate attribution and calibration quality should
+improve as the ontology prevents probability drift, but that must be proven in
+forward data before ratings change.
+
+**Tests:** signal-engine-related tests pass; full non-E2E suite has the same
+pre-existing failures as before the refactor (broker mocks, FOMC date imports,
+paper-router SecretStr issues, flaky WebSocket test).  No new regressions
+introduced by this change.
+
 ### v8.8.7 (2026-06-18) — Backtest Realism, QA Hardening, Entry-Score Relaxation, Sources Removal, Elite Tier, aiohttp CVE Patch
 
 **Why this matters:** the Backtest page was advertising impossible simulated performance (Sharpe 9.12, CAGR 108.8%, Max DD −1.4%) on the same screen as the real live backtest (Sharpe 0.65, Max DD −18.5%), undermining trust. A separate QA audit found a11y/mobile gaps, the entry-score band just below the cutoff carries forward-generalizing alpha, the `elite` tier could not be persisted in Postgres, and a CVE-blocked `aiohttp` was breaking CI.

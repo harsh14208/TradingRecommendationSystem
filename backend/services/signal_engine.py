@@ -5623,9 +5623,13 @@ async def scan_all(
         if n_bull < 2:
             peer_names = ", ".join(p["ticker"] for p in peers[:3])
             bull_names = ", ".join(p["ticker"] for p in bullish_peers) or "none"
-            # Penalty scales with how isolated the signal is
+            # Penalty scales with how isolated the signal is.  This is a
+            # peer-context adjustment, not evidence about expected win rate, so
+            # it mutates display confidence only — calibrated probability is
+            # preserved.
             haircut = 12 if n_bull == 0 else 6
-            sig["confidence"] = round(max(35.0, sig["confidence"] - haircut), 1)
+            sig["displayConfidence"] = round(max(35.0, sig.get("displayConfidence", sig["confidence"]) - haircut), 1)
+            sig["confidence"] = sig["displayConfidence"]
             sig["rationale"] = list(sig.get("rationale", [])) + [
                 {
                     "src": "Sector",
@@ -5636,10 +5640,10 @@ async def scan_all(
                         f"({bull_names}). "
                         "Stocks within a sector mean-revert to their cross-sectional correlation: "
                         "a lone-outlier BUY has a materially lower true-positive rate than a "
-                        "sector-confirmed move. Confidence reduced."
+                        "sector-confirmed move. Display confidence reduced; calibrated probability unchanged."
                     ),
                     "sentiment": "neg",
-                    "meta": f"{etf}: {n_bull}/{n_peers} peers bullish | −{haircut}pp confidence",
+                    "meta": f"{etf}: {n_bull}/{n_peers} peers bullish | −{haircut}pp display_confidence",
                 }
             ]
             sig["sources"] = sorted(set(sig.get("sources", [])) | {"Sector"})
@@ -5652,7 +5656,10 @@ async def scan_all(
         for sig in high_conf_buys:
             adj, reason = await check_related_peer_confirmation(sig["ticker"], sig["action"], signals_by_ticker)
             if adj != 0.0:
-                sig["confidence"] = round(max(35.0, min(72.0, sig["confidence"] + adj)), 1)
+                sig["displayConfidence"] = round(
+                    max(35.0, min(72.0, sig.get("displayConfidence", sig["confidence"]) + adj)), 1
+                )
+                sig["confidence"] = sig["displayConfidence"]
                 sentiment = "pos" if adj > 0 else "neg"
                 sig["rationale"] = list(sig.get("rationale", [])) + [
                     {
@@ -5660,7 +5667,7 @@ async def scan_all(
                         "head": f"Polygon Related Companies {'Confirm' if adj > 0 else 'Diverge'} ({adj:+.0f}pp)",
                         "body": reason,
                         "sentiment": sentiment,
-                        "meta": f"related_adj={adj:+.1f}pp",
+                        "meta": f"related_adj={adj:+.1f}pp display_confidence_only",
                     }
                 ]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Sector"})
@@ -5677,9 +5684,14 @@ async def scan_all(
         for sig in signals:
             sc_delta, sc_reason = get_supply_chain_propagation_score(sig["ticker"], _sig_map)
             if abs(sc_delta) >= 1.0:
-                # Convert score delta to confidence adjustment (capped ±4pp)
+                # Convert score delta to a display-confidence adjustment (capped ±4pp).
+                # This is lead-lag context, not new evidence about this ticker's
+                # win rate, so it does not mutate calibrated probability.
                 _conf_adj = max(-4.0, min(4.0, sc_delta * 0.5))
-                sig["confidence"] = round(max(35.0, min(72.0, sig["confidence"] + _conf_adj)), 1)
+                sig["displayConfidence"] = round(
+                    max(35.0, min(72.0, sig.get("displayConfidence", sig["confidence"]) + _conf_adj)), 1
+                )
+                sig["confidence"] = sig["displayConfidence"]
                 sig["rationale"] = list(sig.get("rationale", [])) + [
                     {
                         "src": "Fundamentals",
@@ -5691,7 +5703,7 @@ async def scan_all(
                             f"commodity cycles."
                         ),
                         "sentiment": "pos" if sc_delta > 0 else "neg",
-                        "meta": f"supply_chain_propagation={sc_delta:+.1f}",
+                        "meta": f"supply_chain_propagation={sc_delta:+.1f} display_confidence_only",
                     }
                 ]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Fundamentals"})
@@ -5699,7 +5711,7 @@ async def scan_all(
         log.warning("supply chain propagation scoring failed", exc_info=True)
 
     # ── Cross-sectional universe ranking ──────────────────────────────────────
-    # Rank every directional signal by confidence within this scan cycle.
+    # Rank every directional signal by calibrated probability within this scan cycle.
     # Top decile (+3pp) and top quartile (+1.5pp) get a boost; bottom quartile
     # and bottom decile receive symmetric penalties. This converts the engine
     # from absolute scoring to relative scoring — what hedge funds actually use.
@@ -5708,10 +5720,12 @@ async def scan_all(
         _dir = [s for s in signals if s.get("action") in ("BUY", "SELL")]
         _n = len(_dir)
         if _n >= 10:
-            _sorted_idx = sorted(range(_n), key=lambda i: _dir[i]["confidence"])
+            _sorted_idx = sorted(range(_n), key=lambda i: _dir[i].get("calibratedProbability", _dir[i]["confidence"]))
             for _rank_pos, _idx in enumerate(_sorted_idx):
                 sig = _dir[_idx]
                 _pct = _rank_pos / (_n - 1)  # 0.0 = weakest, 1.0 = strongest
+                sig["rankPercentile"] = round(_pct * 100, 1)
+                sig["rankScore"] = _n - _rank_pos  # 1 = weakest, _n = strongest
                 if _pct >= 0.90:
                     _adj, _label = 3.0, "Top decile"
                 elif _pct >= 0.75:
@@ -5722,7 +5736,10 @@ async def scan_all(
                     _adj, _label = -1.5, "Bottom quartile"
                 else:
                     continue
-                sig["confidence"] = round(max(35.0, min(72.0, sig["confidence"] + _adj)), 1)
+                sig["displayConfidence"] = round(
+                    max(35.0, min(72.0, sig.get("displayConfidence", sig["confidence"]) + _adj)), 1
+                )
+                sig["confidence"] = sig["displayConfidence"]
                 _pctile_int = round(_pct * 100)
                 sig["rationale"] = list(sig.get("rationale", [])) + [
                     {
@@ -5730,12 +5747,13 @@ async def scan_all(
                         "head": f"{_label} — {_pctile_int}th Percentile of {_n}-Signal Universe ({_adj:+.0f}pp)",
                         "body": (
                             f"Ranked against today's full {_n}-ticker scan universe: {_pctile_int}th "
-                            f"percentile. {_label} signals receive a {_adj:+.0f}pp confidence "
+                            f"percentile. {_label} signals receive a {_adj:+.0f}pp display-confidence "
                             "adjustment — the same relative-strength principle used in cross-sectional "
-                            "quant models to separate strongest from weakest setups each cycle."
+                            "quant models to separate strongest from weakest setups each cycle. "
+                            "Calibrated probability is unchanged."
                         ),
                         "sentiment": "pos" if _adj > 0 else "neg",
-                        "meta": f"universe_rank={_pctile_int}th | n={_n} | adj={_adj:+.0f}pp",
+                        "meta": f"universe_rank={_pctile_int}th | n={_n} | adj={_adj:+.0f}pp | calibrated_unchanged",
                     }
                 ]
                 sig["sources"] = sorted(set(sig.get("sources", [])) | {"Cross-Sectional"})

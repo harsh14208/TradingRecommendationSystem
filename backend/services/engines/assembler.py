@@ -20,6 +20,7 @@ from services.engines.helpers import (
     _make_plain_english,
     _score_to_action,
 )
+from services.gates.warning import apply_warning_deconfliction
 from services.sector import SECTOR_MAP
 from services.sector_ml_promotion import effective_sector_config
 
@@ -1121,10 +1122,6 @@ def _assemble_signal(
         else (rationale[0]["head"] if rationale else f"{action} signal detected")
     )
 
-    # Persist raw confidence so downstream calibration trains on the pre-calibrated
-    # value, avoiding an iterative isotonic-on-isotonic feedback loop.
-    raw_confidence = confidence
-
     # ── XGBoost confidence adjustment (signal model + entry model) ───────
     # Two complementary models blended 50/50 before a single ±25% adjustment:
     #   Signal model  — trained on live DB signals (metadata quality)
@@ -1214,46 +1211,14 @@ def _assemble_signal(
 
     # Final de-confliction safety (string-based warning heads can be brittle):
     # if we detect a known overbought/oversold warning head, apply a small
-    # confidence haircut to reduce false-high conviction.
-    if action == "BUY":
-        overbought_heads = {
-            "RSI Overbought",
-            "RSI Elevated",
-            "Stochastic Overbought",
-            "Stochastic Bearish Cross (Overbought)",
-            "Williams %R Overbought",
-            "CCI Extreme Overbought",
-            "MFI Overbought",
-            "Broad Market Complacency",
-            "Extreme Greed",
-            "NAAIM: Managers Fully Invested",
-        }
-        if any(r.get("head") in overbought_heads for r in rationale):
-            confidence = round(max(35.0, confidence * 0.92), 1)
-    elif action == "SELL":
-        oversold_heads = {
-            "RSI Oversold",
-            "RSI Weakening",
-            "Stochastic Oversold",
-            "Stochastic Bullish Cross (Oversold)",
-            "Williams %R Oversold",
-            "CCI Extreme Oversold",
-            "MFI Oversold",
-            "Extreme Fear",
-            "Market Breadth Deteriorating",
-            "NAAIM: Managers Extremely Defensive",
-        }
-        if any(r.get("head") in oversold_heads for r in rationale):
-            confidence = round(max(35.0, confidence * 0.92), 1)
+    # confidence haircut to reduce false-high conviction. This mutates the raw
+    # confidence estimate only; calibration (next step) produces the calibrated
+    # probability that must remain immutable afterwards.
+    confidence = apply_warning_deconfliction(action, confidence, rationale)
 
-    # Calibration warning: fires when signal confidence significantly exceeds the
-    # historically observed win rate for this action type, or when strong conflicting
-    # signals were penalised away but confidence still appears high to the user.
-    confidence_warning = False
-    if action in ("BUY", "SELL") and confidence >= 75:
-        win_rate_hist = (adaptive or {}).get(f"{action}_win_rate")
-        if win_rate_hist is not None and confidence - win_rate_hist * 100 > 20 or total_confidence_penalty >= 0.15:
-            confidence_warning = True
+    # Persist raw confidence so downstream calibration trains on the pre-calibrated
+    # value, avoiding an iterative isotonic-on-isotonic feedback loop.
+    raw_confidence = confidence
 
     # ── MR exit guidance (§35b: RSI45 adaptive exit — 47% hit rate, 100% WR) ──
     # Tells position holders when the mean-reversion bounce is likely complete.
@@ -1352,19 +1317,24 @@ def _assemble_signal(
     # QUANT_ENGINE_REVIEW §1.4 / §5 Snippet 8: calibration was previously applied
     # *before* ML blend, overbought haircuts, and peer haircut — but trained on
     # the *final stored* confidence.  This created an iterative feedback loop.
-    # Now calibration sees the fully-mutated confidence and is applied just
-    # before delivery, with the hard ceiling enforced afterwards.
+    # Now calibration sees the fully-mutated raw confidence and produces the
+    # calibrated probability of winning.  From this point forward
+    # `calibrated_probability` must never be mutated; only `display_confidence`
+    # (user-facing) and `positionSizeScale` may be adjusted by post-scan context.
+    calibrated_probability = confidence
     if action in ("BUY", "SELL"):
         from services.calibration import apply_calibration
 
         cal_map = (market_ctx or {}).get("calibration_map", {})
         if cal_map:
-            pre_cal = confidence
+            pre_cal = calibrated_probability
             _sp500_trend = macro.get("sp500_trend") if macro else None
             _cal_regime = "bull" if _sp500_trend == "up" else "bear" if _sp500_trend == "down" else "neutral"
             _cal_sector = (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper())
-            confidence, _bin = apply_calibration(confidence, action, cal_map, regime=_cal_regime, sector=_cal_sector)
-            if _bin and abs(confidence - pre_cal) >= 2:
+            calibrated_probability, _bin = apply_calibration(
+                calibrated_probability, action, cal_map, regime=_cal_regime, sector=_cal_sector
+            )
+            if _bin and abs(calibrated_probability - pre_cal) >= 2:
                 _source = _bin.get("source", "platt")
                 _emp_wr = round((_bin.get("win_rate") or _bin.get("prob", pre_cal / 100)) * 100, 1)
                 _n = _bin.get("n", 0)
@@ -1372,13 +1342,13 @@ def _assemble_signal(
                 _gap = round(_emp_wr - pre_cal, 1)
                 _bin_lo = (int(pre_cal) // 5) * 5
                 _bin_hi = _bin_lo + 5
-                _dir = "DOWN" if confidence < pre_cal else "UP"
-                _over = confidence < pre_cal
+                _dir = "DOWN" if calibrated_probability < pre_cal else "UP"
+                _over = calibrated_probability < pre_cal
                 _is_iso = "isotonic" in _source
 
                 if _is_iso:
                     _body = (
-                        f"Isotonic regression ({_source}) mapped {pre_cal:.0f}% → {confidence:.0f}%. "
+                        f"Isotonic regression ({_source}) mapped {pre_cal:.0f}% → {calibrated_probability:.0f}%. "
                         f"Empirical win rate at this confidence level: {_emp_wr:.0f}%. "
                         f"The model is {'over' if _over else 'under'}confident by {abs(_gap):.0f}pp "
                         f"in this confidence region based on resolved signal history."
@@ -1403,7 +1373,7 @@ def _assemble_signal(
                     {
                         "src": "Backtest",
                         "head": (
-                            f"Calibration {_dir}: {pre_cal:.0f}% → {confidence:.0f}%"
+                            f"Calibration {_dir}: {pre_cal:.0f}% → {calibrated_probability:.0f}%"
                             f" ({'overconfident' if _over else 'underconfident'} by {abs(_gap):.0f}pp)"
                         ),
                         "body": _body,
@@ -1413,16 +1383,45 @@ def _assemble_signal(
                 )
             # Re-apply hard ceiling after calibration so no post-calibration value
             # escapes the empirical cap.
-            confidence = round(min(_conf_macro_cap, max(35.0, confidence)), 1)
+            calibrated_probability = round(min(_conf_macro_cap, max(35.0, calibrated_probability)), 1)
+
+    # Display confidence starts from the calibrated probability.  Post-scan steps
+    # (peer confirmation, cross-sectional ranking, etc.) may tilt this value for
+    # display/sizing purposes but must never mutate calibrated_probability.
+    display_confidence = calibrated_probability
+
+    # Calibration warning: fires when the calibrated probability significantly
+    # exceeds the historically observed win rate for this action type, or when
+    # strong conflicting signals were penalised away but confidence still appears
+    # high to the user.  Kept on the evidence-based calibrated probability.
+    if action in ("BUY", "SELL") and calibrated_probability >= 75:
+        win_rate_hist = (adaptive or {}).get(f"{action}_win_rate")
+        if (
+            win_rate_hist is not None
+            and calibrated_probability - win_rate_hist * 100 > 20
+            or total_confidence_penalty >= 0.15
+        ):
+            confidence_warning = True
+    else:
+        confidence_warning = False
 
     return {
         "ticker": ticker,
         "company": info.get("company", ticker),
         "action": action,
+        "alphaScore": score,
         "raw_score": score,
+        "rawConfidence": raw_confidence,
         "raw_confidence": raw_confidence,
-        "confidence": confidence,
+        "calibratedProbability": calibrated_probability,
+        "displayConfidence": display_confidence,
+        # Backward-compatible alias: old consumers expect a single `confidence`
+        # field.  It now equals the user-facing display confidence, which may
+        # include post-scan peer/ranking tilts.
+        "confidence": display_confidence,
         "confidence_warning": confidence_warning,
+        "rankScore": None,
+        "rankPercentile": None,
         "price": price,
         "change": tech.get("change", 0),
         "changePct": tech.get("change_pct", 0),
