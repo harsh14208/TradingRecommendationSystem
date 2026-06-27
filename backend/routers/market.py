@@ -6,10 +6,13 @@ from services.aaii import get_aaii_sentiment
 from services.breadth import get_market_breadth
 from services.cot import get_cot_signal
 from services.fear_greed import get_fear_greed, get_put_call_ratio
+from services.json_sanitize import SafeJSONResponse, json_safe
 from services.macro import get_macro_context
 from services.news import get_api_usage
 
-router = APIRouter(prefix="/api/market", tags=["market"])
+# All market endpoints return external-feed data (VIX/macro/breadth/options) that
+# can contain NaN/Inf; SafeJSONResponse sanitizes every response so none can 500.
+router = APIRouter(prefix="/api/market", tags=["market"], default_response_class=SafeJSONResponse)
 
 # Market context changes at most every few minutes — cache for 5 minutes so
 # page loads don't each fire 6 concurrent external HTTP calls. A partial/failed
@@ -51,6 +54,9 @@ async def market_context():
     # A healthy macro fetch always includes the 10Y treasury yield; if it's
     # missing the upstream fetch degraded — keep the result but retry soon.
     macro_ok = isinstance(macro, dict) and macro.get("t10y") is not None
+    # External feeds (VIX/macro ratios/breadth) can yield NaN/Inf; sanitize before
+    # caching so Starlette's allow_nan=False serializer doesn't 500 the endpoint.
+    result = json_safe(result)
     _ctx_cache["data"] = result
     _ctx_cache["ts"] = now
     _ctx_cache["ttl"] = _CTX_TTL if macro_ok else _CTX_PARTIAL_TTL
