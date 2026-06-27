@@ -31,9 +31,9 @@ the overloaded `confidence` field into separate objects:
 - **Static ticker blocklists are dangerous.** The defensive BUY blocklist
   (`KO`, `PEP`, `ABBV`, `MRK`, `LLY`, `NKE`, `V`, etc.) mixed live-validated
   and backtest-derived exclusions.  Backtest-derived ticker bans encode
-  look-ahead selection bias and temporary regimes.  Stage A keeps the blocklist
-  but adds the scaffolding to replace it with a decay-weighted, point-in-time
-  `TickerPerformanceGate` in Stage B.
+  look-ahead selection bias and temporary regimes.  Stage B replaces the
+  blocklist with `TickerPerformanceGate`, which uses decay-weighted forward
+  performance, minimum sample guards, and auto-retirement.
 - **Rule for future gates:**
   - Probability changes only when evidence changes expected win rate.
   - Sizing changes when risk, liquidity, correlation, concentration, or portfolio context changes.

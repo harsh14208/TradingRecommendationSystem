@@ -6,6 +6,7 @@ gates, calibrates confidence, derives style, and builds the final signal dict.
 
 import logging
 import math
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -20,6 +21,7 @@ from services.engines.helpers import (
     _make_plain_english,
     _score_to_action,
 )
+from services.gates.ticker_performance import TickerPerformanceGate
 from services.gates.warning import apply_warning_deconfliction
 from services.sector import SECTOR_MAP
 from services.sector_ml_promotion import effective_sector_config
@@ -456,7 +458,8 @@ def _assemble_signal(
         # Were added based on 20yr backtest negative avg return (look-ahead bias).
         # Now handled dynamically by the AR(1) momentum-persistence gate below.
     }
-    if action == "BUY" and ticker in _DEFENSIVE_BUY_BLOCK:
+    _static_blocked = action == "BUY" and ticker in _DEFENSIVE_BUY_BLOCK
+    if _static_blocked:
         action = "HOLD"
         _trace(
             "DefensiveTickerBuyGate",
@@ -478,6 +481,32 @@ def _assemble_signal(
                 "sentiment": "neg",
                 "meta": f"Ticker: {ticker} | Gate: defensive_ticker_block",
             }
+        )
+
+    # ── Stage B: TickerPerformanceGate (shadow mode) ───────────────────────
+    # Point-in-time replacement for the static blocklist above.  It evaluates
+    # each ticker's decay-weighted forward win rate over the last 180 days and
+    # blocks (or size-reduces) only when there is sufficient negative evidence.
+    # In Stage B it runs in shadow mode: it appends a rationale card but never
+    # changes the action.  It is controlled by TICKER_PERF_GATE_ENABLED; once
+    # 30 days of shadow logs show parity or improvement, the static list above
+    # will be removed and this gate will become the hard block.
+    _ticker_perf_enabled = os.getenv("TICKER_PERF_GATE_ENABLED", "").lower() in {"1", "true", "yes"}
+    TickerPerformanceGate(enabled=_ticker_perf_enabled).apply(_sig_ctx)
+    _ticker_decision = TickerPerformanceGate(enabled=_ticker_perf_enabled)._decide(_sig_ctx)
+    if _ticker_perf_enabled:
+        action = _sig_ctx.action
+    if _static_blocked and not _ticker_decision.block:
+        log.info(
+            "[ticker_perf_shadow] %s: static blocklist blocked, ticker gate would NOT block (%s)",
+            ticker,
+            _ticker_decision.reason,
+        )
+    elif not _static_blocked and _ticker_decision.block:
+        log.info(
+            "[ticker_perf_shadow] %s: static blocklist passed, ticker gate WOULD block (%s)",
+            ticker,
+            _ticker_decision.reason,
         )
 
     # ── Fundamental Value-Trap Gate (see gates/fundamentals.py) ─────────────

@@ -5561,6 +5561,22 @@ async def scan_all(
     histories = histories or {}
     infos = infos or {}
 
+    # ── Refresh ticker-performance snapshot if stale or absent ───────────────
+    # Stage B: point-in-time replacement for the static defensive-ticker blocklist.
+    # If a DB session is available, recompute the decay-weighted ticker hit-rate
+    # snapshot once per scan.  The gate itself runs in shadow mode inside
+    # _assemble_signal() and does not affect delivery yet.
+    try:
+        from database import AsyncSessionLocal
+        from services.gates.ticker_performance import get_snapshot, refresh_snapshot
+
+        _snap = get_snapshot()
+        if _snap is None or (datetime.now(timezone.utc) - _snap.computed_at).total_seconds() > 3600:
+            async with AsyncSessionLocal() as db:
+                await refresh_snapshot(db)
+    except Exception:
+        log.debug("[scan_all] ticker performance snapshot refresh skipped", exc_info=True)
+
     # ── §63 Sector cointegration: inject ETF close-price series into market_ctx ─
     # If sector ETF DataFrames are present in the prefetched histories dict (they
     # usually are since XLK/XLF/XLY/XLC/XLB are in the watchlist), extract their

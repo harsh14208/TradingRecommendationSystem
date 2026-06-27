@@ -37,6 +37,19 @@ Rule of thumb for future gates:
 - **Sizing** changes when risk, liquidity, correlation, concentration, or portfolio context changes.
 - **Ranking** changes only display/order, not probability.
 
+### Ticker performance gate (Stage B, 2026-06-27)
+
+The static defensive-ticker BUY blocklist is being replaced by a point-in-time
+`ticker_performance` gate.  It blocks (or size-reduces) a ticker only when the
+ticker's own recent resolved signals show a poor decay-weighted win rate with
+sufficient sample size (`n >= 5` to block, `n >= 3` to caution).  Auto-retirement
+is built in: when forward performance improves, the gate unblocks automatically.
+
+In Stage B the gate runs in **shadow mode** inside `assembler.py`; the legacy
+static blocklist still governs delivery.  Disagreements are logged as
+`[ticker_perf_shadow]`.  After 30 days of shadow logs show parity or improvement,
+the static list will be removed and the gate will become the hard block.
+
 The legacy `confidence` key is retained as an alias for `displayConfidence` so
 existing consumers continue to work.
 

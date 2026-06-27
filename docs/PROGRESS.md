@@ -55,10 +55,6 @@ ambiguous.
   calibration is last, `calibratedProbability` is immutable post-assembly,
   bounds hold, and HOLD signals have no levels.
 
-**Stage B pending:** replace the static defensive-ticker BUY blocklist with a
-decay-weighted, point-in-time `TickerPerformanceGate` and remove the hardcoded
-blocklist after a 30-day shadow comparison.
-
 **Ratings impact:** no score move yet — the refactor is structural and
 forward-protective.  Live win-rate attribution and calibration quality should
 improve as the ontology prevents probability drift, but that must be proven in
@@ -68,6 +64,38 @@ forward data before ratings change.
 pre-existing failures as before the refactor (broker mocks, FOMC date imports,
 paper-router SecretStr issues, flaky WebSocket test).  No new regressions
 introduced by this change.
+
+### v8.8.8b (2026-06-27) — Point-in-Time Ticker Performance Gate (Stage B)
+
+**Why this matters:** the static defensive-ticker BUY blocklist (`KO`, `PEP`,
+`ABBV`, `MRK`, `LLY`, `NKE`, `V`, etc.) mixed live-validated and backtest-derived
+exclusions.  Hardcoded ticker bans encode look-ahead selection bias and can
+persist long after a ticker regime changes.
+
+**Changes:**
+- New `services/gates/ticker_performance.py` with:
+  - Decay-weighted ticker hit-rate computation over a 180-day window.
+  - Minimum sample guards (`n >= 5` to block, `n >= 3` to caution).
+  - Auto-retirement: a ticker unblocks automatically when recent forward
+    performance improves above the threshold.
+  - ATR-rank viability guard turns marginal blocks into size reductions when
+    the stock is low-friction.
+- `services/signal_engine.py`: `scan_all()` refreshes the snapshot once per scan
+  from the DB if it is stale/absent.
+- `services/engines/assembler.py`: `TickerPerformanceGate` runs in **shadow
+  mode** alongside the legacy static blocklist.  It appends rationale cards but
+  does not change the action.  Disagreements between the static list and the
+  dynamic gate are logged as `[ticker_perf_shadow]`.
+- `tests/test_ticker_performance_gate.py`: unit tests for snapshot decay,
+  windowing, blocking, caution sizing, low-ATR waiver, auto-retirement, and
+  shadow mode.
+- Gate can be promoted to a hard block by setting `TICKER_PERF_GATE_ENABLED=1`.
+
+**Rollout plan:** keep shadow mode active; after 30 days of shadow logs show
+parity or improvement vs. the static blocklist, delete `_DEFENSIVE_BUY_BLOCK`
+and default `TickerPerformanceGate` to `enabled=True`.
+
+**Tests:** 87 signal-engine / gate tests pass; no new regressions.
 
 ### v8.8.7 (2026-06-18) — Backtest Realism, QA Hardening, Entry-Score Relaxation, Sources Removal, Elite Tier, aiohttp CVE Patch
 
