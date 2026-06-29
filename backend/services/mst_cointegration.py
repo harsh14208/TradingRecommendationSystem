@@ -217,7 +217,15 @@ async def refresh_mst_pairs(histories: dict[str, pd.DataFrame]) -> int:
     frames: dict[str, pd.Series] = {}
     for ticker, df in histories.items():
         if df is not None and "Close" in df.columns and len(df) >= _MIN_WINDOW:
-            frames[ticker] = df["Close"].astype(float)
+            s = df["Close"].astype(float)
+            # Histories come from mixed sources (Polygon = tz-aware, yfinance = tz-naive).
+            # Normalise every index to tz-naive so the DataFrame index-union below does not
+            # raise "Cannot join tz-naive with tz-aware DatetimeIndex".
+            idx = s.index
+            if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None:
+                s = s.copy()
+                s.index = idx.tz_localize(None)
+            frames[ticker] = s
 
     if len(frames) < 5:
         log.warning("[mst] Too few histories (%d) to build MST", len(frames))
