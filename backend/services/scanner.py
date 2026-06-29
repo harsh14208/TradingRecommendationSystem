@@ -71,10 +71,20 @@ def _check_data_quality(histories: dict, settings) -> list[str]:
     return degraded
 
 
+# Delivery-SLA monitor. The once-daily options/VRP (ORATS) scan legitimately runs
+# ~5 min (the regular directional scans are well under), so the old 5-min limit
+# false-alarmed daily. Alert only on genuine degradation, and once per cycle — a slow
+# batch breaches for every signal in it, so don't spam N identical messages.
+_SLA_LATENCY_LIMIT_S = 480.0  # 8 min (was 300 = 5 min, under the real VRP scan duration)
+_sla_alert_state: dict = {"last_baseline": None}  # de-dupe: one SLA alert per scan cycle
+
+
 async def _alert_sla_breach(ticker: str, action: str, latency_s: float, settings):
-    """Notify owner when signal delivery exceeds 5-minute SLA."""
+    """Notify owner when a scan cycle's delivery latency exceeds the SLA."""
+    target_min = int(_SLA_LATENCY_LIMIT_S / 60)
     msg = (
-        f"⚠️ SLA breach: {action} {ticker} took {latency_s / 60:.1f}min to deliver (target ≤5min). Check scanner health."
+        f"⚠️ SLA breach: {action} {ticker} took {latency_s / 60:.1f}min to deliver "
+        f"(target ≤{target_min}min). Check scanner health."
     )
     try:
         url = f"https://api.telegram.org/bot{settings.telegram_bot_token.get_secret_value()}/sendMessage"
@@ -298,7 +308,7 @@ def _build_discord_embed(sig_dict: dict) -> dict:
         "fields": [
             {"name": "Confidence", "value": f"{sig_dict.get('confidence')}%", "inline": True},
             {"name": "Price", "value": f"${sig_dict.get('price')}", "inline": True},
-            {"name": "R:R", "value": str(sig_dict.get("rr", "—")), "inline": True},
+            {"name": "R:R", "value": str(sig_dict.get("rr") or "—"), "inline": True},
             {"name": "Entry", "value": f"${sig_dict.get('entry')}", "inline": True},
             {"name": "Stop", "value": f"${sig_dict.get('stop')}", "inline": True},
             {"name": "Target", "value": f"${sig_dict.get('target')}", "inline": True},
@@ -653,17 +663,21 @@ async def _maybe_send(
         sla_baseline = scan_started_at or db_row.created_at
         if sla_baseline:
             latency_s = (now - sla_baseline).total_seconds()
-            if latency_s > 300:  # > 5 minutes from this scan cycle's start
+            if latency_s > _SLA_LATENCY_LIMIT_S:
                 log.warning(
                     f"[sla] {sig_dict['ticker']} delivery latency {latency_s:.0f}s "
                     f"(scan started {sla_baseline.isoformat()}, sent {now.isoformat()})"
                 )
-                try:
-                    asyncio.ensure_future(
-                        _alert_sla_breach(sig_dict["ticker"], sig_dict["action"], latency_s, settings)
-                    )
-                except Exception:
-                    log.warning("_alert_sla_breach scheduling failed", exc_info=True)
+                # One owner alert per scan cycle — a slow batch breaches for every
+                # signal in it, so de-dupe on the cycle baseline to avoid N alerts.
+                if _sla_alert_state["last_baseline"] != sla_baseline:
+                    _sla_alert_state["last_baseline"] = sla_baseline
+                    try:
+                        asyncio.ensure_future(
+                            _alert_sla_breach(sig_dict["ticker"], sig_dict["action"], latency_s, settings)
+                        )
+                    except Exception:
+                        log.warning("_alert_sla_breach scheduling failed", exc_info=True)
         log.info(
             f" ✓ Telegram sent ({label}) — "
             f"{sig_dict['action']} {sig_dict['ticker']} @ {sig_dict['price']:.2f} "

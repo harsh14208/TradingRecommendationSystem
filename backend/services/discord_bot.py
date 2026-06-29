@@ -23,7 +23,7 @@ async def send_discord_signal(discord_webhook_url: str, signal_data: dict):
         "fields": [
             {"name": "Confidence", "value": f"{signal_data.get('confidence')}%", "inline": True},
             {"name": "Price", "value": f"${signal_data.get('price')}", "inline": True},
-            {"name": "R:R", "value": str(signal_data.get("rr", "—")), "inline": True},
+            {"name": "R:R", "value": str(signal_data.get("rr") or "—"), "inline": True},
             {"name": "Entry", "value": f"${signal_data.get('entry')}", "inline": True},
             {"name": "Stop", "value": f"${signal_data.get('stop')}", "inline": True},
             {"name": "Target", "value": f"${signal_data.get('target')}", "inline": True},

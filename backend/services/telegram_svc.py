@@ -5,7 +5,10 @@ from services.http_client import get_ssl_context, shared_session
 def format_signal(signal: dict) -> str:
     emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(signal["action"], "⚪")
     conf = f"{signal['confidence']:.0f}%"
-    rr = signal.get("rr", "—")
+    # `.get(key, default)` only defaults on a MISSING key; VRP/defined-risk signals
+    # carry rr=None (present), which would render "R:R None". Coerce None/empty to "—".
+    rr = signal.get("rr")
+    rr = rr if rr not in (None, "", "None") else "—"
     company = signal.get("company", "")
     name_part = f" ({company})" if company and company != signal["ticker"] else ""
     lines = [
