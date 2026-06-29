@@ -851,19 +851,27 @@ async def _weekly_drift_detection():
             from scripts.drift_detector import detect_drift
 
             result = await detect_drift(lookback_days=7, verbose=False)
-            if result["drifts"]:
+            if result["logic_drifts"]:
+                # Only genuine replay-engine logic/data drift alarms. Policy/config
+                # divergences (e.g. the SELL/long-only toggle) are expected and reported
+                # as context, not as errors.
+                first_logic = next((d for d in result["discrepancies"] if d.get("kind") != "policy"), None)
                 log.error(
-                    "[drift] REF-2 replay-parity drift: %d/%d signals drifted (%d no-snapshot). First: %s",
-                    result["drifts"],
+                    "[drift] REF-2 replay-parity LOGIC drift: %d/%d signals "
+                    "(%d policy/config drift, %d no-snapshot). First: %s",
+                    result["logic_drifts"],
                     result["checked"],
+                    result["policy_drifts"],
                     result["no_snapshot"],
-                    (result["discrepancies"][0]["description"] if result["discrepancies"] else "?"),
+                    (first_logic["description"] if first_logic else "?"),
                 )
             else:
                 log.info(
-                    "[drift] REF-2 replay-parity OK: %d checked, %d matched, %d no-snapshot.",
+                    "[drift] REF-2 replay-parity OK: %d checked, %d matched, "
+                    "%d policy/config drift (expected), %d no-snapshot.",
                     result["checked"],
                     result["matched"],
+                    result["policy_drifts"],
                     result["no_snapshot"],
                 )
         except Exception as e:

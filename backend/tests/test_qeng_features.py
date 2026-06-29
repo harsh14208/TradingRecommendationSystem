@@ -160,6 +160,52 @@ async def test_drift_detector_flags_decision_drift():
 
 
 @pytest.mark.asyncio
+async def test_drift_detector_splits_policy_vs_logic():
+    """REF-2: a live-vs-replay decision split caused by a CONFIG/POLICY toggle
+    (e.g. the SELL/long-only regime) is classified as ``policy`` drift and does NOT
+    trip the logic-drift alarm, whereas a snapshot-deterministic logic gate
+    ("no MR setup") is ``logic`` drift and does. Regression guard for the false
+    Sentry alarm caused by replaying SELLs through a now-long-only policy."""
+    from unittest.mock import AsyncMock, patch
+
+    from models import Signal
+    from scripts.drift_detector import detect_drift
+
+    async def _fake_gates(sig_dict, db, settings):
+        if sig_dict["ticker"] == "POLICYX":  # config/policy toggle → expected, not a bug
+            return "SELL delivery disabled — long-only regime", sig_dict
+        if sig_dict["ticker"] == "LOGICX":  # snapshot-deterministic → real replay drift
+            return "no mean-reversion setup — needs ≥1 oversold condition", sig_dict
+        return None, sig_dict
+
+    async with AsyncSessionLocal() as db:
+        s_policy = Signal(ticker="POLICYX", action="SELL", confidence=55.0, price=100.0, headline="p", is_sent=True)
+        s_logic = Signal(ticker="LOGICX", action="BUY", confidence=55.0, price=100.0, headline="l", is_sent=True)
+        db.add_all([s_policy, s_logic])
+        await db.flush()
+        for sig in (s_policy, s_logic):
+            await save_feature_snapshot(
+                db=db,
+                ticker=sig.ticker,
+                ts=datetime.utcnow(),
+                features={"rsi": 38.0, "bb_pct_b": 0.18, "quality_score": 55.0, "hasMr": True},
+                signal_id=sig.id,
+            )
+        await db.commit()
+
+        with patch("scripts.drift_detector.check_delivery_gates", AsyncMock(side_effect=_fake_gates)):
+            result = await detect_drift(lookback_days=7, db=db, verbose=False)
+
+    by_ticker = {d["ticker"]: d.get("kind") for d in result["discrepancies"]}
+    assert by_ticker.get("POLICYX") == "policy"  # SELL/long-only toggle → not alarmed
+    assert by_ticker.get("LOGICX") == "logic"  # deterministic gate → real drift
+    assert result["policy_drifts"] >= 1
+    assert result["logic_drifts"] >= 1
+    # logic_drifts must equal the number of non-policy discrepancies (the alarm count).
+    assert result["logic_drifts"] == sum(1 for k in by_ticker.values() if k == "logic")
+
+
+@pytest.mark.asyncio
 async def test_promote_model_checklist():
     """Test model promotion script against registry and checklist requirements."""
 

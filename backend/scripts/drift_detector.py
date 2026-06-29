@@ -30,6 +30,35 @@ class MockSettings:
     min_confidence = 40.0  # Match v8.0 min_confidence configuration
 
 
+# Skip reasons driven by CONFIG / POLICY / market-state toggles — i.e. NOT derivable
+# from the point-in-time feature snapshot. When live and replay disagree because one
+# of these changed between signal time and replay time (the long-only / SELL toggle,
+# recalibrated confidence floors, blocked-ticker/sector lists, the VIX<15 or FOMC
+# market-state gates, sector saturation), that is an INTENTIONAL policy change — not
+# replay-engine drift — so it is tracked separately and does NOT trip the alarm.
+# Snapshot-deterministic logic gates ("no MR setup", "not BUY/SELL", "profit < min")
+# remain alarming because the replay should reproduce them exactly.
+_POLICY_SKIP_PATTERNS = (
+    "long-only",
+    "delivery disabled",
+    "style disabled",
+    "blocked",
+    "floor",
+    "vix=",
+    "fomc",
+    "already has",
+)
+
+
+def _is_policy_skip(reason) -> bool:
+    """True if a skip reason comes from a config/policy/market-state toggle rather
+    than snapshot-deterministic logic."""
+    if not reason:
+        return False
+    r = str(reason).lower()
+    return any(p in r for p in _POLICY_SKIP_PATTERNS)
+
+
 async def _compare_signals(db, lookback_days: int, verbose: bool) -> dict:
     """Core drift comparison. Returns a result dict; never calls sys.exit."""
     cutoff = datetime.utcnow() - timedelta(days=lookback_days)
@@ -91,32 +120,48 @@ async def _compare_signals(db, lookback_days: int, verbose: bool) -> dict:
         )
 
         has_drift = False
+        kind = "logic"
         desc = ""
         if replay_passed != live_passed:
             has_drift = True
+            # A live-vs-replay decision split is EXPECTED policy drift (not a bug) when
+            # the replay skips for a config/policy/market-state reason that toggled since
+            # the signal was sent (e.g. SELL → long-only). Everything else is logic drift.
+            kind = "policy" if (not replay_passed and _is_policy_skip(skip_reason)) else "logic"
             desc = (
                 f"Decision discrepancy: Live Sent={live_passed} | "
                 f"Replay Passed={replay_passed} (Skip reason: {skip_reason})"
             )
         elif conf_drift > 0.01:
             has_drift = True
+            kind = "logic"
             desc = f"Confidence discrepancy: Live Conf={sig.confidence:.2f}% | Replay Conf={replay_conf:.2f}%"
 
         if has_drift:
             discrepancies.append(
-                {"signal_id": sig.id, "ticker": sig.ticker, "created_at": sig.created_at, "description": desc}
+                {
+                    "signal_id": sig.id,
+                    "ticker": sig.ticker,
+                    "created_at": sig.created_at,
+                    "description": desc,
+                    "kind": kind,
+                }
             )
             if verbose:
-                print(f"❌ DRIFT DETECTED: Signal ID {sig.id} ({sig.ticker}) at {sig.created_at} | {desc}")
+                tag = "POLICY DRIFT (expected)" if kind == "policy" else "DRIFT DETECTED"
+                print(f"❌ {tag}: Signal ID {sig.id} ({sig.ticker}) at {sig.created_at} | {desc}")
         else:
             matched_count += 1
             if verbose:
                 print(f"✅ MATCHED: Signal ID {sig.id} ({sig.ticker}) matches replay engine perfectly.")
 
+    logic_drifts = sum(1 for d in discrepancies if d.get("kind") != "policy")
     return {
         "checked": len(signals),
         "matched": matched_count,
         "drifts": len(discrepancies),
+        "logic_drifts": logic_drifts,
+        "policy_drifts": len(discrepancies) - logic_drifts,
         "no_snapshot": no_snapshot_count,
         "discrepancies": discrepancies,
     }
@@ -144,18 +189,24 @@ async def detect_drift(lookback_days: int = 7, db=None, verbose: bool = True) ->
         print("\nDrift Detection Summary:")
         print(f"  Total signals checked: {result['checked']}")
         print(f"  Matched perfectly: {result['matched']}")
-        print(f"  Drifts detected: {result['drifts']}")
-        if result["drifts"]:
-            print("\n🚨 WARNING: System logic or data drift detected! Check signal assembler and gate inputs.")
+        print(
+            f"  Logic/data drifts: {result['logic_drifts']}  "
+            f"(policy/config drifts: {result['policy_drifts']} — expected from gate toggles)"
+        )
+        if result["logic_drifts"]:
+            print("\n🚨 WARNING: Replay-engine logic/data drift! Check signal assembler and gate inputs.")
         else:
-            print("\n🎉 SUCCESS: All replayed signals match live records. No drift detected.")
+            print(
+                f"\n🎉 SUCCESS: No logic/data drift. {result['policy_drifts']} policy/config "
+                "divergence(s) are expected (intentional gate toggles)."
+            )
 
     return result
 
 
 def main():
     result = asyncio.run(detect_drift())
-    sys.exit(1 if result["drifts"] else 0)
+    sys.exit(1 if result["logic_drifts"] else 0)
 
 
 if __name__ == "__main__":
