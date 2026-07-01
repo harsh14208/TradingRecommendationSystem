@@ -260,7 +260,7 @@ async def _fanout_to_subscribers(sig_dict: dict, db_row: Signal, db) -> tuple[bo
             tg_payload = {
                 "chat_id": user.telegram_chat_id,
                 "text": message_text,
-                "parse_mode": "Markdown",
+                "parse_mode": "MarkdownV2",
             }
             await queue_delivery(
                 signal_id=db_row.id,
@@ -616,7 +616,7 @@ async def _maybe_send(
             async with aiohttp.ClientSession() as _sess:
                 _r = await _sess.post(
                     _url,
-                    json={"chat_id": _broadcast_id, "text": _msg, "parse_mode": "Markdown"},
+                    json={"chat_id": _broadcast_id, "text": _msg, "parse_mode": "MarkdownV2"},
                     ssl=_SSL_CTX,
                     timeout=aiohttp.ClientTimeout(total=8),
                 )

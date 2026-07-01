@@ -1,30 +1,48 @@
 import aiohttp
 from services.http_client import get_ssl_context, shared_session
 
+# MarkdownV2 reserves these; any that appear in *dynamic* text (headlines, company
+# names, formatted numbers with '.' or '-') must be backslash-escaped or Telegram
+# returns 400 "can't parse entities". We escape the interpolated values only —
+# never the literal * _ we add for bold/italic formatting.
+_MDV2_SPECIAL = set(r"_*[]()~`>#+-=|{}.!")
+
+
+def _esc(value) -> str:
+    """Escape a value for Telegram MarkdownV2 body text."""
+    return "".join("\\" + c if c in _MDV2_SPECIAL else c for c in str(value))
+
 
 def format_signal(signal: dict) -> str:
     emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(signal["action"], "⚪")
-    conf = f"{signal['confidence']:.0f}%"
+    action = _esc(signal["action"])
+    ticker = _esc(signal["ticker"])
+    conf = _esc(f"{signal['confidence']:.0f}%")
+    price = _esc(f"{signal['price']:.2f}")
     # `.get(key, default)` only defaults on a MISSING key; VRP/defined-risk signals
     # carry rr=None (present), which would render "R:R None". Coerce None/empty to "—".
     rr = signal.get("rr")
     rr = rr if rr not in (None, "", "None") else "—"
+    rr = _esc(rr)
     company = signal.get("company", "")
-    name_part = f" ({company})" if company and company != signal["ticker"] else ""
+    name_part = f" \\({_esc(company)}\\)" if company and company != signal["ticker"] else ""
     lines = [
-        f"{emoji} *{signal['action']} {signal['ticker']}*{name_part} · ${signal['price']:.2f} · {conf} conf · R:R {rr}",
-        f"_{signal['headline']}_",
+        f"{emoji} *{action} {ticker}*{name_part} · ${price} · {conf} conf · R:R {rr}",
+        f"_{_esc(signal['headline'])}_",
     ]
     if signal.get("entry") and signal.get("stop") and signal.get("target"):
-        lines.append(f"Entry ${signal['entry']:.2f}  Stop ${signal['stop']:.2f}  TP ${signal['target']:.2f}")
-    lines.append("_Not financial advice · Signal.Trade_")
+        entry = _esc(f"{signal['entry']:.2f}")
+        stop = _esc(f"{signal['stop']:.2f}")
+        target = _esc(f"{signal['target']:.2f}")
+        lines.append(f"Entry ${entry}  Stop ${stop}  TP ${target}")
+    lines.append(f"_{_esc('Not financial advice · Signal.Trade')}_")
     return "\n".join(lines)
 
 
 async def send_telegram_message(
     chat_id: str,
     text: str,
-    parse_mode: str = "Markdown",
+    parse_mode: str = "MarkdownV2",
     timeout: int = 8,
 ) -> tuple[bool, str]:
     """Single shared Telegram send function used by all call sites."""

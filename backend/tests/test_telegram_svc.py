@@ -77,12 +77,13 @@ class TestFormatSignal:
     def test_price_formatted_to_two_decimal_places(self):
         sig = _base_signal(price=150.5)
         result = self.format_signal(sig)
-        assert "$150.50" in result
+        # MarkdownV2 escapes the decimal point.
+        assert "$150\\.50" in result
 
     def test_rr_included_when_present(self):
         sig = _base_signal(rr="3.1")
         result = self.format_signal(sig)
-        assert "R:R 3.1" in result
+        assert "R:R 3\\.1" in result
 
     def test_rr_falls_back_to_em_dash_when_missing(self):
         sig = _base_signal()
@@ -98,9 +99,9 @@ class TestFormatSignal:
     def test_entry_stop_target_line_appended_when_all_present(self):
         sig = _base_signal(entry=148.00, stop=144.00, target=158.00)
         result = self.format_signal(sig)
-        assert "Entry $148.00" in result
-        assert "Stop $144.00" in result
-        assert "TP $158.00" in result
+        assert "Entry $148\\.00" in result
+        assert "Stop $144\\.00" in result
+        assert "TP $158\\.00" in result
 
     def test_entry_stop_target_line_omitted_when_any_is_missing(self):
         # Only entry + stop, no target
@@ -116,7 +117,20 @@ class TestFormatSignal:
     def test_disclaimer_always_present(self):
         sig = _base_signal()
         result = self.format_signal(sig)
-        assert "_Not financial advice · Signal.Trade_" in result
+        assert "_Not financial advice · Signal\\.Trade_" in result
+
+    def test_special_chars_in_headline_are_escaped(self):
+        # The real-world 400 cause: unbalanced markup chars in the headline.
+        sig = _base_signal(headline="Q3 EPS +12% (beat); guidance_raised *sharply*")
+        result = self.format_signal(sig)
+        # Every MarkdownV2 special char in the headline must be backslash-escaped.
+        assert "\\+12% \\(beat\\); guidance\\_raised \\*sharply\\*" in result
+
+    def test_special_chars_in_company_are_escaped(self):
+        sig = _base_signal(ticker="BRK-B", company="Berkshire (Class B)")
+        result = self.format_signal(sig)
+        assert "*BUY BRK\\-B*" in result
+        assert "\\(Berkshire \\(Class B\\)\\)" in result
 
     def test_output_is_multiline_string(self):
         sig = _base_signal()
@@ -308,9 +322,9 @@ class TestSendTelegram:
         assert ok is True
         assert len(posted_payloads) == 1
         payload = posted_payloads[0]
-        assert "Entry $148.00" in payload["text"]
-        assert "Stop $144.00" in payload["text"]
-        assert payload["parse_mode"] == "Markdown"
+        assert "Entry $148\\.00" in payload["text"]
+        assert "Stop $144\\.00" in payload["text"]
+        assert payload["parse_mode"] == "MarkdownV2"
         assert payload["chat_id"] == "-1001234567890"
 
 
