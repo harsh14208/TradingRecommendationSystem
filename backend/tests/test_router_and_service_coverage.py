@@ -850,3 +850,186 @@ class TestDeliveryManagerDelivery:
             # Final receipt should have status failed
             final_receipt = mock_db.get.await_args_list[-1][0][1]
             # We can't easily assert on the mock object properties, but coverage is exercised
+
+    @pytest.mark.asyncio
+    async def test_deliver_with_retry_telegram_400_no_retry(self, mock_db):
+        """A Telegram 4xx is permanent: stop after one attempt and record the description."""
+        user = MagicMock()
+        user.id = 7
+        user.webhook_secret = None
+
+        captured = {}
+
+        def _db_get(model, pk):
+            if model.__name__ == "User":
+                return user
+            if model.__name__ == "SignalDelivery":
+                receipt = MagicMock()
+                receipt.id = 1
+                receipt.status = "pending"
+                captured["receipt"] = receipt
+                return receipt
+            return None
+
+        mock_db.get.side_effect = _db_get
+        mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=False),
+            patch("services.delivery_manager.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+            patch("services.http_client.shared_session") as mock_shared,
+        ):
+            s = MagicMock()
+            s.telegram_bot_token = MagicMock()
+            s.telegram_bot_token.get_secret_value.return_value = "tok"
+            s.jwt_secret = MagicMock()
+            s.jwt_secret.get_secret_value.return_value = "jwt"
+            mock_settings.return_value = s
+
+            post_resp = AsyncMock()
+            post_resp.status = 400
+            post_resp.json = AsyncMock(return_value={"ok": False, "description": "Bad Request: chat not found"})
+            post_cm = AsyncMock()
+            post_cm.__aenter__ = AsyncMock(return_value=post_resp)
+            post_cm.__aexit__ = AsyncMock(return_value=False)
+            session_mock = AsyncMock()
+            session_mock.post = MagicMock(return_value=post_cm)
+            session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+            session_mock.__aexit__ = AsyncMock(return_value=False)
+            mock_shared.return_value = session_mock
+
+            await dm.deliver_with_retry(7, 7, "telegram", {"text": "hi"}, max_retries=5)
+
+        # Permanent 4xx must not be retried: exactly one POST, no backoff sleeps.
+        assert session_mock.post.call_count == 1
+        mock_sleep.assert_not_awaited()
+        # The Telegram description is preserved (truncated to 50 chars) for the dead-letter.
+        assert captured["receipt"].status == "failed"
+        assert "chat not found" in (captured["receipt"].error_code or "")
+        # The failure is surfaced in the delivery panel (send_log fail row).
+        added = [c.args[0] for c in mock_db.add.call_args_list]
+        send_logs = [a for a in added if type(a).__name__ == "SendLog"]
+        assert len(send_logs) == 1
+        assert send_logs[0].status == "fail"
+        assert send_logs[0].user_id == 7
+
+    @pytest.mark.asyncio
+    async def test_deliver_with_retry_telegram_markdown_falls_back_to_plain(self, mock_db):
+        """A Markdown parse 400 retries once as plain text and succeeds."""
+        user = MagicMock()
+        user.id = 7
+        user.webhook_secret = None
+
+        def _db_get(model, pk):
+            if model.__name__ == "User":
+                return user
+            if model.__name__ == "SignalDelivery":
+                receipt = MagicMock()
+                receipt.id = 1
+                receipt.status = "pending"
+                return receipt
+            return None
+
+        mock_db.get.side_effect = _db_get
+        mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=False),
+            patch("services.delivery_manager.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+            patch("services.http_client.shared_session") as mock_shared,
+        ):
+            s = MagicMock()
+            s.telegram_bot_token = MagicMock()
+            s.telegram_bot_token.get_secret_value.return_value = "tok"
+            s.jwt_secret = MagicMock()
+            s.jwt_secret.get_secret_value.return_value = "jwt"
+            mock_settings.return_value = s
+
+            # First call: 400 parse error. Second call (plain text): success.
+            resp_fail = AsyncMock()
+            resp_fail.status = 400
+            resp_fail.json = AsyncMock(return_value={"ok": False, "description": "Bad Request: can't parse entities"})
+            cm_fail = AsyncMock()
+            cm_fail.__aenter__ = AsyncMock(return_value=resp_fail)
+            cm_fail.__aexit__ = AsyncMock(return_value=False)
+
+            resp_ok = AsyncMock()
+            resp_ok.status = 200
+            resp_ok.json = AsyncMock(return_value={"ok": True, "result": {"message_id": 5}})
+            cm_ok = AsyncMock()
+            cm_ok.__aenter__ = AsyncMock(return_value=resp_ok)
+            cm_ok.__aexit__ = AsyncMock(return_value=False)
+
+            session_mock = AsyncMock()
+            session_mock.post = MagicMock(side_effect=[cm_fail, cm_ok])
+            session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+            session_mock.__aexit__ = AsyncMock(return_value=False)
+            mock_shared.return_value = session_mock
+
+            await dm.deliver_with_retry(
+                7, 7, "telegram", {"chat_id": "x", "text": "hi *_", "parse_mode": "Markdown"}, max_retries=5
+            )
+
+        # Two posts (Markdown then plain text), no outer-loop backoff sleep needed.
+        assert session_mock.post.call_count == 2
+        # Second call dropped parse_mode.
+        assert "parse_mode" not in session_mock.post.call_args_list[1].kwargs["json"]
+        mock_sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_deliver_with_retry_telegram_429_retries(self, mock_db):
+        """A Telegram 429 rate-limit is transient: it must still be retried."""
+        user = MagicMock()
+        user.id = 1
+        user.webhook_secret = None
+
+        def _db_get(model, pk):
+            if model.__name__ == "User":
+                return user
+            if model.__name__ == "SignalDelivery":
+                receipt = MagicMock()
+                receipt.id = 1
+                receipt.status = "pending"
+                return receipt
+            return None
+
+        mock_db.get.side_effect = _db_get
+        mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+
+        with (
+            patch.object(dm, "AsyncSessionLocal", _make_async_session_local(mock_db)),
+            patch("config.get_settings") as mock_settings,
+            patch("services.delivery_manager.is_in_quiet_hours", return_value=False),
+            patch("services.delivery_manager.asyncio.sleep", new_callable=AsyncMock),
+            patch("services.provider_telemetry.current_cycle_id", MagicMock(get=lambda: "c1")),
+            patch("services.http_client.shared_session") as mock_shared,
+        ):
+            s = MagicMock()
+            s.telegram_bot_token = MagicMock()
+            s.telegram_bot_token.get_secret_value.return_value = "tok"
+            s.jwt_secret = MagicMock()
+            s.jwt_secret.get_secret_value.return_value = "jwt"
+            mock_settings.return_value = s
+
+            post_resp = AsyncMock()
+            post_resp.status = 429
+            post_resp.json = AsyncMock(return_value={"ok": False, "description": "Too Many Requests"})
+            post_cm = AsyncMock()
+            post_cm.__aenter__ = AsyncMock(return_value=post_resp)
+            post_cm.__aexit__ = AsyncMock(return_value=False)
+            session_mock = AsyncMock()
+            session_mock.post = MagicMock(return_value=post_cm)
+            session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+            session_mock.__aexit__ = AsyncMock(return_value=False)
+            mock_shared.return_value = session_mock
+
+            await dm.deliver_with_retry(1, 1, "telegram", {"text": "hi"}, max_retries=3)
+
+        # 429 stays retryable: all attempts are used.
+        assert session_mock.post.call_count == 3

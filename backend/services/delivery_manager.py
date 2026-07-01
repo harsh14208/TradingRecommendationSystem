@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from database import AsyncSessionLocal
-from models import SignalDelivery, User, AppSettings
+from models import SignalDelivery, SendLog, User, AppSettings
 from sqlalchemy import select
 
 log = logging.getLogger("signal.trade.delivery")
@@ -188,6 +188,7 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
     latency_ms = None
 
     for attempt in range(max_retries):
+        permanent = False
         if attempt > 0:
             # Update receipt to retrying
             async with _session() as db:
@@ -209,18 +210,54 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
             if channel == "telegram":
                 s = get_settings()
                 url = f"https://api.telegram.org/bot{s.telegram_bot_token.get_secret_value()}/sendMessage"
-                async with shared_session() as session:
-                    async with session.post(url, json=payload, timeout=5.0) as resp:
-                        latency_ms = (time.monotonic() - start_time) * 1000
-                        if resp.status == 200:
-                            res_data = await resp.json()
-                            if res_data.get("ok"):
-                                success = True
-                                msg_id = str(res_data.get("result", {}).get("message_id", ""))
-                            else:
-                                err = f"TG error: {res_data.get('description')}"
-                        else:
-                            err = f"HTTP {resp.status}"
+                tg_payload = payload
+                # One inner attempt, plus a single plain-text fallback if Markdown
+                # parsing fails (see below).
+                for _tg_try in range(2):
+                    async with shared_session() as session:
+                        async with session.post(url, json=tg_payload, timeout=5.0) as resp:
+                            latency_ms = (time.monotonic() - start_time) * 1000
+                            if resp.status == 200:
+                                res_data = await resp.json()
+                                if res_data.get("ok"):
+                                    success = True
+                                    msg_id = str(res_data.get("result", {}).get("message_id", ""))
+                                else:
+                                    err = f"TG error: {res_data.get('description')}"
+                                break
+
+                            # Capture Telegram's JSON description so the dead-letter says *why*
+                            # (e.g. "Bad Request: chat not found", "Forbidden: bot was blocked").
+                            description = ""
+                            try:
+                                description = (await resp.json()).get("description", "")
+                            except Exception:
+                                pass
+                            err = f"HTTP {resp.status}" + (f": {description}" if description else "")
+
+                            # Markdown entity-parse failures are content bugs, not transient.
+                            # Telegram's legacy Markdown chokes on unbalanced * _ ` [ in
+                            # headlines/company names. Re-send once as plain text so the user
+                            # still gets the alert instead of a silent dead-letter.
+                            if (
+                                resp.status == 400
+                                and "parse" in description.lower()
+                                and tg_payload.get("parse_mode")
+                                and _tg_try == 0
+                            ):
+                                tg_payload = {k: v for k, v in tg_payload.items() if k != "parse_mode"}
+                                log.warning(
+                                    f"[delivery] Telegram Markdown parse failed for user={user_id}; "
+                                    f"retrying as plain text. {err}"
+                                )
+                                start_time = time.monotonic()
+                                continue
+
+                            # 4xx (except 429 rate-limit) are permanent — retrying just floods
+                            # the dead-letter. 429/5xx stay retryable.
+                            if 400 <= resp.status < 500 and resp.status != 429:
+                                permanent = True
+                            break
 
             elif channel == "discord":
                 webhook_url = payload.get("webhook_url")
@@ -306,6 +343,12 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
             else:
                 error_code = err
                 log.warning(f"[delivery] Attempt {attempt + 1} failed for {channel} to user {user_id}: {err}")
+                if permanent:
+                    log.warning(
+                        f"[delivery] Permanent failure for {channel} to user {user_id}; "
+                        f"skipping remaining retries. Error: {err}"
+                    )
+                    break
 
         except Exception as e:
             latency_ms = (time.monotonic() - start_time) * 1000
@@ -324,4 +367,24 @@ async def deliver_with_retry(signal_id: int, user_id: int, channel: str, payload
                 log.error(
                     f"[delivery] TSYS-3b Dead-letter triggered: delivery {channel} failed for user={user_id} after {max_retries} attempts. Error: {error_code}"
                 )
+                # Surface the failure in the delivery panel. send_log is the panel's
+                # data source, but the scanner only writes a "sent" row when the
+                # fanout is *queued* — the true async outcome (this failure) never
+                # reached the panel, so ~23% of failures were invisible in the UI.
+                try:
+                    from zoneinfo import ZoneInfo
+                    from services.provider_telemetry import current_cycle_id
+
+                    et_time = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
+                    db.add(
+                        SendLog(
+                            time=et_time,
+                            status="fail",
+                            message=f"✗ {channel} → user {user_id}: {error_code or 'unknown error'}",
+                            user_id=user_id,
+                            cycle_id=current_cycle_id.get(),
+                        )
+                    )
+                except Exception:
+                    log.warning("[delivery] failed to write send_log fail row", exc_info=True)
             await db.commit()
