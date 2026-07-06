@@ -57,9 +57,15 @@ from scripts.orats_opportunity_model import get_vol_view  # noqa: E402
 log = logging.getLogger("signal.orats_recommendation_engine")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-# 'Rich' = top-quintile richness (implied/forecast) AND richness > 1; see _decide for
-# why 'cheap' is an absolute (richness < 1) test rather than a bottom percentile.
+# 'Rich' = top-quintile richness (implied/forecast) AND richness > 1 (sell overpriced vol).
 _RICH_PCT = 0.80
+
+# 'Cheap' (buy-vol side) must be as strict as 'rich': bottom-quintile richness AND an
+# absolute discount (implied well below forecast). The old buy side used only
+# `richness < 1.0`, so near-fair names (e.g. richness 0.99) were bought as long
+# straddles and bled theta — 72% of the paper-options book with negative expectancy.
+_CHEAP_PCT = 1.0 - _RICH_PCT  # 0.20 — cheapest quintile of the cross-sectional VRP
+_CHEAP_MAX = 0.80  # implied at least ~20% below forecast, not merely sub-fair
 
 # Trade-plan params. ATM straddle premium ≈ 0.8× the 1σ implied move; sizing is by a
 # risk budget with a hard per-trade concentration cap (premium-selling tail is real and
@@ -223,11 +229,12 @@ def _decide(row: pd.Series, horizon: int) -> tuple[str, str]:
     """Map a fused row to (action, rationale)."""
     d = row.get("dir_action")
     # The VRP is near-universal (almost every name has implied > forecast), so 'rich'
-    # is the richest quintile, but 'cheap' must be ABSOLUTE (implied actually below
-    # forecast, richness < 1) — a bottom-percentile name with richness 1.2 is still
-    # overpriced, not a buy-premium candidate.
+    # is the richest quintile AND richness > 1. 'cheap' is the symmetric buy side:
+    # cheapest quintile AND a real discount (richness < _CHEAP_MAX) — not merely
+    # sub-fair. A near-fair name (richness ~0.99) is NOT a buy-premium candidate; long
+    # straddles there only pay theta.
     rich = row["richness_pct"] >= _RICH_PCT and row["richness"] > 1.0
-    cheap = row["richness"] < 1.0
+    cheap = row["richness_pct"] <= _CHEAP_PCT and row["richness"] < _CHEAP_MAX
     dte = row.get("days_to_earnings")
     earn_soon = dte is not None and pd.notna(dte) and 0 <= dte <= horizon + 1
     impl = row["impl_move"] * 100
