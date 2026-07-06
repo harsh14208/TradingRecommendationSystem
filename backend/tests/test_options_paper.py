@@ -155,6 +155,59 @@ async def test_submit_paper_option_order_submits_and_dedupes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_submit_paper_option_order_skips_held_leg_collision() -> None:
+    """A leg already held at the broker must be skipped (position-intent guard)."""
+    from services.options_paper import submit_paper_option_order
+
+    sig = {
+        "ticker": "XLF",
+        "option_strategy": "SELL_DEFINED_RISK",
+        "price": 50.0,
+        "entry": 50.0,
+        "option_max_loss": 150.0,
+        "option_exp_gain": 10.0,
+        "option_legs": [
+            {
+                "option_symbol": "O:XLF260717C00052000",
+                "position": "short",
+                "side": "sell",
+                "quantity": 1,
+                "strike": 52.0,
+                "expiry": "2026-07-17",
+                "resolved": True,
+            },
+            {
+                "option_symbol": "O:XLF260717P00048000",
+                "position": "short",
+                "side": "sell",
+                "quantity": 1,
+                "strike": 48.0,
+                "expiry": "2026-07-17",
+                "resolved": True,
+            },
+        ],
+    }
+    place_mock = AsyncMock(return_value={"status": "accepted", "alpaca_order_id": "z"})
+    fake_broker = type("FB", (), {"place_option_order": place_mock})()
+    # We already hold the short call leg (bare OCC form, no "O:" prefix).
+    held = {"XLF260717C00052000"}
+
+    session, engine = await _in_memory_session()
+    async with session:
+        with (
+            patch("services.brokers.alpaca_options.AlpacaOptionsBroker", return_value=fake_broker),
+            patch(
+                "services.options_paper.fetch_contract_snapshot", new_callable=AsyncMock, return_value=_contract(2.0)
+            ),
+        ):
+            result = await submit_paper_option_order(sig, 21, session, "k", "s", 33, held_symbols=held)
+
+        assert result is None  # skipped, not submitted
+        place_mock.assert_not_called()
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_resolve_paper_pnl_marks_to_market() -> None:
     session, engine = await _in_memory_session()
     async with session:

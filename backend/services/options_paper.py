@@ -274,6 +274,7 @@ async def submit_paper_option_order(
     api_key: str,
     api_secret: str,
     account_user_id: int,
+    held_symbols: set[str] | None = None,
 ) -> BrokerOrder | None:
     """Submit one VRP signal to the dedicated Alpaca options PAPER account.
 
@@ -318,6 +319,23 @@ async def submit_paper_option_order(
                 sorted(_exps),
             )
             return None
+    # Skip if any leg collides with a contract we already hold — Alpaca infers a
+    # *_to_close intent against our *_to_open submission and 422s "position intent
+    # mismatch" (observed on repeat XLF condors). Position-aware complement to the
+    # DB idempotency guard below, which only checks the first leg against our orders.
+    if held_symbols:
+        from services.brokers.alpaca_options import _alpaca_symbol
+
+        colliding = [leg.option_symbol for leg in order.legs if _alpaca_symbol(leg.option_symbol) in held_symbols]
+        if colliding:
+            log.info(
+                "options paper: skipping %s %s — legs already held (intent mismatch guard): %s",
+                order.underlying,
+                order.strategy,
+                colliding,
+            )
+            return None
+
     symbol = order.underlying
     first_sym = order.legs[0].option_symbol
 
@@ -402,7 +420,19 @@ async def submit_active_option_orders(db: AsyncSession, api_key: str, api_secret
     RTH, so submission is decoupled from generation. Returns # newly submitted.
     """
     from models import Signal
+    from services.brokers.alpaca_options import AlpacaOptionsBroker
     from services.options_universe import OPTIONS_UNIVERSE
+
+    # Fetch the account's currently-held option contracts ONCE per cycle. Any new
+    # order whose leg collides with a held contract would 422 with a position-intent
+    # mismatch (Alpaca infers *_to_close), so we skip those in submit_paper_option_order.
+    try:
+        held_symbols = await AlpacaOptionsBroker(
+            api_key=api_key, api_secret=api_secret, paper=True
+        ).list_option_position_symbols()
+    except Exception:
+        held_symbols = set()
+        log.warning("options paper: held-position fetch failed; skipping collision guard", exc_info=True)
 
     # Only trade the curated, liquid options universe — never stale/pre-filter
     # signals (e.g. low-vol income ETFs or illiquid names where long straddles
@@ -432,7 +462,9 @@ async def submit_active_option_orders(db: AsyncSession, api_key: str, api_secret
             "option_exp_gain": row.option_exp_gain,
         }
         try:
-            order = await submit_paper_option_order(sig, row.id, db, api_key, api_secret, account_user_id)
+            order = await submit_paper_option_order(
+                sig, row.id, db, api_key, api_secret, account_user_id, held_symbols=held_symbols
+            )
             if order is not None and order.status not in ("rejected", "error"):
                 submitted += 1
         except Exception:

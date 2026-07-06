@@ -176,3 +176,25 @@ class AlpacaOptionsBroker(OptionsBroker):
         except Exception as exc:
             log.warning("Alpaca options position lookup failed for %s: %s", option_symbol, exc)
             return None
+
+    async def list_option_position_symbols(self) -> set[str]:
+        """Return the set of bare OCC symbols currently held (open positions).
+
+        Used to avoid re-submitting an order whose legs collide with a contract
+        we already hold — Alpaca then infers a *_to_close intent and 422s
+        ("position intent mismatch") against our *_to_open submission.
+        """
+        url = f"{self.base_url}/v2/positions"
+        try:
+            async with shared_session() as session:
+                async with session.get(url, headers=_headers(self.api_key, self.api_secret)) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+        except Exception as exc:
+            log.warning("Alpaca options positions list failed: %s", exc)
+            return set()
+        return {
+            (p.get("symbol") or "").upper()
+            for p in (data or [])
+            if p.get("asset_class") == "us_option" and p.get("symbol")
+        }
