@@ -929,7 +929,24 @@ async def _maybe_paper_trade(
 
     ticker = sig_dict["ticker"]
     price = sig_dict.get("price") or sig_dict.get("entry") or 1
-    notional = float(db_settings.get("paper_trade_notional", 1000.0))
+
+    # Size the position off LIVE account equity, not a flat notional. A fixed
+    # $1k/trade leaves a $1M paper account ~84% idle. `paper_trade_equity_pct`
+    # (fraction of equity per position) drives deployment; it falls back to the
+    # flat `paper_trade_notional` when the pct is 0/unset. One account fetch here
+    # is reused for both sizing and the BUY buying-power guard below.
+    try:
+        acct = await alpaca_rest.get_account(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value())
+    except Exception as e:
+        log.info(f" account check failed: {e}")
+        return
+    equity = float(acct.get("equity") or 0.0)
+    buying_power = float(acct.get("buying_power") or 0)
+    equity_pct = float(db_settings.get("paper_trade_equity_pct", 0.0) or 0.0)
+    if equity_pct > 0 and equity > 0:
+        notional = equity * equity_pct
+    else:
+        notional = float(db_settings.get("paper_trade_notional", 1000.0))
     raw_qty = notional / price
     qty = max(1, int(raw_qty))
     if raw_qty - qty >= 0.5:
@@ -945,20 +962,13 @@ async def _maybe_paper_trade(
         qty = max(1, int(notional // price))
     pos = positions_map.get(ticker.upper())
 
-    # Guard: check buying power before placing BUY orders
-    try:
-        if action == "BUY":
-            acct = await alpaca_rest.get_account(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value())
-            buying_power = float(acct.get("buying_power") or 0)
-            if buying_power < notional * 0.5:
-                log.info(
-                    f" {ticker} BUY skipped — insufficient buying power "
-                    f"(${buying_power:.0f} available, ${notional:.0f} needed). "
-                    f"Reset your paper account at alpaca.markets."
-                )
-                return
-    except Exception as e:
-        log.info(f" account check failed: {e}")
+    # Guard: check buying power before placing BUY orders (reuses the fetch above).
+    if action == "BUY" and buying_power < notional * 0.5:
+        log.info(
+            f" {ticker} BUY skipped — insufficient buying power "
+            f"(${buying_power:.0f} available, ${notional:.0f} needed). "
+            f"Reset your paper account at alpaca.markets."
+        )
         return
 
     try:

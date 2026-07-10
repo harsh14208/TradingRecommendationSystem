@@ -29,6 +29,11 @@ _DEFAULTS = {
     "endTime": "16:00",
     "auto_paper_trade": False,
     "paper_trade_notional": 1000.0,
+    # Equity-based sizing: notional per position = equity * this fraction. Overrides
+    # the flat `paper_trade_notional` when > 0. Default 0.01 (1%/position) so a large
+    # account actually deploys instead of sitting ~idle at a flat $1k/trade; the
+    # BUY buying-power guard caps overshoot. Set to 0 to keep the flat-notional path.
+    "paper_trade_equity_pct": 0.01,
     # Separate options paper account: auto-simulate VRP option spreads (broker=
     # 'paper_options') under the owner account, distinct from the equity Alpaca
     # paper account above.

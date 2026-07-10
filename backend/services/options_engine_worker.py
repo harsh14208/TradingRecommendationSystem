@@ -30,17 +30,26 @@ def main() -> None:
     ap.add_argument("--direction-parquet", required=True)
     ap.add_argument("--output-summary", required=True)
     ap.add_argument("--output-book", required=True)
+    ap.add_argument(
+        "--capital",
+        type=float,
+        default=0.0,
+        help="account equity to size the book against; 0 → engine default (50k)",
+    )
     args = ap.parse_args()
 
     direction_df = pd.read_parquet(args.direction_parquet)
     if direction_df.empty:
         direction_df = None
 
-    summary, _recs, book = score_options_universe(
+    score_kwargs = dict(
         universe=args.universe,
         direction_df=direction_df,
         fetch_missing_earnings=False,
     )
+    if args.capital > 0:
+        score_kwargs["capital"] = args.capital
+    summary, _recs, book = score_options_universe(**score_kwargs)
 
     # Summary may contain numpy/pandas types; convert to plain JSON-serializable.
     clean_summary = {}

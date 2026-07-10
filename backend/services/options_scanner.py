@@ -70,7 +70,9 @@ def _build_direction_df(stock_signals: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-async def _score_one_universe(universe: str, direction_df: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+async def _score_one_universe(
+    universe: str, direction_df: pd.DataFrame, capital: float = 0.0
+) -> tuple[dict, pd.DataFrame]:
     """Run the scorer for one universe in a clean subprocess."""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
@@ -92,6 +94,8 @@ async def _score_one_universe(universe: str, direction_df: pd.DataFrame) -> tupl
             "--output-book",
             str(book_path),
         ]
+        if capital > 0:
+            cmd += ["--capital", str(capital)]
         log.info("Starting options scorer subprocess: %s", " ".join(cmd))
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -290,10 +294,23 @@ async def run_options_scan(
     direction_df = _build_direction_df(stock_signals)
     log.info("Running daily options VRP scan (direction view: %d names)", len(direction_df))
 
+    # Size the VRP book against the LIVE options-account equity, not the engine's
+    # hardcoded $50k default (a $1M account otherwise sits ~idle at ~$5k book risk).
+    capital = 0.0
+    try:
+        from config import get_settings
+        from services.options_account import _num, fetch_options_account
+
+        snap = await fetch_options_account(get_settings())
+        if snap and snap.get("account"):
+            capital = _num((snap["account"] or {}).get("equity"), 0.0)
+    except Exception:
+        log.exception("Options scan: could not fetch account equity; using engine default")
+
     all_option_signals: list[dict] = []
     for universe in _OPTIONS_UNIVERSES:
         try:
-            summary, book = await _score_one_universe(universe, direction_df)
+            summary, book = await _score_one_universe(universe, direction_df, capital=capital)
             book = await _resolve_book_legs(book, summary)
             sigs = book_to_signal_dicts(book, summary)
             log.info("Options universe %s: %d book signals", universe, len(sigs))
