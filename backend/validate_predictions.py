@@ -296,10 +296,10 @@ async def resolve_mae_mfe() -> int:
 
                 worst_pct = 0.0  # adverse excursion (most negative)
                 best_pct = 0.0  # favorable excursion (most positive)
-                _hit_stop = False
-                _hit_target = False
+                _stop_bar: int | None = None  # first bar index breaching the stop
+                _tgt_bar: int | None = None  # first bar index breaching the target
 
-                for high, low in window:
+                for _i, (high, low) in enumerate(window):
                     if is_buy:
                         adv = (high - entry) / entry * 100  # upside = favorable
                         adrs = (low - entry) / entry * 100  # downside = adverse
@@ -310,27 +310,41 @@ async def resolve_mae_mfe() -> int:
                     best_pct = max(best_pct, adv)
                     worst_pct = min(worst_pct, adrs)
 
-                    # Check stop/target hit
+                    # Record FIRST breach bar for stop/target (chronology matters:
+                    # a live account exits at whichever level is touched first).
                     if is_buy:
-                        if stop and low <= stop:
-                            _hit_stop = True
-                        if target and high >= target:
-                            _hit_target = True
+                        if stop and low <= stop and _stop_bar is None:
+                            _stop_bar = _i
+                        if target and high >= target and _tgt_bar is None:
+                            _tgt_bar = _i
                     else:
-                        if stop and high >= stop:
-                            _hit_stop = True
-                        if target and low <= target:
-                            _hit_target = True
+                        if stop and high >= stop and _stop_bar is None:
+                            _stop_bar = _i
+                        if target and low <= target and _tgt_bar is None:
+                            _tgt_bar = _i
 
-                # Determine exit type (chronological priority)
-                if _hit_target:
-                    exit_type = "target"
-                elif _hit_stop:
+                # Determine exit type CHRONOLOGICALLY: first breach wins. If both
+                # levels are touched on the SAME daily bar, intrabar order is
+                # unknowable → assume stop-first (conservative). The old code
+                # preferred 'target' whenever both were hit — even if the stop was
+                # breached days earlier — and fix_phantom_wins then re-booked those
+                # rows at the stop fill while the 'target' label survived (74 rows
+                # mislabeled as of 2026-07-13).
+                if _stop_bar is not None and (_tgt_bar is None or _stop_bar <= _tgt_bar):
                     exit_type = "stop"
+                elif _tgt_bar is not None:
+                    exit_type = "target"
                 elif age >= 14:
                     exit_type = "time"
                 else:
                     exit_type = "pending"
+
+                # hit flags reflect what happened while the position was OPEN:
+                # once the first level is hit, the trade is closed — a later breach
+                # of the other level is counterfactual (and previously caused
+                # fix_phantom_wins to clobber genuine target-first wins).
+                _hit_stop = exit_type == "stop"
+                _hit_target = exit_type == "target"
 
                 sig_db = (await db.execute(select(Signal).where(Signal.id == sig.id))).scalar_one_or_none()
                 if sig_db:
@@ -365,10 +379,17 @@ async def resolve_mae_mfe() -> int:
                         raw = (sig.stop - entry) / entry * 100
                         sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
                         sig_db.outcome_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                    elif exit_type == "target" and sig_db.outcome_pct is None and sig.target and entry > 0:
+                    elif exit_type == "target" and sig.target and entry > 0:
+                        # Symmetric to the stop path: a target-first exit realizes the
+                        # TARGET fill, not a later calendar mark. The old `outcome_pct
+                        # is None` guard let a day-7 mark-to-market survive (mean booked
+                        # +4.06% vs +10.4% at fill — "phantom losses", the mirror image
+                        # of phantom wins). Overwrite any calendar mark with the fill.
                         raw = (sig.target - entry) / entry * 100
-                        sig_db.outcome_pct = round(raw if is_buy else -raw, 2)
-                        sig_db.outcome_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                        _tgt_fill = round(raw if is_buy else -raw, 2)
+                        if sig_db.outcome_pct is None or abs(sig_db.outcome_pct - _tgt_fill) > 0.01:
+                            sig_db.outcome_pct = _tgt_fill
+                            sig_db.outcome_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     # TSYS-8b: snapshot the price path used to derive MAE/MFE/exit so
                     # the resolution can be replayed without re-fetching OHLCV. Runs
@@ -426,6 +447,13 @@ async def fix_phantom_wins(apply: bool = False) -> int:
                         Signal.outcome_pct > 0,
                         Signal.entry.isnot(None),
                         Signal.stop.isnot(None),
+                        # Chronology guard (2026-07-13): if the target was ALSO hit,
+                        # the stop breach may postdate a target-first exit — the
+                        # position was already closed at the target, so the "phantom
+                        # win" is genuine. resolve_mae_mfe now sets exactly one hit
+                        # flag (first breach wins); this guard protects legacy rows
+                        # with both flags set from being clobbered to a stop fill.
+                        Signal.hit_target.isnot(True),
                     )
                 )
             )
@@ -475,6 +503,147 @@ async def fix_phantom_wins(apply: bool = False) -> int:
 
     await engine.dispose()
     print(f"  Fixed {len(fixes)} phantom wins — outcome_pct corrected to stop-fill level.")
+    return len(fixes)
+
+
+async def fix_exit_chronology(apply: bool = False) -> int:
+    """Re-book legacy rows where BOTH stop and target were hit (one-off backfill).
+
+    Before 2026-07-13, resolve_mae_mfe labeled any both-hit trade 'target'
+    (regardless of which level was touched first) and fix_phantom_wins then
+    re-booked it at the STOP fill — leaving 74 rows labeled 'target' with
+    stop-loss outcomes. This replays each ambiguous row's price path
+    chronologically (first breach wins; same daily bar → stop, conservative)
+    and re-books outcome_pct/outcome_14d at the true first-hit fill.
+
+    Path source: outcome_path_snapshots (TSYS-8b) where available, else a
+    date-ranged OHLCV refetch. Rows with neither are reported and skipped.
+    Idempotent: corrected rows have exactly one hit flag set and no longer match.
+    """
+    import yfinance as yf
+
+    engine = create_async_engine(DB_URL, echo=False)
+    Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with Session() as db:
+        rows = (
+            (
+                await db.execute(
+                    select(Signal).where(
+                        Signal.hit_stop == True,
+                        Signal.hit_target == True,
+                        Signal.outcome_pct.isnot(None),
+                        Signal.entry.isnot(None),
+                        Signal.stop.isnot(None),
+                        Signal.target.isnot(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        snap_rows = {}
+        if rows:
+            snaps = (
+                (
+                    await db.execute(
+                        select(OutcomePathSnapshot).where(OutcomePathSnapshot.signal_id.in_([s.id for s in rows]))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            snap_rows = {s.signal_id: s.path_data for s in snaps}
+
+    if not rows:
+        print("  No both-hit (ambiguous chronology) rows found — nothing to re-book.")
+        await engine.dispose()
+        return 0
+
+    print(f"  Found {len(rows)} rows with hit_stop AND hit_target both set.")
+    ohlcv_cache: dict[str, object] = {}
+    fixes = []  # (id, ticker, old_exit, new_exit, old_pct, new_pct)
+    skipped = 0
+    for sig in rows:
+        entry, stop, target = float(sig.entry), float(sig.stop), float(sig.target)
+        if entry <= 0:
+            skipped += 1
+            continue
+        is_buy = sig.action == "BUY"
+
+        # Price path: snapshot bars, else date-ranged refetch.
+        bars = None
+        snap = snap_rows.get(sig.id)
+        if snap and snap.get("bars"):
+            bars = [(float(h), float(low)) for h, low in snap["bars"]]
+        else:
+            try:
+                if sig.ticker not in ohlcv_cache:
+                    ohlcv_cache[sig.ticker] = yf.Ticker(sig.ticker).history(
+                        start=sig.created_at.strftime("%Y-%m-%d"), auto_adjust=True
+                    )
+                df = ohlcv_cache[sig.ticker]
+                if df is not None and not df.empty:
+                    win = df[df.index >= sig.created_at.strftime("%Y-%m-%d")].head(14)
+                    bars = [(float(r["High"]), float(r["Low"])) for _, r in win.iterrows()]
+            except Exception:
+                bars = None
+        if not bars:
+            skipped += 1
+            continue
+
+        stop_bar = tgt_bar = None
+        for i, (high, low) in enumerate(bars):
+            if is_buy:
+                if low <= stop and stop_bar is None:
+                    stop_bar = i
+                if high >= target and tgt_bar is None:
+                    tgt_bar = i
+            else:
+                if high >= stop and stop_bar is None:
+                    stop_bar = i
+                if low <= target and tgt_bar is None:
+                    tgt_bar = i
+        if stop_bar is None and tgt_bar is None:
+            skipped += 1  # path window doesn't reproduce either breach — leave untouched
+            continue
+
+        if stop_bar is not None and (tgt_bar is None or stop_bar <= tgt_bar):
+            new_exit, level = "stop", stop
+        else:
+            new_exit, level = "target", target
+        raw = (level - entry) / entry * 100
+        new_pct = round(raw if is_buy else -raw, 2)
+        if sig.exit_type != new_exit or abs(float(sig.outcome_pct) - new_pct) > 0.01:
+            fixes.append((sig.id, sig.ticker, sig.exit_type, new_exit, float(sig.outcome_pct), new_pct))
+
+    print(f"  Re-bookable: {len(fixes)}  |  skipped (no path data / no breach in window): {skipped}")
+    if not apply:
+        print("  DRY RUN — sample:")
+        for sid, tkr, oe, ne, op, np_ in fixes[:10]:
+            print(f"    {tkr} id={sid}: {oe}→{ne}  {op:+.2f}% → {np_:+.2f}%")
+        if len(fixes) > 10:
+            print(f"    … and {len(fixes) - 10} more")
+        print("  Re-run with --fix-exit-chronology --apply to write changes.")
+        await engine.dispose()
+        return 0
+
+    async with Session() as db:
+        for sid, _, _, new_exit, _, new_pct in fixes:
+            await db.execute(
+                update(Signal)
+                .where(Signal.id == sid)
+                .values(
+                    exit_type=new_exit,
+                    hit_stop=(new_exit == "stop"),
+                    hit_target=(new_exit == "target"),
+                    outcome_pct=new_pct,
+                    outcome_14d=new_pct,  # calibration prefers 14d — keep consistent (see fix_phantom_wins)
+                )
+            )
+        await db.commit()
+    await engine.dispose()
+    print(f"  Re-booked {len(fixes)} rows at chronological first-hit fills.")
     return len(fixes)
 
 
@@ -723,7 +892,11 @@ async def calibration_report():
 # ── main ─────────────────────────────────────────────────────────────────────
 
 
-async def main(fix_phantoms: bool = False, apply_phantoms: bool = False):
+async def main(fix_phantoms: bool = False, apply_phantoms: bool = False, fix_chronology: bool = False):
+    if fix_chronology:
+        print("\nStep 0 — Re-booking both-hit rows at chronological first-hit fills…")
+        await fix_exit_chronology(apply=apply_phantoms)
+        return
     if fix_phantoms:
         print("\nStep 0 — Fixing phantom wins (hit_stop=True but outcome_pct > 0)…")
         await fix_phantom_wins(apply=apply_phantoms)
@@ -770,12 +943,17 @@ if __name__ == "__main__":
 
     _parser = _ap.ArgumentParser()
     _parser.add_argument("--fix-phantoms", action="store_true", help="Dry-run phantom win correction")
-    _parser.add_argument("--apply", action="store_true", help="Write phantom win corrections to DB")
+    _parser.add_argument(
+        "--fix-exit-chronology", action="store_true", help="Dry-run re-booking of both-hit rows (first breach wins)"
+    )
+    _parser.add_argument("--apply", action="store_true", help="Write corrections to DB")
     _parser.add_argument("--gate-win-rate", type=float, default=None, help="Minimum raw win rate (0-1) to exit 0")
     _parser.add_argument("--gate-sharpe", type=float, default=None, help="Minimum annualized Sharpe to exit 0")
     _args = _parser.parse_args()
 
-    asyncio.run(main(fix_phantoms=_args.fix_phantoms, apply_phantoms=_args.apply))
+    asyncio.run(
+        main(fix_phantoms=_args.fix_phantoms, apply_phantoms=_args.apply, fix_chronology=_args.fix_exit_chronology)
+    )
 
     if _args.gate_win_rate is not None or _args.gate_sharpe is not None:
         n, wr, sharpe = asyncio.run(gate_stats())

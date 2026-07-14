@@ -200,8 +200,10 @@ def _extract_features(sig: dict) -> list[float]:
 
     n_sources = len(sources)
     n_rationale = len(rationale)
-    n_pos = sum(1 for r in rationale if r.get("sentiment") == "pos")
-    n_neg = sum(1 for r in rationale if r.get("sentiment") == "neg")
+    # options_vrp rationale entries can be plain strings instead of the usual
+    # {"src","head","body","sentiment",...} dict — skip those for sentiment counts.
+    n_pos = sum(1 for r in rationale if isinstance(r, dict) and r.get("sentiment") == "pos")
+    n_neg = sum(1 for r in rationale if isinstance(r, dict) and r.get("sentiment") == "neg")
 
     # rr string → float (e.g. "1:1.5" or "1.5" → 1.5)
     rr_raw = sig.get("rr") or ""

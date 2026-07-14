@@ -262,7 +262,9 @@ async def refresh_cohort_edges(db) -> dict:
     try:
         from models import Signal
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)
+        # signals.created_at is TIMESTAMP WITHOUT TIME ZONE — the cutoff must be
+        # tz-naive UTC or asyncpg raises DataError (tz-aware vs naive subtract).
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=WINDOW_DAYS)
         result = await db.execute(
             select(Signal.action, Signal.style, Signal.sector_etf, Signal.outcome_pct).where(
                 Signal.outcome_pct.isnot(None),

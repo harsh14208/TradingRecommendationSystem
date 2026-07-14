@@ -249,6 +249,19 @@ def structural_delivery_status(
             return False, f"{style} style disabled"
         return False, f"confidence {confidence:.0f}% < {floor:.0f}% floor"
 
+    # Cohort-EV gate (QENG-COHORT) — mirrors check_delivery_gates so
+    # generation-time pre-filtering and feed deliverability tagging agree with
+    # send time. Reads only the cached nightly snapshot (no DB/network); cold
+    # start → passthrough, so this stays cheap and never blocks on absent data.
+    try:
+        from services.cohort_edge_gate import get_cohort_decision
+
+        _cd = get_cohort_decision(action, style, sector_etf)
+        if not _cd.deliver:
+            return False, _cd.reason
+    except Exception:  # pragma: no cover — defensive; gate must never break tagging
+        pass
+
     return True, None
 
 
@@ -335,6 +348,39 @@ async def check_delivery_gates(
         return "no MR setup — ≥1 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
     if action == "SELL" and not sig_dict.get("hasMrSell", False):
         return "no SELL MR setup — ≥1 overbought condition required for SELL delivery", sig_dict
+
+    # ── Cohort-EV gate (QENG-COHORT) — self-calibrating (action, style, sector) ──
+    # Learned from the system's own trailing resolved outcomes; blocks cohorts
+    # whose lower confidence bound on net edge is ≤ 0 and sizes survivors by
+    # shrunk net edge. Cold-start / thin-data → passthrough (never starves a
+    # fresh deployment). Refreshed nightly (main.py). Options VRP is exempt
+    # (own risk engine, returned above).
+    try:
+        from services.cohort_edge_gate import get_cohort_decision
+
+        _cd = get_cohort_decision(action, style, sig_dict.get("sectorEtf"))
+        if not _cd.deliver:
+            return _cd.reason, sig_dict
+        if _cd.size_mult != 1.0:
+            sig_dict = dict(sig_dict)
+            _scale = sig_dict.get("positionSizeScale") or 1.0
+            sig_dict["positionSizeScale"] = round(min(max(_scale * _cd.size_mult, 0.10), 3.00), 2)
+            sig_dict.setdefault("rationale", [])
+            sig_dict["rationale"] = list(sig_dict["rationale"]) + [
+                {
+                    "src": "Risk Gate",
+                    "head": f"Cohort-EV Sizing ({_cd.size_mult:.2f}×)",
+                    "body": (
+                        f"Realized net edge for this signal's cohort [{_cd.matched_key}] is "
+                        f"{_cd.net_edge:+.2f}%/trade over the trailing window (n={_cd.n}). "
+                        f"Position size scaled {_cd.size_mult:.2f}× accordingly."
+                    ),
+                    "sentiment": "pos" if _cd.size_mult > 1.0 else "neg",
+                    "meta": f"cohort={_cd.matched_key} net={_cd.net_edge:+.2f}% n={_cd.n} (QENG-COHORT)",
+                }
+            ]
+    except Exception:
+        log.warning("cohort-EV gate check failed; delivering without it", exc_info=True)  # pragma: no mutate
 
     # ── Ticker-adaptive confidence floor (checked before global floor) ─────────
     # High-win tickers (≥75% historical WR) get a relaxed 52% floor instead of

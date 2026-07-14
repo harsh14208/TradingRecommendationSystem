@@ -424,6 +424,37 @@ async def _periodic_scan():
             await asyncio.sleep(interval_min * 60)
 
 
+async def _nightly_cohort_edge_refresh():
+    """Refresh the self-calibrating cohort-EV gate (QENG-COHORT).
+
+    Runs once immediately at startup (so the delivery path has a fresh snapshot
+    after a restart), then daily at 2:30am ET — after the 2:00am outcome
+    resolution, so the gate learns from the newest resolved outcomes.
+    """
+    ET = pytz.timezone("America/New_York")
+    first_run = True
+    while True:
+        if not first_run:
+            now_et = datetime.now(ET)
+            target = now_et.replace(hour=2, minute=30, second=0, microsecond=0)
+            if now_et >= target:
+                target += timedelta(days=1)
+            await asyncio.sleep((target - now_et).total_seconds())
+        first_run = False
+        try:
+            from database import AsyncSessionLocal
+            from services.cohort_edge_gate import refresh_cohort_edges
+
+            async with AsyncSessionLocal() as db:
+                snap = await refresh_cohort_edges(db)
+            log.info(
+                f"[cohort_edge] snapshot refreshed — total_n={snap.get('total_n', 0)} "
+                f"passthrough={snap.get('passthrough')} cohorts={len(snap.get('cohorts', {}))}"
+            )
+        except Exception as e:
+            log.warning(f"[cohort_edge] nightly refresh failed: {e}")
+
+
 async def _nightly_signal_cleanup():
     """Deactivate signals that have passed their expires_at timestamp. Runs at 4:15am ET daily."""
     ET = pytz.timezone("America/New_York")
@@ -1777,6 +1808,7 @@ async def lifespan(app: FastAPI):
     _supervise("weekly_ml_retrain", _weekly_ml_retrain, restart=True)
     _supervise("weekly_drift_detection", _weekly_drift_detection, restart=True)
     _supervise("nightly_signal_cleanup", _nightly_signal_cleanup, restart=True)
+    _supervise("nightly_cohort_edge_refresh", _nightly_cohort_edge_refresh, restart=True)
     _supervise("nightly_stripe_reconciliation", _nightly_stripe_reconciliation, restart=True)
     _supervise("nightly_outcome_resolution", _nightly_outcome_resolution, restart=True)
     _supervise("nightly_cboe_options_snapshot", _nightly_cboe_options_snapshot, restart=True)
