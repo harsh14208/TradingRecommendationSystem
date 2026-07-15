@@ -1,8 +1,9 @@
 # Signal.Trade — Live Engine Signal Validation Status
 
 > Tracks every signal and gate in the live engine (`signal_engine.py`) against its backtest evidence.
-> Last updated: 2026-06-10 evening — v10.9 IS canon (N=217, WR=69.1%, Sharpe=0.24; DSR ⚠ fails at honest 744 trials) + live delivery overhaul.
-> **2026-06-10 delivery overhaul:** sector model-file unblock removed, SELL delivery disabled, §55/§14 hard blocks removed, DELIV-1 price-validity EOD guard, `skip_reason` persisted — see the 🔴 table + `Stats.md §DELIV`. ⚠ All pre-2026-06-10 live-WR evidence in this doc is contaminated by the delivery leaks (81% null `sector_rs`, unblocked sectors, SELL floor bypass) — re-validate findings against the post-fix forward window.
+> Last updated: **2026-07-14 — gate audit + exit-chronology correction.**
+> **2026-07-14 gate audit:** outcomes were re-booked chronologically first (74 both-hit trades had been mislabeled `'target'` with stop-fill P&L — see `validate_predictions.py --fix-exit-chronology`; book +82.5%→+917.8%), then `gate_contribution_analysis.py` + the §85-1 audit ran on the corrected 725-signal book and all-time card-firing counts (87,982 signals) were measured. **Removed:** §64/§65/§66/§68 (macro_extensions module — 0 fires ever), §78 live remnant, min-ATR BUY gate (1 fire ever), §81 (0 fires), §74 Beneish (§85-1: ΔWR −24.2pp @ N=70), §69/§70/§71/§72 stock-score modifiers (untestable + fired 85-95% on blocked SELL/intraday cohorts), §67 FOMC hard block (ΔSh −0.00 + stale date list), §51 forward-PE (24 fires ever), §57 *Friday* HOLD-flip (no ledger entry — the validated §57 *Thursday* threshold is kept). The cohort-EV gate (`services/cohort_edge_gate.py`) is now WIRED into delivery (was dormant) and supersedes the static blocklists over time.
+> **2026-06-10 delivery overhaul:** sector model-file unblock removed, SELL delivery disabled, §55/§14 hard blocks removed, DELIV-1 price-validity EOD guard, `skip_reason` persisted — see the 🔴 table + `Stats.md §DELIV`. ⚠ All pre-2026-06-10 live-WR evidence in this doc is contaminated by the delivery leaks (81% null `sector_rs`, unblocked sectors, SELL floor bypass) — and all pre-2026-07-14 live-WR evidence additionally by the exit-chronology mislabeling. Re-validate against the corrected book.
 >
 > **How to re-run backtest validation:**
 > ```bash
@@ -79,12 +80,13 @@ The following criteria must be met before broker auto-execute is enabled:
 
 | Category | Count | Validated? |
 |---|---|---|
-| ✅ Backtest-validated (ΔSharpe measured) | 11 | Yes — gate ablation run (§63 cointegration added 2026-06-03) |
-| ⚠ Directional evidence only (live data, no backtest) | 5 | Partial — live WR observed (§50/§73 EDGAR: confirmed neutral) |
-| ❌ Not testable in backtest (look-ahead / paid data) | 17 | No — live-only |
-| 🔴 Removed / disabled (tested, found harmful or dead) | 8 | Yes — empirical (§76 Altman added 2026-06-03) |
+| ✅ Backtest-validated (ΔSharpe measured) | 7 | Yes — gate ablation run (§64/§68/§67/§78 removed 2026-07-14) |
+| ⚠ Directional evidence only (live data, no backtest) | 4 | Partial — §50 Piotroski re-confirmed +9.3pp on corrected book |
+| ❌ Not testable in backtest (look-ahead / paid data) | 10 | No — live-only (§69–§72/§74/§81/§51 removed 2026-07-14) |
+| 🔴 Removed / disabled (tested, found harmful or dead) | 17 | Yes — empirical (9 more added by the 2026-07-14 gate audit) |
 | ⏳ Monitoring (live tracking, insufficient N to validate) | 1 | No — §93d midday warning, need N≥20 in reliable cohort |
-| **Total live engine gates** | **41** | — |
+| ➕ Cohort-EV gate (adaptive layer) | 1 | Wired 2026-07-13 — learns per-(action,style,sector) edge from resolved outcomes; supersedes static blocklists over time |
+| **Total live engine gates** | **~32 (was 41)** | — |
 
 ---
 
@@ -165,6 +167,15 @@ These gates are in the live engine but **cannot** be added to the backtest witho
 
 | Gate | What was tried | Evidence | Outcome |
 |---|---|---|---|
+| **§64/§65/§66/§68 macro extensions** | TRIN capitulation, Zweig breadth, T10Y yield-curve/rate penalties as confidence modifiers | Gate audit 2026-07-14: **0 fires in 87,982 all-time signals** — ^TRIN/^NYAD 404 (inputs never populate); §64/§68 conditions never triggered; backtest ablation ΔSh −0.00 | **Removed** — `gates/macro_extensions.py` deleted (2026-07-14) |
+| **§78 Sep/Oct floors (live remnant)** | conf<62/60 blocks in Sep/Oct in `delivery_gates.py` | Backtest copy removed 2026-06-02 as dead; live copy was left behind | **Removed** from `delivery_gates.py` (2026-07-14) |
+| **Min-ATR 0.7% BUY gate** | BUY→HOLD when ATR<0.7% of price | 1 fire in 87,982 all-time signals; claimed "20yr backtest" has no ledger entry; low-ATR defensives covered by cohort-EV + ticker_performance gates | **Removed** from `assembler.py` (2026-07-14) |
+| **§81 block prints** | ≥3 block buys→+5 score | 0 fires ever; untestable (no historical block-trade data) | **Removed** from `signal_engine.py` (2026-07-14); `get_recent_block_prints()` kept for research |
+| **§74 Beneish M-Score** | M>−1.78→−12 score | §85-1 audit (corrected book): fired N=70, WR 22.9%, **ΔWR −24.2pp** — 24× past removal threshold; fired 0× on surviving BUY position/swing book; not point-in-time | **Removed** from `gates/fundamentals.py` (2026-07-14); `beneish_m` still computed for display |
+| **§69/§70/§71/§72 options stock modifiers** | GEX-flip ±5/−2, 0DTE −4, max-pain +4, VRP-proxy +3/−2 score | Untestable (❌ table) + live firing 85–95% on now-blocked SELL/intraday cohorts (WR 11–20% where fired); ~0 fires on surviving book | **Removed** from `options.py` score_options (2026-07-14); fields still computed; options_vrp engine unaffected |
+| **§67 FOMC hard block + −4pp haircut** | Block BUY on FOMC day; −4pp day before | Ablation ΔSh −0.00 (+4 N); hardcoded `_FOMC_DATES` list was rotting (unit test already failing) | **Removed** from `delivery_gates.py` (2026-07-14) |
+| **§51 Forward-PE trap** | PE>30→−5, PE<15→+3 | 24 fires in 87,982 (cheap side: 0), N<3 resolved; "Low" ledger confidence (12-month value premium ≠ 10d MR) | **Removed** from `gates/fundamentals.py` (2026-07-14) |
+| **§57 Friday HOLD-flip** | BUY→HOLD Friday when score<65 | Claimed "20yr backtest ~0.40%" — **no ledger entry**; only the Thursday threshold was ablated (that one KEEPS, ΔSh −0.10) | **Removed** from `gates/calendar.py` (2026-07-14) |
 | **Sector model-file dynamic unblock** | BLOCKED_SECTORS lifted when `backtest_ml_model_{SECTOR}.json` exists (v8.1 feature 2f0cdcd) | **The biggest live leak found to date (2026-06-10):** files existed for XLF/XLI/XLP → only XLU actually enforced. 60d delivered BUYs: XLF 72 @ 29.2% net WR (−1.52%/trade), XLP 50 @ 24.0% (−1.22%), XLI 35 @ 37.1% (−1.27%) = 32% of book at ≈−1.4%/trade. Training artifacts flipped delivery policy with no promotion gate. | **Removed** from `delivery_gates.py` (2026-06-10); 6 files quarantined to `data/quarantine/`; unblock now requires QENG-1c promotion record |
 | **SELL delivery** | SELL signals delivered live (backtest §32 had disabled them: Sharpe 0.20→−0.03) | 60d live: 71 resolved SELLs, net WR 35.2%, **−1.00%/trade**; some sent at conf 35 — below min_confidence=40 and swing floor 46 (gate bypass on a SELL path) | **Disabled** in `delivery_gates.py` (2026-06-10) — long-only regime until a SELL-specific validated path exists |
 | §55 Cross-asset 3/3 headwinds hard block | Hard block when TLT+UUP+XLE all stressed | `--validate-live-gates`: −18 trades (−8%) for −0.00 ΔSharpe — pure N destruction | **Removed** from `delivery_gates.py` (2026-06-10); soft −10 scoring in `macro.py` preserved |
@@ -180,25 +191,26 @@ These gates are in the live engine but **cannot** be added to the backtest witho
 
 ---
 
-## §85-1 Audit — Fundamental Modifiers (Pending ≥200 Resolved Signals)
+## §85-1 Audit — Fundamental Modifiers (RAN 2026-07-14 on corrected book)
 
-The live engine applies fundamental modifiers (§50/§51/§52/§58/§73/§74/§76) that do NOT exist in the IS backtest. The IS/live WR gap is **25.7pp** (IS 68.2% → live 42.5%). Some fraction of this gap is caused by misfiring fundamental gates.
+The live engine applies fundamental modifiers that do NOT exist in the IS backtest.
+**Ran on the exit-chronology-corrected 725-signal book** (baseline WR 47.0%):
 
-**Script:** `python scripts/gate_contribution_analysis.py --section85 --after 2026-06-01`
+**Script:** `python scripts/gate_contribution_analysis.py --section85`
 
 **Threshold for removal:** ΔWR < −1pp with N ≥ 30 resolved signals.
 
-| Gate | Pre-audit status | Expected horizon fit |
+| Gate | Result (2026-07-14) | Verdict |
 |---|---|---|
-| §50 Piotroski | Scores applied; A19 fix removed double-count | Low — annual metric on 10d trade |
-| §51 Forward PE | −5pp if PE>30; +3pp if PE<15 | Low — valuation multiples don't predict 10d bounce |
-| §52 SI velocity | +4/−5 modifier | Medium — short squeeze can compress into 10d |
-| §58 EPS revision | revision_pts multiplier | Medium — analyst revision momentum 1-4wk |
-| §73 Insider clustering | unique buyers bonus | Low-medium — EDGAR filings lag by 48h+ |
-| §74 Beneish M-Score | −8pp if manipulator signal | Low — accounting quality irrelevant to MR bounce |
-| §76 Altman Z-Score | −10pp if distressed | Low — distress is multi-quarter, not 10d |
+| §50 Piotroski | N=165, WR 56.4%, **ΔWR +9.3pp** | ✅ KEEP |
+| §52 SI velocity | N=7, WR 85.7%, ΔWR +38.7pp | ✅ KEEP (thin N — keep watching) |
+| §74 Beneish M-Score | N=70, WR 22.9%, **ΔWR −24.2pp** | ❌ **REMOVED 2026-07-14** (fired 0× on surviving BUY position/swing book) |
+| §51 Forward PE | N<3 fired (24 all-time, cheap-side 0) | ❌ **REMOVED 2026-07-14** (inert + no horizon fit) |
+| §58 EPS revision | N<3 fired | ⏳ inert — candidate for later simplification |
+| §73 Insider clustering | N<3 in audit patterns | ⚠ EDGAR-validated neutral — keep as-is |
+| §76 Altman Z-Score | — | 🔴 already removed 2026-06-03 |
 
-**Run §85-1 audit once ≥200 resolved signals are available. Disable any modifier with ΔWR < −1pp and N ≥ 30.**
+**Confound caveat:** §74's drag concentrated on the now-blocked SELL/intraday cohorts; within the go-forward BUY position/swing cohort (N=473, baseline 54.1%) the strong positives hold: §60 Hurst quality card +13.4pp (N=37), §50 Piotroski +8.5pp (N=107).
 
 ---
 
