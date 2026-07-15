@@ -11,6 +11,5 @@ Extracting gates here makes them independently unit-testable and reduces
 the surface area of the monolithic _assemble_signal() function incrementally.
 
 Modules:
-  macro_extensions — §64 yield curve, §65 TRIN, §66 AD breadth, §68 T10Y rate
   calendar         — §57 DOW gate, §77 tax-loss seasonal window
 """

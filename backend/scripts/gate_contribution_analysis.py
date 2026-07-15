@@ -80,6 +80,8 @@ _SECTOR_FIELD = "sector"  # key in signal.extra_data or rationale
 
 def _gate_fired(rationale: list[dict[str, Any]], patterns: list[str]) -> bool:
     for card in rationale:
+        if not isinstance(card, dict):  # options_vrp rationale entries can be plain strings
+            continue
         head = card.get("head", "")
         if any(p.lower() in head.lower() for p in patterns):
             return True

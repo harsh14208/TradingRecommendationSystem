@@ -1151,18 +1151,11 @@ def _assemble_signal(
                 }
             )
 
-    # ── §64/§65/§66/§68 macro extension gates ─────────────────────────────
-    from services.gates.macro_extensions import score_macro_extensions as _macro_ext
-
-    _sector_etf_key = (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper(), "")
-    confidence, _mext_cards, _mext_sources = _macro_ext(
-        action=action,
-        confidence=confidence,
-        macro=macro,
-        sector_etf=_sector_etf_key,
-    )
-    rationale.extend(_mext_cards)
-    sources.update(_mext_sources)
+    # §64/§65/§66/§68 macro extension gates REMOVED (gate audit 2026-07-14):
+    # 0 fires in 87,982 all-time signals — ^TRIN/^NYAD 404 from yfinance so
+    # trin/zweig/ad_ema10 never populate (§65/§66), and the §64/§68 T10Y
+    # conditions never triggered. Backtest ablation ΔSh=−0.00 for §64/§68.
+    # gates/macro_extensions.py deleted; see docs/SIGNAL_VALIDATION.md.
 
     plain_english = _make_plain_english(action, ticker, style, rationale, confidence, entry, stop, target)
 

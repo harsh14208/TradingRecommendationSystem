@@ -1,4 +1,4 @@
-"""Unit tests for the gate modules (volume, calendar, fundamentals, macro_extensions).
+"""Unit tests for the gate modules (volume, calendar, fundamentals).
 
 Function-based gates are called directly; class-based gates are exercised via a
 SignalContext built by the _ctx() factory.
@@ -11,7 +11,6 @@ from services.gates.fundamentals import (
     apply_quality_screens,
     apply_short_interest_velocity,
 )
-from services.gates.macro_extensions import MacroExtensionsGate, score_macro_extensions
 from services.gates.volume import AdxGate, DollarVolumeGate, OverboughtWeakTrendGate, RvolGate
 
 
@@ -229,41 +228,5 @@ def test_quality_screens_no_fundamentals_is_noop():
     assert score == 50.0
 
 
-# ── score_macro_extensions ───────────────────────────────────────────────────
-
-
-def test_macro_ext_trin_capitulation_bonus():
-    conf, cards, srcs = score_macro_extensions(action="BUY", confidence=50.0, macro={"trin": 2.5}, sector_etf="XLK")
-    assert conf == 54.0  # +4
-    assert "Macro" in srcs
-
-
-def test_macro_ext_zweig_thrust_bonus():
-    conf, _, _ = score_macro_extensions(action="BUY", confidence=50.0, macro={"zweig_thrust": True}, sector_etf="XLK")
-    assert conf == 55.0  # +5
-
-
-def test_macro_ext_yield_curve_xlf_penalty():
-    conf, _, _ = score_macro_extensions(action="BUY", confidence=50.0, macro={"t10y2y_spread": -0.8}, sector_etf="XLF")
-    assert conf == 45.0  # -5
-
-
-def test_macro_ext_rising_rates_xlk_penalty_and_falling_tailwind():
-    conf_up, _, _ = score_macro_extensions(action="BUY", confidence=50.0, macro={"t10y_30d_chg": 0.8}, sector_etf="XLK")
-    assert conf_up == 44.0  # -6
-    conf_dn, _, _ = score_macro_extensions(
-        action="BUY", confidence=50.0, macro={"t10y_30d_chg": -0.5}, sector_etf="XLV"
-    )
-    assert conf_dn == 53.0  # +3 tailwind
-
-
-def test_macro_ext_no_signal_is_noop():
-    conf, cards, srcs = score_macro_extensions(action="BUY", confidence=50.0, macro={}, sector_etf="XLK")
-    assert conf == 50.0 and cards == [] and srcs == set()
-
-
-def test_macro_ext_wrapper_mutates_ctx():
-    ctx = _ctx(confidence=50.0, macro={"trin": 2.5})
-    MacroExtensionsGate().apply(ctx)
-    assert ctx.confidence == 54.0
-    assert repr(MacroExtensionsGate()) == "MacroExtensionsGate"
+# score_macro_extensions tests removed with gates/macro_extensions.py
+# (gate audit 2026-07-14: 0 fires in 87,982 all-time signals — dead module)

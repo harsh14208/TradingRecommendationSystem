@@ -932,7 +932,8 @@ async def get_macro_context() -> dict:
 
     # §65 TRIN (^TRIN) and §66 NYSE A/D breadth (^NYAD) fetches removed —
     # yfinance 404s on both symbols, so trin/ad_ema10_chg/zweig_thrust never
-    # populated. Gates in macro_extensions.py already tolerate their absence.
+    # populated. gates/macro_extensions.py itself deleted 2026-07-14 (gate
+    # audit: 0 fires in 87,982 all-time signals).
 
     # ── §64 10Y-3M Yield Spread ───────────────────────────────────────────
     try:
