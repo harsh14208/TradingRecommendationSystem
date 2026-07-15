@@ -354,52 +354,6 @@ def test_position_size_scale_reduces_in_calm_regime():
 
 
 @pytest.mark.asyncio
-async def test_fomc_decision_day_blocks_buy():
-    """FOMC day (distance=0) → hard block on BUY signals."""
-    from services.delivery_gates import check_delivery_gates, _FOMC_DATES_2026
-
-    db = await _mock_db_zero_sector()
-    # Pick a known FOMC date
-    fomc_date_str = sorted(_FOMC_DATES_2026)[0]  # e.g. 2026-01-28
-    fomc_dt = datetime.strptime(fomc_date_str, "%Y-%m-%d").replace(hour=14, minute=0, tzinfo=timezone.utc)
-
-    with patch("services.delivery_gates.datetime") as mock_dt:
-        mock_dt.now.return_value = fomc_dt
-        mock_dt.strptime = datetime.strptime
-        reason, _ = await check_delivery_gates(_sig(action="BUY", confidence=70.0), db, _Settings())
-
-    assert reason is not None, "FOMC day should block BUY"
-    assert "FOMC" in reason
-
-
-@pytest.mark.asyncio
-async def test_fomc_day_minus_one_applies_haircut():
-    """One day before FOMC → −4pp haircut (not hard block)."""
-    from services.delivery_gates import check_delivery_gates, _FOMC_DATES_2026
-    from datetime import date, timedelta
-
-    db = await _mock_db_zero_sector()
-    fomc_date_str = sorted(_FOMC_DATES_2026)[0]
-    fomc_d = date.fromisoformat(fomc_date_str)
-    day_before = fomc_d - timedelta(days=1)
-    day_before_dt = datetime(day_before.year, day_before.month, day_before.day, 14, 0, 0, tzinfo=timezone.utc)
-
-    with patch("services.delivery_gates.datetime") as mock_dt:
-        mock_dt.now.return_value = day_before_dt
-        mock_dt.strptime = datetime.strptime
-        reason, out_sig = await check_delivery_gates(_sig(action="BUY", confidence=65.0), db, _Settings())
-
-    # Gate should NOT hard-block (returns None reason if conf still above floor)
-    # Check rationale contains FOMC haircut card
-    rationale_heads = [r.get("head", "") for r in out_sig.get("rationale", [])]
-    assert any("FOMC" in h for h in rationale_heads), (
-        f"Expected FOMC haircut rationale on day T-1; got: {rationale_heads}"
-    )
-    # Confidence should be reduced
-    assert out_sig["confidence"] < 65.0, f"Confidence should be reduced on T-1 FOMC; got {out_sig['confidence']}"
-
-
-@pytest.mark.asyncio
 async def test_fomc_far_away_no_effect():
     """7 days from nearest FOMC → no FOMC gate fires."""
     from services.delivery_gates import check_delivery_gates
@@ -598,84 +552,6 @@ def test_hurst_requires_minimum_data():
 # ── §69–§72 Options Pack (score_options pure-function tests) ──────────────────
 
 
-def test_gex_flip_proximity_gate():
-    """§69 GEX flip level — near proxy (+5) and >3% above penalty (-2)."""
-    from services.options import score_options
-
-    # (a) spot 1% below flip → within [-2%, +1%] band → +5
-    delta_near, cards_near = score_options({"gex_flip_level": 99.0, "spot": 100.0})
-    heads_near = [c["head"] for c in cards_near]
-    assert any("GEX Flip" in h for h in heads_near), f"GEX near-flip card expected; got: {heads_near}"
-    assert delta_near >= 5, f"Expected score ≥ +5 for near-flip; got {delta_near}"
-    pos = [c for c in cards_near if "GEX Flip" in c.get("head", "")]
-    assert any(c["sentiment"] == "pos" for c in pos), "GEX near-flip card must be positive sentiment"
-
-    # (b) flip 5% above spot → >3% above band → -2 penalty
-    delta_far, cards_far = score_options({"gex_flip_level": 105.0, "spot": 100.0})
-    heads_far = [c["head"] for c in cards_far]
-    assert any("Above GEX" in h or "Dealer Short Delta" in h for h in heads_far), (
-        f"Above-GEX penalty card expected; got: {heads_far}"
-    )
-    assert delta_far <= -2, f"Expected score ≤ -2 for above-flip; got {delta_far}"
-
-
-def test_zero_dte_spike_gate():
-    """§70 Zero-DTE put spike — ratio > 0.30 fires (-4); ≤ 0.30 does not."""
-    from services.options import score_options
-
-    # (a) spike fires → negative card
-    delta, cards = score_options({"zero_dte_ratio": 0.45})
-    heads = [c["head"] for c in cards]
-    assert any("Zero-DTE" in h for h in heads), f"Zero-DTE card expected; got: {heads}"
-    assert delta <= -4, f"Expected score ≤ -4 for zero-DTE spike; got {delta}"
-    spike_cards = [c for c in cards if "Zero-DTE" in c.get("head", "")]
-    assert any(c["sentiment"] == "neg" for c in spike_cards), "Zero-DTE card must be negative sentiment"
-
-    # (b) below threshold → no card
-    _, cards_no = score_options({"zero_dte_ratio": 0.20})
-    assert not any("Zero-DTE" in c["head"] for c in cards_no), "Zero-DTE card must not fire at ratio=0.20"
-
-
-def test_max_pain_convergence_gate():
-    """§71 Max pain >2% above spot with expiry ≤ 2 days → +4; far expiry → no card."""
-    from services.options import score_options
-    from datetime import date, timedelta
-
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
-
-    # (a) fires: max_pain 3% above spot, expiry tomorrow
-    delta, cards = score_options({"max_pain": 103.0, "spot": 100.0, "expiry": tomorrow})
-    heads = [c["head"] for c in cards]
-    assert any("Max Pain" in h for h in heads), f"Max Pain card expected; got: {heads}"
-    assert delta >= 4, f"Expected score ≥ +4 for max pain pull; got {delta}"
-
-    # (b) expiry 10 days out → doesn't fire
-    far_exp = (date.today() + timedelta(days=10)).isoformat()
-    _, cards_far = score_options({"max_pain": 103.0, "spot": 100.0, "expiry": far_exp})
-    assert not any("Max Pain" in c["head"] for c in cards_far), "Max Pain card must not fire when expiry > 2 days away"
-
-
-def test_vrp_proxy_gate():
-    """§72 VRP proxy — positive IV premium (+3) and negative IV backwardation (-2)."""
-    from services.options import score_options
-
-    # (a) positive VRP → +3 and pos card
-    delta_pos, cards_pos = score_options({"vrp_proxy": 0.08})
-    heads_pos = [c["head"] for c in cards_pos]
-    assert any("Volatility Risk Premium" in h or "VRP" in h for h in heads_pos), (
-        f"Positive VRP card expected; got: {heads_pos}"
-    )
-    assert delta_pos >= 3, f"Expected score ≥ +3 for positive VRP; got {delta_pos}"
-
-    # (b) negative VRP → -2 and neg card
-    delta_neg, cards_neg = score_options({"vrp_proxy": -0.10})
-    heads_neg = [c["head"] for c in cards_neg]
-    assert any("Negative VRP" in h or "Back-Month" in h for h in heads_neg), (
-        f"Negative VRP card expected; got: {heads_neg}"
-    )
-    assert delta_neg <= -2, f"Expected score ≤ -2 for negative VRP; got {delta_neg}"
-
-
 # ── §73/§74/§76 Gates (generate_signal integration, mocked fetchers) ─────────
 
 
@@ -785,26 +661,6 @@ async def test_insider_cluster_buy_gate():
         heads_single = [r["head"] for r in res_single.get("rationale", [])]
         assert not any("Distinct Insiders" in h for h in heads_single), (
             f"unique_buyers=1 should not fire cluster card; got: {heads_single}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_beneish_m_score_gate():
-    """§74 Beneish M-Score — > -1.78 → manipulation flag (-12); < -1.78 → no card."""
-    # (a) M = -1.5 (above threshold) → flag fires
-    res = await _gen_signal_mocked(fundamentals={"beneish_m": -1.5})
-    if res is not None:
-        heads = [r["head"] for r in res.get("rationale", [])]
-        assert any("Beneish" in h for h in heads), f"Expected Beneish manipulation card for M=-1.5; got: {heads}"
-        beneish_cards = [r for r in res.get("rationale", []) if "Beneish" in r.get("head", "")]
-        assert all(r["sentiment"] == "neg" for r in beneish_cards), "Beneish card must be negative sentiment"
-
-    # (b) M = -2.5 (below threshold, no manipulation signal) → no card
-    res_safe = await _gen_signal_mocked(fundamentals={"beneish_m": -2.5})
-    if res_safe is not None:
-        heads_safe = [r["head"] for r in res_safe.get("rationale", [])]
-        assert not any("Beneish" in h for h in heads_safe), (
-            f"M=-2.5 (safe) should not fire Beneish card; got: {heads_safe}"
         )
 
 

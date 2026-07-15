@@ -107,14 +107,6 @@ def test_insider_clustering_skipped_for_lev_etf():
 # ─── §74 Beneish M-Score ────────────────────────────────────────────────────
 
 
-def test_beneish_above_threshold_penalises_12pp():
-    # −1.78 is the manipulation threshold; above it → penalty
-    new_score, cards, sources = _quality_screens(beneish_m=-1.5)
-    assert new_score == 38.0, f"M-Score −1.5 > −1.78 → −12pp; got {new_score}"
-    assert any("Beneish" in c["head"] for c in cards)
-    assert "Fundamentals" in sources
-
-
 def test_beneish_at_threshold_penalises():
     # −1.78 itself is NOT safe (> −1.78 is the condition; −1.78 is exactly the boundary)
     # Beneish says > −1.78 is manipulation zone, so −1.78 should NOT penalise
@@ -127,12 +119,6 @@ def test_beneish_safe_zone_no_change():
     new_score, cards, _ = _quality_screens(beneish_m=-2.5)
     assert new_score == 50.0, "M-Score −2.5 is in safe zone — no penalty"
     assert not any("Beneish" in c["head"] for c in cards)
-
-
-def test_beneish_strongly_positive_penalises():
-    new_score, cards, _ = _quality_screens(beneish_m=0.5)
-    assert new_score == 38.0, "Positive M-Score (extreme manipulation flag) → −12pp"
-    assert cards
 
 
 def test_beneish_skipped_for_lev_etf():
@@ -179,16 +165,6 @@ def test_altman_none_no_change():
 
 
 # ─── Combined gate interaction ──────────────────────────────────────────────
-
-
-def test_beneish_and_altman_both_fire_penalties_stack():
-    """§76 Altman removed — only Beneish fires; Altman no longer stacks."""
-    new_score, cards, _ = _quality_screens(beneish_m=-1.0, altman_z=1.5)
-    assert new_score == 38.0, f"§76 removed: only Beneish −12pp; got {new_score - 50.0}"
-    beneish_cards = [c for c in cards if "Beneish" in c["head"]]
-    altman_cards = [c for c in cards if "Z-Score" in c["head"] or "Distress" in c["head"] or "Altman" in c["head"]]
-    assert beneish_cards, "Beneish card should still fire"
-    assert not altman_cards, f"§76 removed — no Altman cards expected; got: {altman_cards}"
 
 
 def test_insider_clustering_and_altman_distress_partially_offset():

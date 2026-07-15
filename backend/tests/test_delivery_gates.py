@@ -9,9 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Real reference captured before any autouse patch — the direct `_days_to_nearest_fomc`
-# unit tests use this so the calendar-neutralizing fixture below doesn't mock them out.
-from services.delivery_gates import _days_to_nearest_fomc as _real_days_to_fomc
+# (§67 FOMC gate + _days_to_nearest_fomc removed 2026-07-14 — gate audit)
 
 
 @contextmanager
@@ -24,7 +22,6 @@ def _no_calendar_haircuts():
 
     _tuesday = datetime(2026, 2, 10, 12, 0, 0, tzinfo=timezone.utc)
     with (
-        patch("services.delivery_gates._days_to_nearest_fomc", return_value=999),
         patch("services.market_calendar.is_pre_long_weekend", return_value=(False, None)),
         patch("services.delivery_gates.datetime") as mock_dt,
     ):
@@ -37,8 +34,7 @@ def _no_calendar_haircuts():
 def _neutralize_calendar_gates():
     """Module-wide: every test runs with the date-dependent FOMC/long-weekend gates
     neutralized, so the suite is deterministic regardless of the calendar date it
-    runs on. Direct `_days_to_nearest_fomc` unit tests use `_real_days_to_fomc`
-    (captured at import) to exercise the real function despite this patch."""
+    runs on."""
     with _no_calendar_haircuts():
         yield
 
@@ -78,13 +74,6 @@ async def _db_no_sector_count():
 
 
 # ── Internal helper tests ─────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_days_to_nearest_fomc_returns_initial_when_no_dates_match():
-    """A date far outside the 2026 schedule should return the sentinel value."""
-
-    assert _real_days_to_fomc("2030-01-01") == 999
 
 
 @pytest.mark.asyncio
@@ -140,24 +129,23 @@ async def test_gate_blocks_buy_without_mr_setup():
 
 
 @pytest.mark.asyncio
-async def test_gate_buy_missing_hasmr_key_blocked_then_restored():
-    """ACT-4c: a reconstructed dict missing the hasMr key (the pre-fix EOD batch
-    path) blocks every BUY as "no MR setup". Restoring hasMr from extra_data
-    (the fix) lets a genuine MR BUY through."""
+async def test_gate_buy_missing_hasmr_key_defaults_true():
+    """A dict missing the hasMr key (pre-field rows / EOD reconstruction)
+    defaults to True and passes the MR gate — aligned with
+    structural_delivery_status (2026-06-17 revert of the ACT-4c default).
+    An explicit hasMr=False still blocks."""
     from services.delivery_gates import check_delivery_gates
 
-    # Simulate the EOD reconstruction: build the dict WITHOUT a hasMr key.
     eod_sig = _sig()
     del eod_sig["hasMr"]
     db = await _db_no_sector_count()
     reason, _ = await check_delivery_gates(eod_sig, db, _Settings())
-    assert reason is not None and "MR" in reason  # blocked (hasMr defaults False)
+    assert reason is None  # missing key defaults True → passes
 
-    # Now restore hasMr from persisted extra_data — gate passes.
-    eod_sig["hasMr"] = True
+    eod_sig["hasMr"] = False
     db = await _db_no_sector_count()
     reason, _ = await check_delivery_gates(eod_sig, db, _Settings())
-    assert reason is None
+    assert reason is not None and "MR" in reason
 
 
 @pytest.mark.asyncio
@@ -625,22 +613,6 @@ async def test_alias_gate_only_fires_on_buy_not_sell():
 # ── _days_to_nearest_fomc ─────────────────────────────────────────────────────
 
 
-def test_days_to_nearest_fomc_exact_date():
-
-    assert _real_days_to_fomc("2026-01-28") == 0
-
-
-def test_days_to_nearest_fomc_one_day_before():
-
-    assert _real_days_to_fomc("2026-01-27") == 1
-
-
-def test_days_to_nearest_fomc_far_from_meeting():
-
-    dist = _real_days_to_fomc("2026-02-15")
-    assert dist > 2
-
-
 # ── Ticker-adaptive win rate gates (lines 114-117) ───────────────────────────
 
 
@@ -793,58 +765,6 @@ async def test_ex_div_blocks_buy():
 # ── FOMC gates (lines 325, 327-330) ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_fomc_decision_day_blocks_buy():
-    from services.delivery_gates import check_delivery_gates
-
-    db = await _db_no_sector_count()
-
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    scalar_result = AsyncMock()
-    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
-    mock_session.execute = AsyncMock(return_value=scalar_result)
-
-    # Patch _days_to_nearest_fomc to return 0
-    with (
-        patch("database.AsyncSessionLocal", return_value=mock_session),
-        patch("services.delivery_gates._days_to_nearest_fomc", return_value=0),
-    ):
-        reason, _ = await check_delivery_gates(_sig(), db, _Settings())
-
-    assert reason is not None
-    assert "FOMC" in reason
-
-
-@pytest.mark.asyncio
-async def test_fomc_one_day_away_haircut():
-    from services.delivery_gates import check_delivery_gates
-
-    db = await _db_no_sector_count()
-
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    scalar_result = AsyncMock()
-    scalar_result.scalar_one_or_none = MagicMock(return_value=None)
-    mock_session.execute = AsyncMock(return_value=scalar_result)
-
-    with (
-        patch("database.AsyncSessionLocal", return_value=mock_session),
-        patch("services.delivery_gates._days_to_nearest_fomc", return_value=1),
-    ):
-        reason, out_sig = await check_delivery_gates(
-            _sig(confidence=65.0),
-            db,
-            _Settings(),
-        )
-
-    # Should apply -4pp haircut (not a hard block), so confidence drops
-    if reason is None:
-        assert out_sig["confidence"] <= 61.1  # 65 - 4 = 61
-
-
 # ── Thursday haircut (lines 298-318) ─────────────────────────────────────────
 
 
@@ -868,7 +788,6 @@ async def test_thursday_haircut_below_58():
     with (
         patch("database.AsyncSessionLocal", return_value=mock_session),
         patch("services.delivery_gates.datetime") as mock_dt,
-        patch("services.delivery_gates._days_to_nearest_fomc", return_value=5),
     ):
         mock_dt.now.return_value = thursday
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -906,7 +825,6 @@ async def test_pre_long_weekend_haircut_applied():
 
     with (
         patch("database.AsyncSessionLocal", return_value=mock_session),
-        patch("services.delivery_gates._days_to_nearest_fomc", return_value=5),
         patch("services.market_calendar.get_upcoming_holidays", return_value=[]),
         patch("services.market_calendar.is_pre_long_weekend", return_value=(True, "Memorial Day")),
     ):

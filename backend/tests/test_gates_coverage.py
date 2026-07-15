@@ -132,19 +132,14 @@ def test_dollar_volume_mid_haircut():
 # ── apply_calendar_gates (function) + CalendarGate (wrapper) ─────────────────
 
 
-def test_calendar_friday_blocks_low_score():
+def test_calendar_friday_no_longer_blocks():
+    # §57 Friday HOLD-flip removed 2026-07-14 (gate audit — unvalidated);
+    # Friday low-score BUYs now pass through unchanged.
     action, conf, cards, srcs = apply_calendar_gates(
         action="BUY", confidence=60.0, score=50.0, today_dow=4, month=6, price=100.0, info={}
     )
-    assert action == "HOLD"
-    assert "Risk Gate" in srcs
-
-
-def test_calendar_friday_exempt_high_score():
-    action, _, _, _ = apply_calendar_gates(
-        action="BUY", confidence=60.0, score=70.0, today_dow=4, month=6, price=100.0, info={}
-    )
-    assert action == "BUY"  # score≥65 exempt
+    assert action == "BUY"
+    assert cards == []
 
 
 def test_calendar_near_52wk_low_penalty():
@@ -162,9 +157,10 @@ def test_calendar_near_52wk_low_penalty():
 
 
 def test_calendar_gate_wrapper_mutates_ctx():
-    ctx = _ctx(today_dow=4, score=50.0)
+    # §77 path: near 52-wk low applies −4pp via the wrapper.
+    ctx = _ctx(today_dow=1, score=50.0, price=100.0, info={"week_52_low": 95.0}, confidence=60.0)
     CalendarGate().apply(ctx)
-    assert ctx.action == "HOLD"
+    assert ctx.confidence == 56.0
     assert repr(CalendarGate()) == "CalendarGate"
 
 

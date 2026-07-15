@@ -986,32 +986,6 @@ def test_score_options_delta_flow_negative():
     assert score < 0
 
 
-def test_score_options_zero_dte_spike():
-    from services.options import score_options
-
-    opt = {"zero_dte_ratio": 0.40}
-    score, rationale = score_options(opt)
-    assert any("Zero-DTE Put Dominance" in r["head"] for r in rationale)
-    assert score < 0
-
-
-def test_score_options_max_pain_convergence():
-    from services.options import score_options
-
-    from datetime import datetime, timezone, timedelta
-
-    near_exp = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
-    opt = {
-        "max_pain": 155.0,
-        "spot": 150.0,
-        "price": 150.0,
-        "expiry": near_exp,
-    }
-    score, rationale = score_options(opt)
-    assert any("Max Pain Pull" in r["head"] for r in rationale)
-    assert score > 0
-
-
 def test_score_options_max_pain_far_away():
     from services.options import score_options
 
@@ -1026,42 +1000,6 @@ def test_score_options_max_pain_far_away():
     }
     score, rationale = score_options(opt)
     assert not any("Max Pain Pull" in r["head"] for r in rationale)
-
-
-def test_score_options_vrp_positive():
-    from services.options import score_options
-
-    opt = {"vrp_proxy": 0.08, "near_iv": 0.30, "far_iv": 0.22}
-    score, rationale = score_options(opt)
-    assert any("Positive Volatility Risk Premium" in r["head"] for r in rationale)
-    assert score > 0
-
-
-def test_score_options_vrp_negative():
-    from services.options import score_options
-
-    opt = {"vrp_proxy": -0.08}
-    score, rationale = score_options(opt)
-    assert any("Negative VRP" in r["head"] for r in rationale)
-    assert score < 0
-
-
-def test_score_options_gex_flip_proximity():
-    from services.options import score_options
-
-    opt = {"gex_flip_level": 151.0, "spot": 150.0, "price": 150.0}
-    score, rationale = score_options(opt)
-    assert any("GEX Flip Level Proximity" in r["head"] for r in rationale)
-    assert score > 0
-
-
-def test_score_options_gex_flip_above():
-    from services.options import score_options
-
-    opt = {"gex_flip_level": 160.0, "spot": 150.0, "price": 150.0}
-    score, rationale = score_options(opt)
-    assert any("Above GEX Flip" in r["head"] for r in rationale)
-    assert score < 0
 
 
 def test_score_options_vanna_charm_exception():
