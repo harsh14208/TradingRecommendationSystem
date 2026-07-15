@@ -300,8 +300,13 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             r_sl = rsi_s.iloc[-n:].reset_index(drop=True)
             prev_low_i = int(c_sl.iloc[:mid].idxmin())
             prev_high_i = int(c_sl.iloc[:mid].idxmax())
-            curr_low_i = mid + int(c_sl.iloc[mid:].idxmin())
-            curr_high_i = mid + int(c_sl.iloc[mid:].idxmax())
+            # BUG FIXED 2026-07-15: after reset_index(drop=True) the slice keeps
+            # positional labels mid..n-1, so idxmin/idxmax are ALREADY absolute —
+            # the old `mid +` double-offset raised IndexError on EVERY call
+            # (3,410 warnings per recent log window; rsi_divergence never computed
+            # once since the feature shipped).
+            curr_low_i = int(c_sl.iloc[mid:].idxmin())
+            curr_high_i = int(c_sl.iloc[mid:].idxmax())
             curr_rsi = float(rsi_s.iloc[-1]) if not pd.isna(rsi_s.iloc[-1]) else 50
             if (
                 c_sl.iloc[curr_low_i] < c_sl.iloc[prev_low_i] * 0.995

@@ -1,57 +1,57 @@
 {
-  "trained_at": "2026-07-14T16:09:09.478745",
-  "n_train": 280,
-  "n_test": 120,
-  "n_total": 400,
+  "trained_at": "2026-07-15T20:26:04.025064",
+  "n_train": 508,
+  "n_test": 218,
+  "n_total": 726,
   "feature_stats": {
     "n_sources": {
       "p01": 1.0,
-      "p99": 1.0,
-      "median": 1.0,
-      "mean": 1.0,
-      "std": 0.0
+      "p99": 19.0,
+      "median": 13.0,
+      "mean": 11.53719,
+      "std": 4.341563
     },
     "n_rationale": {
-      "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p01": 1.0,
+      "p99": 66.75,
+      "median": 30.0,
+      "mean": 30.026171,
+      "std": 14.758875
     },
     "n_pos_rationale": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 31.0,
+      "median": 18.0,
+      "mean": 16.615702,
+      "std": 7.175273
     },
     "n_neg_rationale": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 39.0,
+      "median": 11.0,
+      "mean": 12.975207,
+      "std": 9.410851
     },
     "rr_numeric": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 2.0,
+      "median": 1.5,
+      "mean": 1.428926,
+      "std": 0.396042
     },
     "is_buy": {
-      "p01": 1.0,
+      "p01": 0.0,
       "p99": 1.0,
       "median": 1.0,
-      "mean": 1.0,
-      "std": 0.0
+      "mean": 0.716253,
+      "std": 0.450815
     },
     "has_options_source": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 1.0,
+      "median": 1.0,
+      "mean": 0.763085,
+      "std": 0.425189
     },
     "has_dark_pool_source": {
       "p01": 0.0,
@@ -62,10 +62,10 @@
     },
     "has_fundamentals_source": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 1.0,
+      "median": 1.0,
+      "mean": 0.767218,
+      "std": 0.422605
     },
     "has_institutional_source": {
       "p01": 0.0,
@@ -76,187 +76,208 @@
     },
     "has_macro_source": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 1.0,
+      "median": 1.0,
+      "mean": 0.849862,
+      "std": 0.357206
     },
     "has_earnings_source": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 1.0,
+      "median": 1.0,
+      "mean": 0.866391,
+      "std": 0.340232
     },
     "is_pre_market": {
       "p01": 0.0,
       "p99": 0.0,
       "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "mean": 0.00551,
+      "std": 0.074022
     },
     "is_position_style": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 1.0,
+      "median": 1.0,
+      "mean": 0.665289,
+      "std": 0.471889
     },
     "stop_pct": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 13.259561,
+      "median": 5.40432,
+      "mean": 5.778391,
+      "std": 2.78145
     },
     "target_pct": {
       "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p99": 19.355805,
+      "median": 7.983634,
+      "mean": 8.631322,
+      "std": 4.010199
     },
     "price_log": {
-      "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p01": 1.418898,
+      "p99": 3.219533,
+      "median": 2.324653,
+      "mean": 2.308133,
+      "std": 0.384835
     },
     "change_pct": {
-      "p01": 0.0,
-      "p99": 0.0,
-      "median": 0.0,
-      "mean": 0.0,
-      "std": 0.0
+      "p01": -6.20715,
+      "p99": 9.861625,
+      "median": 0.087,
+      "mean": 0.402064,
+      "std": 2.753725
     },
     "day_of_week": {
       "p01": 0.0,
       "p99": 6.0,
       "median": 3.0,
-      "mean": 2.8225,
-      "std": 2.033714
+      "mean": 2.778237,
+      "std": 1.691535
     },
     "month": {
-      "p01": 1.0,
-      "p99": 1.0,
-      "median": 1.0,
-      "mean": 1.0,
-      "std": 0.0
+      "p01": 4.0,
+      "p99": 7.0,
+      "median": 5.0,
+      "mean": 4.793388,
+      "std": 0.864838
+    },
+    "sector_ord": {
+      "p01": 0.0,
+      "p99": 8.54,
+      "median": 2.0,
+      "mean": 2.846986,
+      "std": 2.832755
+    },
+    "dte_bucket": {
+      "p01": 0.0,
+      "p99": 3.0,
+      "median": 2.0,
+      "mean": 2.048458,
+      "std": 0.9208
+    },
+    "rs_vs_sector": {
+      "p01": -36.819,
+      "p99": 28.834,
+      "median": -0.91,
+      "mean": -1.839716,
+      "std": 11.54618
     }
   },
-  "oos_accuracy": 0.6,
-  "oos_auc": null,
+  "oos_accuracy": 0.5,
+  "oos_auc": 0.5695,
   "oos_auc_ci_95": [
-    null,
-    null
+    0.4908,
+    0.6482
   ],
-  "oos_precision": 0.6,
-  "oos_recall": 0.6,
+  "oos_precision": 0.7237,
+  "oos_recall": 0.3846,
   "top_features": [
-    "n_sources",
-    "n_rationale",
+    "target_pct",
+    "price_log",
+    "month",
     "n_pos_rationale",
-    "n_neg_rationale",
-    "rr_numeric"
+    "n_sources"
   ],
   "feature_importances": [
     {
-      "feature": "n_sources",
-      "importance": 0.1
-    },
-    {
-      "feature": "n_rationale",
-      "importance": 0.1
-    },
-    {
-      "feature": "n_pos_rationale",
-      "importance": 0.1
-    },
-    {
-      "feature": "n_neg_rationale",
-      "importance": 0.1
-    },
-    {
-      "feature": "rr_numeric",
-      "importance": 0.1
-    },
-    {
-      "feature": "is_buy",
-      "importance": 0.1
-    },
-    {
-      "feature": "has_options_source",
-      "importance": 0.1
-    },
-    {
-      "feature": "has_dark_pool_source",
-      "importance": 0.1
-    },
-    {
-      "feature": "has_fundamentals_source",
-      "importance": 0.1
-    },
-    {
-      "feature": "has_institutional_source",
-      "importance": 0.1
-    },
-    {
-      "feature": "has_macro_source",
-      "importance": 0.1
-    },
-    {
-      "feature": "has_earnings_source",
-      "importance": 0.1
-    },
-    {
-      "feature": "is_pre_market",
-      "importance": 0.1
-    },
-    {
-      "feature": "is_position_style",
-      "importance": 0.1
-    },
-    {
-      "feature": "stop_pct",
-      "importance": 0.1
-    },
-    {
       "feature": "target_pct",
-      "importance": 0.1
+      "importance": 0.11062
     },
     {
       "feature": "price_log",
-      "importance": 0.1
-    },
-    {
-      "feature": "change_pct",
-      "importance": 0.1
-    },
-    {
-      "feature": "day_of_week",
-      "importance": 0.1
+      "importance": 0.08627
     },
     {
       "feature": "month",
-      "importance": 0.1
+      "importance": 0.07437
+    },
+    {
+      "feature": "n_pos_rationale",
+      "importance": 0.0709
+    },
+    {
+      "feature": "n_sources",
+      "importance": 0.06997
     },
     {
       "feature": "sector_ord",
-      "importance": 0.1
+      "importance": 0.06582
     },
     {
-      "feature": "dte_bucket",
-      "importance": 0.1
+      "feature": "stop_pct",
+      "importance": 0.06165
+    },
+    {
+      "feature": "day_of_week",
+      "importance": 0.05949
+    },
+    {
+      "feature": "is_buy",
+      "importance": 0.05718
+    },
+    {
+      "feature": "n_neg_rationale",
+      "importance": 0.05458
+    },
+    {
+      "feature": "change_pct",
+      "importance": 0.05313
     },
     {
       "feature": "rs_vs_sector",
-      "importance": 0.1
+      "importance": 0.05172
+    },
+    {
+      "feature": "n_rationale",
+      "importance": 0.04925
+    },
+    {
+      "feature": "is_position_style",
+      "importance": 0.04755
+    },
+    {
+      "feature": "has_earnings_source",
+      "importance": 0.0466
+    },
+    {
+      "feature": "rr_numeric",
+      "importance": 0.04091
+    },
+    {
+      "feature": "has_options_source",
+      "importance": 0.0
+    },
+    {
+      "feature": "has_dark_pool_source",
+      "importance": 0.0
+    },
+    {
+      "feature": "has_fundamentals_source",
+      "importance": 0.0
+    },
+    {
+      "feature": "has_institutional_source",
+      "importance": 0.0
+    },
+    {
+      "feature": "has_macro_source",
+      "importance": 0.0
+    },
+    {
+      "feature": "is_pre_market",
+      "importance": 0.0
+    },
+    {
+      "feature": "dte_bucket",
+      "importance": 0.0
     }
   ],
   "deployed": false,
   "training_only": false,
-  "champion_auc": 0.65,
+  "champion_auc": 0.5654,
   "min_live_n_for_deployment": 300,
   "min_auc_delta_to_deploy": 0.005
 }

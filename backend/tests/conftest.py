@@ -54,6 +54,38 @@ def _neutralize_cohort_gate():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_signal_ml_persistence(tmp_path, monkeypatch):
+    """Redirect ALL signal_ml model/feature persistence paths to tmp_path.
+
+    Root-caused 2026-07-15: tests exercising train_model() mocked _MODEL_FILE
+    but not _FEATURE_FILE (and friends), so every full pytest run overwrote
+    production data/signal_ml_features.json with fixture metadata (n_total=400,
+    champion_auc=0.65). The drift monitor then compared live features against
+    zero-variance fixture stats — thousands of bogus "distribution drift"
+    warnings per scan — and honest retrain artifacts were silently clobbered
+    before being committed. No test may write to the real data/ model files.
+    """
+    try:
+        from services import signal_ml as _sml
+
+        for _attr in (
+            "_MODEL_FILE",
+            "_FEATURE_FILE",
+            "_ENTRY_MODEL_FILE",
+            "_ENTRY_FEATURE_FILE",
+            "_CHALLENGER_MODEL_FILE",
+            "_CHALLENGER_FEATURE_FILE",
+            "_META_MODEL_FILE",
+            "_META_FEATURE_FILE",
+        ):
+            if hasattr(_sml, _attr):
+                monkeypatch.setattr(_sml, _attr, tmp_path / getattr(_sml, _attr).name)
+        yield
+    except Exception:
+        yield
+
+
 @contextlib.contextmanager
 def override_deps(app, **deps):
     """Temporarily override FastAPI dependencies and restore them on exit.

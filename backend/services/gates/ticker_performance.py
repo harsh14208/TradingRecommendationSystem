@@ -194,7 +194,11 @@ async def refresh_snapshot(db, window_days: int = _WINDOW_DAYS) -> TickerPerform
     try:
         from models import Signal
 
-        reference = datetime.now(timezone.utc)
+        # signals.created_at is TIMESTAMP WITHOUT TIME ZONE — tz-naive UTC or
+        # asyncpg raises DataError (3rd instance of this bug pattern; see
+        # cohort_edge_gate.refresh 2026-07-13). This one silently broke every
+        # snapshot refresh of the Stage-B ticker-performance gate.
+        reference = datetime.now(timezone.utc).replace(tzinfo=None)
         cutoff = reference - timedelta(days=window_days)
         result = await db.execute(
             select(Signal.ticker, Signal.action, Signal.outcome_pct, Signal.created_at).where(
