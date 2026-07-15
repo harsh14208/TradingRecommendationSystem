@@ -34,6 +34,8 @@ Run from backend/:
     python scripts/backtest_technicals.py --gate-sweep  # §59–§82 threshold sensitivity
     python scripts/backtest_technicals.py --orats     # §111 ORATS options-flow alt-data tilt
     python scripts/backtest_technicals.py --portfolio --vol-target 0.10  # portfolio vol targeting
+    python scripts/backtest_technicals.py --portfolio --entry-limit 0.20   # limit entry 0.2 ATR below close
+    python scripts/backtest_technicals.py --portfolio --max21-filter 0.50  # keep low-MAX signals (bottom half)
 """
 
 from __future__ import annotations
@@ -2302,6 +2304,8 @@ def simulate_ticker(
     entry_at_close: bool = False,
     # §97a: limit-order entry — fill at Close − k×ATR if next-day Low ≤ limit
     entry_limit_k: float | None = None,
+    # §MAX: skip signals whose 21-day MAX exceeds the expanding percentile
+    max21_filter_pct: float | None = None,
 ) -> pd.DataFrame:
     """
     Generate signals and simulate trades for one ticker.
@@ -2400,12 +2404,21 @@ def simulate_ticker(
     # lottery-like names). Causal: at bar i the window ends at bar i's close,
     # which is known when the signal is generated (entry fills T+1).
     _max21_series = df["Close"].pct_change().rolling(21).max() * 100.0
+    _max21_quantile = None
+    if max21_filter_pct is not None:
+        # Causal expanding quantile: at bar i, only past max21 values are known.
+        _max21_quantile = _max21_series.expanding(min_periods=21).quantile(max21_filter_pct).reindex(df.index)
     for i in range(200, len(df)):
         row = df.iloc[i]
         date = df.index[i]
 
         if TRADE_FROM != END and date < _trade_from_ts:
             continue
+
+        # §MAX filter: skip signals whose 21-day MAX is above the expanding percentile.
+        if _max21_quantile is not None and pd.notna(_max21_quantile.iloc[i]):
+            if float(_max21_series.iloc[i]) > float(_max21_quantile.iloc[i]):
+                continue
 
         if date <= in_trade_until:
             continue
@@ -5257,6 +5270,18 @@ def main():
             except ValueError:
                 pass
 
+    # §MAX: filter out signals whose trailing 21-day MAX is above the expanding median.
+    _max21_filter_pct = None
+    if "--max21-filter" in sys.argv:
+        for _i, _arg in enumerate(sys.argv):
+            if _arg == "--max21-filter" and _i + 1 < len(sys.argv):
+                try:
+                    _max21_filter_pct = float(sys.argv[_i + 1])
+                except ValueError:
+                    pass
+        if _max21_filter_pct is None:
+            _max21_filter_pct = 0.50  # default: keep bottom half (low MAX)
+
     # Portfolio-level volatility target (Harvey et al. / Man Group).
     _vol_target: float | None = None
     if "--vol-target" in sys.argv:
@@ -5754,6 +5779,7 @@ def main():
             ff_str_regime_map=_ff_str_regime_map,
             entry_at_close=_entry_at_close_flag,
             entry_limit_k=_entry_limit_k if _entry_limit_flag else None,
+            max21_filter_pct=_max21_filter_pct,
         )
         if t is not None and not t.empty:
             all_trades.append(t)
@@ -7680,7 +7706,13 @@ def main():
 
     # ── §QuantEngine: portfolio equity curve simulation ──────────────────────
     if "--portfolio" in sys.argv:
-        run_portfolio_simulation(trades, vol_target=_vol_target)
+        # R7 (2026-07-15): the graduated DD-throttle is DEPLOYED in the live
+        # allocator (portfolio_allocator.compute_dd_multiplier — >3% off peak →
+        # 0.5× new positions; 26yr A/B: Ann.Sharpe 3.28→3.46, MaxDD −8.43→−6.38
+        # at zero CAGR cost). The headline sim mirrors live by default;
+        # --no-dd-throttle shows the unthrottled path.
+        _dd_on = "--no-dd-throttle" not in sys.argv
+        run_portfolio_simulation(trades, vol_target=_vol_target, dd_throttle=_dd_on, dd_trig=3.0, throttle_mult=0.5)
         if _vol_target is not None:
             print(
                 "\n> Vol-target baseline comparison: run without --vol-target to see "
