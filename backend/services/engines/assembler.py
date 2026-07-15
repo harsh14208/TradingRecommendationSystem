@@ -377,33 +377,11 @@ def _assemble_signal(
     _adx_gate = tech.get("adx")
     _rsi_gate = float(tech.get("rsi") or 50)
 
-    # ── Low-volatility stock BUY gate ───────────────────────────────────
-    # Stocks with ATR < 0.8% of price (KO, PEP, T, JNJ, WFC, etc.) have
-    # tight, mean-reverting price action where technical breakout signals
-    # fail at much higher rates. Validation: ALL such tickers had 0% win
-    # rates despite 70-85% confidence. Require a stronger score (≥35) and
-    # a non-negative macro environment before issuing a BUY.
-    atr_pct = atr / price if price > 0 else 0.02
-    _macro_score_now = macro.get("macro_score", 0) if macro else 0
-    if action == "BUY" and atr_pct < 0.007:
-        # Hard block: ATR < 0.7%/day means the stock can't generate enough 5-day
-        # return to clear friction. 20-year backtest showed these trades drag avg
-        # return by -0.20%+ even in positive macro environments.
-        action = "HOLD"
-        sources.add("Risk Gate")
-        rationale.append(
-            {
-                "src": "Risk Gate",
-                "head": f"Minimum ATR Gate — ATR {atr_pct * 100:.2f}% Below 0.7% Floor",
-                "body": (
-                    f"ATR is {atr_pct * 100:.2f}% of price — stock moves too little to generate "
-                    "returns above friction in a 5-day hold. Backtest confirmed these trades "
-                    "are negative expected value across all macro environments."
-                ),
-                "sentiment": "neg",
-                "meta": f"ATR%: {atr_pct * 100:.2f}% < 0.7% floor",
-            }
-        )
+    # Low-volatility (min-ATR 0.7%) BUY gate REMOVED (gate audit 2026-07-14):
+    # 1 fire in 87,982 all-time signals — the floor never binds on the current
+    # universe. Its claimed "20-year backtest" has no entry in the validation
+    # ledger, and low-ATR defensives are covered by the cohort-EV gate +
+    # ticker_performance gate from live data.
 
     # ── Defensive-ticker BUY gate ────────────────────────────────────────
     # Tickers that showed 0% BUY win rate across ≥3 resolved signals in the

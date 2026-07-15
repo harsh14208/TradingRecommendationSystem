@@ -5297,75 +5297,11 @@ async def generate_signal(
                 # This guarantees signal generation is never blocked by worker latency.
                 pass
 
-        # ── §81 Block Print Detection ─────────────────────────────────────────
-        # Easley & O'Hara (1987): block prints (>=5k shares) near day-low signal
-        # institutional accumulation. Classify buy vs sell blocks and score.
-        # Only meaningful for liquid large-caps during market hours; skip otherwise.
-        try:
-            if not _is_lev_etf:
-                from services.polygon_client import get_recent_block_prints as _get_blocks
-
-                _bp = await asyncio.wait_for(
-                    _get_blocks(ticker, min_block_size=5_000),
-                    timeout=3.0,
-                )
-                _bb = _bp.get("block_buys", 0) or 0
-                _bs = _bp.get("block_sells", 0) or 0
-                _bbv = _bp.get("block_buy_volume", 0.0) or 0.0
-                _bsv = _bp.get("block_sell_volume", 0.0) or 0.0
-
-                if _bb >= 3 and _bbv > _bsv * 2:
-                    score += 5
-                    sources.add("Options/Flow")
-                    rationale.append(
-                        {
-                            "src": "Options/Flow",
-                            "head": f"Block Print Accumulation — {_bb} Blocks at Day-Low",
-                            "body": (
-                                f"{_bb} block prints (≥5,000 shares each) executed near today's "
-                                f"day-low, totalling {_bbv:,.0f} shares. Vs only {_bs} distribution "
-                                f"blocks ({_bsv:,.0f} shares). Informed buyers willing to pay the "
-                                "spread in size at a depressed price — strongest real-time confirmation "
-                                "that the selloff is temporary (Easley & O'Hara 1987)."
-                            ),
-                            "sentiment": "pos",
-                            "meta": f"block_buys={_bb} vol={_bbv:,.0f} vs block_sells={_bs} vol={_bsv:,.0f}",
-                        }
-                    )
-                elif _bb >= 2 and _bbv > _bsv:
-                    score += 2
-                    sources.add("Options/Flow")
-                    rationale.append(
-                        {
-                            "src": "Options/Flow",
-                            "head": f"Moderate Block Accumulation — {_bb} Blocks Near Low",
-                            "body": (
-                                f"{_bb} block prints near today's low, with buy blocks "
-                                f"({_bbv:,.0f} shares) outpacing sell blocks ({_bsv:,.0f} shares). "
-                                "Directional institutional activity at the oversold price adds modest confirmation."
-                            ),
-                            "sentiment": "pos",
-                            "meta": f"block_buys={_bb} vol={_bbv:,.0f}",
-                        }
-                    )
-                elif _bs >= 3 and _bsv > _bbv * 2:
-                    score -= 6
-                    sources.add("Options/Flow")
-                    rationale.append(
-                        {
-                            "src": "Options/Flow",
-                            "head": f"Block Print Distribution — {_bs} Large Sells Near Day-High",
-                            "body": (
-                                f"{_bs} block prints near today's day-high, totalling {_bsv:,.0f} shares sold. "
-                                "Institutional sellers distributing into price strength — worst MR setup. "
-                                "Smart money is exiting, not accumulating."
-                            ),
-                            "sentiment": "neg",
-                            "meta": f"block_sells={_bs} vol={_bsv:,.0f} vs block_buys={_bb} vol={_bbv:,.0f}",
-                        }
-                    )
-        except Exception:
-            pass
+        # §81 Block Print Detection REMOVED (gate audit 2026-07-14): 0 fires
+        # in 87,982 all-time signals — the score thresholds never triggered.
+        # Untestable in backtest (no historical block-trade data), so no
+        # evidence path exists. get_recent_block_prints() retained in
+        # polygon_client.py for ad-hoc research use.
 
         # ── OFI: Order Flow Imbalance (Lee-Ready 1min approximation) ─────────
         # Cont, Kukanov & Stoikov (2013): OFI predicts short-term price impact.
