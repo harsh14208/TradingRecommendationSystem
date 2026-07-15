@@ -1209,117 +1209,13 @@ def score_options(opt: dict) -> tuple[float, list[dict]]:
                 }
             )
 
-    # ── §70 Zero-DTE Put Spike (event risk flag) ─────────────────────────────
-    _zdtr = opt.get("zero_dte_ratio", 0) or 0
-    if _zdtr > 0.30:
-        score -= 4
-        rationale.append(
-            {
-                "src": "Options",
-                "head": f"Zero-DTE Put Dominance — {_zdtr:.0%} of Put OI",
-                "body": (
-                    f"{_zdtr:.0%} of total put open interest is in zero-DTE contracts. "
-                    "This signals hedging against an imminent same-day catalyst, not typical "
-                    "MR panic — the move may resolve intraday rather than over 10 days."
-                ),
-                "sentiment": "neg",
-                "meta": f"zero_dte_ratio={_zdtr:.3f}",
-            }
-        )
-
-    # ── §71 Max Pain Convergence ──────────────────────────────────────────────
-    _mp = opt.get("max_pain")
-    _spot_mp = opt.get("spot") or opt.get("price") or 0
-    _near_exp = opt.get("expiry")
-    if _mp and _spot_mp and _near_exp:
-        try:
-            from datetime import date as _date_mp, datetime as _dt_mp
-
-            _exp_date = _date_mp.fromisoformat(_near_exp)
-            _days_to_exp = (_exp_date - _dt_mp.utcnow().date()).days
-            _mp_gap_pct = (_mp - _spot_mp) / _spot_mp
-            if _days_to_exp <= 2 and _mp_gap_pct > 0.02:
-                score += 4
-                rationale.append(
-                    {
-                        "src": "Options",
-                        "head": f"Max Pain Pull — ${_mp:.2f} target ({_mp_gap_pct:.1%} above spot)",
-                        "body": (
-                            f"Options expiry in {_days_to_exp}d. Max pain level ${_mp:.2f} is "
-                            f"{_mp_gap_pct:.1%} above current spot — dealer hedging creates "
-                            "gravitational pull toward max pain, amplifying the MR bounce."
-                        ),
-                        "sentiment": "pos",
-                        "meta": f"max_pain={_mp:.2f} spot={_spot_mp:.2f} dte={_days_to_exp}",
-                    }
-                )
-        except Exception as _mp_err:
-            log.debug("[options] max pain calculation failed: %s", _mp_err)
-
-    # ── §72 VRP Proxy (IV term premium) ──────────────────────────────────────
-    _vrp = opt.get("vrp_proxy")
-    if _vrp is not None:
-        if _vrp > 0.05:
-            score += 3
-            rationale.append(
-                {
-                    "src": "Options",
-                    "head": f"Positive Volatility Risk Premium (+{_vrp:.2f})",
-                    "body": (
-                        f"Near-term IV exceeds back-month IV by {_vrp:.2f} — the options market "
-                        "is overcharging for near-term protection. This systematic fear overpricing "
-                        "historically precedes faster bounce completions."
-                    ),
-                    "sentiment": "pos",
-                    "meta": f"vrp_proxy={_vrp:+.4f} near_iv={opt.get('near_iv')} far_iv={opt.get('far_iv')}",
-                }
-            )
-        elif _vrp < -0.05:
-            score -= 2
-            rationale.append(
-                {
-                    "src": "Options",
-                    "head": f"Negative VRP ({_vrp:.2f}) — Back-Month Fear",
-                    "body": (
-                        "Back-month IV exceeds near-term IV — longer-duration fear dominates. "
-                        "Typically signals persistent structural concern rather than acute panic."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"vrp_proxy={_vrp:+.4f}",
-                }
-            )
-
-    # ── §69 GEX Flip Level Proximity ─────────────────────────────────────────
-    _gfl = opt.get("gex_flip_level")
-    _spot_gfl = opt.get("spot") or opt.get("price") or 0
-    if _gfl and _spot_gfl and _spot_gfl > 0:
-        _gfl_gap = (_gfl - _spot_gfl) / _spot_gfl
-        if -0.02 <= _gfl_gap <= 0.01:
-            score += 5
-            rationale.append(
-                {
-                    "src": "Options",
-                    "head": f"GEX Flip Level Proximity — ${_gfl:.2f} ({_gfl_gap:+.1%})",
-                    "body": (
-                        f"Price within 2% of GEX flip level ${_gfl:.2f}. Below the flip, "
-                        "dealers are short gamma → they must buy as price falls, mechanically "
-                        "amplifying the MR bounce. SpotGamma: 73% of bottoms occur within "
-                        "0.5% of the GEX flip."
-                    ),
-                    "sentiment": "pos",
-                    "meta": f"gex_flip={_gfl:.2f} spot={_spot_gfl:.2f} gap={_gfl_gap:+.2%}",
-                }
-            )
-        elif _gfl_gap > 0.03:
-            score -= 2
-            rationale.append(
-                {
-                    "src": "Options",
-                    "head": f"Above GEX Flip — Dealer Short Delta Zone ({_gfl_gap:+.1%})",
-                    "body": "Price above flip level — dealers long gamma, dampen moves. Lower bounce energy.",
-                    "sentiment": "neg",
-                    "meta": f"gex_flip={_gfl:.2f} spot={_spot_gfl:.2f}",
-                }
-            )
+    # §69 GEX-flip / §70 zero-DTE / §71 max-pain / §72 VRP-proxy score
+    # modifiers REMOVED (gate audit 2026-07-14): untestable in backtest (no
+    # historical options-surface data exists) and live firing was 85-95%
+    # concentrated on the now-blocked SELL/intraday cohorts (WR 11-20% where
+    # fired); on the surviving BUY position/swing book they fired on ~zero
+    # signals. The underlying fields (gex_flip_level, zero_dte_ratio,
+    # max_pain, vrp_proxy) are still computed above for display/research and
+    # the separate options_vrp paper engine is unaffected.
 
     return round(score, 1), rationale
