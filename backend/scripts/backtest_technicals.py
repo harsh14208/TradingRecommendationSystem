@@ -33,6 +33,7 @@ Run from backend/:
     python scripts/backtest_technicals.py --sweep     # BUY_THRESH / HOLD_DAYS grid search
     python scripts/backtest_technicals.py --gate-sweep  # §59–§82 threshold sensitivity
     python scripts/backtest_technicals.py --orats     # §111 ORATS options-flow alt-data tilt
+    python scripts/backtest_technicals.py --portfolio --vol-target 0.10  # portfolio vol targeting
 """
 
 from __future__ import annotations
@@ -4297,6 +4298,7 @@ def run_portfolio_simulation(
     dd_trig: float = 3.0,
     throttle_mult: float = 0.5,
     quiet: bool = False,
+    vol_target: float | None = None,
 ) -> dict | None:
     """Concurrent-position portfolio equity-curve simulation.
 
@@ -4335,6 +4337,24 @@ def run_portfolio_simulation(
     skipped = 0
     last_event_dt = df["_entry_dt"].iloc[0]
 
+    # ── §QuantEngine: portfolio-level volatility targeting ───────────────────
+    # Harvey et al. / Man Group evidence: scaling exposure to a forecast-vol
+    # target is one of the most reliable Sharpe levers in equity systems.
+    # We use a causal expanding/rolling realized vol of per-trade net_pct
+    # returns and scale each slot's notional so expected portfolio vol
+    # approximates vol_target (default 25% ann).
+    _vol_multipliers: list[float] | None = None
+    if vol_target is not None and len(df) >= 2:
+        _min_periods = min(21, len(df) - 1)
+        _roll_std = df["net_pct"].shift(1).rolling(window=63, min_periods=_min_periods).std()
+        # Fallback to expanding std for the first trades.
+        _exp_std = df["net_pct"].shift(1).expanding(min_periods=_min_periods).std()
+        _realized_std = _roll_std.fillna(_exp_std)
+        # Annualize: each trade is ~1 day of exposure on average; sqrt(252).
+        _forecast_vol = (_realized_std * np.sqrt(252)).clip(lower=1e-6)
+        _multiplier = (vol_target / _forecast_vol).clip(lower=0.25, upper=2.0)
+        _vol_multipliers = _multiplier.fillna(1.0).tolist()
+
     def _apply_tbill(until_dt: pd.Timestamp) -> None:
         """Credit T-bill return on idle slots between last_event_dt and until_dt."""
         nonlocal capital, last_event_dt
@@ -4348,7 +4368,7 @@ def run_portfolio_simulation(
         capital *= 1.0 + _T_BILL_ANN * idle_frac * (dt_days / 365.25)
         last_event_dt = until_dt
 
-    for _, row in df.iterrows():
+    for i, row in df.iterrows():
         entry_dt = row["_entry_dt"]
         exit_dt = row["_exit_dt"]
         net_pct = float(row["net_pct"])
@@ -4373,7 +4393,8 @@ def run_portfolio_simulation(
             _dd_now = (peak - capital) / peak * 100 if peak > 0 else 0.0
             _throttle = throttle_mult if (dd_throttle and _dd_now > dd_trig) else 1.0
             _trade_size = float(row.get("size_mult", 1.0)) if pd.notna(row.get("size_mult")) else 1.0
-            _mult = _throttle * _trade_size
+            _vol_mult = _vol_multipliers[i] if _vol_multipliers else 1.0
+            _mult = _throttle * _trade_size * _vol_mult
             open_slots.append((exit_dt, net_pct, _mult))
         else:
             skipped += 1
@@ -4424,19 +4445,23 @@ def run_portfolio_simulation(
 
     if not quiet:
         print(f"\n## §QuantEngine: Portfolio Equity-Curve Simulation ({max_concurrent} concurrent slots)\n")
-        print_table(
-            ["Metric", "Value", "Note"],
-            [
-                ["Input trades", str(n_input), "signal-level"],
-                ["Skipped (slots full)", str(skipped), f"{skipped / n_input * 100:.1f}%"],
-                ["Exit events", str(n_events), "slot close events"],
-                ["Final capital", f"${capital:,.0f}", "from $10,000 start (incl. T-bill on idle)"],
-                ["CAGR", f"{cagr:+.1f}%", f"over {n_years:.1f} years"],
-                ["T-bill benchmark", f"+{tbill_cagr:.1f}%", f"{_T_BILL_ANN * 100:.1f}% annual on idle (QE4)"],
-                ["Portfolio Max DD", f"-{max_dd:.2f}%", "concurrent-position compound DD"],
-                ["Annualized Sharpe", fmt_sharpe(ann_sharpe) if ann_sharpe else "—", "event-time (see note)"],
-            ],
-        )
+        _metrics_rows = [
+            ["Input trades", str(n_input), "signal-level"],
+            ["Skipped (slots full)", str(skipped), f"{skipped / n_input * 100:.1f}%"],
+            ["Exit events", str(n_events), "slot close events"],
+            ["Final capital", f"${capital:,.0f}", "from $10,000 start (incl. T-bill on idle)"],
+            ["CAGR", f"{cagr:+.1f}%", f"over {n_years:.1f} years"],
+            ["T-bill benchmark", f"+{tbill_cagr:.1f}%", f"{_T_BILL_ANN * 100:.1f}% annual on idle (QE4)"],
+            ["Portfolio Max DD", f"-{max_dd:.2f}%", "concurrent-position compound DD"],
+            ["Annualized Sharpe", fmt_sharpe(ann_sharpe) if ann_sharpe else "—", "event-time (see note)"],
+        ]
+        if vol_target is not None and _vol_multipliers is not None:
+            _avg_mult = float(np.mean(_vol_multipliers))
+            _metrics_rows.insert(
+                4,
+                ["Vol target (ann)", f"{vol_target:.0%}", f"avg size mult {_avg_mult:.2f}x (Harvey/Man Group)"],
+            )
+        print_table(["Metric", "Value", "Note"], _metrics_rows)
         print(
             f"\n> Idle capital earns {_T_BILL_ANN * 100:.1f}%/yr T-bill rate (QE4: 3.5% historical 2003-2026 avg).\n"
             "> Ann. Sharpe from event-time daily-equivalent returns — use CAGR as the primary metric.\n"
@@ -5200,6 +5225,17 @@ def main():
                 _entry_limit_k = float(sys.argv[_i + 1])
             except ValueError:
                 pass
+
+    # Portfolio-level volatility target (Harvey et al. / Man Group).
+    _vol_target: float | None = None
+    if "--vol-target" in sys.argv:
+        _vol_target = VOL_REF_ANN  # default 25%
+        for _i, _arg in enumerate(sys.argv):
+            if _arg == "--vol-target" and _i + 1 < len(sys.argv):
+                try:
+                    _vol_target = float(sys.argv[_i + 1])
+                except ValueError:
+                    pass
 
     # Parse --target-mult X.Y
     _target_mult_override = None
@@ -7555,7 +7591,12 @@ def main():
 
     # ── §QuantEngine: portfolio equity curve simulation ──────────────────────
     if "--portfolio" in sys.argv:
-        run_portfolio_simulation(trades)
+        run_portfolio_simulation(trades, vol_target=_vol_target)
+        if _vol_target is not None:
+            print(
+                "\n> Vol-target baseline comparison: run without --vol-target to see "
+                "unscaled Sharpe/MaxDD for the same trade stream.\n"
+            )
 
     # ── §QuantEngine: beta-hedge comparison ──────────────────────────────────
     if _beta_hedge_flag and spy_prices:
