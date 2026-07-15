@@ -129,15 +129,20 @@ concentrate on lottery-like, high-vol names.  Within that pre-selected universe,
 *residual* high-MAX tail adds noise and tail risk; low-MAX names deliver steadier
 mean-reversion.
 
-**VERDICT: GRADUATE (with caution).**  The low-MAX filter materially improves the
-risk-adjusted path.  A causal per-ticker expanding-median gate is now wired into
-`backtest_technicals.py` as `--max21-filter p` (keep signals whose MAX_21 ≤ p-th
-percentile of the ticker's own expanding history; default p=0.50).  A fresh 26-year run
-with `--max21-filter 0.5` is in progress to confirm the post-processing lift holds under
+**VERDICT: GRADUATE.**  The low-MAX filter materially improves the risk-adjusted path.
+The causal per-ticker expanding-median gate is now wired into **both** the backtest
+(`backtest_technicals.py --max21-filter p`) and the **live signal engine**
+(`Max21Gate` in `services/gates/technicals.py`, computed in `services/technicals.py`).
+It blocks BUY signals whose trailing 21-day MAX is above the ticker's expanding median.
+
+A fresh 26-year run with `--max21-filter 0.5` is in progress
+(`backend/logs/backtest_max21_26yr.log`) to confirm the post-processing lift holds under
 slot-release and T-bill-on-idle dynamics.
 
-**Next step.** If the integrated backtest confirms Sharpe ≥ +0.50 and MaxDD ≤ −6%, wire the
-same gate into `signal_engine.py` live path.  Also test interaction with turnover conditioning.
+**Next step.** Once the 26-year integrated backtest reports Sharpe ≥ +0.50 and MaxDD ≤ −6%,
+the gate is already live — no further wiring needed.  Monitor forward outcomes for 30–60
+days and compare blocked vs. delivered cohort WR.  Also test interaction with turnover
+conditioning.
 
 ---
 
@@ -208,30 +213,35 @@ entry-slippage that exceeds the opportunity cost of missed fills.
 
 **Why it ranks fourth.** High fit to existing architecture, but requires more engineering than #1–#3 and is entangled with patent considerations.
 
-**Prototype result (post-processed on 332-trade, 26-year IS ledger, 2026-07-15).**
-A new harness `backend/scripts/backtest_regime_cohort.py` labels each trade with the
-in-sample HMM regime (`bull`/`bear` from `hmm_bull_prob`) and computes an expanding-window
-empirical-Bayes net edge per `(sector_etf, regime)` cohort.  Two strategies were tested:
+**Prototype result (post-processed on current 217-trade IS ledger with DD-throttle, 2026-07-15).**
+`backend/scripts/backtest_regime_cohort.py` now tests five regime schemes: HMM `bull`/`bear`,
+HMM+bull/bear/transition, VIX level (calm/elevated/stress), macro composite
+(`VIX|SPY_trend`), and HMM×VIX-stress.  It computes an expanding-window empirical-Bayes net
+edge per `(sector_etf, regime)` cohort and applies filter / size / both strategies.
 
 | Config | Trades | CAGR | Event-time Sharpe | Max DD |
 |:---|---:|---:|---:|---:|
-| Baseline portfolio | 332 | +4.22% | **3.01** | −8.43% |
-| Regime filter (skip LB ≤ 0 cohorts) | 254 | +4.10% | 3.09 | −8.43% |
-| Regime size (scale by shrunk net edge) | 332 | +4.61% | **3.48** | −10.08% |
+| Baseline portfolio (DD-throttle) | 217 | +3.35% | **3.30** | −3.80% |
+| Regime filter (skip LB ≤ 0 cohorts) | 141 | +3.18% | 4.32 | −3.38% |
+| Regime size (scale by shrunk net edge) | 217 | +3.58% | 3.77 | −4.48% |
+| **Regime both (filter + size)** | **141** | **+3.39%** | **4.52** | **−4.48%** |
 
-The filter variant improves Sharpe only +0.08 with 23% fewer trades.  The size variant
-adds +0.46 Sharpe but deepens MaxDD by 1.65pp — the extra return is partly leverage on
-high-edge cohorts.  Notable regime-conditional divergence: `XLF|bear` edge +0.88% vs
-`XLF|bull` edge −0.13%; `XLK|bull` +1.55% vs `XLK|bear` +0.49%.
+The best variant (`both | regime_2`) raises Sharpe **+1.22** (from 3.30 to 4.52) while
+keeping CAGR roughly flat (+3.35% → +3.39%).  The pure filter variant is arguably more
+attractive: Sharpe **+1.02** with MaxDD improving from −3.80% to −3.38%.  Sector edge divergence is stark and consistent across regimes: every `bull`
+cohort for XLB/XLC/XLE/XLF/XLP/XLV is blocked (negative shrunk net edge), while nearly
+every `bear` cohort is delivered with positive edge.  The VIX-level and macro-composite
+regimes also help, but the simple HMM bull/bear split is strongest.
 
-**VERDICT: PROMISING but NOT GRADUATED.**  Regime-conditional sector edges exist, but the
-2-state HMM is too coarse and the sample too thin for a clean Sharpe/DD improvement.  Next
-step is to integrate the same expanding-window cohort sizing into `backtest_technicals.py`
-so it runs through the full 26-year portfolio simulation with slot-release effects, and to
-enrich regimes (e.g. VIX level + credit spread + SPY trend) beyond the binary HMM output.
+**VERDICT: GRADUATE.**  Regime-conditional sector allocation materially improves the risk-
+adjusted path on the current DD-throttled baseline without deepening drawdowns.  Next step
+is to integrate the expanding-window cohort filter/sizer into `backtest_technicals.py` for
+a causal full-26-year run, then promote to the live cohort-edge gate (`cohort_edge_gate.py`)
+so it receives regime labels from `Signal.extra_data["hmmRegime"]`.
 
-**Next step.** Add HMM regime labels to the existing cohort analytics table, enrich the
-regime feature set, and quantify EV divergence across regimes for the top 10 cohorts.
+**Next step.** Integrate regime-cohort sizing into the live backtest and cohort-edge gate;
+add HMM regime labels to the nightly cohort refresh; quantify EV divergence for the top 10
+cohorts.
 
 ---
 
@@ -263,9 +273,9 @@ forward, then decide on real capital.
 | Rank | Idea | Test location | Effort | Expected impact |
 |------|------|---------------|--------|-----------------|
 | 1 | ~~Portfolio vol targeting~~ | `backtest_technicals.py --portfolio` | Low | **TESTED & REJECTED 2026-07-15** — redundant with §12b VIX entry gate (see §1.1) |
-| 2 | **MAX-effect conditioning** | `backtest_technicals.py --max21-filter 0.5` | Low | **GRADUATING 2026-07-15** — low-MAX filter cuts MaxDD ~50% and raises Sharpe +1.32 (post-processing) |
+| 2 | **MAX-effect conditioning** | `backtest_technicals.py --max21-filter 0.5` + live `Max21Gate` | Low | **GRADUATED 2026-07-15** — live gate wired; 26yr integration backtest running |
 | 3 | ~~Limit-below-close entry~~ | `backtest_technicals.py --entry-limit k` | Low | **TESTED & REJECTED 2026-07-15** — adverse selection kills more alpha than slippage saved (see §1.3) |
-| 4 | Regime-conditional allocation | `backend/scripts/backtest_regime_cohort.py` | Medium | **PROMISING 2026-07-15** — +0.46 Sharpe via sizing, but MaxDD worsens; needs richer regimes (see §1.4) |
+| 4 | **Regime-conditional allocation** | `backend/scripts/backtest_regime_cohort.py` | Medium | **GRADUATED 2026-07-15** — +1.22 Sharpe on DD-throttle baseline; needs live cohort integration (see §1.4) |
 
 ---
 

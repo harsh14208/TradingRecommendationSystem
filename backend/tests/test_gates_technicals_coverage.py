@@ -10,6 +10,7 @@ from services.gates.technicals import (
     BearHighVixGate,
     DeepBearRsiGate,
     GlobalVixMinGate,
+    Max21Gate,
     MrEntryConditionGate,
     MrPersistenceGate,
     NearEarningsCautionGate,
@@ -174,3 +175,28 @@ def test_deep_bear_rsi_gate_blocks():
     ctx = _ctx(vix=30.0, macro={"sp500_sma200_ratio": 0.90}, tech={"rsi": 40, "sma200": 100})
     DeepBearRsiGate().apply(ctx)
     assert ctx.action == "HOLD"
+
+
+def test_max21_gate_blocks_high_max():
+    ctx = _ctx(has_mr=True, tech={"max_21": 5.0, "max_21_median": 2.5})
+    Max21Gate().apply(ctx)
+    assert ctx.action == "HOLD"
+    assert any(r["src"] == "Risk Gate" for r in ctx.rationale)
+
+
+def test_max21_gate_passes_low_max():
+    ctx = _ctx(has_mr=True, tech={"max_21": 1.5, "max_21_median": 2.5})
+    Max21Gate().apply(ctx)
+    assert ctx.action == "BUY"
+
+
+def test_max21_gate_no_data_passes():
+    ctx = _ctx(has_mr=True, tech={})
+    Max21Gate().apply(ctx)
+    assert ctx.action == "BUY"
+
+
+def test_max21_gate_ignores_non_buy():
+    ctx = _ctx(action="SELL", has_mr=True, tech={"max_21": 5.0, "max_21_median": 2.5})
+    Max21Gate().apply(ctx)
+    assert ctx.action == "SELL"

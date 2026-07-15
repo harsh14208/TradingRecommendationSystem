@@ -100,6 +100,41 @@ def regime_three_state(bull_prob: pd.Series, trans_risk: pd.Series) -> pd.Series
     return out
 
 
+def regime_vix(vix: pd.Series) -> pd.Series:
+    """VIX-level regime: calm / elevated / stress."""
+    out = pd.Series(index=vix.index, dtype="object")
+    out[vix < 20] = "calm"
+    out[(vix >= 20) & (vix < 30)] = "elevated"
+    out[vix >= 30] = "stress"
+    return out
+
+
+def regime_spy_trend(spy_trend: pd.Series) -> pd.Series:
+    """SPY trend direction at entry."""
+    return pd.Series(np.where(spy_trend >= 0, "spy_bull", "spy_bear"), index=spy_trend.index)
+
+
+def regime_macro(vix: pd.Series, spy_trend: pd.Series) -> pd.Series:
+    """Combined macro regime using VIX level and SPY trend."""
+    out = pd.Series(index=vix.index, dtype="object")
+    vix_label = regime_vix(vix)
+    spy_label = regime_spy_trend(spy_trend)
+    for idx in vix.index:
+        out[idx] = f"{vix_label[idx]}|{spy_label[idx]}"
+    return out
+
+
+def regime_hmm_vix(bull_prob: pd.Series, vix: pd.Series) -> pd.Series:
+    """HMM bull/bear crossed with VIX stress flag."""
+    out = pd.Series(index=bull_prob.index, dtype="object")
+    hmm = regime_bull_bear(bull_prob)
+    vix_stress = vix >= 30
+    for idx in bull_prob.index:
+        suffix = "stress" if vix_stress[idx] else "normal"
+        out[idx] = f"{hmm[idx]}|{suffix}"
+    return out
+
+
 # ── Empirical-Bayes cohort edge ──────────────────────────────────────────────
 
 
@@ -356,6 +391,26 @@ def main() -> None:
     trades["date"] = pd.to_datetime(trades["date"])
     trades["regime_2"] = regime_bull_bear(trades["hmm_bull_prob"])
     trades["regime_3"] = regime_three_state(trades["hmm_bull_prob"], trades.get("hmm_trans_risk"))
+
+    # Richer regime labels when market data is available.
+    _vix_col = "vix_entry" if "vix_entry" in trades.columns else ("vix" if "vix" in trades.columns else None)
+    _spy_col = "spy_trend_entry" if "spy_trend_entry" in trades.columns else None
+    if _vix_col:
+        trades["regime_vix"] = regime_vix(trades[_vix_col])
+    else:
+        trades["regime_vix"] = "unknown"
+    if _spy_col:
+        trades["regime_spy"] = regime_spy_trend(trades[_spy_col])
+    else:
+        trades["regime_spy"] = "unknown"
+    if _vix_col and _spy_col:
+        trades["regime_macro"] = regime_macro(trades[_vix_col], trades[_spy_col])
+    else:
+        trades["regime_macro"] = "unknown"
+    if _vix_col:
+        trades["regime_hmm_vix"] = regime_hmm_vix(trades["hmm_bull_prob"], trades[_vix_col])
+    else:
+        trades["regime_hmm_vix"] = "unknown"
     trades["regime"] = trades["regime_2"]  # default 2-regime
 
     baseline_pm = run_portfolio_simulation(trades, max_concurrent=args.slots, quiet=True) or {}
@@ -379,8 +434,13 @@ def main() -> None:
     variants = []
     strategies = ["filter", "size", "both"] if args.strategy == "both" else [args.strategy]
 
+    regime_cols = ["regime_2", "regime_3"]
+    if _vix_col:
+        regime_cols.append("regime_vix")
+    if _vix_col and _spy_col:
+        regime_cols.extend(["regime_macro", "regime_hmm_vix"])
     for strategy in strategies:
-        for regime_col in ["regime_2", "regime_3"]:
+        for regime_col in regime_cols:
             work = trades.copy()
             work["regime"] = work[regime_col]
             rc = apply_regime_cohort(work, strategy, args.min_cohort_n, args.shrink_k)

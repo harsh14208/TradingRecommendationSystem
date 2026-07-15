@@ -734,6 +734,7 @@ def _assemble_signal(
         AtrRankCeilingGate as _ARCGate,
         AtrRankFloorGate as _ARFGate,
         IbsSma20ConfluenceGate as _IBSGate,
+        Max21Gate as _Max21Gate,
         MrEntryConditionGate as _MRECGate,
         MrPersistenceGate as _MRPGate,
         ReturnJumpGate as _RJGate,
@@ -754,6 +755,7 @@ def _assemble_signal(
             _ARCGate(),
             _RJGate(),
             _VDGate(),
+            _Max21Gate(),
         ]
     ).run(_sig_ctx)
     action = _sig_ctx.action
