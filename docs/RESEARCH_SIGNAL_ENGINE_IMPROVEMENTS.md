@@ -51,9 +51,25 @@ The five longer-term improvement areas (regime detection, PIT data/survivorship 
 
 > Avg size multiplier was 0.51× — the strategy's realized vol was roughly double the 25% target, so the target heavily de-risked the path. Risk-adjusted return (CAGR/MaxDD) improved from 0.97 to 1.87.
 
+**FULL-UNIVERSE validation (2026-07-14, 330 signal-level trades, identical trade stream, 22.0 years):**
+
+| Config | CAGR | Event-time Sharpe | Max DD | CAGR/MaxDD | Avg mult |
+|:---|---:|---:|---:|---:|---:|
+| Baseline portfolio | +4.1% | 2.61 | −8.43% | 0.49 | 1.00× |
+| `--vol-target 0.25` | +3.2% | 3.92 | −2.17% | **1.47** | 0.30× |
+
+> **The effect replicates at full scale** — Sharpe 2.61→3.92, MaxDD −8.43%→−2.17%, CAGR/MaxDD 3×.
+> **But σ=0.25 over-deleverages:** avg mult 0.30× drops CAGR (+3.2%) *below the T-bill benchmark*
+> (+3.5%) — the scaled book under-earns cash in absolute terms. Root cause: the forecast
+> annualizes per-trade `net_pct` vol by √252 as if trades were daily observations, while holds
+> overlap ~10 days — biasing forecast vol high (~0.8 ann) and multipliers low. The scaling signal
+> is monotone (the A/B is valid); the *label* just isn't literally "25% portfolio vol".
+
+**Deploy bar.** Sweep σ_target upward (0.40–0.60 range, targeting avg mult ≈ 0.7–1.0) so DD reduction is kept without dropping absolute return below cash, OR fix the annualization to account for overlapping holds (√(252/HOLD_DAYS) scaling) so the target is honest. Do not deploy the sizing hook live until a config beats baseline on CAGR/MaxDD **while keeping CAGR > T-bill**.
+
 **Why it wins.** Largest documented effect; lowest implementation risk; no new data needed; directly addresses the June high-vol drawdown.
 
-**Next step.** Run on the full (non-`--quick`) universe and test σ_target ∈ {0.10, 0.15, 0.20, 0.25} to find the risk-adjusted sweet spot. Also evaluate a VIX-conditioned variant where σ_forecast blends strategy realized vol with VIX level.
+**Next step.** σ_target sweep on the full universe; then evaluate a VIX-conditioned variant where σ_forecast blends strategy realized vol with VIX level.
 
 ---
 
