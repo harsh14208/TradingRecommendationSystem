@@ -83,7 +83,9 @@ async def main() -> None:
     from database import AsyncSessionLocal
     from models import Signal, TickerPerfShadowDecision
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
+    # scan_ts is TIMESTAMP WITHOUT TIME ZONE — cutoff must be tz-naive UTC or
+    # asyncpg raises DataError (same fix as cohort_edge_gate.refresh 2026-07-13).
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=args.days)
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -131,19 +133,19 @@ async def main() -> None:
     # ── Disagreement buckets ────────────────────────────────────────────────
     static_only = Bucket(
         "Static blocked / Dynamic passed",
-        [r for r in rows if r[0].static_blocked and r[0].dynamic_decision == "pass"],
+        [r[0] for r in rows if r[0].static_blocked and r[0].dynamic_decision == "pass"],
     )
     dynamic_only = Bucket(
         "Static passed / Dynamic blocked or cautioned",
-        [r for r in rows if not r[0].static_blocked and r[0].dynamic_decision in ("block", "caution")],
+        [r[0] for r in rows if not r[0].static_blocked and r[0].dynamic_decision in ("block", "caution")],
     )
     both_blocked = Bucket(
         "Both blocked",
-        [r for r in rows if r[0].static_blocked and r[0].dynamic_decision == "block"],
+        [r[0] for r in rows if r[0].static_blocked and r[0].dynamic_decision == "block"],
     )
     both_passed = Bucket(
         "Both passed",
-        [r for r in rows if not r[0].static_blocked and r[0].dynamic_decision == "pass"],
+        [r[0] for r in rows if not r[0].static_blocked and r[0].dynamic_decision == "pass"],
     )
 
     print(_section("Disagreement analysis"))
@@ -153,10 +155,11 @@ async def main() -> None:
         resolved = bucket.outcomes(outcome_field)
         wr = bucket.wr(outcome_field)
         avg_ret = bucket.avg_return(outcome_field)
+        wr_s = f"{wr:.1%}" if wr is not None else "n/a"
+        avg_s = f"{avg_ret:+.2f}%" if avg_ret is not None else "n/a"
         print(
             f"| {bucket.name} | {bucket.n} | {len(resolved)} | "
-            f"{wr:.1% if wr is not None else 'n/a'} | "
-            f"{avg_ret:+.2f}% if avg_ret is not None else 'n/a' | "
+            f"{wr_s} | {avg_s} | "
             f"{bucket.missed_winners(outcome_field)} | {bucket.saved_losers(outcome_field)} |"
         )
 
@@ -211,7 +214,8 @@ async def main() -> None:
     misaligned = 0
     hold_missing = 0
     for d, s in rows:
-        if d.hold_days is None or s.outcome_pct_7d is None:
+        # the 7d outcome lives on the shadow-decision row, not the Signal
+        if d.hold_days is None or d.outcome_pct_7d is None:
             hold_missing += 1
             continue
         # Heuristic: 7d outcome is aligned if hold_days is within 5-10 days.
