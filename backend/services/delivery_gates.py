@@ -18,41 +18,6 @@ from sqlalchemy import func, select
 
 log = logging.getLogger("scanner")
 
-# ── §67 FOMC meeting dates (scheduled announcement days) ─────────────────────
-_FOMC_DATES: frozenset[str] = frozenset(
-    {
-        "2026-01-28",
-        "2026-03-18",
-        "2026-04-29",
-        "2026-06-17",
-        "2026-07-29",
-        "2026-09-16",
-        "2026-10-28",
-        "2026-12-16",
-        # 2027 dates — update quarterly
-        "2027-01-27",
-        "2027-03-17",
-        "2027-04-28",
-        "2027-06-16",
-        "2027-07-28",
-        "2027-09-15",
-        "2027-10-27",
-        "2027-12-15",
-    }
-)
-
-
-def _days_to_nearest_fomc(today_str: str) -> int:
-    from datetime import date as _date
-
-    today = _date.fromisoformat(today_str)
-    min_days = 999
-    for ds in _FOMC_DATES:
-        d = _date.fromisoformat(ds)
-        diff = abs((d - today).days)
-        min_days = min(min_days, diff)
-    return min_days
-
 
 def _utcnow_naive() -> datetime:
     """UTC timestamp compatible with existing naive SQLAlchemy DateTime columns."""
@@ -457,30 +422,12 @@ async def check_delivery_gates(
     except Exception:
         pass
 
-    # §67 FOMC Proximity caution (≤1 day)
-    if action == "BUY":
-        _today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        _fomc_dist = _days_to_nearest_fomc(_today_str)
-        if _fomc_dist == 0:
-            return "FOMC decision day — rate announcement gap risk, MR entry blocked", sig_dict
-        elif _fomc_dist == 1:
-            sig_dict = dict(sig_dict)
-            sig_dict["confidence"] = round(max(35.0, sig_dict.get("confidence", 0) - 4.0), 1)
-            sig_dict.setdefault("rationale", [])
-            sig_dict["rationale"] = list(sig_dict["rationale"]) + [
-                {
-                    "src": "Risk Gate",
-                    "head": "FOMC Tomorrow — Rate Decision Uncertainty (−4pp)",
-                    "body": (
-                        "Tomorrow is a scheduled FOMC rate decision. Pre-decision gap risk and "
-                        "intraday volatility reduce fill quality and MR hold reliability. "
-                        "Confidence reduced −4pp."
-                    ),
-                    "sentiment": "neg",
-                    "meta": "fomc_dist=1d haircut=-4pp (§67)",
-                }
-            ]
-            conf = sig_dict["confidence"]
+    # §67 FOMC hard block + FOMC-tomorrow haircut REMOVED (gate audit
+    # 2026-07-14): backtest ablation measured ΔSharpe −0.00 (+4 N) — no
+    # measurable benefit — and the hardcoded _FOMC_DATES list was a
+    # maintenance timebomb (a unit test had already started failing as the
+    # dates aged out). Event-day risk is partially covered by VIX9D/MOVE
+    # event-risk cards in the assembler.
 
     # ── Global confidence floor (with ticker-adaptive override) ──────────────
     if conf < _effective_conf_floor:
