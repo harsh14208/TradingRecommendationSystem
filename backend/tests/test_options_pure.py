@@ -273,11 +273,6 @@ class TestScoreOptions:
         score, rationale = score_options({"skew_25d": 0.15})
         assert score == -4
 
-    def test_inverted_skew_bullish(self):
-        """Call skew (inverted, skew_25d < -0.05) → +5."""
-        score, rationale = score_options({"skew_25d": -0.10})
-        assert score == 5
-
     def test_negative_gex_bearish(self):
         """GEX < -0.5B → -3."""
         score, rationale = score_options({"gex": -1_000_000_000})

@@ -2,10 +2,7 @@
 
 from services.gates.base import SignalContext
 from services.gates.options import (
-    IvrMrGate,
-    IvTermStructureGate,
     OptionsFlowConfirmationGate,
-    PutCallSkewGate,
     PutSweepCapitulationGate,
 )
 
@@ -77,46 +74,10 @@ def test_options_flow_skips_without_opt_flow():
     assert ctx.action == "BUY" and ctx.confidence == 60.0
 
 
-# ── IvrMrGate (modifies score) ───────────────────────────────────────────────
-
-
-def test_ivr_mr_high_boost():
-    ctx = _ctx(vix=22.0, opt_flow={"iv_rank": 60})
-    IvrMrGate().apply(ctx)
-    assert ctx.score == 55.0  # +5
-
-
-def test_ivr_mr_low_penalty():
-    ctx = _ctx(vix=22.0, opt_flow={"iv_rank": 10})
-    IvrMrGate().apply(ctx)
-    assert ctx.score == 47.0  # -3
-
-
-def test_ivr_mr_skips_low_vix():
-    ctx = _ctx(vix=12.0, opt_flow={"iv_rank": 60})
-    IvrMrGate().apply(ctx)
-    assert ctx.score == 50.0  # vix<=15 → skipped
+# IvrMrGate/PutCallSkewGate/IvTermStructureGate tests removed 2026-07-14 (gates deleted — 0 fires ever)
 
 
 # ── PutCallSkewGate / IvTermStructureGate / PutSweepCapitulationGate ─────────
-
-
-def test_put_call_skew_boost():
-    ctx = _ctx(opt_flow={"skew_25d": 0.15})
-    PutCallSkewGate().apply(ctx)
-    assert ctx.score == 54.0  # +4
-
-
-def test_iv_term_structure_boost():
-    ctx = _ctx(opt_flow={"iv_term_spike": 2.0})
-    IvTermStructureGate().apply(ctx)
-    assert ctx.score == 54.0  # +4
-
-
-def test_iv_term_structure_skips_low_spike():
-    ctx = _ctx(opt_flow={"iv_term_spike": 1.2})
-    IvTermStructureGate().apply(ctx)
-    assert ctx.score == 50.0  # <=1.5 → skip
 
 
 def test_put_sweep_capitulation_boost():

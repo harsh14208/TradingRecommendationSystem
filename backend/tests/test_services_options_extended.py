@@ -916,15 +916,6 @@ def test_score_options_skew_high_put():
     assert score < 0
 
 
-def test_score_options_skew_inverted():
-    from services.options import score_options
-
-    opt = {"skew_25d": -0.08}
-    score, rationale = score_options(opt)
-    assert any("Inverted Skew" in r["head"] for r in rationale)
-    assert score > 0
-
-
 def test_score_options_gex_positive():
     from services.options import score_options
 

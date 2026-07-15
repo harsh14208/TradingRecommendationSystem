@@ -1051,18 +1051,11 @@ def score_options(opt: dict) -> tuple[float, list[dict]]:
                     "meta": f"25d skew: +{skew_25d * 100:.0f}pp",
                 }
             )
-        elif skew_25d < -0.05:  # calls more expensive than puts — unusual
-            score += 5
-            rationale.append(
-                {
-                    "src": "Options",
-                    "head": "Inverted Skew — Call Demand Unusual",
-                    "body": f"25-delta calls carry more IV than equivalent puts ({abs(skew_25d) * 100:.0f}pp premium). "
-                    "Inverted skew is rare and signals aggressive upside positioning.",
-                    "sentiment": "pos",
-                    "meta": f"25d skew: {skew_25d * 100:.0f}pp",
-                }
-            )
+        # "Inverted Skew" +5 boost REMOVED (gate audit 2026-07-14): fired on
+        # N=70 delivered go-forward signals at ΔWR −4.0pp vs baseline — a
+        # near-universal boost whose cohort underperforms, with no citation.
+        # The put-skew −4 penalty above is kept (its fired cohort correctly
+        # underperforms, consistent with a penalty).
 
     # ── Gamma Exposure (GEX) ─────────────────────────────────────────────────
     gex = opt.get("gex", 0)

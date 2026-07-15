@@ -150,27 +150,6 @@ def test_yield_curve_no_penalty_for_non_xlf():
 # ── §48 IVR Gate ──────────────────────────────────────────────────────────────
 
 
-def test_high_ivr_adds_confidence_on_mr_buy():
-    """IVR ≥50 on MR BUY with VIX>15 → positive IVR rationale card present."""
-    base_high = _mr_buy_kwargs(
-        market_ctx={"macro": {"sp500_trend": "up", "vix": 22.0}},
-        opt_flow={"sweep_calls": False, "gex": 0, "pc_ratio": 0.8, "iv_rank": 65.0},
-    )
-
-    res_high = _asm(**base_high)
-
-    if res_high and res_high["action"] == "BUY":
-        heads = [r["head"] for r in res_high["rationale"]]
-        assert any("IVR" in h or "IV Rank" in h for h in heads), (
-            f"Expected IVR rationale card for iv_rank=65; got: {heads}"
-        )
-        # Card should be positive-sentiment (dealer unwind amplifies recovery)
-        ivr_cards = [r for r in res_high["rationale"] if "IVR" in r.get("head", "") or "IV Rank" in r.get("head", "")]
-        assert any(r["sentiment"] == "pos" for r in ivr_cards), (
-            f"High IVR card should have positive sentiment; got: {ivr_cards}"
-        )
-
-
 def test_low_ivr_reduces_confidence():
     """IVR < 20 on MR BUY → -3pp penalty rationale."""
     base = _mr_buy_kwargs(
@@ -186,30 +165,6 @@ def test_low_ivr_reduces_confidence():
 
 
 # ── §49 Put-Call Skew ─────────────────────────────────────────────────────────
-
-
-def test_high_put_call_skew_adds_confidence():
-    """skew_25d > 0.10 on MR BUY → +4pp confidence."""
-    base_high = _mr_buy_kwargs(
-        market_ctx={"macro": {"sp500_trend": "up", "vix": 20.0}},
-        opt_flow={"sweep_calls": False, "gex": 0, "pc_ratio": 0.8, "skew_25d": 0.15},
-    )
-    base_low = _mr_buy_kwargs(
-        market_ctx={"macro": {"sp500_trend": "up", "vix": 20.0}},
-        opt_flow={"sweep_calls": False, "gex": 0, "pc_ratio": 0.8, "skew_25d": 0.02},
-    )
-
-    res_high = _asm(**base_high)
-    res_low = _asm(**base_low)
-
-    if res_high and res_low and res_high["action"] == res_low["action"] == "BUY":
-        assert res_high["confidence"] >= res_low["confidence"], (
-            "High put-call skew should not reduce confidence below low-skew baseline"
-        )
-        heads = [r["head"] for r in res_high["rationale"]]
-        assert any("Skew" in h or "skew" in h.lower() or "Put" in h for h in heads), (
-            f"Expected skew rationale card; got: {heads}"
-        )
 
 
 # ── §77 Tax-Loss Harvesting Window ────────────────────────────────────────────

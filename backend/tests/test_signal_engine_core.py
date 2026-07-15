@@ -176,46 +176,7 @@ def test_assemble_signal_earnings_blackout():
     assert res["action"] == "HOLD"
 
 
-def test_assemble_signal_risk_free_rate_dampener():
-    # Freeze to Wednesday so the day-of-week gate (blocks Friday BUY entries) doesn't fire.
-    # NB: the gate lives in engines/assembler.py since the BE-1 decomposition — patching
-    # signal_engine.datetime never reached it (test failed every real-world Friday until 2026-06-12).
-    from datetime import datetime as _dt
-    import services.engines.assembler as _asm
-
-    _wednesday = _dt(2026, 5, 27, 12, 0, 0)  # Wednesday
-    with patch.object(_asm, "datetime", wraps=_asm.datetime) as _mock_dt:
-        _mock_dt.now.return_value = _wednesday
-        res = _assemble_signal(
-            ticker="AAPL",
-            info={"company": "Apple"},
-            tech={
-                "price": 100.0,
-                "atr": 1.0,
-                "rsi": 38.0,
-                "bb_pct_b": 0.20,
-                "ibs": 0.14,
-            },  # 2 MR conditions for count≥2
-            score=50.0,  # BUY
-            rationale=[],
-            sources=set(),
-            _force_hold=False,
-            _is_low_atr=False,
-            _atr_pct_pre=0.01,
-            total_confidence_penalty=0.0,
-            avg_sent=0.0,
-            price=100.0,
-            atr=1.0,
-            market_ctx={"macro": {"t10y": 4.5, "sp500_trend": "up"}},  # 4.5% risk free rate
-            earnings_cal={},
-            sector_rs={"sector_etf": "XLY", "rs_vs_sector": 0},
-            days_to_earnings=None,
-        )
-
-    assert "Macro" in res["sources"]
-    assert any(
-        "Risk-Adjusted Return Negative" in r["head"] or "Thin Risk Premium" in r["head"] for r in res["rationale"]
-    )
+# test_assemble_signal_risk_free_rate_dampener removed 2026-07-14 (yield dampener deleted — inert no-op on 76% of book)
 
 
 def test_assemble_signal_chronic_loser():

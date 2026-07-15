@@ -142,7 +142,9 @@ def test_calendar_friday_no_longer_blocks():
     assert cards == []
 
 
-def test_calendar_near_52wk_low_penalty():
+def test_calendar_near_52wk_low_hard_block():
+    # §77 strengthened penalty→hard block 2026-07-14 (corrected-book audit:
+    # −4pp cohort still resolved at ΔWR −16.4pp / negative net EV)
     action, conf, cards, _ = apply_calendar_gates(
         action="BUY",
         confidence=60.0,
@@ -152,15 +154,15 @@ def test_calendar_near_52wk_low_penalty():
         price=100.0,
         info={"week_52_low": 95.0},  # price within 8% of low
     )
-    assert action == "BUY"
-    assert conf == round(60.0 - 4, 1)
+    assert action == "HOLD"
+    assert conf == 60.0  # confidence untouched — the block is on action
 
 
 def test_calendar_gate_wrapper_mutates_ctx():
-    # §77 path: near 52-wk low applies −4pp via the wrapper.
+    # §77 path: near 52-wk low hard-blocks via the wrapper.
     ctx = _ctx(today_dow=1, score=50.0, price=100.0, info={"week_52_low": 95.0}, confidence=60.0)
     CalendarGate().apply(ctx)
-    assert ctx.confidence == 56.0
+    assert ctx.action == "HOLD"
     assert repr(CalendarGate()) == "CalendarGate"
 
 

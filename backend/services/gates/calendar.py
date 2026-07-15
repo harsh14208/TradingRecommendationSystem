@@ -54,32 +54,33 @@ def apply_calendar_gates(
     # effect is real it must earn a ledger entry via --validate-live-gates
     # before coming back.
 
-    # ── §77 Tax-Loss Harvesting Window — INVERTED 2026-05-31 ─────────────────
-    # Live-data audit (Inv 3, 546 resolved signals): signals near 52-week low
-    # have WR=31.0% (−11.5pp vs baseline 42.5%). The academic tax-loss recovery
-    # hypothesis does not hold in our 10-day MR system — stocks near 52-week lows
-    # are in structural decline, not recoverable oversold. The prior +4pp boost was
-    # actively harmful. Replaced with a −4pp penalty: near-annual-low = structural
-    # seller pressure, not a temporary dislocation.
+    # ── §77 52-Week-Low Structural Decline — HARD BLOCK (strengthened 2026-07-14) ──
+    # History of this gate: +4pp tax-loss boost (theory) → INVERTED to −4pp
+    # penalty 2026-05-31 (live: WR 31.0% near 52-wk low, −11.5pp vs baseline)
+    # → HARD BLOCK 2026-07-14. Gate audit on the exit-chronology-corrected
+    # book: the −4pp cohort STILL resolved at ΔWR −16.4pp / avg net −0.46%
+    # per trade (N=21 delivered) — the penalty was far too weak to gate a
+    # cohort this bad. Near-annual-low = structural decline, not recoverable
+    # oversold; these BUYs are now converted to HOLD.
     _wk52l = info.get("week_52_low")
     if action == "BUY" and _wk52l and price and price > 0:
         _near_low = (_wk52l > 0) and (price <= _wk52l * 1.08)
         if _near_low:
-            confidence = round(max(35.0, confidence - 4), 1)
+            action = "HOLD"
             new_sources.add("Risk Gate")
             cards.append(
                 {
                     "src": "Risk Gate",
-                    "head": "Near 52-Week Low — Structural Decline Risk −4pp (§77)",
+                    "head": "Near 52-Week Low — Structural Decline, BUY Blocked (§77)",
                     "body": (
                         f"Price is within 8% of the 52-week low ({_wk52l:.2f}). "
-                        "Live-data audit (546 trades): signals near 52-week lows win only "
-                        "31% of the time (−11.5pp vs baseline). These stocks are in "
+                        "Live-data audits (546 trades 2026-05: WR 31%; corrected book "
+                        "2026-07: ΔWR −16.4pp, negative net EV) show these stocks are in "
                         "structural decline — the dip is fundamental, not a recoverable "
-                        "oversold. Confidence reduced −4pp."
+                        "oversold. The earlier −4pp penalty was too weak; BUY is blocked."
                     ),
                     "sentiment": "neg",
-                    "meta": "near_52wk_low=True penalty=-4pp §77 (inverted 2026-05-31)",
+                    "meta": "near_52wk_low=True hard_block §77 (penalty→block 2026-07-14)",
                 }
             )
 

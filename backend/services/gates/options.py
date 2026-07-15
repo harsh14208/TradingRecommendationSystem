@@ -4,24 +4,22 @@ Options-flow gate pack extracted from _assemble_signal().
 Gates (applied in pipeline order):
   OptionsFlowConfirmationGate  — PC ratio hard-block; call sweep + GEX bonus/penalty
   IvRankFlagGate               — informational elevated-IV disclosure (no score change)
-  IvrMrGate                    — §48 IVR MR amplifier (score ±3–5 for dealer unwind)
-  PutCallSkewGate              — §49 25d put skew panic-precision signal (score +4)
-  IvTermStructureGate          — IV term spike MR amplifier (score +4)
   PutSweepCapitulationGate     — extreme put sweep capitulation confirmation (+5pp)
+  (IvrMrGate §48 / PutCallSkewGate §49 / IvTermStructureGate removed 2026-07-14 — 0 fires ever)
 
 All gates guard on ctx.action == "BUY" and ctx.has_mr where applicable;
 a prior gate setting action = "HOLD" causes them to skip naturally.
 
 Unit test pattern:
     from services.gates.base import SignalContext
-    from services.gates.options import IvrMrGate
+    from services.gates.options import PutSweepCapitulationGate
 
     ctx = SignalContext(
         action="BUY", confidence=60.0, score=50.0, rationale=[], sources=set(),
         has_mr=True, vix=22.0, opt_flow={"iv_rank": 65},
         ...
     )
-    IvrMrGate().apply(ctx)
+    PutSweepCapitulationGate().apply(ctx)
     assert ctx.score == 55.0
 """
 
@@ -186,136 +184,12 @@ class IvRankFlagGate(GateBase):
         )
 
 
-class IvrMrGate(GateBase):
-    """
-    §48 IVR MR amplifier — dealer hedge unwind.
-
-    High IVR with an oversold MR setup signals acute dealer hedging that will
-    unwind sharply when panic exhausts (+5 raw score).  Low IVR means the
-    dealer-pressure effect is absent (−3 raw score).
-
-    Note: modifies ctx.score (not confidence) because _score_to_action() has
-    already been called; the adjustment feeds raw_score in the final signal dict.
-    """
-
-    def apply(self, ctx: SignalContext) -> None:
-        if not ctx.opt_flow or not ctx.has_mr:
-            return
-        if ctx.action != "BUY":
-            return
-        if ctx.vix is None or ctx.vix <= 15:
-            return
-
-        ivr = ctx.opt_flow.get("iv_rank")
-        if ivr is None:
-            return
-        ivr_f = float(ivr)
-
-        if ivr_f >= 50:
-            ctx.score += 5
-            ctx.sources.add("Options")
-            ctx.rationale.append(
-                {
-                    "src": "Options",
-                    "head": f"High IVR {ivr_f:.0f} — Dealer Hedge Unwind Amplifies Recovery (§48)",
-                    "body": (
-                        f"IV Rank {ivr_f:.0f}% with an oversold MR setup. Dealers short large put "
-                        "positions must delta-hedge by selling stock as it falls — adding to the "
-                        "forced selling. When panic exhausts, the entire hedge unwinds (buy pressure). "
-                        "High IVR MR setups have historically shown 74% WR (Cracking Markets 2020–2025). "
-                        "Confidence boosted +5pp (§48)."
-                    ),
-                    "sentiment": "pos",
-                    "meta": f"ivr_mr={ivr_f:.0f} vix={ctx.vix:.1f} dealer_unwind_setup=True §48",
-                }
-            )
-        elif ivr_f < 20:
-            ctx.score -= 3
-            ctx.sources.add("Options")
-            ctx.rationale.append(
-                {
-                    "src": "Options",
-                    "head": f"Low IVR {ivr_f:.0f} — Calm Drift, No Dealer Pressure (§48)",
-                    "body": (
-                        f"IV Rank {ivr_f:.0f}% — implied volatility is historically low. "
-                        "Dealers carry minimal hedge books; the unwind amplification effect is absent. "
-                        "Low-IVR MR setups lack the dealer-pressure energy that drives sharp reversals. "
-                        "Confidence reduced −3pp (§48)."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"ivr_mr={ivr_f:.0f} low_dealer_pressure §48",
-                }
-            )
-
-
-class PutCallSkewGate(GateBase):
-    """
-    §49 Put-call skew — panic precision signal.
-
-    High 25d put skew (put IV >> call IV) forces dealers to over-hedge via
-    delta-selling.  When panic exhausts, put IV collapses and hedges unwind
-    simultaneously → sharpest MR snap-backs (+4 raw score).
-    """
-
-    def apply(self, ctx: SignalContext) -> None:
-        if not ctx.opt_flow or not ctx.has_mr or ctx.action != "BUY":
-            return
-        skew = ctx.opt_flow.get("skew_25d")
-        if skew is None:
-            return
-        skew_f = float(skew)
-        if skew_f > 0.10:
-            ctx.score += 4
-            ctx.sources.add("Options")
-            ctx.rationale.append(
-                {
-                    "src": "Options",
-                    "head": f"High Put Skew ({skew_f * 100:.0f}pp) — Panic Peak MR Signal (§49)",
-                    "body": (
-                        f"25-delta puts carry {skew_f * 100:.0f}pp more IV than equivalent calls. "
-                        "Extreme put skew isolates pure downside panic (not general fear). "
-                        "As panic exhausts, put IV collapses (IV crush) and dealer put hedges unwind "
-                        "(forced buying). 25d put/call ratio >1.20 historically signals MR entries "
-                        "with 68% WR vs 54% in flat-skew setups (arXiv 2016). Confidence +4pp (§49)."
-                    ),
-                    "sentiment": "pos",
-                    "meta": f"skew_25d={skew_f:.3f} panic_peak_mr §49",
-                }
-            )
-
-
-class IvTermStructureGate(GateBase):
-    """
-    IV term structure spike — MR amplifier.
-
-    Near-term IV >> back-month (ratio > 1.5) means dealers are at peak hedging.
-    The snap-back when exhaustion hits will be sharpest (+4 raw score).
-    """
-
-    def apply(self, ctx: SignalContext) -> None:
-        if not ctx.opt_flow or not ctx.has_mr or ctx.action != "BUY":
-            return
-        spike = ctx.opt_flow.get("iv_term_spike")
-        if spike is None or float(spike) <= 1.5:
-            return
-        spike_f = float(spike)
-        ctx.score += 4
-        ctx.sources.add("Options")
-        ctx.rationale.append(
-            {
-                "src": "Options",
-                "head": f"Near-term IV Spike ({spike_f:.1f}×) — Acute Panic, MR Amplifier",
-                "body": (
-                    f"Short-dated IV is {spike_f:.1f}× back-month — the market is pricing "
-                    "acute near-term panic. Dealers are at their most heavily hedged right now. "
-                    "When this panic exhausts, the hedge unwind (forced dealer buying) will be "
-                    "exceptionally sharp. IV term spikes of this magnitude historically precede the "
-                    "strongest MR snap-backs. Confidence +4pp."
-                ),
-                "sentiment": "pos",
-                "meta": f"iv_term_spike={spike_f:.2f} mr_amplifier=True",
-            }
-        )
+# IvrMrGate (§48), PutCallSkewGate (§49), and IvTermStructureGate REMOVED
+# (gate audit 2026-07-14): exact-head search shows 0 fires in 87,982 all-time
+# signals — their opt_flow + has_mr (+ VIX>15) precondition combination is
+# never satisfied at the assembler stage, so the claimed +4/+5pp MR credits
+# were never applied even once. Untestable in backtest (no historical IV
+# surface). The general score_options() IVR/skew cards are unaffected.
 
 
 class PutSweepCapitulationGate(GateBase):

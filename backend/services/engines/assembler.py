@@ -763,14 +763,11 @@ def _assemble_signal(
     # ── Options flow pipeline ───────────────────────────────────────────────
     # _sig_ctx is the same SignalContext object built in the volume pipeline
     # above — reuse it with updated action/confidence/score already synced.
-    # Runs: OptionsFlowConfirmationGate → IvRankFlagGate → IvrMrGate →
-    #       PutCallSkewGate → IvTermStructureGate → PutSweepCapitulationGate
+    # Runs: OptionsFlowConfirmationGate → IvRankFlagGate → PutSweepCapitulationGate
+    # (IvrMrGate/PutCallSkewGate/IvTermStructureGate removed 2026-07-14 — 0 fires ever)
     from services.gates.options import (
         IvRankFlagGate,
-        IvTermStructureGate,
-        IvrMrGate,
         OptionsFlowConfirmationGate,
-        PutCallSkewGate,
         PutSweepCapitulationGate,
     )
 
@@ -784,9 +781,6 @@ def _assemble_signal(
         [
             OptionsFlowConfirmationGate(),
             IvRankFlagGate(),
-            IvrMrGate(),
-            PutCallSkewGate(),
-            IvTermStructureGate(),
             PutSweepCapitulationGate(),
         ]
     ).run(_sig_ctx)
@@ -1061,73 +1055,11 @@ def _assemble_signal(
 
     entry, stop, target, rr = _levels(price, atr, action, style, rsi=_rsi_gate)
 
-    # ── Risk-Free Rate Yield Dampener ────────────────────────────────────
-    # Every equity trade competes against the risk-free rate. If the signal's
-    # projected return (entry → target) doesn't clear a meaningful risk premium
-    # over Treasuries, the trade has negative expected value on a Sharpe basis.
-    t10y_rate = ((market_ctx or {}).get("macro") or {}).get("t10y")
-    if t10y_rate and t10y_rate > 2.0 and action == "BUY" and entry and target and entry > 0:
-        projected_pct = abs(target - entry) / entry * 100
-        # Growth / high-beta sectors require a larger premium (investors face more risk)
-        sector_etf_key = (sector_rs or {}).get("sector_etf") or SECTOR_MAP.get(ticker.upper(), "")
-        high_beta = sector_etf_key in {"XLK", "XLC", "XLY", "XLB"}
-        required_premium = 3.5 if high_beta else 2.0  # pp above risk-free
-        excess = projected_pct - t10y_rate - required_premium
-
-        if excess < -required_premium:
-            # Projected return doesn't even beat the risk-free rate outright
-            confidence = round(max(35.0, confidence - 14), 1)
-            sources.add("Macro")
-            rationale.append(
-                {
-                    "src": "Macro",
-                    "head": f"Risk-Adjusted Return Negative vs Bonds ({projected_pct:.1f}% target vs {t10y_rate:.1f}% risk-free)",
-                    "body": (
-                        f"Signal target implies a {projected_pct:.1f}% return — below the "
-                        f"{t10y_rate:.1f}% 10-Year Treasury yield. Holding risk-free bonds "
-                        "dominates this trade on a Sharpe basis. Confidence reduced significantly."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"Projected {projected_pct:.1f}% | 10Y {t10y_rate:.1f}% | Premium: {excess:.1f}pp",
-                }
-            )
-        elif excess < 0:
-            # Return beats risk-free but misses the required risk premium
-            penalty = round(abs(excess) / required_premium * 8, 1)
-            confidence = round(max(35.0, confidence - penalty), 1)
-            sources.add("Macro")
-            rationale.append(
-                {
-                    "src": "Macro",
-                    "head": f"Thin Risk Premium Over Bonds ({projected_pct:.1f}% vs {t10y_rate:.1f}% + {required_premium:.1f}pp premium)",
-                    "body": (
-                        f"Projected return of {projected_pct:.1f}% only clears the risk-free rate "
-                        f"by {projected_pct - t10y_rate:.1f}pp — below the {required_premium:.1f}pp "
-                        "risk premium required for this sector's beta. "
-                        "The marginal risk-adjusted case is weak."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"Excess return: {projected_pct - t10y_rate:.1f}pp | Required: {required_premium:.1f}pp",
-                }
-            )
-        elif excess > required_premium * 2:
-            # Generous excess return — genuine edge over risk-free
-            boost = min(5.0, excess * 0.3)
-            confidence = round(min(72.0, confidence + boost), 1)
-            sources.add("Macro")
-            rationale.append(
-                {
-                    "src": "Macro",
-                    "head": f"Strong Risk-Adjusted Return ({projected_pct:.1f}% target, {excess:.1f}pp above hurdle)",
-                    "body": (
-                        f"Signal target of {projected_pct:.1f}% clears the {t10y_rate:.1f}% risk-free rate "
-                        f"by {projected_pct - t10y_rate:.1f}pp — {excess:.1f}pp above the "
-                        f"{required_premium:.1f}pp required premium. Genuine Sharpe-positive edge."
-                    ),
-                    "sentiment": "pos",
-                    "meta": f"Excess return: {excess:.1f}pp above hurdle | 10Y: {t10y_rate:.1f}%",
-                }
-            )
+    # Risk-Free Rate Yield Dampener REMOVED (gate audit 2026-07-14): its
+    # cards fired on 76% of the delivered go-forward book (N=323) with
+    # ΔWR +0.7pp — a near-universal no-op built on arbitrary constants
+    # (3.5/2.0pp sector premiums, ×8 penalty slope) with no ledger entry.
+    # Rate context is already carried by the §14 FRED sizing dampener.
 
     # §64/§65/§66/§68 macro extension gates REMOVED (gate audit 2026-07-14):
     # 0 fires in 87,982 all-time signals — ^TRIN/^NYAD 404 from yfinance so
