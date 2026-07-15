@@ -4352,7 +4352,13 @@ def run_portfolio_simulation(
         _realized_std = _roll_std.fillna(_exp_std)
         # Annualize: each trade is a HOLD_DAYS-period return, so daily vol =
         # trade_std / sqrt(HOLD_DAYS) and annual vol = daily vol * sqrt(252).
-        _forecast_vol = (_realized_std * np.sqrt(252 / max(HOLD_DAYS, 1))).clip(lower=1e-6)
+        # UNITS (bug fixed 2026-07-15): net_pct is in PERCENT (0.8 == 0.8%), so
+        # divide by 100 to get a decimal vol comparable to vol_target. Without
+        # this, forecast vol read ~35 (3,500% ann) and the multiplier clipped
+        # to the 0.25 floor for EVERY trade at any target — "vol targeting"
+        # silently degenerated into a constant 0.25x de-leverage (σ=0.05 and
+        # σ=2.0 produced identical equity curves).
+        _forecast_vol = ((_realized_std / 100.0) * np.sqrt(252 / max(HOLD_DAYS, 1))).clip(lower=1e-6)
         _multiplier = (vol_target / _forecast_vol).clip(lower=0.25, upper=2.0)
         _vol_multipliers = _multiplier.fillna(1.0).tolist()
 
