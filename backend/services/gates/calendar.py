@@ -1,11 +1,10 @@
 """
-Calendar and seasonal gates: §57 DOW gate and §77 tax-loss harvesting window.
+Calendar and seasonal gates: §77 tax-loss harvesting window.
 
-Both gates are time-based adjustments with no dependency on live market data
-beyond the signal's own price and basic fundamentals.
-
-§57 DOW gate can flip action to HOLD (Friday entries with score<65).
-§77 tax-loss window only adjusts confidence.
+Time-based adjustment with no dependency on live market data beyond the
+signal's own price and basic fundamentals. §77 only adjusts confidence.
+(§57 Friday HOLD-flip removed 2026-07-14 — unvalidated; the validated §57
+Thursday threshold lives in delivery_gates.py.)
 
 Public API:
     apply_calendar_gates(action, confidence, score, today_dow, month, price, info)
@@ -29,7 +28,7 @@ def apply_calendar_gates(
     info: dict,
 ) -> tuple[str, float, list[dict], set[str]]:
     """
-    Apply §57 DOW gate and §77 tax-loss seasonal gate.
+    Apply the §77 tax-loss seasonal gate.
 
     Args:
         action:    current signal action
@@ -46,29 +45,14 @@ def apply_calendar_gates(
     cards: list[dict] = []
     new_sources: set[str] = set()
 
-    # ── §57 Day-of-Week Gate — No Friday BUY Entries ──────────────────────
-    # Friday entries carry 2-day weekend gap risk with no intraday management.
-    # 20yr backtest: Friday entries underperform Mon-Thu by ~0.40% avg return.
-    # High-conviction signals (score≥65) are exempt — the edge is strong enough
-    # to overcome the weekend-gap risk.
-    if action == "BUY" and today_dow == 4 and score < 65:
-        action = "HOLD"
-        new_sources.add("Risk Gate")
-        cards.append(
-            {
-                "src": "Risk Gate",
-                "head": "Day-of-Week Gate — No Friday Entries (Weekend Gap Risk)",
-                "body": (
-                    "Friday BUY entries face a mandatory 2-day hold through the weekend with no "
-                    "intraday management capability. 20yr backtest: Friday entries underperform "
-                    "Mon–Thu by ~0.40% avg return due to gap-open risk. "
-                    "Signals with score≥65 (strong alt-data confirmation) are exempt."
-                ),
-                "sentiment": "neg",
-                "meta": f"weekday=Friday(4) score={score:.1f}<65 | dow_gate=True",
-            }
-        )
-        return action, confidence, cards, new_sources  # terminal: DOW gate fires
+    # §57 Friday HOLD-flip — REMOVED 2026-07-14 (gate audit)
+    # This silent BUY→HOLD conversion claimed "20yr backtest ~0.40%" but has
+    # NO entry in the validation ledger — the only §57 component that was
+    # actually ablated is the *Thursday* strict threshold in delivery_gates
+    # (ΔSharpe −0.10 on removal, the largest validated gate — kept). An
+    # unaudited action-flip is the most dangerous gate shape; if a Friday
+    # effect is real it must earn a ledger entry via --validate-live-gates
+    # before coming back.
 
     # ── §77 Tax-Loss Harvesting Window — INVERTED 2026-05-31 ─────────────────
     # Live-data audit (Inv 3, 546 resolved signals): signals near 52-week low

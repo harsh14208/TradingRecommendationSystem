@@ -225,42 +225,11 @@ def apply_quality_screens(
     # contributing to the IS/live WR gap. Removed after backtest_edgar.py confirmed
     # standalone Altman hurts IS Sharpe: N 230→79, Sh 0.20→0.16 (-0.03).
 
-    # ── §51 Forward PE Value Trap Filter ─────────────────────────────────────
-    fwd_pe = info.get("forward_pe")
-    if fwd_pe is not None and not is_lev_etf and action == "BUY":
-        new_sources.add("Fundamentals")
-        if fwd_pe > 30:
-            score -= 5
-            cards.append(
-                {
-                    "src": "Fundamentals",
-                    "head": f"Forward PE Value Trap Warning ({fwd_pe:.1f}×)",
-                    "body": (
-                        f"Forward PE of {fwd_pe:.1f}× — expensive valuation on a declining stock. "
-                        "AQR research shows high-PE oversold stocks frequently fail to revert: "
-                        "the market is correctly pricing deteriorating fundamentals, not panic. "
-                        "Confidence reduced −5pp (§51 value trap filter)."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"forward_pe={fwd_pe:.1f} value_trap=high §51",
-                }
-            )
-        elif fwd_pe < 15:
-            score += 3
-            cards.append(
-                {
-                    "src": "Fundamentals",
-                    "head": f"Genuinely Cheap — Forward PE {fwd_pe:.1f}×",
-                    "body": (
-                        f"Forward PE of {fwd_pe:.1f}× confirms this is not a value trap: "
-                        "the stock is oversold AND priced cheaply relative to future earnings. "
-                        "Low-PE MR setups have historically stronger reversion: "
-                        "valuation provides fundamental support for the bounce. Confidence +3pp (§51)."
-                    ),
-                    "sentiment": "pos",
-                    "meta": f"forward_pe={fwd_pe:.1f} value_confirmed §51",
-                }
-            )
+    # §51 Forward PE Value Trap Filter — REMOVED 2026-07-14 (gate audit)
+    # 24 fires in 87,982 all-time signals (cheap-side: 0) and N<3 in the
+    # resolved book — inert. Ledger confidence was "Low — valuation multiples
+    # don't predict a 10d bounce" (the AQR value premium is a 12-month effect)
+    # and the modifier was never validatable point-in-time.
 
     return score, cards, new_sources
 
