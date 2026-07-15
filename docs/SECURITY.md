@@ -70,6 +70,9 @@ Signal.Trade backend after the security/architecture refactor.
   invalidates stored credentials until users re-enter them.
 - Portfolio drawdown circuit breaker: auto-execution is blocked if unrealised
   P&L / equity falls below **−5%**.
+- Drawdown throttle (R7): new positions are scaled to `DD_THROTTLE_MULT`
+  (default 0.5×) when portfolio equity is more than `DD_THROTTLE_TRIGGER_PCT`
+  (default 3%) below its historical peak. Existing positions are not reduced.
 - Per-user runtime risk limits (`max_daily_orders`, `max_ticker_notional`) are
   enforced in `broker_svc.py`.
 
@@ -134,7 +137,12 @@ The following controls are enforced in code and must never be bypassed:
    - New orders are blocked if unrealized P&L / equity < **−5%**.
    - Owner receives a Telegram alert on first breach.
 
-4. **Per-user runtime limits**
+4. **Drawdown throttle (R7)**
+   - When equity falls more than `DD_THROTTLE_TRIGGER_PCT` (default 3%) below its
+     historical peak, new positions are sized at `DD_THROTTLE_MULT` (default 0.5×).
+   - Applies in both the portfolio allocator and per-signal execution paths.
+
+5. **Per-user runtime limits**
    - `max_daily_orders` — caps order count per day.
    - `max_ticker_notional` — caps same-ticker notional per day.
    - `auto_execute_qty_dollars` — fixed notional per trade (default $100).

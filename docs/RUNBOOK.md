@@ -85,10 +85,21 @@ When `CASH_OVERLAY_ENABLE=true`, the portfolio allocator auto-invests any capita
 - **Default parking**: `CASH_OVERLAY_TICKER` (SGOV) — 0–3 month T-bill ETF, state-tax-exempt interest, minimal drawdown.
 - **Beta sleeve**: `CASH_OVERLAY_BETA_TICKER` (VOO) — used only when all of the following are true:
   - VIX is at or below `CASH_OVERLAY_VIX_THRESHOLD` (default 18)
-  - The account is not in a drawdown throttle (portfolio DD ≤ 3%)
+  - The account is not in a drawdown throttle (portfolio DD ≤ `DD_THROTTLE_TRIGGER_PCT`)
   - The engine is not already targeting the beta ticker this cycle
 - **Cap**: Total overlay exposure is capped at `CASH_OVERLAY_MAX_FRACTION` (default 50% of equity).
 - **Min trade**: Residual orders smaller than `CASH_OVERLAY_MIN_TRADE_DOLLARS` are skipped to avoid micro-trades.
+
+### 1.5 Drawdown Throttle (R7)
+
+Both the portfolio allocator and the per-signal execution path apply a graduated drawdown throttle to **new** positions:
+
+- **Trigger**: `DD_THROTTLE_TRIGGER_PCT` (default **3%** below peak equity from `pnl_daily`).
+- **Multiplier**: `DD_THROTTLE_MULT` (default **0.5×** — new positions are sized at half normal).
+- **Scope**: new positions only; existing holdings are not reduced.
+- **Calibration**: 26-year backtest (2000-2026) showed this cuts max portfolio DD from -8.43% to -6.38% and lifts Ann.Sharpe from 3.01 to 3.40 with no CAGR penalty.
+
+The hard **-5% circuit breaker** (`RISK-2`) in `broker_svc.py` remains the last-resort kill switch and is unchanged.
 
 Monitoring:
 ```bash

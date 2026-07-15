@@ -16,6 +16,7 @@ from cryptography.fernet import Fernet, MultiFernet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.brokers.options_broker import OptionLeg, OptionOrder
+from services.portfolio_allocator import compute_dd_multiplier
 
 log = logging.getLogger("broker_svc")
 
@@ -602,6 +603,40 @@ async def execute_signal_for_user(
     scale = float(scale_raw) if scale_raw is not None else 1.0
     notional = round(base_notional * scale, 2)
     notional = max(notional, 1.0)  # minimum
+
+    # R7: graduated drawdown throttle for new positions (mirrors portfolio path)
+    try:
+        from models import PnlDaily
+        from sqlalchemy import func, select
+
+        peak_stmt = select(func.max(PnlDaily.equity)).where(PnlDaily.user_id == user.id)
+        peak_res = await db.execute(peak_stmt)
+        peak_equity = peak_res.scalar()
+        latest_stmt = select(PnlDaily.equity).where(PnlDaily.user_id == user.id).order_by(PnlDaily.date.desc()).limit(1)
+        latest_res = await db.execute(latest_stmt)
+        current_equity = latest_res.scalar()
+        if (
+            isinstance(peak_equity, (int, float))
+            and isinstance(current_equity, (int, float))
+            and peak_equity > 0
+            and current_equity > 0
+        ):
+            dd_pct = (peak_equity - current_equity) / peak_equity * 100.0
+            dd_mult = compute_dd_multiplier(dd_pct)
+            if dd_mult < 1.0:
+                old_notional = notional
+                notional = round(notional * dd_mult, 2)
+                log.info(
+                    "broker_svc: user=%d DD-throttle active (%.2f%% DD) — sizing %s %s from %.2f to %.2f",
+                    user.id,
+                    dd_pct,
+                    sig.get("ticker", ""),
+                    sig.get("action", ""),
+                    old_notional,
+                    notional,
+                )
+    except Exception as e:
+        log.debug("broker_svc: DD-throttle lookup failed for user=%d: %s", user.id, e)
 
     ticker = sig.get("ticker", "")
     action = sig.get("action", "")

@@ -51,7 +51,7 @@ Key components:
 | Scanner orchestration | `services/scanner.py` | Triggers auto-execute after signal delivery |
 | Broker abstraction | `services/broker_svc.py` | Credential encryption, risk limits, order placement, reconciliation |
 | Broker REST clients | `services/alpaca_rest.py`, `services/ibkr_rest.py` | Low-level order APIs |
-| Portfolio allocator | `services/portfolio_allocator.py` | HRP-based target weights; optional residual-cash overlay into SGOV/VOO |
+| Portfolio allocator | `services/portfolio_allocator.py` | HRP-based target weights; R7 drawdown throttle; optional residual-cash overlay into SGOV/VOO |
 | Cross-sleeve allocator | `services/alpha_sleeves.py` | Risk-parity / Sharpe-proportional capital split across MR, cross-sectional L/S, etc. |
 | Daily PnL mark | `models.py` → `PnlDaily` | Equity, cash, gross/net exposure, drawdown tracking |
 | Cross-sectional alpha | `services/cross_sectional_shadow.py` | Persisted h=21/h=63 XGBoost models; live bottom-decile sizing |

@@ -1,4 +1,4 @@
-"""Unit tests for the residual cash overlay in services/portfolio_allocator."""
+"""Unit tests for the residual cash overlay and drawdown throttle in services/portfolio_allocator."""
 
 from __future__ import annotations
 
@@ -148,3 +148,22 @@ async def test_small_residual_below_min_trade_is_ignored():
             dd_mult=1.0,
         )
     assert orders == []
+
+
+def test_compute_dd_multiplier_default(monkeypatch):
+    """R7: no throttle below trigger; throttle multiplier above trigger."""
+    monkeypatch.setattr(pa, "_DD_THROTTLE_TRIGGER_PCT", 3.0)
+    monkeypatch.setattr(pa, "_DD_THROTTLE_MULT", 0.5)
+    assert pa.compute_dd_multiplier(0.0) == 1.0
+    assert pa.compute_dd_multiplier(2.99) == 1.0
+    assert pa.compute_dd_multiplier(3.0) == 1.0
+    assert pa.compute_dd_multiplier(3.01) == 0.5
+    assert pa.compute_dd_multiplier(8.0) == 0.5
+
+
+def test_compute_dd_multiplier_env_overrides(monkeypatch):
+    """R7: env vars can tune the throttle trigger and multiplier."""
+    monkeypatch.setattr(pa, "_DD_THROTTLE_TRIGGER_PCT", 5.0)
+    monkeypatch.setattr(pa, "_DD_THROTTLE_MULT", 0.25)
+    assert pa.compute_dd_multiplier(4.9) == 1.0
+    assert pa.compute_dd_multiplier(5.1) == 0.25

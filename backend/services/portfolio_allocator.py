@@ -52,6 +52,25 @@ MAX_SECTOR_EXPOSURE = 0.35  # max 35% in any single sector
 MAX_SINGLE_STOCK = 0.15  # max 15% in any single stock
 TURNOVER_NO_TRADE_BAND = 0.02  # 2% no-trade band (cost-aware control)
 
+# R7: graduated drawdown throttle for new positions. Calibrated in 26-year
+# backtest (2000-2026): trigger >3% off peak, scale new positions to 0.5×.
+_DD_THROTTLE_TRIGGER_PCT = float(os.getenv("DD_THROTTLE_TRIGGER_PCT", "3.0"))
+_DD_THROTTLE_MULT = float(os.getenv("DD_THROTTLE_MULT", "0.5"))
+
+
+def compute_dd_multiplier(drawdown_pct: float) -> float:
+    """
+    R7 graduated de-risk: scale new positions when portfolio is below peak.
+
+    Defaults mirror the 26yr honest canon (2000-2026, PIT-corrected
+    membership, N=313): Ann.Sharpe 3.28 -> 3.46 and max DD -8.43% -> -6.38%
+    at zero CAGR cost. (An earlier pre-PIT-fix run reported 3.01 -> 3.40 on
+    a contaminated 332-trade universe; see docs/RESEARCH_SIGNAL_ENGINE_IMPROVEMENTS.md.)
+    """
+    if drawdown_pct <= _DD_THROTTLE_TRIGGER_PCT:
+        return 1.0
+    return _DD_THROTTLE_MULT
+
 
 def get_correlation_matrix(cov: np.ndarray) -> np.ndarray:
     """Derive correlation matrix from covariance matrix."""
@@ -515,7 +534,7 @@ async def allocate_portfolio(
             final_weights[t] = target
 
     # 5. Drawdown Throttle (R7)
-    # If the user is in >3% drawdown from historical peak equity, scale new positions by 0.5
+    # If the user is in drawdown from historical peak equity, scale new positions.
     dd_mult = 1.0
     dd_pct = 0.0
     try:
@@ -524,10 +543,12 @@ async def allocate_portfolio(
         peak_equity = res.scalar()
         if peak_equity is not None and peak_equity > 0:
             dd_pct = (peak_equity - total_cash) / peak_equity * 100.0
-            if dd_pct > 3.0:
-                dd_mult = 0.5
+            dd_mult = compute_dd_multiplier(dd_pct)
+            if dd_mult < 1.0:
                 log.info(
-                    f"Drawdown Throttle active: user={user_id} is in {dd_pct:.2f}% drawdown (peak=${peak_equity:,.2f}, current=${total_cash:,.2f}). Scaling new trades by 0.5."
+                    f"Drawdown Throttle active: user={user_id} is in {dd_pct:.2f}% drawdown "
+                    f"(peak=${peak_equity:,.2f}, current=${total_cash:,.2f}). "
+                    f"Scaling new trades by {dd_mult:.2f}."
                 )
     except Exception as e:
         log.warning(f"Failed to query peak equity for drawdown throttle: {e}")
