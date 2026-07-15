@@ -287,92 +287,10 @@ async def options_worker(
         except Exception:
             pass
 
-    if massive_sigs:
-        # Dark pool short volume
-        sv = (massive_sigs.get("short_interest") or {}).get("short_volume_pct", 0)
-        if sv > 55:
-            result.score -= 12
-            result.sources.add("Dark Pool")
-            result.rationale.append(
-                {
-                    "src": "Dark Pool",
-                    "head": "Heavy Dark Pool Short Volume",
-                    "body": f"Off-exchange short volume {sv:.1f}% — institutional distribution.",
-                    "sentiment": "neg",
-                    "meta": "Short Volume",
-                }
-            )
-        elif 0 < sv < 35:
-            result.score += 10
-            result.sources.add("Dark Pool")
-            result.rationale.append(
-                {
-                    "src": "Dark Pool",
-                    "head": "Light Dark Pool Short Volume",
-                    "body": f"Off-exchange short volume {sv:.1f}% — institutional accumulation.",
-                    "sentiment": "pos",
-                    "meta": "Short Volume",
-                }
-            )
-
-        # FTDs & Reg SHO
-        ftd = massive_sigs.get("ftd") or {}
-        if ftd.get("is_reg_sho") and ftd.get("spike_pct", 0) > 300:
-            result.score += 15
-            result.sources.add("Fundamentals")
-            result.rationale.append(
-                {
-                    "src": "Fundamentals",
-                    "head": f"Reg SHO + FTD Spike ({ftd.get('spike_pct', 0):.0f}%)",
-                    "body": "Stock on Reg SHO list with surging Fails-to-Deliver. High probability of forced short covering.",
-                    "sentiment": "pos",
-                    "meta": "FTD spike",
-                }
-            )
-
-        # GEX
-        gex_val = (massive_sigs.get("gex") or {}).get("net_gex", 0.0)
-        if gex_val > 1_000_000:
-            result.score += 0  # net effect on score is muted but included for rationale
-            result.sources.add("Options")
-            result.rationale.append(
-                {
-                    "src": "Options",
-                    "head": "Positive Gamma Exposure (GEX)",
-                    "body": "Dealers net long gamma. Volatility pinned — favours mean-reversion.",
-                    "sentiment": "pos",
-                    "meta": f"net_gex={gex_val:,.0f}",
-                }
-            )
-        elif gex_val < -1_000_000:
-            result.sources.add("Options")
-            result.rationale.append(
-                {
-                    "src": "Options",
-                    "head": "Negative Gamma Exposure (GEX)",
-                    "body": "Dealers net short gamma. Volatility may amplify moves — momentum favoured.",
-                    "sentiment": "neg",
-                    "meta": f"net_gex={gex_val:,.0f}",
-                }
-            )
-
-        # Retail vs Institutional flow divergence
-        rif = massive_sigs.get("retail_vs_institutional") or {}
-        inst_flow = rif.get("institutional_flow_usd", 0)
-        ret_flow = rif.get("retail_flow_usd", 0)
-        if abs(inst_flow) > 500_000 and inst_flow * ret_flow < 0:
-            dir_str = "buying" if inst_flow > 0 else "selling"
-            result.score += 8 if inst_flow > 0 else -8
-            result.sources.add("Dark Pool")
-            result.rationale.append(
-                {
-                    "src": "Dark Pool",
-                    "head": f"Institutional {dir_str.capitalize()} vs Retail Divergence",
-                    "body": f"Institutions are {dir_str} (${abs(inst_flow) / 1e6:.1f}M) while retail goes the other way. Smart money edge.",
-                    "sentiment": "pos" if inst_flow > 0 else "neg",
-                    "meta": f"inst={inst_flow / 1e6:+.1f}M ret={ret_flow / 1e6:+.1f}M",
-                }
-            )
+    # massive_sigs scoring (dark-pool SV / FTD-RegSHO / GEX / retail-divergence)
+    # REMOVED (dead-code audit 2026-07-14): zero rationale cards and zero
+    # 'Dark Pool' source tags across all 87,982 all-time signals — the
+    # massive_sigs payload never populates these keys at scoring time.
 
     return result
 
@@ -388,65 +306,13 @@ async def institutional_worker(
     market_ctx: dict | None,
 ) -> ScoringResult:
     result = ScoringResult()
-
-    # SEC Form 4 insider activity
-    if insider and insider.get("filings", 0) > 0:
-        iscore = insider["score"]
-        result.score += iscore
-        if abs(iscore) >= 4:
-            result.sources.add("SEC EDGAR")
-            net = insider.get("net_shares", 0)
-            n_fv = insider.get("filings", 0)
-            if iscore > 0:
-                result.rationale.append(
-                    {
-                        "src": "SEC EDGAR",
-                        "head": f"Insider Cluster Buy — {n_fv} Form 4 Filings",
-                        "body": f"Multiple insiders purchased net {net:,} shares. Cluster buys within 30 days signal high conviction by executives who know the business best.",
-                        "sentiment": "pos",
-                        "meta": f"Net shares: +{net:,} | Filings: {n_fv}",
-                    }
-                )
-            else:
-                result.rationale.append(
-                    {
-                        "src": "SEC EDGAR",
-                        "head": f"Insider Cluster Sell — {n_fv} Form 4 Filings",
-                        "body": f"Multiple insiders sold net {abs(net):,} shares. Cluster selling within 30 days is a bearish signal when concentrated among senior executives.",
-                        "sentiment": "neg",
-                        "meta": f"Net shares: {net:,} | Filings: {n_fv}",
-                    }
-                )
-
-    # 13F institutional flow from market_ctx (fetched once per scan, not per-ticker)
-    inst_map = (market_ctx or {}).get("institutional_signals") or {}
-    inst = inst_map.get(ticker)
-    if inst:
-        fund_score = inst.get("score", 0)
-        result.score += fund_score
-        if abs(fund_score) >= 4:
-            result.sources.add("13F")
-            qoq = inst.get("qoq_trend", "")
-            if fund_score > 0:
-                result.rationale.append(
-                    {
-                        "src": "13F",
-                        "head": f"13F Institutional Accumulation — {qoq.title()} Trend",
-                        "body": "Major funds increasing or initiating positions. Follow-the-smart-money signal from quarterly SEC 13F filings.",
-                        "sentiment": "pos",
-                        "meta": f"13F qoq={qoq} score={fund_score:+.0f}",
-                    }
-                )
-            else:
-                result.rationale.append(
-                    {
-                        "src": "13F",
-                        "head": f"13F Institutional Distribution — {qoq.title()} Trend",
-                        "body": "Major funds reducing or exiting positions. Early-exit signal from quarterly 13F filings.",
-                        "sentiment": "neg",
-                        "meta": f"13F qoq={qoq} score={fund_score:+.0f}",
-                    }
-                )
+    # Insider Form-4 cluster + 13F QoQ scoring REMOVED (dead-code audit
+    # 2026-07-14): zero cards and zero '13F'/'SEC EDGAR' source tags from this
+    # worker across 87,982 all-time signals — `insider['filings']` and the
+    # market_ctx institutional_signals map never populate. Worker retained as
+    # a no-op so orchestration/tests keep a stable surface; delete outright
+    # once the orchestrator drops the call.
+    _ = (ticker, insider, market_ctx)  # noqa: F841 — keep signature honest
 
     return result
 

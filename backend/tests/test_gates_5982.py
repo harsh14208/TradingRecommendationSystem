@@ -600,26 +600,6 @@ async def _gen_signal_mocked(*, insider=None, fundamentals=None, ticker="NVDA"):
 
 
 @pytest.mark.asyncio
-async def test_insider_cluster_buy_gate():
-    """§73 Insider clustering — ≥ 3 unique buyers → cluster card; 1 buyer → no card."""
-    # (a) 3 unique buyers → 'Insider Cluster Buy — N Distinct Insiders' card
-    res = await _gen_signal_mocked(insider={"unique_buyers": 3})
-    if res is not None:
-        heads = [r["head"] for r in res.get("rationale", [])]
-        assert any("Distinct Insiders" in h for h in heads), (
-            f"Expected 'Insider Cluster Buy — N Distinct Insiders' card for unique_buyers=3; got: {heads}"
-        )
-
-    # (b) 1 unique buyer → no cluster card (threshold is ≥ 2)
-    res_single = await _gen_signal_mocked(insider={"unique_buyers": 1})
-    if res_single is not None:
-        heads_single = [r["head"] for r in res_single.get("rationale", [])]
-        assert not any("Distinct Insiders" in h for h in heads_single), (
-            f"unique_buyers=1 should not fire cluster card; got: {heads_single}"
-        )
-
-
-@pytest.mark.asyncio
 async def test_altman_z_score_gate():
     """§76 Altman Z removed 2026-06-03 — confirms no Altman cards at any Z value.
 

@@ -4,8 +4,6 @@ Fundamental quality gates extracted from generate_signal() and _assemble_signal(
 Functional API (for gates inside generate_signal — they modify accumulated score):
     apply_short_interest_velocity(score, info)
         -> (new_score, cards, sources)  [§52]
-    apply_insider_clustering(score, insider, is_lev_etf)
-        -> (new_score, cards, sources)  [§73]
     apply_quality_screens(score, info, fundamentals, is_lev_etf, action)
         -> (new_score, cards, sources)  [§50 Piotroski, §51 ForwardPE]
 
@@ -16,7 +14,6 @@ GateBase class (for gate inside _assemble_signal — can change action):
 
 Public API summary:
     apply_short_interest_velocity(score, info) -> (score, cards, sources)
-    apply_insider_clustering(score, insider, is_lev_etf) -> (score, cards, sources)
     apply_quality_screens(score, info, fundamentals, is_lev_etf, action) -> (score, cards, sources)
     FundamentalValueTrapGate — GateBase; use in a GatePipeline inside _assemble_signal
 """
@@ -93,49 +90,10 @@ def apply_short_interest_velocity(
     return score, cards, new_sources
 
 
-def apply_insider_clustering(
-    score: float,
-    insider: dict,
-    is_lev_etf: bool,
-) -> tuple[float, list[dict], set[str]]:
-    """
-    §73 Insider Clustering — multiple distinct insider buyers.
-
-    Multiple distinct insiders buying simultaneously signals consensus on
-    undervaluation — far stronger than a single large-holder transaction
-    that may be routine compensation or scheduled diversification.
-
-    Returns:
-        (new_score, cards, sources)
-    """
-    cards: list[dict] = []
-    new_sources: set[str] = set()
-
-    if not insider or is_lev_etf:
-        return score, cards, new_sources
-
-    unique_buyers = insider.get("unique_buyers", 0) or 0
-    if unique_buyers >= 2:
-        bonus = 8 if unique_buyers >= 3 else 5
-        score += bonus
-        new_sources.add("SEC EDGAR")
-        cards.append(
-            {
-                "src": "SEC EDGAR",
-                "head": f"Insider Cluster Buy — {unique_buyers} Distinct Insiders",
-                "body": (
-                    f"{unique_buyers} distinct insiders filed Form 4 purchases in the last 30 days. "
-                    "Cluster buys (multiple independent decision-makers) carry far higher "
-                    "predictive power than single-insider transactions. "
-                    "Academic research: insider cluster buys outperform by ~12% in the "
-                    "6 months following the filings."
-                ),
-                "sentiment": "pos",
-                "meta": f"unique_insider_buyers={unique_buyers} bonus=+{bonus}",
-            }
-        )
-
-    return score, cards, new_sources
+# apply_insider_clustering (§73) REMOVED 2026-07-14 (dead-code audit):
+# 0 fires in 87,982 all-time signals — unique_buyers never >= 2 from the
+# EDGAR Form-4 feed on this universe. edgar.py still computes insider data
+# for the net-flow penalties in signal_engine.py.
 
 
 def apply_quality_screens(

@@ -1020,56 +1020,6 @@ async def test_generate_signal_etf_flows_exception():
 
 
 @pytest.mark.asyncio
-async def test_generate_signal_post_earnings_blackout():
-    from services.signal_engine import generate_signal
-
-    mock_df = _make_df(35)
-    mock_df_1h = _make_df_1h()
-    with (
-        patch("services.signal_engine.get_company_news", new_callable=AsyncMock) as m_news,
-        patch("services.signal_engine.get_scraped_news", new_callable=AsyncMock) as m_snews,
-        patch("services.signal_engine.get_insider_activity", new_callable=AsyncMock) as m_insider,
-        patch("services.signal_engine.get_analyst_recs", new_callable=AsyncMock) as m_arecs,
-        patch("services.signal_engine.get_earnings_calendar", new_callable=AsyncMock) as m_ecal,
-        patch("services.signal_engine.get_earnings_surprise", new_callable=AsyncMock) as m_esurp,
-        patch("services.signal_engine.get_options_flow", new_callable=AsyncMock) as m_oflow,
-        patch("services.signal_engine.get_fundamentals", new_callable=AsyncMock) as m_fund,
-        patch("services.signal_engine.get_social_sentiment", new_callable=AsyncMock) as m_soc,
-        patch("services.signal_engine.get_google_trends", new_callable=AsyncMock) as m_trends,
-        patch("services.signal_engine.get_congress_signal", new_callable=AsyncMock) as m_cong,
-        patch("services.signal_engine.get_history", new_callable=AsyncMock) as m_hist,
-        patch("services.signal_engine.get_info", new_callable=AsyncMock) as m_info,
-        patch("services.signal_engine.get_sector_relative_strength", new_callable=AsyncMock) as m_sec,
-        patch("services.signal_engine.calculate_indicators") as m_calc,
-    ):
-        _setup_generate_signal_mocks(
-            m_news,
-            m_snews,
-            m_insider,
-            m_arecs,
-            m_ecal,
-            m_esurp,
-            m_oflow,
-            m_fund,
-            m_soc,
-            m_trends,
-            m_cong,
-            m_hist,
-            m_info,
-            m_sec,
-            m_calc,
-            df_daily=mock_df,
-            df_1h=mock_df_1h,
-        )
-        # Post-earnings blackout: days_since=1 forces HOLD
-        m_ecal.return_value = {"days_since_earnings": 1, "last_earnings_date": "2026-05-01"}
-        result = await generate_signal("AAPL")
-    assert result is not None
-    assert result["action"] == "HOLD"
-    assert any("Post-Earnings Blackout" in r["head"] for r in result["rationale"])
-
-
-@pytest.mark.asyncio
 async def test_generate_signal_pre_earnings_blackout():
     from services.signal_engine import generate_signal
 

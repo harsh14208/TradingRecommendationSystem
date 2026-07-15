@@ -7,7 +7,6 @@ SignalContext built by the _ctx() factory.
 from services.gates.base import SignalContext
 from services.gates.calendar import CalendarGate, apply_calendar_gates
 from services.gates.fundamentals import (
-    apply_insider_clustering,
     apply_quality_screens,
     apply_short_interest_velocity,
 )
@@ -191,24 +190,7 @@ def test_si_velocity_missing_data():
     assert score == 30.0 and cards == [] and srcs == set()
 
 
-# ── apply_insider_clustering ─────────────────────────────────────────────────
-
-
-def test_insider_cluster_three_buyers():
-    score, cards, srcs = apply_insider_clustering(score=40.0, insider={"unique_buyers": 3}, is_lev_etf=False)
-    assert score == 48.0  # +8
-    assert "SEC EDGAR" in srcs
-
-
-def test_insider_cluster_two_buyers():
-    score, _, _ = apply_insider_clustering(score=40.0, insider={"unique_buyers": 2}, is_lev_etf=False)
-    assert score == 45.0  # +5
-
-
-def test_insider_cluster_skipped_for_lev_etf_and_empty():
-    assert apply_insider_clustering(score=40.0, insider={"unique_buyers": 3}, is_lev_etf=True)[0] == 40.0
-    assert apply_insider_clustering(score=40.0, insider={}, is_lev_etf=False)[0] == 40.0
-
+# apply_insider_clustering tests removed 2026-07-14 (§73 deleted — 0 fires ever)
 
 # ── apply_quality_screens (Piotroski branch) ─────────────────────────────────
 

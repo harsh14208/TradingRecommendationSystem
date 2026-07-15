@@ -216,27 +216,6 @@ async def test_options_worker_no_data():
     assert result.score == 0
 
 
-@pytest.mark.asyncio
-async def test_options_worker_high_dark_pool_short():
-    """Dark pool short volume > 55% → bearish signal."""
-    massive_sigs = {"short_interest": {"short_volume_pct": 60.0}, "ftd": {}, "gex": {}, "retail_vs_institutional": {}}
-    from services.signal_workers import options_worker
-
-    result = await options_worker(ticker="TSLA", opt_flow=None, massive_sigs=massive_sigs)
-    assert result.score < 0
-    assert "Dark Pool" in result.sources
-
-
-@pytest.mark.asyncio
-async def test_options_worker_low_dark_pool_short():
-    """Dark pool short volume < 35% → bullish signal."""
-    massive_sigs = {"short_interest": {"short_volume_pct": 25.0}, "ftd": {}, "gex": {}, "retail_vs_institutional": {}}
-    from services.signal_workers import options_worker
-
-    result = await options_worker(ticker="TSLA", opt_flow=None, massive_sigs=massive_sigs)
-    assert result.score > 0
-
-
 # ── institutional_worker ──────────────────────────────────────────────────────
 
 
@@ -248,27 +227,6 @@ async def test_institutional_worker_no_data():
     result = await institutional_worker(ticker="AAPL", insider=None, market_ctx=None)
     assert result.ok is True
     assert result.score == 0
-
-
-@pytest.mark.asyncio
-async def test_institutional_worker_insider_buy():
-    """Cluster insider buying with positive score adds to result."""
-    insider = {"filings": 3, "score": 8, "net_shares": 5000}
-    from services.signal_workers import institutional_worker
-
-    result = await institutional_worker(ticker="AAPL", insider=insider, market_ctx=None)
-    assert result.score == 8
-    assert "SEC EDGAR" in result.sources
-
-
-@pytest.mark.asyncio
-async def test_institutional_worker_insider_sell():
-    """Cluster insider selling with negative score subtracts from result."""
-    insider = {"filings": 2, "score": -6, "net_shares": -10000}
-    from services.signal_workers import institutional_worker
-
-    result = await institutional_worker(ticker="AAPL", insider=insider, market_ctx=None)
-    assert result.score == -6
 
 
 # ── sentiment_worker ──────────────────────────────────────────────────────────
@@ -328,90 +286,6 @@ async def test_sentiment_worker_wsb_velocity():
 
 
 # ── options_worker extended coverage ──────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_options_worker_reg_sho_ftd_spike():
-    """Reg SHO + FTD spike > 300% → adds 15 points."""
-    massive_sigs = {
-        "short_interest": {"short_volume_pct": 40.0},
-        "ftd": {"is_reg_sho": True, "spike_pct": 400.0},
-        "gex": {},
-        "retail_vs_institutional": {},
-    }
-    from services.signal_workers import options_worker
-
-    result = await options_worker(ticker="BBBY", opt_flow=None, massive_sigs=massive_sigs)
-    assert result.score >= 15
-    assert "Fundamentals" in result.sources
-
-
-@pytest.mark.asyncio
-async def test_options_worker_positive_gex():
-    """Positive GEX > 1M → adds rationale (no score change but sources added)."""
-    massive_sigs = {
-        "short_interest": {"short_volume_pct": 40.0},
-        "ftd": {},
-        "gex": {"net_gex": 2_000_000.0},
-        "retail_vs_institutional": {},
-    }
-    from services.signal_workers import options_worker
-
-    result = await options_worker(ticker="SPY", opt_flow=None, massive_sigs=massive_sigs)
-    assert "Options" in result.sources
-    assert any("GEX" in r["head"] for r in result.rationale)
-
-
-@pytest.mark.asyncio
-async def test_options_worker_negative_gex():
-    """Negative GEX < -1M → adds negative GEX rationale."""
-    massive_sigs = {
-        "short_interest": {"short_volume_pct": 40.0},
-        "ftd": {},
-        "gex": {"net_gex": -2_000_000.0},
-        "retail_vs_institutional": {},
-    }
-    from services.signal_workers import options_worker
-
-    result = await options_worker(ticker="SPY", opt_flow=None, massive_sigs=massive_sigs)
-    assert any("Negative Gamma" in r["head"] for r in result.rationale)
-
-
-@pytest.mark.asyncio
-async def test_options_worker_institutional_buying_vs_retail():
-    """Institutional buying vs retail selling → bullish divergence signal."""
-    massive_sigs = {
-        "short_interest": {"short_volume_pct": 40.0},
-        "ftd": {},
-        "gex": {},
-        "retail_vs_institutional": {
-            "institutional_flow_usd": 1_000_000.0,
-            "retail_flow_usd": -500_000.0,
-        },
-    }
-    from services.signal_workers import options_worker
-
-    result = await options_worker(ticker="AAPL", opt_flow=None, massive_sigs=massive_sigs)
-    assert result.score > 0
-    assert "Dark Pool" in result.sources
-
-
-@pytest.mark.asyncio
-async def test_options_worker_institutional_selling_vs_retail():
-    """Institutional selling vs retail buying → bearish divergence signal."""
-    massive_sigs = {
-        "short_interest": {"short_volume_pct": 40.0},
-        "ftd": {},
-        "gex": {},
-        "retail_vs_institutional": {
-            "institutional_flow_usd": -1_000_000.0,
-            "retail_flow_usd": 500_000.0,
-        },
-    }
-    from services.signal_workers import options_worker
-
-    result = await options_worker(ticker="AAPL", opt_flow=None, massive_sigs=massive_sigs)
-    assert result.score < 0
 
 
 @pytest.mark.asyncio
@@ -477,49 +351,6 @@ async def test_fundamentals_worker_negative_fcf():
 
 
 # ── institutional_worker 13F path ─────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_institutional_worker_13f_accumulation():
-    """13F institutional accumulation adds score and rationale."""
-    market_ctx = {
-        "institutional_signals": {
-            "AAPL": {"score": 8, "qoq_trend": "increasing"},
-        }
-    }
-    from services.signal_workers import institutional_worker
-
-    result = await institutional_worker(ticker="AAPL", insider=None, market_ctx=market_ctx)
-    assert result.score == 8
-    assert "13F" in result.sources
-    assert any("Accumulation" in r["head"] for r in result.rationale)
-
-
-@pytest.mark.asyncio
-async def test_institutional_worker_13f_distribution():
-    """13F institutional distribution subtracts score."""
-    market_ctx = {
-        "institutional_signals": {
-            "TSLA": {"score": -6, "qoq_trend": "decreasing"},
-        }
-    }
-    from services.signal_workers import institutional_worker
-
-    result = await institutional_worker(ticker="TSLA", insider=None, market_ctx=market_ctx)
-    assert result.score == -6
-    assert "13F" in result.sources
-
-
-@pytest.mark.asyncio
-async def test_institutional_worker_insider_small_score_no_source():
-    """Insider score < 4 adds score but doesn't add SEC EDGAR source or rationale."""
-    insider = {"filings": 1, "score": 2, "net_shares": 100}
-    from services.signal_workers import institutional_worker
-
-    result = await institutional_worker(ticker="AAPL", insider=insider, market_ctx=None)
-    assert result.score == 2
-    assert "SEC EDGAR" not in result.sources
-    assert result.rationale == []
 
 
 # ── sentiment_worker congress path ────────────────────────────────────────────

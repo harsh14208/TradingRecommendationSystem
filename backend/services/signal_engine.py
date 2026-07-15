@@ -1267,12 +1267,11 @@ async def generate_signal(
             elif score < 0 and net > 0 and buy_val > 250_000:
                 insider_confidence_penalty = 0.08
 
-        # ── §73 Insider Clustering (see gates/fundamentals.py) ──────────────
-        from services.gates.fundamentals import apply_insider_clustering as _ic_fn
-
-        score, _ic_cards, _ic_srcs = _ic_fn(score, insider, _is_lev_etf)
-        rationale.extend(_ic_cards)
-        sources.update(_ic_srcs)
+        # §73 Insider Clustering REMOVED (dead-code audit 2026-07-14): the
+        # 'Insider Cluster Buy' card fired 0 times in 87,982 all-time signals —
+        # insider['unique_buyers'] never reaches 2 (EDGAR Form-4 parsing yields
+        # sparse/empty buyer counts on this large-cap universe). The plain
+        # insider net-flow confidence penalties above DO fire and are kept.
 
         # ── Liquidity Ceiling (NAAIM > 90%) ─────────────────────────────
         aaii = (market_ctx or {}).get("aaii") or {}
@@ -1880,41 +1879,11 @@ async def generate_signal(
         # IV crush is happening, and gap fills / post-earnings drift make all
         # technical indicators unreliable. Hard-HOLD for 2 trading days.
         # Days 3-4: partial suppression (×0.80) — initial reaction is settling.
-        _last_earnings = earnings_cal.get("last_earnings_date", "")
-        _days_since = earnings_cal.get("days_since_earnings")
-        if _days_since is not None and 0 <= _days_since <= 4:
-            sources.add("Earnings")
-            if _days_since <= 2:
-                score = 0
-                _force_hold = True  # subsequent signals must not re-open a directional trade
-                sources.add("Risk Gate")
-                rationale.append(
-                    {
-                        "src": "Risk Gate",
-                        "head": f"Post-Earnings Blackout — {_days_since}d After Report ({_last_earnings})",
-                        "body": (
-                            f"Earnings were reported {_days_since} day(s) ago ({_last_earnings}). "
-                            "Price discovery and IV crush are still in progress — technical signals "
-                            "are unreliable immediately after earnings. Signal forced to HOLD."
-                        ),
-                        "sentiment": "neg",
-                        "meta": f"POST-EARNINGS: {_days_since}d after {_last_earnings}",
-                    }
-                )
-            else:
-                score *= 0.80
-                rationale.append(
-                    {
-                        "src": "Earnings",
-                        "head": f"Post-Earnings Settling — {_days_since}d After Report",
-                        "body": (
-                            f"Earnings {_days_since} days ago. Initial post-earnings reaction is "
-                            "still settling — conviction reduced until price normalises."
-                        ),
-                        "sentiment": "neg",
-                        "meta": f"Last earnings: {_last_earnings}",
-                    }
-                )
+        # Post-earnings blackout/settling REMOVED (dead-code audit 2026-07-14):
+        # zero fires across 87,982 signals spanning hundreds of earnings events —
+        # earnings_cal['days_since_earnings'] never populates, so this protection
+        # never functioned. The PRE-earnings blackout below is the one that fires
+        # (630+ cards) and is unchanged.
 
         # ── Earnings Proximity Risk ──────────────────────────────────────
         days_to_earnings = earnings_cal.get("days_to_earnings")
@@ -2461,45 +2430,10 @@ async def generate_signal(
                     }
                 )
 
-        # ── Massive Analyst Intelligence (Bulls Bears Say + Guidance) ───────
-        try:
-            from services.massive_analyst import get_analyst_intelligence
-
-            ai = await get_analyst_intelligence(ticker)
-            if ai:
-                bbs = ai.get("bulls_bears", {})
-                gd = ai.get("guidance", {})
-                # Bulls Bears Say — adds colour to rationale
-                bbs_score = bbs.get("score", 0.0)
-                if abs(bbs_score) >= 2.0:
-                    analyst_score += bbs_score
-                    bbs_label = bbs.get("label", "neutral").capitalize()
-                    bc, rc = bbs.get("bull_count", 0), bbs.get("bear_count", 0)
-                    text = bbs.get("bull_text" if bbs_score > 0 else "bear_text", "")
-                    rationale.append(
-                        {
-                            "src": "Analyst",
-                            "head": f"Bulls Bears Say: {bbs_label} ({bc} bull / {rc} bear analysts)",
-                            "body": text[:250] or f"{bc} analysts bullish vs {rc} bearish on {ticker}.",
-                            "sentiment": "pos" if bbs_score > 0 else "neg",
-                            "meta": f"bbs_score={bbs_score:+.1f}",
-                        }
-                    )
-                # Corporate Guidance signal (high-weight catalyst)
-                gd_score = gd.get("score", 0.0)
-                if abs(gd_score) >= 4.0:
-                    analyst_score += gd_score
-                    rationale.append(
-                        {
-                            "src": "Analyst",
-                            "head": f"Corporate Guidance {'Raised' if gd_score > 0 else 'Cut'}",
-                            "body": gd.get("summary", "Company updated EPS/revenue guidance."),
-                            "sentiment": "pos" if gd_score > 0 else "neg",
-                            "meta": f"guidance_score={gd_score:+.1f}",
-                        }
-                    )
-        except Exception:
-            log.warning("corporate events scoring failed for %s", ticker, exc_info=True)
+        # Massive Analyst Intelligence (Bulls Bears Say + Guidance) REMOVED
+        # (dead-code audit 2026-07-14): zero cards from either branch across
+        # 87,982 all-time signals — get_analyst_intelligence() never yields
+        # actionable scores. Other analyst scoring (targets/recs) unaffected.
 
         # Apply analyst consensus bucket cap: price target + rec consensus + Finnhub
         # recs all read "what sell-side thinks" — cap so the bucket contributes once.
@@ -2679,23 +2613,10 @@ async def generate_signal(
                         }
                     )
 
-            # Extended-hours volume surge even with a small gap = institutional activity
-            if eh_vol_r >= 3.0 and abs(eh_gap) < 1.0:
-                direction_bonus = 4 if eh_gap >= 0 else -4
-                score += direction_bonus
-                rationale.append(
-                    {
-                        "src": "Technical",
-                        "head": f"Extended-Hours Volume Surge ({eh_vol_r:.1f}×) — Flat Price",
-                        "body": (
-                            f"Extended-hours volume is {eh_vol_r:.1f}× above average with only a "
-                            f"{eh_gap:+.2f}% price move. Unusual volume without price movement often "
-                            "signals institutional positioning ahead of the regular session."
-                        ),
-                        "sentiment": "pos" if direction_bonus > 0 else "neg",
-                        "meta": f"EH vol: {eh_vol_r:.1f}× | Gap: {eh_gap:+.2f}%",
-                    }
-                )
+            # Extended-hours volume-surge bonus REMOVED (dead-code audit
+            # 2026-07-14): 0 fires in 87,982 signals — the vol_r>=3 with
+            # |gap|<1% combination never occurs in practice. The gap up/down
+            # cards above fire and are unchanged.
 
         # ── Options flow (yfinance multi-expiry enhanced sweep detection) ───
         if opt_flow:
@@ -2705,30 +2626,9 @@ async def generate_signal(
                 sources.add("Options")
                 rationale.extend(opt_rationale)
 
-        # ── 8-K Material Events ───────────────────────────────────────────────
-        try:
-            from services.eightk_events import get_8k_signals
-
-            ek = await get_8k_signals(ticker)
-            if ek and abs(ek.get("score", 0)) >= 3.0:
-                sources.add("Fundamentals")
-                score += ek["score"]
-                for ev_label in ek.get("events", [])[:2]:
-                    rationale.append(
-                        {
-                            "src": "Fundamentals",
-                            "head": f"8-K Event: {ev_label}",
-                            "body": (
-                                "SEC Form 8-K reports material corporate events within 4 business days. "
-                                "These are the earliest public disclosures of M&A, CEO changes, "
-                                "material agreements, and guidance updates."
-                            ),
-                            "sentiment": "pos" if ek["score"] > 0 else "neg",
-                            "meta": f"8k_score={ek['score']:+.1f}",
-                        }
-                    )
-        except Exception as _edgar_err:
-            log.debug("[engine] %s EDGAR 8-K scoring failed: %s", ticker, _edgar_err)
+        # 8-K material-events scoring REMOVED (dead-code audit 2026-07-14):
+        # 0 cards in 87,982 signals — get_8k_signals() never returns |score|>=3.
+        # services/eightk_events.py retained for research.
 
         # ── Massive Financial Ratios (augment yfinance fundamentals) ─────────
         try:
@@ -2846,108 +2746,12 @@ async def generate_signal(
                     }
                 )
 
-        # ── CBOE Put/Call Ratio (contrarian sentiment) ───────────────────────
-        pc = (market_ctx or {}).get("put_call")
-        if pc and pc.get("bias"):
-            bias = pc["bias"]
-            pc_score += bias
-            if abs(bias) >= 8:
-                sources.add("Options")
-                signal_txt = "extreme put buying (fear)" if bias > 0 else "extreme call buying (complacency)"
-                rationale.append(
-                    {
-                        "src": "Options",
-                        "head": f"CBOE P/C Ratio {pc['ratio']} — {signal_txt.split('(')[1].rstrip(')')} signal",
-                        "body": (
-                            f"CBOE total put/call ratio at {pc['ratio']}. "
-                            + (
-                                "Ratio >1.15 signals excessive fear — contrarian bullish."
-                                if bias > 0
-                                else "Ratio <0.65 signals complacency — contrarian bearish."
-                            )
-                        ),
-                        "sentiment": "pos" if bias > 0 else "neg",
-                        "meta": f"P/C = {pc['ratio']}",
-                    }
-                )
-
-        # ── Options Flow Direction Confirmation ──────────────────────────────
-        # Directional layer: does the options market flow align with or contradict
-        # the current signal? Both use the same P/C ratio — bucketed with contrarian
-        # above so the ratio only contributes once to the total score.
-        if pc and pc.get("ratio"):
-            pc_ratio = float(pc["ratio"])
-            if score > 0:  # BUY signal
-                if pc_ratio < 0.70:
-                    # Calls dominating — options market is directionally bullish, confirms BUY
-                    pc_score += 6
-                    sources.add("Options")
-                    rationale.append(
-                        {
-                            "src": "Options",
-                            "head": f"Options Flow Confirms BUY (P/C {pc_ratio:.2f})",
-                            "body": (
-                                f"CBOE P/C ratio of {pc_ratio:.2f} shows call volume dominating puts. "
-                                "The options market is directionally bullish — confirming this BUY signal."
-                            ),
-                            "sentiment": "pos",
-                            "meta": f"P/C = {pc_ratio:.2f} (calls dominant)",
-                        }
-                    )
-                elif pc_ratio > 1.50:
-                    # Puts dominating — options market is directionally bearish, contradicts BUY
-                    pc_score -= 10
-                    sources.add("Options")
-                    rationale.append(
-                        {
-                            "src": "Options",
-                            "head": f"Options Flow Contradicts BUY (P/C {pc_ratio:.2f})",
-                            "body": (
-                                f"CBOE P/C ratio of {pc_ratio:.2f} shows put volume dominating calls. "
-                                "The options market is positioning bearishly — this conflicts with the BUY signal."
-                            ),
-                            "sentiment": "neg",
-                            "meta": f"P/C = {pc_ratio:.2f} (puts dominant)",
-                        }
-                    )
-            elif score < 0:  # SELL signal
-                if pc_ratio > 1.50:
-                    # Puts dominating — confirms SELL direction
-                    pc_score -= 6
-                    sources.add("Options")
-                    rationale.append(
-                        {
-                            "src": "Options",
-                            "head": f"Options Flow Confirms SELL (P/C {pc_ratio:.2f})",
-                            "body": (
-                                f"CBOE P/C ratio of {pc_ratio:.2f} shows heavy put buying. "
-                                "The options market is directionally bearish — confirming this SELL signal."
-                            ),
-                            "sentiment": "neg",
-                            "meta": f"P/C = {pc_ratio:.2f} (puts dominant)",
-                        }
-                    )
-                elif pc_ratio < 0.70:
-                    # Calls dominating — contradicts SELL direction
-                    pc_score += 10
-                    sources.add("Options")
-                    rationale.append(
-                        {
-                            "src": "Options",
-                            "head": f"Options Flow Contradicts SELL (P/C {pc_ratio:.2f})",
-                            "body": (
-                                f"CBOE P/C ratio of {pc_ratio:.2f} shows calls dominating. "
-                                "Options market is bullish — this contradicts the SELL signal."
-                            ),
-                            "sentiment": "pos",
-                            "meta": f"P/C = {pc_ratio:.2f} (calls dominant)",
-                        }
-                    )
-
-        # Apply P/C ratio bucket cap: contrarian bias + directional confirmation both
-        # derived from the same ratio — prevent the same data point scoring twice.
-        # 0.85 discount: overlaps with score_options() sweep/flow signals already in score.
-        score += max(-12, min(12, pc_score)) * 0.85
+        # CBOE P/C contrarian + flow-confirmation scoring REMOVED (dead-code
+        # audit 2026-07-14): all 5 card variants show 0 fires in 87,982
+        # all-time signals — market_ctx['put_call'] never populates because the
+        # CBOE daily-stats CSVs return 403 (known-broken feed, see memory/
+        # free-backtest-data-fred). Per-ticker options flow via score_options()
+        # is unaffected and remains the live options signal.
 
         # ── Market Breadth (% of S&P 500 basket above SMA50/200) ────────────
         breadth = (market_ctx or {}).get("breadth")
