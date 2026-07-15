@@ -698,18 +698,9 @@ async def check_delivery_gates(
         if profit_pct < 2.0:
             return f"profit {profit_pct:.1f}% < 2.0% minimum", sig_dict
 
-    # ── §78 Sep/Oct seasonality — worst calendar months, raise entry bar ─────
-    _month = datetime.now(timezone.utc).month
-    _conf = sig_dict.get("confidence", 0)
-    if action == "BUY" and _month == 9 and _conf < 62:
-        return (
-            f"September seasonality gate — worst calendar month, confidence {_conf:.0f}% below 62% threshold",
-            sig_dict,
-        )
-    if action == "BUY" and _month == 10 and _conf < 60:
-        return (
-            f"October seasonality gate — elevated whipsaw risk, confidence {_conf:.0f}% below 60% threshold",
-            sig_dict,
-        )
+    # §78 Sep/Oct seasonality floors REMOVED (gate audit 2026-07-14): the
+    # backtest ablation retired §78 on 2026-06-02 as confirmed dead (ΔSh=0.00,
+    # no trades blocked at 100-ticker scale) and SIGNAL_VALIDATION.md lists it
+    # as Removed — but this live copy was left behind. Doc and code now agree.
 
     return None, sig_dict  # all gates passed

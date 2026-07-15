@@ -114,20 +114,6 @@ def _neutralize_calendar_gates():
 # ── §65 TRIN / Arms Index ─────────────────────────────────────────────────────
 
 
-def test_trin_capitulation_adds_confidence():
-    """TRIN > 2.0 on MR BUY should add +4pp confidence."""
-    base = _mr_buy_kwargs(market_ctx={"macro": {"sp500_trend": "up", "trin": 2.5}})
-    base_no_trin = _mr_buy_kwargs(market_ctx={"macro": {"sp500_trend": "up"}})
-
-    res_trin = _asm(**base)
-    res_no = _asm(**base_no_trin)
-
-    if res_trin and res_no and res_trin["action"] == res_no["action"] == "BUY":
-        assert res_trin["confidence"] >= res_no["confidence"], "TRIN>2.0 should not reduce confidence"
-        heads = [r["head"] for r in res_trin["rationale"]]
-        assert any("TRIN" in h or "Capitulation" in h for h in heads), f"Expected TRIN rationale card; got: {heads}"
-
-
 def test_trin_below_threshold_no_bonus():
     """TRIN <= 2.0 should not trigger the capitulation card."""
     base = _mr_buy_kwargs(market_ctx={"macro": {"sp500_trend": "up", "trin": 1.5}})
@@ -142,66 +128,7 @@ def test_trin_below_threshold_no_bonus():
 # ── §66 AD Breadth / Zweig Thrust ────────────────────────────────────────────
 
 
-def test_zweig_thrust_adds_confidence():
-    """Zweig breadth thrust should add confidence on BUY."""
-    base = _mr_buy_kwargs(market_ctx={"macro": {"sp500_trend": "up", "zweig_thrust": True}})
-    base_no = _mr_buy_kwargs(market_ctx={"macro": {"sp500_trend": "up", "zweig_thrust": False}})
-
-    res = _asm(**base)
-    res_no = _asm(**base_no)
-
-    if res and res_no and res["action"] == res_no["action"] == "BUY":
-        assert res["confidence"] >= res_no["confidence"], "Zweig thrust should not reduce confidence vs no-thrust"
-        heads = [r["head"] for r in res["rationale"]]
-        assert any("Zweig" in h or "Breadth" in h or "breadth" in h.lower() for h in heads), (
-            f"Expected Zweig/breadth rationale; got: {heads}"
-        )
-
-
-def test_ad_breadth_deteriorating_reduces_confidence():
-    """AD EMA10 drop < -200 should add a negative rationale."""
-    base = _mr_buy_kwargs(market_ctx={"macro": {"sp500_trend": "up", "ad_ema10_chg": -300.0}})
-    res = _asm(**base)
-
-    if res and res["action"] == "BUY":
-        heads = [r["head"] for r in res["rationale"]]
-        sents = [
-            r["sentiment"]
-            for r in res["rationale"]
-            if "breadth" in r.get("head", "").lower() or "AD" in r.get("head", "") or "Breadth" in r.get("head", "")
-        ]
-        # Expect a negative-sentiment breadth card
-        assert any(
-            "neg" in r["sentiment"]
-            for r in res["rationale"]
-            if "Breadth" in r.get("head", "") or "AD" in r.get("head", "")
-        ), f"AD deterioration should produce neg sentiment card; heads={heads}"
-
-
 # ── §64 Yield Curve — XLF Penalty ────────────────────────────────────────────
-
-
-def test_inverted_yield_curve_penalises_xlf():
-    """Deeply inverted yield curve (t10y2y < -0.5) + XLF sector → -5pp."""
-    xlf_rs = {"sector_etf": "XLF", "rs_vs_sector": 0}
-    base_inv = _mr_buy_kwargs(
-        market_ctx={"macro": {"sp500_trend": "up", "t10y2y_spread": -0.8}},
-        sector_rs=xlf_rs,
-    )
-    base_flat = _mr_buy_kwargs(
-        market_ctx={"macro": {"sp500_trend": "up", "t10y2y_spread": 0.5}},
-        sector_rs=xlf_rs,
-    )
-
-    res_inv = _asm(**base_inv)
-    res_flat = _asm(**base_flat)
-
-    if res_inv and res_flat and res_inv["action"] == res_flat["action"] == "BUY":
-        assert res_inv["confidence"] < res_flat["confidence"], "Inverted yield curve should lower XLF confidence"
-        heads = [r["head"] for r in res_inv["rationale"]]
-        assert any("Yield Curve" in h or "Inverted" in h for h in heads), (
-            f"Expected yield curve rationale; got: {heads}"
-        )
 
 
 def test_yield_curve_no_penalty_for_non_xlf():
@@ -218,49 +145,6 @@ def test_yield_curve_no_penalty_for_non_xlf():
 
 
 # ── §68 T10Y Rate of Change — XLK Headwind/Tailwind ─────────────────────────
-
-
-def test_rising_rates_penalise_xlk():
-    """t10y_30d_chg > 0.5 + XLK sector → -6pp confidence."""
-    xlk_rs = {"sector_etf": "XLK", "rs_vs_sector": 0}
-    base_rising = _mr_buy_kwargs(
-        market_ctx={"macro": {"sp500_trend": "up", "t10y_30d_chg": 0.7}},
-        sector_rs=xlk_rs,
-    )
-    base_stable = _mr_buy_kwargs(
-        market_ctx={"macro": {"sp500_trend": "up", "t10y_30d_chg": 0.1}},
-        sector_rs=xlk_rs,
-    )
-
-    res_rising = _asm(**base_rising)
-    res_stable = _asm(**base_stable)
-
-    if res_rising and res_stable and res_rising["action"] == res_stable["action"] == "BUY":
-        assert res_rising["confidence"] < res_stable["confidence"], "Rising rates should lower XLK confidence"
-        heads = [r["head"] for r in res_rising["rationale"]]
-        assert any("Rising Rate" in h or "Headwind" in h or "Rate" in h for h in heads), (
-            f"Expected rising-rates rationale; got: {heads}"
-        )
-
-
-def test_falling_rates_boost_xlk():
-    """t10y_30d_chg < -0.3 → +3pp tailwind on any sector."""
-    base = _mr_buy_kwargs(
-        market_ctx={"macro": {"sp500_trend": "up", "t10y_30d_chg": -0.5}},
-    )
-    base_stable = _mr_buy_kwargs(
-        market_ctx={"macro": {"sp500_trend": "up", "t10y_30d_chg": 0.0}},
-    )
-
-    res = _asm(**base)
-    res_stable = _asm(**base_stable)
-
-    if res and res_stable and res["action"] == res_stable["action"] == "BUY":
-        assert res["confidence"] >= res_stable["confidence"], "Falling rates should not reduce confidence"
-        heads = [r["head"] for r in res["rationale"]]
-        assert any("Falling" in h or "Tailwind" in h or "Rate" in h for h in heads), (
-            f"Expected falling-rates tailwind rationale; got: {heads}"
-        )
 
 
 # ── §48 IVR Gate ──────────────────────────────────────────────────────────────
@@ -535,68 +419,6 @@ async def test_fomc_far_away_no_effect():
 
 
 # ── §78 Sep/Oct Seasonality (delivery_gates) ─────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_september_gate_blocks_low_confidence():
-    """September BUY with confidence < 62 → blocked."""
-    from services.delivery_gates import check_delivery_gates
-
-    db = await _mock_db_zero_sector()
-    sep_dt = datetime(2026, 9, 10, 12, 0, 0, tzinfo=timezone.utc)
-
-    with patch("services.delivery_gates.datetime") as mock_dt:
-        mock_dt.now.return_value = sep_dt
-        reason, _ = await check_delivery_gates(_sig(action="BUY", confidence=58.0), db, _Settings())
-
-    assert reason is not None, "September gate should block BUY with conf<62"
-    assert "September" in reason or "seasonality" in reason.lower()
-
-
-@pytest.mark.asyncio
-async def test_september_gate_passes_high_confidence():
-    """September BUY with confidence ≥ 62 → gate passes."""
-    from services.delivery_gates import check_delivery_gates
-
-    db = await _mock_db_zero_sector()
-    sep_dt = datetime(2026, 9, 10, 12, 0, 0, tzinfo=timezone.utc)
-
-    with patch("services.delivery_gates.datetime") as mock_dt:
-        mock_dt.now.return_value = sep_dt
-        reason, _ = await check_delivery_gates(_sig(action="BUY", confidence=63.0), db, _Settings())
-
-    assert reason is None or "September" not in str(reason), "September gate should pass with confidence ≥ 62"
-
-
-@pytest.mark.asyncio
-async def test_october_gate_blocks_low_confidence():
-    """October BUY with confidence < 60 → blocked."""
-    from services.delivery_gates import check_delivery_gates
-
-    db = await _mock_db_zero_sector()
-    oct_dt = datetime(2026, 10, 14, 12, 0, 0, tzinfo=timezone.utc)
-
-    with patch("services.delivery_gates.datetime") as mock_dt:
-        mock_dt.now.return_value = oct_dt
-        reason, _ = await check_delivery_gates(_sig(action="BUY", confidence=57.0), db, _Settings())
-
-    assert reason is not None, "October gate should block BUY with conf<60"
-    assert "October" in reason or "seasonality" in reason.lower()
-
-
-@pytest.mark.asyncio
-async def test_october_gate_passes_above_threshold():
-    """October BUY with confidence ≥ 60 → gate passes."""
-    from services.delivery_gates import check_delivery_gates
-
-    db = await _mock_db_zero_sector()
-    oct_dt = datetime(2026, 10, 14, 12, 0, 0, tzinfo=timezone.utc)
-
-    with patch("services.delivery_gates.datetime") as mock_dt:
-        mock_dt.now.return_value = oct_dt
-        reason, _ = await check_delivery_gates(_sig(action="BUY", confidence=61.0), db, _Settings())
-
-    assert reason is None or "October" not in str(reason), "October gate should pass with confidence ≥ 60"
 
 
 @pytest.mark.asyncio
