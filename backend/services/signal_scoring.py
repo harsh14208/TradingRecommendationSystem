@@ -298,7 +298,11 @@ def score_macd(
             }
         )
     elif cross_down:
-        score_delta -= 22
+        # Gate-audit 2026-07-15: in MR-dip context the bearish-cross penalty is
+        # wrong-signed (cohort +5.2pp, N=20 — thin but consistent with the whole
+        # MACD family read). Skipped in dip context only.
+        if not mr_dip:
+            score_delta -= 22
         dominant_hint = "macd"
         rationale.append(
             {

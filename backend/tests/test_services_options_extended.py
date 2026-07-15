@@ -868,7 +868,7 @@ def test_score_options_iv_term_spike():
     opt = {"iv_term_spike": 1.8, "near_iv": 0.35, "far_iv": 0.20}
     score, rationale = score_options(opt)
     assert any("IV Spike" in r["head"] for r in rationale)
-    assert score < 0
+    assert score == 0  # penalty neutralized 2026-07-15 (gate audit: cohort +5.6pp, N=141)
 
 
 def test_score_options_low_iv_with_volume():

@@ -146,21 +146,26 @@ def apply_quality_screens(
         elif f_score >= 5:
             score += 5
         elif f_score <= 2:
-            score -= 10
+            # −10 penalty NEUTRALIZED (gate-audit 2026-07-15): the "Financially
+            # Weak" cohort ran +9.4pp ABOVE baseline on the delivered MR book
+            # (N=49) — weak-balance-sheet names bounce HARDER off oversold dips
+            # (junk-rally dynamics). The §50 boost side (+9.3pp, N=165) is
+            # unchanged and validated.
             cards.append(
                 {
                     "src": "Fundamentals",
                     "head": f"Piotroski F-Score {f_score}/9 — Financially Weak",
                     "body": (
-                        f"Piotroski F-Score of only {f_score}/9: poor profitability, increasing leverage, "
-                        "and deteriorating efficiency. Low-F-score stocks are academic short candidates."
+                        f"Piotroski F-Score of only {f_score}/9. Note: at oversold MR entries this "
+                        "cohort has historically OUTPERFORMED (+9.4pp WR, N=49 — junk-rally bounce). "
+                        "Informational only; no score change."
                     ),
-                    "sentiment": "neg",
-                    "meta": f"F-Score: {f_score}/9",
+                    "sentiment": "neu",
+                    "meta": f"F-Score: {f_score}/9 (penalty neutralized 2026-07-15)",
                 }
             )
         elif f_score <= 4:
-            score -= 4
+            pass  # −4 neutralized with the −10 branch above (same audit)
 
     # §74 Beneish M-Score — REMOVED 2026-07-14 (gate audit)
     # §85-1 live audit on the corrected 725-signal book: fired N=70 with WR

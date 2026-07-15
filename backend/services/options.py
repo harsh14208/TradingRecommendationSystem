@@ -974,7 +974,9 @@ def score_options(opt: dict) -> tuple[float, list[dict]]:
     # Score: general -3 for event uncertainty; MR-specific +4 applied separately in
     # _assemble_signal() where we know whether the signal IS an MR BUY entry.
     if iv_spike is not None and iv_spike > 1.5:
-        score -= 3  # general option-premium cost penalty
+        # −3 penalty NEUTRALIZED (gate-audit 2026-07-15): delivered MR-BUY cohort
+        # with this card ran +5.6pp above baseline (N=141) — acute near-term IV
+        # is peak panic pricing, which is when MR snap-backs are sharpest.
         rationale.append(
             {
                 "src": "Options",

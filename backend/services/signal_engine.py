@@ -1741,8 +1741,11 @@ async def generate_signal(
                 )
             # Bollinger Bands entirely inside KC = maximum volatility squeeze
             if bb_upper and bb_lower and bb_upper < kc_upper and bb_lower > kc_lower:
-                squeeze_sentiment = "pos" if score > 0 else "neg"
-                score += 4 if score > 0 else (-4 if score < 0 else 0)
+                # ±4 direction-chasing modifier NEUTRALIZED (gate-audit 2026-07-15):
+                # cohort −8.1pp vs baseline (N=36). "Breakout direction is likely
+                # set" is momentum logic — at an MR dip the compression resolves
+                # DOWN as often as up. Card informational.
+                squeeze_sentiment = "neu"
                 rationale.append(
                     {
                         "src": "Technical",
@@ -3303,20 +3306,37 @@ async def generate_signal(
                     }
                 )
             elif gap_pct <= -2.5:
-                momentum_score -= 8
+                # −8 penalty SKIPPED in MR-dip context (gate-audit 2026-07-15):
+                # cohort +15.5pp vs baseline (N=23) — a large gap down INTO an
+                # oversold dip is capitulation (overnight seller exhaustion), the
+                # strongest MR setup. Penalty retained outside dip context.
+                _gap_mr_dip = (tech.get("bb_pct_b") is not None and float(tech["bb_pct_b"]) < 0.22) or (
+                    tech.get("ibs") is not None and float(tech["ibs"]) < 0.15
+                )
+                if not _gap_mr_dip:
+                    momentum_score -= 8
                 rationale.append(
                     {
                         "src": "Technical",
                         "head": f"Bearish Gap Down {gap_pct:.1f}%",
-                        "body": f"Today's open gapped {abs(gap_pct):.1f}% below yesterday's close. Downside gaps reflect urgent selling — institutional distribution overnight.",
-                        "sentiment": "neg",
-                        "meta": f"Gap: {gap_pct:.1f}%",
+                        "body": (
+                            f"Open gapped {abs(gap_pct):.1f}% down into an oversold dip — capitulation/"
+                            "seller exhaustion; penalty skipped (live +15.5pp WR cohort, N=23)."
+                            if _gap_mr_dip
+                            else f"Today's open gapped {abs(gap_pct):.1f}% below yesterday's close. Downside gaps reflect urgent selling — institutional distribution overnight."
+                        ),
+                        "sentiment": "pos" if _gap_mr_dip else "neg",
+                        "meta": f"Gap: {gap_pct:.1f}% mr_dip={_gap_mr_dip}",
                     }
                 )
             elif 1.5 <= gap_pct < 2.5:
                 momentum_score += 4
             elif -2.5 < gap_pct <= -1.5:
-                momentum_score -= 4
+                _gap_mr_dip2 = (tech.get("bb_pct_b") is not None and float(tech["bb_pct_b"]) < 0.22) or (
+                    tech.get("ibs") is not None and float(tech["ibs"]) < 0.15
+                )
+                if not _gap_mr_dip2:
+                    momentum_score -= 4
 
         # ── Relative Volume (RVOL) — direction-aware with multiplier system ─────
         # RVOL > 3.0 = major catalyst (boost all signals); < 0.5 = no participation (dampen).
