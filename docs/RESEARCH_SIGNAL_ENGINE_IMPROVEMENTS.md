@@ -108,7 +108,36 @@ entry gate. Vol targeting helps strategies with *unconditioned* vol exposure; it
 
 **Why it ranks second.** Free feature; large published spread; minimal code change; could improve per-signal IC without changing data infrastructure.
 
-**Next step.** Add MAX_21 to `signal_engine.py` feature set and backtest the interaction with existing oversold conditions (RSI<42, BB%B<0.22, etc.).
+**Prototype result (post-processed on 332-trade, 26-year IS ledger, 2026-07-15).**
+A new harness `backend/scripts/backtest_max_effect.py` tests MAX_21 as a causal filter/sizer
+using expanding-window percentiles.  Contrary to the published high-MAX effect, this
+vol-gated MR book performs **better on low-MAX names**:
+
+| Config | Trades | CAGR | Event-time Sharpe | Max DD |
+|:---|---:|---:|---:|---:|
+| Baseline portfolio | 332 | +4.22% | **3.01** | −8.43% |
+| High-MAX filter (top 33%) | 96 | +3.23% | 3.24 | −4.46% |
+| Low-MAX filter (bottom 50%) | 196 | +3.34% | **4.33** | −4.24% |
+| MAX linear sizing | 332 | +4.33% | 3.08 | −8.68% |
+
+The low-MAX filter cuts MaxDD by ~50% and raises Sharpe +1.32, but reduces CAGR by
+~0.9pp because 41% of trades are removed.  The high-MAX filter improves per-trade avg
+(+1.22% vs +0.81%) but with higher volatility, so risk-adjusted improvement is modest.
+
+**Why the sign flips:** the existing entry gates (VIX≥20, score/quality, BB%B, etc.) already
+concentrate on lottery-like, high-vol names.  Within that pre-selected universe, the
+*residual* high-MAX tail adds noise and tail risk; low-MAX names deliver steadier
+mean-reversion.
+
+**VERDICT: GRADUATE (with caution).**  The low-MAX filter materially improves the
+risk-adjusted path.  A causal per-ticker expanding-median gate is now wired into
+`backtest_technicals.py` as `--max21-filter p` (keep signals whose MAX_21 ≤ p-th
+percentile of the ticker's own expanding history; default p=0.50).  A fresh 26-year run
+with `--max21-filter 0.5` is in progress to confirm the post-processing lift holds under
+slot-release and T-bill-on-idle dynamics.
+
+**Next step.** If the integrated backtest confirms Sharpe ≥ +0.50 and MaxDD ≤ −6%, wire the
+same gate into `signal_engine.py` live path.  Also test interaction with turnover conditioning.
 
 ---
 
@@ -132,7 +161,28 @@ entry gate. Vol targeting helps strategies with *unconditioned* vol exposure; it
 
 **Why it ranks third.** Attacks a measured, quantified leak rather than adding new alpha; cheap to test; aligns with the documented mean-reversion edge.
 
-**Next step.** Implement a `limit_entry_atr_fraction` parameter in the backtest harness and sweep k ∈ [0.05, 0.50] by style.
+**Fit to current code (updated 2026-07-15).** Already implemented as `--entry-limit k` in
+`backtest_technicals.py` §97a.  Fill logic: limit at signal Close − k×ATR; filled if next-day
+Low ≤ limit (or gap-down through limit); unfilled signals expire.  The limit grid is printed
+automatically when the flag is used.
+
+**Prototype result (2026-07-15).** The `--entry-limit` harness in `backtest_technicals.py`
+was run on 2015–2026 and produced a fill rate of only 67.7% at k=0.2, with per-trade
+Sharpe 0.03 and portfolio Sharpe 0.70.  This aligns with the v8.5 finding documented in
+`docs/Stats.md` line 414: **"§97a limit-order grid all failed deploy bar (adverse
+selection confirmed)"**.  The unfilled signals are disproportionately the strong reversal
+setups; waiting for a better fill means missing the alpha.
+
+| Config (2015–2026) | N | Fill Rate | WR | Avg Ret | Port Sharpe | Max DD |
+|:---|---:|---:|---:|---:|---:|---:|
+| Limit entry k=0.2 | 132 | 67.7% | 57.6% | +0.10% | 0.70 | −6.55% |
+
+**VERDICT: REJECTED.**  Limit-below-close entry destroys more alpha than it saves in
+slippage.  Keep the existing open-entry discipline; execution improvements should target
+fill-price TCAs and broker routing, not entry timing.
+
+**Next step.** None for the MR book.  Revisit only if a future sleeve has measured
+entry-slippage that exceeds the opportunity cost of missed fills.
 
 ---
 
@@ -158,7 +208,30 @@ entry gate. Vol targeting helps strategies with *unconditioned* vol exposure; it
 
 **Why it ranks fourth.** High fit to existing architecture, but requires more engineering than #1–#3 and is entangled with patent considerations.
 
-**Next step.** Add HMM regime labels to the existing cohort analytics table and quantify EV divergence across regimes for the top 10 cohorts.
+**Prototype result (post-processed on 332-trade, 26-year IS ledger, 2026-07-15).**
+A new harness `backend/scripts/backtest_regime_cohort.py` labels each trade with the
+in-sample HMM regime (`bull`/`bear` from `hmm_bull_prob`) and computes an expanding-window
+empirical-Bayes net edge per `(sector_etf, regime)` cohort.  Two strategies were tested:
+
+| Config | Trades | CAGR | Event-time Sharpe | Max DD |
+|:---|---:|---:|---:|---:|
+| Baseline portfolio | 332 | +4.22% | **3.01** | −8.43% |
+| Regime filter (skip LB ≤ 0 cohorts) | 254 | +4.10% | 3.09 | −8.43% |
+| Regime size (scale by shrunk net edge) | 332 | +4.61% | **3.48** | −10.08% |
+
+The filter variant improves Sharpe only +0.08 with 23% fewer trades.  The size variant
+adds +0.46 Sharpe but deepens MaxDD by 1.65pp — the extra return is partly leverage on
+high-edge cohorts.  Notable regime-conditional divergence: `XLF|bear` edge +0.88% vs
+`XLF|bull` edge −0.13%; `XLK|bull` +1.55% vs `XLK|bear` +0.49%.
+
+**VERDICT: PROMISING but NOT GRADUATED.**  Regime-conditional sector edges exist, but the
+2-state HMM is too coarse and the sample too thin for a clean Sharpe/DD improvement.  Next
+step is to integrate the same expanding-window cohort sizing into `backtest_technicals.py`
+so it runs through the full 26-year portfolio simulation with slot-release effects, and to
+enrich regimes (e.g. VIX level + credit spread + SPY trend) beyond the binary HMM output.
+
+**Next step.** Add HMM regime labels to the existing cohort analytics table, enrich the
+regime feature set, and quantify EV divergence across regimes for the top 10 cohorts.
 
 ---
 
@@ -174,7 +247,8 @@ entry gate. Vol targeting helps strategies with *unconditioned* vol exposure; it
 | **50/50 risk blend** | **1.31 (+0.43)** |
 
 Optimal tangency weight ≈ 52/48 — the blend is robust to weighting error. This dwarfs every
-single-sleeve lever tested (all rejected: vol-targeting, MAX, session exits, limit entries).
+single-sleeve lever tested (rejected: vol-targeting, session exits, limit entries; **MAX-effect
+low-MAX filter is now graduating** — see §1.2).
 Alternatives measured the same day: **TSMOM** tangency Δ +0.01 only (standalone 0.40 fresh,
 corr +0.25 — skip); **VRP paper** unjudgeable from signals.outcome_pct (measures the
 underlying, not option P&L — needs Alpaca-fills accounting).
@@ -189,9 +263,9 @@ forward, then decide on real capital.
 | Rank | Idea | Test location | Effort | Expected impact |
 |------|------|---------------|--------|-----------------|
 | 1 | ~~Portfolio vol targeting~~ | `backtest_technicals.py --portfolio` | Low | **TESTED & REJECTED 2026-07-15** — redundant with §12b VIX entry gate (see §1.1) |
-| 2 | MAX-effect conditioning | Existing feature harness | Low | Medium (1.66% vs 0.65% weekly reversal spread) |
-| 3 | Limit-below-close entry | Backtest execution layer | Low | Medium (closes −0.86pp slippage leak) |
-| 4 | Regime-conditional allocation | Cohort analytics + HMM | Medium | High (tail-risk auto-de-risk) |
+| 2 | **MAX-effect conditioning** | `backtest_technicals.py --max21-filter 0.5` | Low | **GRADUATING 2026-07-15** — low-MAX filter cuts MaxDD ~50% and raises Sharpe +1.32 (post-processing) |
+| 3 | ~~Limit-below-close entry~~ | `backtest_technicals.py --entry-limit k` | Low | **TESTED & REJECTED 2026-07-15** — adverse selection kills more alpha than slippage saved (see §1.3) |
+| 4 | Regime-conditional allocation | `backend/scripts/backtest_regime_cohort.py` | Medium | **PROMISING 2026-07-15** — +0.46 Sharpe via sizing, but MaxDD worsens; needs richer regimes (see §1.4) |
 
 ---
 
