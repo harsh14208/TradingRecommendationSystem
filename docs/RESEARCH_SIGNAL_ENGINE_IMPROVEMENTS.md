@@ -162,6 +162,28 @@ entry gate. Vol targeting helps strategies with *unconditioned* vol exposure; it
 
 ---
 
+## 1.5 Sleeve Blending — MEASURED 2026-07-15 (the real Tier-1 lever)
+
+**MR × cross-sectional h=63 monthly correlation = −0.02 over 165 overlapping months**
+(`data/mr_monthly_equity.csv` × `data/cross_sectional_monthly_h63.csv`):
+
+| Config | Ann. Sharpe (monthly basis) |
+|:---|---:|
+| MR book alone | 0.88 |
+| XS h=63 L/S alone | 0.95 |
+| **50/50 risk blend** | **1.31 (+0.43)** |
+
+Optimal tangency weight ≈ 52/48 — the blend is robust to weighting error. This dwarfs every
+single-sleeve lever tested (all rejected: vol-targeting, MAX, session exits, limit entries).
+Alternatives measured the same day: **TSMOM** tangency Δ +0.01 only (standalone 0.40 fresh,
+corr +0.25 — skip); **VRP paper** unjudgeable from signals.outcome_pct (measures the
+underlying, not option P&L — needs Alpaca-fills accounting).
+
+**Caveats:** XS series is the walk-forward research artifact (net 10bps, pre-borrow; h=63
+CI [+0.29,+0.94]; horizon nested-validated but grid descended from a contaminated sweep).
+The honest path: promote XS h=63 to a PAPER L/S sleeve at 50/50 risk split, run 60–90 days
+forward, then decide on real capital.
+
 ## 2. Immediate Roadmap
 
 | Rank | Idea | Test location | Effort | Expected impact |
@@ -327,7 +349,7 @@ After the four survivors are tested, the following areas remain the next best le
 ## 6. Immediate Next Steps (in priority order)
 
 1. ~~Prototype portfolio vol-targeting~~ — **done & rejected 2026-07-15** (units-bug retraction + honest A/B in §1.1).
-2. **Add MAX_21** to the feature set and test interaction with existing oversold conditions.
+2. ~~Add MAX_21~~ — **done & rejected 2026-07-15** (High-vs-Low spread −0.03; §MAX auto-runs in every IS backtest).
 3. **Implement limit-below-close entry** with ATR fraction sweep.
 4. **Add HMM regime labels** to cohort analytics and quantify EV divergence.
 5. Source a PIT survivorship-bias-free dataset and re-run the full backtest.
