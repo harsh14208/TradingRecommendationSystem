@@ -50,14 +50,21 @@ _CONFIDENCE_FLOOR = 35.0
 
 
 def _has_conflicting_head(action: str, rationale: list[dict]) -> bool:
-    """Return True if rationale contains a head that conflicts with action."""
+    """Return True if rationale contains a head that conflicts with action.
+
+    Sentiment-aware since 2026-07-15 (gate audit): in an oversold MR-dip
+    context the scorers re-emit overbought heads with sentiment="pos"
+    (bullish divergence — live cohorts ran +4.7 to +18.2pp ABOVE baseline).
+    Those must not trigger the conviction haircut; only cards still carrying
+    sentiment="neg" are genuine conflicts.
+    """
     if action == "BUY":
         target_heads = _BUY_OVERBOUGHT_HEADS
     elif action == "SELL":
         target_heads = _SELL_OVERSOLD_HEADS
     else:
         return False
-    return any(r.get("head") in target_heads for r in rationale)
+    return any(r.get("head") in target_heads and r.get("sentiment") != "pos" for r in rationale)
 
 
 def apply_warning_deconfliction(action: str, raw_confidence: float, rationale: list[dict]) -> float:

@@ -1268,6 +1268,15 @@ def score_row(r: pd.Series, no_family_discount: bool = False) -> float:
         elif rsi_val > 65:
             osc -= 10
 
+    # MR-dip context (gate-audit 2026-07-15, parity with live signal_scoring):
+    # when the same bar shows an oversold dip (BB%B<0.22 or IBS<0.15), the
+    # stochastic / Williams%R OVERBOUGHT penalties are wrong-signed — live
+    # delivered cohorts ran +4.7pp / +8.1pp ABOVE baseline (N=134/133). An
+    # overbought fast oscillator during a dip is early recovery, not resistance.
+    _bb_dip = r.get("bb_pct_b")
+    _ibs_dip = r.get("ibs")
+    _mr_dip = (pd.notna(_bb_dip) and float(_bb_dip) < 0.22) or (pd.notna(_ibs_dip) and float(_ibs_dip) < 0.15)
+
     sk, sd = r.get("stoch_k"), r.get("stoch_d")
     sk_p, sd_p = r.get("stoch_k_p"), r.get("stoch_d_p")
     if all(pd.notna(x) for x in (sk, sd, sk_p, sd_p)):
@@ -1277,15 +1286,15 @@ def score_row(r: pd.Series, no_family_discount: bool = False) -> float:
         if sk < 20 and sd < 20 and cross_up:
             osc += 18  # both in extreme zone
         elif sk > 80 and sd > 80 and cross_down:
-            osc -= 14  # asymmetric
+            osc -= 0 if _mr_dip else 14  # asymmetric; skipped in MR-dip context
         elif sk < 20 and cross_up:
             osc += 10
         elif sk > 80 and cross_down:
-            osc -= 8
+            osc -= 0 if _mr_dip else 8
         elif sk < 25:
             osc += 5
         elif sk > 75:
-            osc -= 4
+            osc -= 0 if _mr_dip else 4
 
     wr = r.get("wr")
     if pd.notna(wr):
@@ -1293,7 +1302,7 @@ def score_row(r: pd.Series, no_family_discount: bool = False) -> float:
         if wr <= -85:
             osc += 10  # only extreme readings
         elif wr >= -15:
-            osc -= 8
+            osc -= 0 if _mr_dip else 8
 
     cci = r.get("cci")
     if pd.notna(cci):
@@ -1732,14 +1741,22 @@ def compute_scores(df: pd.DataFrame, no_family_discount: bool = False) -> pd.Ser
     # Zone conditions use the same elif-fallthrough logic as score_row:
     # they fire whenever the higher-priority cross conditions didn't match.
     handled = (cu & (sk < 20) & (sd < 20)) | (cd & (sk > 80) & (sd > 80)) | (cu & (sk < 20)) | (cd & (sk > 80))
+    # MR-dip context (gate-audit 2026-07-15, parity with score_row above):
+    # skip stoch/W%R overbought penalties when the bar shows BB%B<0.22 or IBS<0.15.
+    _bb_v = _v("bb_pct_b", 1.0)
+    _ibs_v = _v("ibs", 1.0)
+    _bb_ok = df["bb_pct_b"].notna().values if "bb_pct_b" in df.columns else np.zeros(n, bool)
+    _ibs_ok = df["ibs"].notna().values if "ibs" in df.columns else np.zeros(n, bool)
+    _mr_dip_v = (_bb_ok & (_bb_v < 0.22)) | (_ibs_ok & (_ibs_v < 0.15))
+
     osc += np.select(
         [
             cu & (sk < 20) & (sd < 20),
-            cd & (sk > 80) & (sd > 80),
+            cd & (sk > 80) & (sd > 80) & ~_mr_dip_v,
             cu & (sk < 20),
-            cd & (sk > 80),
+            cd & (sk > 80) & ~_mr_dip_v,
             st_ok & ~handled & (sk < 25),
-            st_ok & ~handled & (sk > 75),
+            st_ok & ~handled & (sk > 75) & ~_mr_dip_v,
         ],
         [18, -14, 10, -8, 5, -4],
         default=0,
@@ -1748,7 +1765,7 @@ def compute_scores(df: pd.DataFrame, no_family_discount: bool = False) -> pd.Ser
     wr = _v("wr", -50)
     wr_ok = df["wr"].notna().values if "wr" in df.columns else np.zeros(n, bool)
     osc += np.where(wr_ok & (wr <= -85), 10, 0)
-    osc += np.where(wr_ok & (wr >= -15), -8, 0)
+    osc += np.where(wr_ok & (wr >= -15) & ~_mr_dip_v, -8, 0)
 
     cci = _v("cci", 0)
     cci_ok = df["cci"].notna().values if "cci" in df.columns else np.zeros(n, bool)

@@ -107,15 +107,23 @@ def score_oscillators(
                 }
             )
         elif rsi > 70:
-            osc_delta -= 20
+            # Gate-audit 2026-07-15: in an MR-dip context the RSI-overbought
+            # cohort ran +18.2pp ABOVE baseline (N=75) — divergence, not risk.
+            if not _mr_dip_context:
+                osc_delta -= 20
             dominant_hint = "rsi"
             rationale.append(
                 {
                     "src": "Technical",
                     "head": "RSI Overbought",
-                    "body": f"RSI {rsi:.1f} — overbought. Pullback risk elevated.",
-                    "sentiment": "neg",
-                    "meta": f"RSI(14) = {rsi:.1f}",
+                    "body": (
+                        f"RSI {rsi:.1f} with an oversold dip context — bullish divergence; "
+                        "penalty skipped (live +18.2pp WR cohort, N=75)."
+                        if _mr_dip_context
+                        else f"RSI {rsi:.1f} — overbought. Pullback risk elevated."
+                    ),
+                    "sentiment": "pos" if _mr_dip_context else "neg",
+                    "meta": f"RSI(14) = {rsi:.1f} mr_dip={_mr_dip_context}",
                 }
             )
         elif rsi > 60:
@@ -261,6 +269,7 @@ def score_oscillators(
 def score_macd(
     hist: float,
     hist_p: float,
+    mr_dip: bool = False,
 ) -> tuple[float, float, list[dict], Optional[str]]:
     """Score MACD crossover and continuation signals.
 
@@ -301,25 +310,42 @@ def score_macd(
             }
         )
     elif hist > 0 and hist > hist_p:
-        trend_delta += 10
+        # Gate-audit 2026-07-15: on the delivered MR book the expansion pair is
+        # fully INVERTED — "Expanding Bullish" cohort −17.2pp (N=83: at a dip,
+        # bullish MACD expansion = the bounce already happened, entry is a
+        # chase), "Expanding Bearish" cohort +10.9pp (N=61: deeper capitulation
+        # = better MR entry). Both neutralized in MR-dip context.
+        if not mr_dip:
+            trend_delta += 10
         rationale.append(
             {
                 "src": "Technical",
                 "head": "MACD Expanding Bullish",
-                "body": "Histogram widening above zero — bullish momentum building.",
-                "sentiment": "pos",
-                "meta": f"Hist {hist:.5f}",
+                "body": (
+                    "Histogram widening above zero at an oversold dip — bounce already in "
+                    "progress; boost skipped (live −17.2pp WR cohort, N=83)."
+                    if mr_dip
+                    else "Histogram widening above zero — bullish momentum building."
+                ),
+                "sentiment": "neu" if mr_dip else "pos",
+                "meta": f"Hist {hist:.5f} mr_dip={mr_dip}",
             }
         )
     elif hist < 0 and hist < hist_p:
-        trend_delta -= 10
+        if not mr_dip:
+            trend_delta -= 10
         rationale.append(
             {
                 "src": "Technical",
                 "head": "MACD Expanding Bearish",
-                "body": "Histogram widening below zero — bearish momentum building.",
-                "sentiment": "neg",
-                "meta": f"Hist {hist:.5f}",
+                "body": (
+                    "Histogram widening below zero at an oversold dip — capitulation deepening, "
+                    "historically a BETTER MR entry; penalty skipped (live +10.9pp WR cohort, N=61)."
+                    if mr_dip
+                    else "Histogram widening below zero — bearish momentum building."
+                ),
+                "sentiment": "pos" if mr_dip else "neg",
+                "meta": f"Hist {hist:.5f} mr_dip={mr_dip}",
             }
         )
 

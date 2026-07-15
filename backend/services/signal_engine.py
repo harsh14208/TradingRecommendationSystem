@@ -666,7 +666,10 @@ async def generate_signal(
         # Crossover (_macd_sd) and continuation state (_macd_td) both derive from
         # the same MACD indicator. Both now route into trend_score so the family
         # cap (±22) governs the total MACD contribution, not just the state part.
-        _macd_sd, _macd_td, _macd_rat, _macd_dom = score_macd(hist, hist_p)
+        _macd_mr_dip = (tech.get("bb_pct_b") is not None and float(tech["bb_pct_b"]) < 0.22) or (
+            tech.get("ibs") is not None and float(tech["ibs"]) < 0.15
+        )
+        _macd_sd, _macd_td, _macd_rat, _macd_dom = score_macd(hist, hist_p, mr_dip=_macd_mr_dip)
         trend_score += _macd_sd
         trend_score += _macd_td
         rationale.extend(_macd_rat)
@@ -773,14 +776,21 @@ async def generate_signal(
                     }
                 )
             elif pct_from_low < 10:
-                mean_rev_score += 8
+                # +8 boost REMOVED (gate-audit 2026-07-15): directly contradicts the
+                # §77 hard block — near-52wk-low cohorts are validated at 31-35% WR
+                # (live audits 2026-05-31 + 2026-07-14/15, this card's own delivered
+                # cohort −16.4pp, N=21). Structural decline, not deep value.
                 rationale.append(
                     {
                         "src": "Technical",
-                        "head": "Near 52-Week Low — Deep Value Zone",
-                        "body": f"Price is within 10% of its 52-week low (${wk52_l:.2f}). Oversold on annual basis.",
-                        "sentiment": "pos",
-                        "meta": f"52W Low ${wk52_l:.2f} | +{pct_from_low:.1f}% from bottom",
+                        "head": "Near 52-Week Low",
+                        "body": (
+                            f"Price is within 10% of its 52-week low (${wk52_l:.2f}). Live audits show "
+                            "near-annual-low names win only 31-35% — structural decline, not value. "
+                            "No score boost (§77-aligned); BUYs within 8% of the low are blocked."
+                        ),
+                        "sentiment": "neg",
+                        "meta": f"52W Low ${wk52_l:.2f} | +{pct_from_low:.1f}% from bottom (boost removed 2026-07-15)",
                     }
                 )
 
@@ -2235,7 +2245,10 @@ async def generate_signal(
             target_low = info.get("target_low")
             sources.add("Analyst")
             if upside > 20:
-                analyst_score += 15
+                # +15 REMOVED (gate-audit 2026-07-15): 'Analysts See Upside' cohort
+                # −8.5pp vs baseline (N=194) — big implied upside on an oversold name
+                # is usually a stale target on a crashed price (value-trap magnet),
+                # not conviction. Downside penalty branch unchanged.
                 rationale.append(
                     {
                         "src": "Analyst",
@@ -2254,7 +2267,7 @@ async def generate_signal(
                     }
                 )
             elif upside > 10:
-                analyst_score += 8
+                # +8 removed with the +15 branch above (same audit).
                 rationale.append(
                     {
                         "src": "Analyst",
@@ -4062,7 +4075,9 @@ async def generate_signal(
             sources.add("Fundamentals")
             yield_gap = div_yield - t10y_rate
             if yield_gap > 1.0:
-                score += 6
+                # +6 REMOVED (gate-audit 2026-07-15): cohort −6.2pp vs baseline
+                # (N=239) — a yield fat vs Treasuries on an oversold stock usually
+                # means the PRICE fell (value trap), not that demand is coming.
                 rationale.append(
                     {
                         "src": "Fundamentals",
@@ -4089,12 +4104,15 @@ async def generate_signal(
             from services.edgar import has_active_buyback
 
             if await has_active_buyback(ticker, days=90):
+                # +5 REMOVED (gate-audit 2026-07-15): §75 was disabled 2026-05-31
+                # (live WR 33.8%, −8.7pp) but only the buyback-YIELD variant was
+                # zeroed — this 8-K variant kept scoring. Delivered cohort with the
+                # buyback card: −10.1pp (N=58). Leak closed; card informational.
                 sources.add("Fundamentals")
-                score += 5
                 rationale.append(
                     {
                         "src": "Fundamentals",
-                        "head": "Active Share Repurchase Program (§75)",
+                        "head": "Active Share Repurchase Program (§75, info only)",
                         "body": (
                             "Company announced an active share repurchase program within the last 90 days via Form 8-K. "
                             "Shows strong institutional support and capital allocation alignment at oversold levels."
@@ -4731,7 +4749,10 @@ async def generate_signal(
             if sector_etf and conf >= 50:
                 sources.add("Macro")
                 if sector_etf in favoured:
-                    score += 6
+                    # +6 REMOVED (gate-audit 2026-07-15): delivered cohorts with this
+                    # boost ran −22.0pp (XLF, N=54) and −14.5pp (XLI, N=34) vs baseline —
+                    # the macro-cycle narrative overrode measured sector performance.
+                    # Headwind penalty below is unchanged. Card informational.
                     rationale.append(
                         {
                             "src": "Macro",
