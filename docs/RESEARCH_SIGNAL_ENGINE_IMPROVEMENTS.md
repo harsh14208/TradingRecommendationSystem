@@ -51,25 +51,39 @@ The five longer-term improvement areas (regime detection, PIT data/survivorship 
 
 > Avg size multiplier was 0.51× — the strategy's realized vol was roughly double the 25% target, so the target heavily de-risked the path. Risk-adjusted return (CAGR/MaxDD) improved from 0.97 to 1.87.
 
-**FULL-UNIVERSE validation (2026-07-14, 330 signal-level trades, identical trade stream, 22.0 years):**
+**⚠ RETRACTED (2026-07-15): all results above measured a units bug, not vol timing.**
 
-| Config | CAGR | Event-time Sharpe | Max DD | CAGR/MaxDD | Avg mult |
-|:---|---:|---:|---:|---:|---:|
-| Baseline portfolio | +4.1% | 2.61 | −8.43% | 0.49 | 1.00× |
-| `--vol-target 0.25` | +3.2% | 3.92 | −2.17% | **1.47** | 0.30× |
+The multiplier compared a *decimal* target against a forecast built from `net_pct`, which is
+stored in **percent units** — forecast vol read ~3,500% annualized, so the multiplier clipped
+to the 0.25 floor on every post-warmup trade *at any target*. Empirical proof: σ=0.05 and
+σ=2.0 produced dollar-identical equity curves, and the printed avg mults matched the
+warmup+floor arithmetic exactly (0.30× = (21×1.0+309×0.25)/330). Every "improvement" in the
+tables above was a **constant 0.25× de-leverage**, which mechanically cuts MaxDD ~4× and
+blends toward T-bills — not volatility *timing*. Fixed in `2b4e0fb` (`/100` + the earlier
+`f848be3` √(252/HOLD_DAYS) annualization).
 
-> **The effect replicates at full scale** — Sharpe 2.61→3.92, MaxDD −8.43%→−2.17%, CAGR/MaxDD 3×.
-> **But σ=0.25 over-deleverages:** avg mult 0.30× drops CAGR (+3.2%) *below the T-bill benchmark*
-> (+3.5%) — the scaled book under-earns cash in absolute terms. Root cause: the forecast
-> annualizes per-trade `net_pct` vol by √252 as if trades were daily observations, while holds
-> overlap ~10 days — biasing forecast vol high (~0.8 ann) and multipliers low. The scaling signal
-> is monotone (the A/B is valid); the *label* just isn't literally "25% portfolio vol".
+**HONEST full-universe A/B (2026-07-15, identical 328-trade stream, 22.0 years, post-fix):**
 
-**Deploy bar.** Sweep σ_target upward (0.40–0.60 range, targeting avg mult ≈ 0.7–1.0) so DD reduction is kept without dropping absolute return below cash, OR fix the annualization to account for overlapping holds (√(252/HOLD_DAYS) scaling) so the target is honest. Do not deploy the sizing hook live until a config beats baseline on CAGR/MaxDD **while keeping CAGR > T-bill**.
+| Config | CAGR | Event-time Sharpe | Max DD | Avg mult |
+|:---|---:|---:|---:|---:|
+| Baseline portfolio | +4.0% | **2.51** | −8.43% | 1.00× |
+| `--vol-target 0.15` | +3.7% | 2.37 | −8.19% | 0.87× |
+| `--vol-target 0.25` | +4.2% | 1.93 | **−13.31%** | 1.40× |
 
-**Why it wins.** Largest documented effect; lowest implementation risk; no new data needed; directly addresses the June high-vol drawdown.
+**VERDICT: REJECTED for this system.** Genuine vol targeting improves nothing on any axis —
+σ=0.15 gives up CAGR and Sharpe for a negligible DD gain; σ=0.25 levers *up* (forecast strategy
+vol ≈ 18% < target) and blows out MaxDD.
 
-**Next step.** σ_target sweep on the full universe; then evaluate a VIX-conditioned variant where σ_forecast blends strategy realized vol with VIX level.
+**Why the literature result doesn't transfer:** the Man Group/Harvey +0.08–0.11 Sharpe effect is
+measured on broad long equity exposure. This engine already **conditions on volatility at
+entry** — the §12b VIX≥20 gate deliberately concentrates trades in high-vol regimes because
+that is where the MR edge lives (backtest: Sharpe 0.23 with the gate vs 0.13 without). A
+portfolio-level vol scaler de-risks precisely when the strategy has its edge, fighting the
+entry gate. Vol targeting helps strategies with *unconditioned* vol exposure; it is redundant
+(or harmful) stacked on a vol-gated overlay.
+
+**Keep:** the `--vol-target` harness stays for future sleeves that lack entry vol conditioning
+(e.g. a cross-sectional L/S sleeve). Do not deploy on the MR book.
 
 ---
 
@@ -152,7 +166,7 @@ The five longer-term improvement areas (regime detection, PIT data/survivorship 
 
 | Rank | Idea | Test location | Effort | Expected impact |
 |------|------|---------------|--------|-----------------|
-| 1 | Portfolio vol targeting | `backtest_technicals.py --portfolio` | Low | High (Sharpe +0.08–0.11 documented) |
+| 1 | ~~Portfolio vol targeting~~ | `backtest_technicals.py --portfolio` | Low | **TESTED & REJECTED 2026-07-15** — redundant with §12b VIX entry gate (see §1.1) |
 | 2 | MAX-effect conditioning | Existing feature harness | Low | Medium (1.66% vs 0.65% weekly reversal spread) |
 | 3 | Limit-below-close entry | Backtest execution layer | Low | Medium (closes −0.86pp slippage leak) |
 | 4 | Regime-conditional allocation | Cohort analytics + HMM | Medium | High (tail-risk auto-de-risk) |
@@ -312,7 +326,7 @@ After the four survivors are tested, the following areas remain the next best le
 
 ## 6. Immediate Next Steps (in priority order)
 
-1. **Prototype portfolio vol-targeting** in `backtest_technicals.py --portfolio`.
+1. ~~Prototype portfolio vol-targeting~~ — **done & rejected 2026-07-15** (units-bug retraction + honest A/B in §1.1).
 2. **Add MAX_21** to the feature set and test interaction with existing oversold conditions.
 3. **Implement limit-below-close entry** with ATR fraction sweep.
 4. **Add HMM regime labels** to cohort analytics and quantify EV divergence.
