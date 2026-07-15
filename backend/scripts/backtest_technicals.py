@@ -2378,6 +2378,11 @@ def simulate_ticker(
             return None
 
     _trade_from_ts = pd.Timestamp(TRADE_FROM)
+    # §MAX: max daily close-to-close return over the trailing 21 bars (Chen et al.,
+    # "Maxing Out Short-term Reversals" — reversal much stronger in high-MAX,
+    # lottery-like names). Causal: at bar i the window ends at bar i's close,
+    # which is known when the signal is generated (entry fills T+1).
+    _max21_series = df["Close"].pct_change().rolling(21).max() * 100.0
     for i in range(200, len(df)):
         row = df.iloc[i]
         date = df.index[i]
@@ -3222,6 +3227,8 @@ def simulate_ticker(
                 "intraday_pct": round(_intraday_sum, 3),
                 "entry_style": _entry_style,
                 "mr_trigger": _mr_trigger_label,
+                # §MAX: trailing-21-bar max daily return at signal time (lottery proxy)
+                "max21": round(float(_max21_series.iloc[i]), 2) if pd.notna(_max21_series.iloc[i]) else None,
                 # ── Quality score (Option B — continuous trade ranking) ──────────
                 # Composite 0-100: rewards high signal score, fast OU mean-reversion,
                 # and low Hurst (more mean-reverting). Used to rank trades within the
@@ -6482,6 +6489,64 @@ def main():
                 else ("➖ L8 neutral" if _d_sh_l8 > -0.01 else "⚠ L8 mildly negative — review quality_score thresholds")
             )
             print(f"> ΔSharpe = {_d_sh_l8:+.3f}  {verdict_l8}\n")
+
+    # ── §MAX. MAX-Effect Tier Analysis (Chen et al., SSRN 4622831) ────────────
+    # Published: short-term reversal ~2.5x stronger in high-MAX (lottery) names.
+    # Does trailing-21d max daily return discriminate within the passing set?
+    if trades is not None and not trades.empty and "max21" in trades.columns:
+        _mx = trades.dropna(subset=["max21"])
+        if len(_mx) > 30:
+            print("\n## §MAX. MAX-Effect Tier Analysis (trailing-21d max daily return)\n")
+            _p33, _p67 = _mx["max21"].quantile(0.33), _mx["max21"].quantile(0.67)
+            _mx_rows = []
+            for _label, _sub in [
+                (f"Low  (<{_p33:.1f}%)", _mx[_mx["max21"] < _p33]),
+                (f"Mid  ({_p33:.1f}–{_p67:.1f}%)", _mx[(_mx["max21"] >= _p33) & (_mx["max21"] < _p67)]),
+                (f"High (≥{_p67:.1f}%)", _mx[_mx["max21"] >= _p67]),
+            ]:
+                _sr = stats(_sub["net_pct"].tolist())
+                _mx_rows.append(
+                    [_label, str(_sr["n"]), f"{_sr['wr']:.1f}%", f"{_sr['avg']:+.2f}%", fmt_sharpe(_sr["sharpe"])]
+                )
+            print_table(["MAX_21 Tier", "N", "WR", "Avg Ret", "Sharpe"], _mx_rows)
+            _mx_lo = stats(_mx[_mx["max21"] < _p33]["net_pct"].tolist())
+            _mx_hi = stats(_mx[_mx["max21"] >= _p67]["net_pct"].tolist())
+            _mx_spread = (_mx_hi.get("sharpe") or 0) - (_mx_lo.get("sharpe") or 0)
+            print(f"\n> High-MAX vs Low-MAX Sharpe spread: {_mx_spread:+.2f}")
+            print("> Literature predicts High >> Low. Spread > +0.10 ⇒ candidate L-stack sizing feature;")
+            print("> spread ≤ 0 ⇒ MAX effect does not transfer to this vol-gated universe.\n")
+
+    # ── §ON. Overnight vs Intraday P&L Decomposition ─────────────────────────
+    # Published: short-term reversal profits concentrate overnight. If the intraday
+    # leg is a net drag, exiting at the OPEN of the final hold day (instead of the
+    # close) is a costless exit improvement candidate.
+    if trades is not None and not trades.empty and {"overnight_pct", "intraday_pct"}.issubset(trades.columns):
+        _on = trades.dropna(subset=["overnight_pct", "intraday_pct"])
+        if len(_on) > 30:
+            print("\n## §ON. Overnight vs Intraday P&L Decomposition\n")
+            _on_stats = stats(_on["overnight_pct"].tolist())
+            _in_stats = stats(_on["intraday_pct"].tolist())
+            print_table(
+                ["Leg", "N", "Avg/trade", "Total", "Sharpe"],
+                [
+                    [
+                        "Overnight (close→open)",
+                        str(_on_stats["n"]),
+                        f"{_on_stats['avg']:+.2f}%",
+                        f"{_on['overnight_pct'].sum():+.1f}%",
+                        fmt_sharpe(_on_stats["sharpe"]),
+                    ],
+                    [
+                        "Intraday (open→close)",
+                        str(_in_stats["n"]),
+                        f"{_in_stats['avg']:+.2f}%",
+                        f"{_on['intraday_pct'].sum():+.1f}%",
+                        fmt_sharpe(_in_stats["sharpe"]),
+                    ],
+                ],
+            )
+            print("\n> Gross hold P&L ≈ overnight + intraday legs (per-day decomposition over the hold).")
+            print("> If one leg carries the P&L and the other drags, session-timed exits are the lever.\n")
 
     # Sleeve-correlation support: dump MR monthly returns for backtest_sleeves --corr.
     if trades is not None and not trades.empty and {"date", "net_pct"}.issubset(trades.columns):
