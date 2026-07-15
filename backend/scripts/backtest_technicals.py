@@ -4350,8 +4350,9 @@ def run_portfolio_simulation(
         # Fallback to expanding std for the first trades.
         _exp_std = df["net_pct"].shift(1).expanding(min_periods=_min_periods).std()
         _realized_std = _roll_std.fillna(_exp_std)
-        # Annualize: each trade is ~1 day of exposure on average; sqrt(252).
-        _forecast_vol = (_realized_std * np.sqrt(252)).clip(lower=1e-6)
+        # Annualize: each trade is a HOLD_DAYS-period return, so daily vol =
+        # trade_std / sqrt(HOLD_DAYS) and annual vol = daily vol * sqrt(252).
+        _forecast_vol = (_realized_std * np.sqrt(252 / max(HOLD_DAYS, 1))).clip(lower=1e-6)
         _multiplier = (vol_target / _forecast_vol).clip(lower=0.25, upper=2.0)
         _vol_multipliers = _multiplier.fillna(1.0).tolist()
 
