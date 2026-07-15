@@ -7,7 +7,7 @@ Functional API (for gates inside generate_signal — they modify accumulated sco
     apply_insider_clustering(score, insider, is_lev_etf)
         -> (new_score, cards, sources)  [§73]
     apply_quality_screens(score, info, fundamentals, is_lev_etf, action)
-        -> (new_score, cards, sources)  [§50 Piotroski, §74 Beneish, §76 Altman, §51 ForwardPE]
+        -> (new_score, cards, sources)  [§50 Piotroski, §51 ForwardPE]
 
 GateBase class (for gate inside _assemble_signal — can change action):
     FundamentalValueTrapGate
@@ -150,9 +150,8 @@ def apply_quality_screens(
 
     Includes:
       §50 Piotroski F-Score     — financial strength 0-9 scale
-      §74 Beneish M-Score       — earnings manipulation screen
-      §76 Altman Z-Score        — financial distress screen
       §51 Forward PE            — value trap vs genuinely cheap filter
+      (§74 Beneish removed 2026-07-14; §76 Altman removed 2026-06-03)
 
     Args:
         score:        current composite score (to be adjusted)
@@ -205,27 +204,15 @@ def apply_quality_screens(
         elif f_score <= 4:
             score -= 4
 
-    # ── §74 Beneish M-Score — Earnings Manipulation Screen ───────────────────
-    beneish_m = fundamentals.get("beneish_m")
-    if beneish_m is not None and not is_lev_etf:
-        new_sources.add("Fundamentals")
-        if beneish_m > -1.78:
-            score -= 12
-            cards.append(
-                {
-                    "src": "Fundamentals",
-                    "head": f"Beneish M-Score {beneish_m:.2f} — Possible Earnings Manipulation",
-                    "body": (
-                        f"Beneish M-Score of {beneish_m:.2f} exceeds the −1.78 manipulation "
-                        "threshold. The 8-variable model (Beneish 1999, 76% accuracy) flags "
-                        "abnormal accruals, receivables growth, and asset quality deterioration "
-                        "consistent with earnings inflation. WorldCom, Enron, and many major "
-                        "frauds were detected by this model pre-collapse. Reduce sizing significantly."
-                    ),
-                    "sentiment": "neg",
-                    "meta": f"M-Score={beneish_m:.2f} (threshold=-1.78)",
-                }
-            )
+    # §74 Beneish M-Score — REMOVED 2026-07-14 (gate audit)
+    # §85-1 live audit on the corrected 725-signal book: fired N=70 with WR
+    # 22.9% (ΔWR −24.2pp vs 47.0% baseline) — 24× past the pre-registered
+    # removal threshold (ΔWR<−1pp @ N≥30). Firing was concentrated on the
+    # now-blocked SELL/intraday cohorts; on the surviving BUY position/swing
+    # book it fired on ZERO signals — no benefit either way. Quarterly
+    # yfinance financials are also not point-in-time (untestable in backtest),
+    # and accounting quality is a multi-quarter thesis, not a 10d MR one.
+    # fundamentals.py still computes beneish_m for research/display.
 
     # §76 Altman Z-Score — REMOVED 2026-06-03
     # EDGAR validation showed 79/106 IS tickers (74%) are permanently below Z'<1.23
