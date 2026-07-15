@@ -185,13 +185,14 @@ class TestScoreOptions:
         assert score > 0
         assert any("Call Sweep" in r["head"] for r in rationale)
 
-    def test_put_sweep_subtracts_score(self):
-        """Large put sweep → negative score + rationale."""
+    def test_put_sweep_informational_no_penalty(self):
+        """Put sweep is informational since 2026-07-15 (penalty neutralized —
+        delivered MR-BUY cohort ran +10.2pp above baseline, N=160)."""
         sweep = [
             {"strike": 140, "vol": 5000, "oi": 1000, "vol_oi": 5.0, "itm": False, "expiry": "2024-02-16", "iv": 0.30}
         ]
         score, rationale = score_options({"sweep_puts": sweep})
-        assert score < 0
+        assert score == 0
         assert any("Put Sweep" in r["head"] for r in rationale)
 
     def test_otm_call_surge_bullish(self):
@@ -200,10 +201,11 @@ class TestScoreOptions:
         assert score == 6
         assert any("OTM Call" in r["head"] for r in rationale)
 
-    def test_otm_put_spike_bearish(self):
-        """OTM put > 70% of total put vol and > 500 → -5."""
+    def test_otm_put_spike_informational(self):
+        """OTM put spike is informational since 2026-07-15 (penalty neutralized —
+        delivered MR-BUY cohort ran +4.6pp above baseline, N=241)."""
         score, rationale = score_options({"otm_put_vol": 800, "put_vol": 1000})
-        assert score == -5
+        assert score == 0
         assert any("OTM Put" in r["head"] for r in rationale)
 
     def test_combined_signals(self):

@@ -890,18 +890,23 @@ def score_options(opt: dict) -> tuple[float, list[dict]]:
         )
 
     # ── Large put sweeps ──────────────────────────────────────────────────────
+    # Penalty NEUTRALIZED (gate-audit 2026-07-15): on the delivered book — which
+    # is MR-BUY by construction (the MR-setup delivery gate requires an oversold
+    # condition) — the put-sweep cohort ran +10.2pp ABOVE baseline (N=160). Put
+    # sweeps into an oversold dip are capitulation/protection at the low, a
+    # bullish MR marker, not informed shorting. Card kept as informational.
     if sweep_puts:
         top = sweep_puts[0]
-        score -= min(12, top["vol_oi"] * 1.5)
         itm_label = "ITM" if top["itm"] else "OTM"
         rationale.append(
             {
                 "src": "Options",
                 "head": f"Large Put Sweep — ${top['strike']:.0f} {itm_label}",
                 "body": f"Single-strike put sweep: {top['vol']:,} contracts vs {top['oi']:,} OI "
-                f"({top['vol_oi']:.1f}× OI) — expiry {top['expiry']}. "
-                "Large put sweeps suggest protection buying or directional short bets by institutions.",
-                "sentiment": "neg",
+                f"({top['vol_oi']:.1f}× OI) — expiry {top['expiry']}. At oversold entries this "
+                "cohort has historically OUTPERFORMED (+10.2pp WR, N=160): capitulation "
+                "protection-buying at the low. Informational only — no score change.",
+                "sentiment": "neu",
                 "meta": f"Vol/OI = {top['vol_oi']:.1f}× | {top['vol']:,} contracts",
             }
         )
@@ -926,14 +931,17 @@ def score_options(opt: dict) -> tuple[float, list[dict]]:
     if otm_pv > 0 and put_vol > 0:
         otm_put_ratio = otm_pv / put_vol
         if otm_put_ratio > 0.70 and otm_pv > 500:
-            score -= 5
+            # Penalty NEUTRALIZED (gate-audit 2026-07-15): delivered MR-BUY cohort
+            # with this card ran +4.6pp above baseline (N=241) — OTM put demand at
+            # a dip is hedging-at-the-low, not directional conviction.
             rationale.append(
                 {
                     "src": "Options",
                     "head": f"OTM Put Hedging Spike — {otm_pv:,} contracts",
                     "body": f"{otm_put_ratio * 100:.0f}% of put volume is OTM ({otm_pv:,} contracts). "
-                    "Elevated OTM put activity suggests institutional hedging ahead of expected downside.",
-                    "sentiment": "neg",
+                    "At oversold entries this cohort has historically outperformed (+4.6pp WR, "
+                    "N=241): hedging at the low, not informed shorting. Informational only.",
+                    "sentiment": "neu",
                     "meta": f"OTM puts: {otm_pv:,} / total puts: {put_vol:,}",
                 }
             )

@@ -816,6 +816,32 @@ def _assemble_signal(
     confidence = _sig_ctx.confidence
     score = _sig_ctx.score
 
+    # ── RS-laggard hard gate (gate-audit 2026-07-15) ─────────────────────────
+    # The "Underperforming S&P 500" −12 score penalty fires on 20% of the
+    # delivered book (N=85) and that cohort resolves at WR 35.3% (−14.5pp vs
+    # baseline) — correctly signed but far too weak, the §77 pattern again.
+    # 1M return more than 8pp below SPY = institutional distribution, not a
+    # recoverable dip. BUY → HOLD.
+    _rs_1m = tech.get("rel_strength_1m")
+    if action == "BUY" and _rs_1m is not None and _rs_1m < -8.0:
+        action = "HOLD"
+        sources.add("Risk Gate")
+        rationale.append(
+            {
+                "src": "Risk Gate",
+                "head": f"RS Laggard — {abs(_rs_1m):.1f}% Below S&P (1M), BUY Blocked",
+                "body": (
+                    f"1-month return trails the S&P 500 by {abs(_rs_1m):.1f}pp. Live audit "
+                    "(corrected book, 2026-07-15): delivered BUYs in this cohort won only "
+                    "35.3% (−14.5pp vs baseline, N=85) — persistent relative weakness marks "
+                    "institutional selling, not a mean-reverting dip. The prior −12 score "
+                    "penalty still let these through; BUY is now blocked."
+                ),
+                "sentiment": "neg",
+                "meta": f"rel_strength_1m={_rs_1m:+.1f}pp hard_block (gate-audit 2026-07-15)",
+            }
+        )
+
     # ── §57 DOW gate + §77 tax-loss window ─────────────────────────────────
     from services.gates.calendar import apply_calendar_gates as _cal_gates
 

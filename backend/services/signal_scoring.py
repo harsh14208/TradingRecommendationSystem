@@ -71,6 +71,16 @@ def score_oscillators(
     rationale: list[dict] = []
     dominant_hint: Optional[str] = None
 
+    # Gate-audit 2026-07-15: when the bar shows an oversold MR setup (BB%B/IBS
+    # dip context), the Stochastic/Williams%R OVERBOUGHT penalties are wrong-
+    # signed — on the delivered MR-BUY book those cohorts ran +4.7pp / +8.1pp
+    # ABOVE baseline (N=134/133). An overbought fast oscillator during a dip is
+    # early momentum recovery (bullish divergence), not resistance. Penalties
+    # are skipped in MR context; cards kept as informational.
+    _bb_mr = tech.get("bb_pct_b")
+    _ibs_mr = tech.get("ibs")
+    _mr_dip_context = (_bb_mr is not None and float(_bb_mr) < 0.22) or (_ibs_mr is not None and float(_ibs_mr) < 0.15)
+
     # ── RSI ──────────────────────────────────────────────────────────────────
     if rsi is not None:
         if rsi < 30:
@@ -166,14 +176,20 @@ def score_oscillators(
                 }
             )
         elif stoch_k > 75:
-            osc_delta -= 5
+            if not _mr_dip_context:
+                osc_delta -= 5
             rationale.append(
                 {
                     "src": "Technical",
                     "head": "Stochastic Overbought",
-                    "body": f"Stochastic at {stoch_k:.1f} — price is near recent highs. Caution.",
-                    "sentiment": "neg",
-                    "meta": f"K={stoch_k:.1f} D={stoch_d:.1f}",
+                    "body": (
+                        f"Stochastic at {stoch_k:.1f} with an oversold dip context — early momentum "
+                        "recovery (bullish divergence); penalty skipped (live +4.7pp WR cohort, N=134)."
+                        if _mr_dip_context
+                        else f"Stochastic at {stoch_k:.1f} — price is near recent highs. Caution."
+                    ),
+                    "sentiment": "pos" if _mr_dip_context else "neg",
+                    "meta": f"K={stoch_k:.1f} D={stoch_d:.1f} mr_dip={_mr_dip_context}",
                 }
             )
 
@@ -192,14 +208,20 @@ def score_oscillators(
                 }
             )
         elif wr >= -20:
-            osc_delta -= 6
+            if not _mr_dip_context:
+                osc_delta -= 6
             rationale.append(
                 {
                     "src": "Technical",
                     "head": "Williams %R Overbought",
-                    "body": f"Williams %R at {wr:.1f} — price at top of 14-day range. Resistance likely.",
-                    "sentiment": "neg",
-                    "meta": f"W%R = {wr:.1f}",
+                    "body": (
+                        f"Williams %R at {wr:.1f} with an oversold dip context — early momentum "
+                        "recovery; penalty skipped (live +8.1pp WR cohort, N=133)."
+                        if _mr_dip_context
+                        else f"Williams %R at {wr:.1f} — price at top of 14-day range. Resistance likely."
+                    ),
+                    "sentiment": "pos" if _mr_dip_context else "neg",
+                    "meta": f"W%R = {wr:.1f} mr_dip={_mr_dip_context}",
                 }
             )
 

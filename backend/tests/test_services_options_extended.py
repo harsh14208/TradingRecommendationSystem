@@ -817,7 +817,7 @@ def test_score_options_otm_put_surge():
     }
     score, rationale = score_options(opt)
     assert any("OTM Put Hedging Spike" in r["head"] for r in rationale)
-    assert score < 0
+    assert score == 0  # penalty neutralized 2026-07-15 (gate audit) — card informational
 
 
 def test_score_options_unusual_vol_bullish():

@@ -1290,6 +1290,10 @@ async def generate_signal(
             else:
                 ticker_1m = (float(close_arr.iloc[-1]) / _c21 - 1) * 100
                 rel_strength = round(ticker_1m - spy_1m, 2)
+                # Gate-audit 2026-07-15: expose 1M SPY-relative strength to the
+                # assembler's RS-laggard hard gate (live: RS<-8 cohort WR 35.3%,
+                # -14.5pp vs base, N=85 — penalty alone was too weak).
+                tech["rel_strength_1m"] = rel_strength
             if rel_strength is not None and rel_strength > 8:
                 if not liquidity_ceiling:
                     score += 12
@@ -4315,14 +4319,16 @@ async def generate_signal(
         if st_bull_pct is not None and social.get("st_total", 0) >= 5:
             sources.add("Social")
             if st_bull_pct >= 90:
-                # Extreme retail bullishness = contrarian SELL (euphoria top)
-                soc_bucket -= 5
+                # Contrarian −5 penalty NEUTRALIZED (gate-audit 2026-07-15): on the
+                # delivered MR-BUY book the >=90% cohort ran +6.0pp ABOVE baseline
+                # (N=138) — at an oversold entry, extreme retail bullishness is
+                # confirmation, not euphoria-top. Card kept as informational.
                 rationale.append(
                     {
                         "src": "Social",
-                        "head": f"StockTwits Extreme Bullishness ({st_bull_pct:.0f}%) — Contrarian Bearish",
-                        "body": f"{st_bull_pct:.0f}% of StockTwits messages are bullish — near-euphoric retail sentiment. Historically extreme retail bullishness precedes short-term reversals.",
-                        "sentiment": "neg",
+                        "head": f"StockTwits Extreme Bullishness ({st_bull_pct:.0f}%)",
+                        "body": f"{st_bull_pct:.0f}% of StockTwits messages are bullish. At oversold MR entries this cohort has historically OUTPERFORMED (+6pp WR, N=138) — informational only, no score change.",
+                        "sentiment": "pos",
                         "meta": f"ST Bull: {st_bull_pct:.0f}% | {social.get('st_total', 0)} messages",
                     }
                 )
