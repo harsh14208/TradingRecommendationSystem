@@ -1,30 +1,53 @@
+import logging
+
 from config import get_settings
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from models import BrokerOrder, User
 from pydantic import BaseModel
-from services import alpaca_rest
+from services import alpaca_rest, market_data
 from services.auth_svc import get_current_user
 from services.broker_svc import _normalize_broker_status
+from services.options_paper import options_paper_credentials
 from sqlalchemy.ext.asyncio import AsyncSession
+
+log = logging.getLogger("signal.paper_router")
 
 router = APIRouter(prefix="/api/paper", tags=["paper"])
 
 
+def _unwrap(secret_val):
+    if not secret_val:
+        return ""
+    if hasattr(secret_val, "get_secret_value"):
+        return secret_val.get_secret_value() or ""
+    return str(secret_val)
+
+
+def _num(v, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def _require_keys():
     s = get_settings()
-
-    def _unwrap(secret_val):
-        if not secret_val:
-            return ""
-        if hasattr(secret_val, "get_secret_value"):
-            return secret_val.get_secret_value() or ""
-        return str(secret_val)
-
     raw_key = _unwrap(s.alpaca_api_key)
     raw_secret = _unwrap(s.alpaca_api_secret)
     if not raw_key or not raw_secret:
         raise HTTPException(403, "Alpaca API keys not configured — set ALPACA_API_KEY and ALPACA_API_SECRET in .env")
+    return raw_key, raw_secret
+
+
+def _require_se_keys():
+    s = get_settings()
+    raw_key = _unwrap(s.alpaca_se_api_key)
+    raw_secret = _unwrap(s.alpaca_se_api_secret)
+    if not raw_key or not raw_secret:
+        raise HTTPException(
+            403, "COT/signal-engine Alpaca keys not configured — set alpaca_se_api_key and alpaca_se_api_secret in .env"
+        )
     return raw_key, raw_secret
 
 
@@ -64,7 +87,7 @@ async def options_account(user: User = Depends(get_current_user), db: AsyncSessi
     """Dedicated options paper account: live account + positions (Alpaca), recent
     submitted orders (broker_orders), and the rolling equity history."""
     _require_paper_user(user)
-    from sqlalchemy import desc, select
+    from sqlalchemy import select
 
     from models import AppSettings, Signal
     from services.options_account import compute_options_risk, fetch_options_account, options_pnl_history
@@ -81,31 +104,55 @@ async def options_account(user: User = Depends(get_current_user), db: AsyncSessi
             "history": [],
         }
 
-    # Recent options orders + the originating signal's strategy.
+    # Live orders from the current Alpaca options paper account, enriched with
+    # strategy metadata from our local broker_orders table. Using Alpaca as the
+    # source means resetting the options paper account (new account id / wiped
+    # orders) automatically clears the history shown here.
+    live_orders: list[dict] = []
+    creds = options_paper_credentials(settings)
+    if creds:
+        try:
+            key, secret = creds
+            raw = await alpaca_rest.get_orders(key, secret, status="all", limit=200)
+            live_orders = raw if isinstance(raw, list) else []
+        except Exception as exc:
+            log.warning("options orders fetch failed: %s", exc)
+
+    # Build lookup of DB records by Alpaca order id so we can attach strategy.
     rows = (
         await db.execute(
             select(BrokerOrder, Signal.option_strategy)
             .outerjoin(Signal, Signal.id == BrokerOrder.signal_id)
             .where(BrokerOrder.broker == "alpaca_options")
-            .order_by(desc(BrokerOrder.created_at))
-            .limit(100)
         )
     ).all()
-    orders = [
-        {
-            "id": o.id,
-            "symbol": o.symbol,
-            "strategy": strat,
-            "side": o.side,
-            "status": o.status,
-            "qty": o.requested_qty,
-            "alpaca_order_id": o.alpaca_order_id,
-            "reject_reason": o.reject_reason,
-            "legs": o.option_legs or [],
-            "created_at": o.created_at.isoformat() if o.created_at else None,
+    db_by_alpaca_id: dict[str, tuple[BrokerOrder, str | None]] = {}
+    for o, strat in rows:
+        if o.alpaca_order_id:
+            db_by_alpaca_id[o.alpaca_order_id] = (o, strat)
+
+    def _normalize_options_order(raw: dict) -> dict:
+        oid = raw.get("id") or raw.get("alpaca_order_id")
+        db_rec, strategy = db_by_alpaca_id.get(oid, (None, None))
+        status = _normalize_broker_status(raw.get("status"))
+        created = raw.get("created_at") or raw.get("submitted_at")
+        legs = raw.get("legs") or (db_rec.option_legs if db_rec else None) or []
+        symbol = raw.get("symbol") or (db_rec.symbol if db_rec else None) or "—"
+        return {
+            "id": oid,
+            "symbol": symbol,
+            "strategy": strategy,
+            "side": (raw.get("side") or (db_rec.side if db_rec else "buy")).lower(),
+            "status": status,
+            "qty": _num(raw.get("qty") or raw.get("filled_qty") or (db_rec.requested_qty if db_rec else 0)),
+            "alpaca_order_id": oid,
+            "reject_reason": raw.get("reject_reason") or (db_rec.reject_reason if db_rec else None),
+            "legs": legs,
+            "created_at": created,
         }
-        for o, strat in rows
-    ]
+
+    orders = [_normalize_options_order(o) for o in live_orders]
+    orders.sort(key=lambda x: x["created_at"] or "", reverse=True)
 
     srow = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
     history = options_pnl_history(srow.data if srow else None)
@@ -146,6 +193,92 @@ async def orders(status: str = "all", user: User = Depends(get_current_user)):
         raise HTTPException(502, "Broker request failed")
 
 
+@router.get("/cot/account")
+async def cot_account(user: User = Depends(get_current_user)):
+    """COT / signal-engine shadow book account (separate Alpaca paper keys)."""
+    _require_paper_user(user)
+    key, secret = _require_se_keys()
+    try:
+        return await alpaca_rest.get_account(key, secret)
+    except alpaca_rest.AlpacaAuthError as e:
+        raise HTTPException(403, f"COT Alpaca keys are invalid or the account is unauthorized: {e}")
+    except alpaca_rest.AlpacaRateLimitError as e:
+        raise HTTPException(429, f"Alpaca rate limit exceeded: {e}")
+    except Exception as e:
+        raise HTTPException(502, "Broker request failed")
+
+
+@router.get("/cot/positions")
+async def cot_positions(user: User = Depends(get_current_user)):
+    """Open positions for the COT / signal-engine shadow book."""
+    _require_paper_user(user)
+    key, secret = _require_se_keys()
+    try:
+        return await alpaca_rest.get_positions(key, secret)
+    except alpaca_rest.AlpacaAuthError as e:
+        raise HTTPException(403, f"COT Alpaca keys are invalid or the account is unauthorized: {e}")
+    except alpaca_rest.AlpacaRateLimitError as e:
+        raise HTTPException(429, f"Alpaca rate limit exceeded: {e}")
+    except Exception as e:
+        raise HTTPException(502, "Broker request failed")
+
+
+@router.get("/cot/orders")
+async def cot_orders(status: str = "all", user: User = Depends(get_current_user)):
+    """Recent orders for the COT / signal-engine shadow book."""
+    _require_paper_user(user)
+    key, secret = _require_se_keys()
+    try:
+        return await alpaca_rest.get_orders(key, secret, status)
+    except alpaca_rest.AlpacaAuthError as e:
+        raise HTTPException(403, f"COT Alpaca keys are invalid or the account is unauthorized: {e}")
+    except alpaca_rest.AlpacaRateLimitError as e:
+        raise HTTPException(429, f"Alpaca rate limit exceeded: {e}")
+    except Exception as e:
+        raise HTTPException(502, "Broker request failed")
+
+
+@router.get("/cot/risk")
+async def cot_portfolio_risk(user: User = Depends(get_current_user)):
+    """
+    Aggregate risk metrics across the COT / signal-engine shadow book.
+    Uses the same methodology as the equity risk endpoint.
+    """
+    _require_paper_user(user)
+    from services.alpaca_rest import get_account, get_positions
+    from services.portfolio_risk import compute_portfolio_risk
+
+    key, secret = _require_se_keys()
+    account_error = None
+    auth_error = None
+    try:
+        positions = await get_positions(key, secret)
+    except alpaca_rest.AlpacaAuthError as e:
+        auth_error = str(e)
+        positions = []
+    except Exception as e:
+        positions = []
+        account_error = str(e)
+    try:
+        account = await get_account(key, secret)
+    except alpaca_rest.AlpacaAuthError as e:
+        auth_error = auth_error or str(e)
+        account = None
+    except Exception as e:
+        account = None
+        account_error = account_error or str(e)
+
+    if auth_error:
+        raise HTTPException(403, f"COT Alpaca keys are invalid or the account is unauthorized: {auth_error}")
+    if account_error and not positions and not account:
+        raise HTTPException(502, "Broker request failed")
+
+    equity = float(account.get("equity") or 1) if account else 1.0
+    return await compute_portfolio_risk(
+        positions or [], equity, api_key=key, api_secret=secret, benchmark="SPY", period="1y", interval="1d"
+    )
+
+
 @router.post("/orders")
 async def place_order(
     req: OrderRequest,
@@ -160,6 +293,47 @@ async def place_order(
         raise HTTPException(400, "qty must be positive")
     if req.qty > 10_000:
         raise HTTPException(400, "qty cannot exceed 10,000 shares in paper mode")
+
+    # Margin-free guard: trade only with non-margin buying power and never open a
+    # naked short position. This keeps the paper book cash-secured.
+    account = None
+    try:
+        account = await alpaca_rest.get_account(key, secret)
+    except Exception as exc:
+        log.warning("paper order: account check failed: %s", exc)
+        raise HTTPException(502, "Broker account check failed")
+
+    non_margin_bp = float(account.get("non_marginable_buying_power") or account.get("cash") or 0.0)
+
+    if req.side == "buy":
+        price = req.limit_price
+        if not price:
+            quote = await market_data.get_quote(req.symbol)
+            price = (quote or {}).get("p") or (quote or {}).get("price") or 0.0
+        if not price:
+            raise HTTPException(502, "Could not fetch current price for order check")
+        estimated_notional = req.qty * price
+        if non_margin_bp > 0 and estimated_notional > non_margin_bp:
+            raise HTTPException(
+                400,
+                f"Order notional ${estimated_notional:,.2f} exceeds non-margin buying power ${non_margin_bp:,.2f}",
+            )
+    else:  # sell
+        positions = []
+        try:
+            positions = await alpaca_rest.get_positions(key, secret)
+        except Exception as exc:
+            log.warning("paper order: positions fetch failed: %s", exc)
+        long_qty = 0.0
+        for pos in positions:
+            if (pos.get("symbol") or "").upper() == req.symbol.upper() and (pos.get("side") or "").lower() == "long":
+                long_qty = float(pos.get("qty") or 0.0)
+                break
+        if req.qty > long_qty:
+            raise HTTPException(
+                400,
+                f"Sell qty {req.qty} exceeds long position {long_qty:.0f}; naked short selling is disabled",
+            )
 
     order_record = BrokerOrder(
         user_id=user.id,
@@ -217,116 +391,33 @@ async def cancel_order(order_id: str, user: User = Depends(get_current_user)):
 @router.get("/risk")
 async def portfolio_risk(user: User = Depends(get_current_user)):
     """
-    Aggregate risk metrics across all open paper positions:
+    Aggregate risk metrics across all open equity paper positions:
     Sharpe ratio, max drawdown, beta vs SPY, total exposure.
     """
     _require_paper_user(user)
-    import math
-
     from services.alpaca_rest import get_account, get_positions
-    from services.market_data import get_histories_batch
+    from services.portfolio_risk import compute_portfolio_risk
 
     key, secret = _require_keys()
-    positions = []
-    account = None
     account_error = None
     try:
         positions = await get_positions(key, secret)
     except Exception as e:
+        positions = []
         account_error = str(e)
     try:
         account = await get_account(key, secret)
     except Exception as e:
-        account_error = str(e)
+        account = None
+        account_error = account_error or str(e)
+
     if account_error and not positions and not account:
         raise HTTPException(502, "Broker request failed")
 
-    if not positions:
-        return {
-            "positions": 0,
-            "total_exposure": 0,
-            "beta": None,
-            "sharpe": None,
-            "max_drawdown": None,
-            "risk_level": "none",
-        }
-
-    tickers = [p["symbol"] for p in positions]
     equity = float(account.get("equity") or 1) if account else 1.0
-    histories = await get_histories_batch(tickers + ["SPY"], period="3mo", interval="1d")
-
-    spy_df = histories.get("SPY")
-    spy_returns = []
-    if spy_df is not None and len(spy_df) > 1:
-        closes = spy_df["Close"].astype(float)
-        spy_returns = [float(closes.iloc[i] / closes.iloc[i - 1] - 1) for i in range(1, len(closes))]
-
-    betas, pos_returns_by_day = [], {}
-    total_exposure = 0.0
-
-    for p in positions:
-        sym = p["symbol"]
-        mktval = float(p.get("market_value") or 0)
-        total_exposure += abs(mktval)
-        df = histories.get(sym)
-        if df is None or len(df) < 10:
-            continue
-        closes = df["Close"].astype(float)
-        daily_ret = [float(closes.iloc[i] / closes.iloc[i - 1] - 1) for i in range(1, len(closes))]
-
-        # Beta vs SPY
-        if spy_returns and len(daily_ret) == len(spy_returns):
-            n = len(daily_ret)
-            mean_r = sum(daily_ret) / n
-            mean_s = sum(spy_returns) / n
-            cov = sum((daily_ret[i] - mean_r) * (spy_returns[i] - mean_s) for i in range(n)) / max(n - 1, 1)
-            var_s = sum((spy_returns[i] - mean_s) ** 2 for i in range(n)) / max(n - 1, 1)
-            beta = round(cov / var_s, 2) if var_s > 0 else None
-            if beta is not None:
-                betas.append(beta)
-
-        # Weighted daily returns for portfolio Sharpe/drawdown
-        weight = abs(mktval) / max(equity, 1)
-        for di, r in enumerate(daily_ret):
-            pos_returns_by_day[di] = pos_returns_by_day.get(di, 0) + r * weight
-
-    # Portfolio-level returns list
-    port_returns = list(pos_returns_by_day.values()) if pos_returns_by_day else []
-
-    sharpe, max_dd = None, None
-    if len(port_returns) >= 10:
-        n = len(port_returns)
-        mean_r = sum(port_returns) / n
-        std_r = math.sqrt(sum((r - mean_r) ** 2 for r in port_returns) / max(n - 1, 1))
-        sharpe = round((mean_r / std_r) * math.sqrt(252), 2) if std_r > 0 else None
-
-        # Max drawdown on cumulative portfolio curve
-        cumulative, peak, max_dd = 1.0, 1.0, 0.0
-        for r in port_returns:
-            cumulative *= 1 + r
-            peak = max(peak, cumulative)
-            max_dd = max(max_dd, (peak - cumulative) / peak * 100)
-        max_dd = round(-max_dd, 2)
-
-    avg_beta = round(sum(betas) / len(betas), 2) if betas else None
-
-    risk_level = "low"
-    if avg_beta is not None and avg_beta > 1.5:
-        risk_level = "high"
-    elif avg_beta is not None and avg_beta > 1.0:
-        risk_level = "medium"
-    if sharpe is not None and sharpe < 0:
-        risk_level = "high"
-
-    return {
-        "positions": len(positions),
-        "total_exposure": round(total_exposure, 2),
-        "exposure_pct": round(total_exposure / max(equity, 1) * 100, 1),
-        "beta": avg_beta,
-        "sharpe": sharpe,
-        "max_drawdown": max_dd,
-        "risk_level": risk_level,
-    }
+    return await compute_portfolio_risk(
+        positions or [], equity, api_key=key, api_secret=secret, benchmark="SPY", period="1y", interval="1d"
+    )
 
 
 @router.get("/volatility-target")

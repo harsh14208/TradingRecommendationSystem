@@ -312,6 +312,16 @@ Paper trading simulates real trades through Alpaca's paper account.
 
 **Requires**: `ALPACA_API_KEY` and `ALPACA_API_SECRET` for a **paper** account (not live).
 
+The UI exposes three isolated paper books, each with its own Alpaca paper credentials:
+
+| Book | Env keys | Purpose |
+|------|----------|---------|
+| Equity | `ALPACA_API_KEY` / `ALPACA_API_SECRET` | Manual/auto equity paper trades and portfolio analytics |
+| Options | `ALPACA_OPTIONS_API_KEY` / `ALPACA_OPTIONS_API_SECRET` | Dedicated VRP options sleeve; book sized against `options_buying_power` (capped by equity) so it never exceeds the account's option-buying limit |
+| COT / Signal Engine | `ALPACA_SE_API_KEY` / `ALPACA_SE_API_SECRET` (or lowercase `alpaca_se_api_key` / `alpaca_se_api_secret`) | Signal-engine shadow book shown in the COT Engine tab |
+
+All three use Alpaca's paper endpoint (`paper-api.alpaca.markets`). Keep live keys out of these fields.
+
 ### Manual paper trade
 1. Click "Paper Trade" button in the action row (requires Basic)
 2. Enter quantity, choose market/limit
@@ -320,14 +330,18 @@ Paper trading simulates real trades through Alpaca's paper account.
 ### Auto paper trading
 - Toggleable in Account Settings
 - Runs alongside Telegram sends — every signal that passes auto-send rules also places a paper order
-- Notional sizes: $500 / $1k / $2k / $5k per trade (configurable)
+- Notional sizes: $500 / $1k / $2k / $5k per trade (configurable), or a % of account cash via `paper_trade_equity_pct`
+- **Cash-secured / no margin**: equity buys are sized against `non_marginable_buying_power` (cash), and SELL signals from the main long-only engine only close existing long positions — naked short selling is disabled for that book. The cross-sectional (XS-h63) sleeve is the one exception: it's a genuine dollar-neutral long/short book, so its SELL entries open real shorts, sized against margin buying power
+
+### Uninvested cash
+By default, idle cash in all paper accounts simply sits in the Alpaca paper account (no sweep/interest). The optional residual-cash overlay (`CASH_OVERLAY_ENABLE=true`) can deploy idle cash into `SGOV` / `VOO`, but it is **disabled by default** and currently wired to the live portfolio allocator, not the paper books.
 
 ### Portfolio view
 Open from sidebar or mobile → Paper tab:
 - Total equity, day P&L, buying power
 - Open positions with unrealized P&L
-- Order history (filled / cancelled / pending)
-- **Risk dashboard**: Beta vs SPY, Sharpe ratio (3M), Max Drawdown, Exposure %
+- Order history (filled / cancelled / pending) — equity orders come live from Alpaca; option orders come live from Alpaca and are enriched with strategy metadata from `broker_orders`, so resetting the options paper account automatically clears the list
+- **Risk dashboard**: Beta vs SPY, Sharpe ratio (account history, excess return over `RISK_FREE_RATE`), Max Drawdown, Exposure %
 
 ---
 
@@ -834,8 +848,14 @@ TELEGRAM_BROADCAST_CHANNEL_ID=   # Optional: post to channel instead of N per-us
                                   # Required once subscribers exceed ~50 (Telegram 30msg/sec limit)
 
 # ── Paper trading ─────────────────────────────────────────────────────────────
-ALPACA_API_KEY=             # Paper account keys from alpaca.markets
+ALPACA_API_KEY=             # Equity paper account keys from alpaca.markets
 ALPACA_API_SECRET=
+
+# Separate Alpaca paper accounts (optional — create additional paper accounts at alpaca.markets)
+ALPACA_OPTIONS_API_KEY=     # Dedicated options VRP sleeve
+ALPACA_OPTIONS_API_SECRET=
+ALPACA_SE_API_KEY=          # Signal-engine / COT shadow book (lowercase names also accepted)
+ALPACA_SE_API_SECRET=
 
 # ── Auth (required) ───────────────────────────────────────────────────────────
 JWT_SECRET=                 # python3 -c "import secrets; print(secrets.token_hex(32))"

@@ -28,6 +28,13 @@ log = logging.getLogger("signal.options_paper")
 _OPTION_FEE_PER_CONTRACT = 0.65
 
 
+def _num(v, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def _underlying_from_symbol(option_symbol: str) -> str | None:
     parsed = _parse_opra(option_symbol)
     return parsed[0] if parsed else None
@@ -275,6 +282,7 @@ async def submit_paper_option_order(
     api_secret: str,
     account_user_id: int,
     held_symbols: set[str] | None = None,
+    account_id: str | None = None,
 ) -> BrokerOrder | None:
     """Submit one VRP signal to the dedicated Alpaca options PAPER account.
 
@@ -342,15 +350,10 @@ async def submit_paper_option_order(
     from datetime import datetime, timezone
 
     today = datetime.now(timezone.utc).date()
-    existing = (
-        (
-            await db.execute(
-                select(BrokerOrder).where(BrokerOrder.broker == "alpaca_options", BrokerOrder.symbol == symbol)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    existing_query = select(BrokerOrder).where(BrokerOrder.broker == "alpaca_options", BrokerOrder.symbol == symbol)
+    if account_id:
+        existing_query = existing_query.where(BrokerOrder.alpaca_account_id == account_id)
+    existing = (await db.execute(existing_query)).scalars().all()
     for o in existing:
         if not any((lf or {}).get("option_symbol") == first_sym for lf in (o.option_legs or [])):
             continue
@@ -364,6 +367,7 @@ async def submit_paper_option_order(
         user_id=account_user_id,  # bookkeeping holder; trading account = options creds
         broker="alpaca_options",
         account_type="paper",
+        alpaca_account_id=account_id,
         symbol=symbol,
         notional=round(float(sig.get("option_max_loss") or 0.0), 2),
         side="sell" if order.strategy.startswith("SELL") else "buy",
@@ -420,12 +424,27 @@ async def submit_active_option_orders(db: AsyncSession, api_key: str, api_secret
     RTH, so submission is decoupled from generation. Returns # newly submitted.
     """
     from models import Signal
+    from services import alpaca_rest
     from services.brokers.alpaca_options import AlpacaOptionsBroker
     from services.options_universe import OPTIONS_UNIVERSE
 
-    # Fetch the account's currently-held option contracts ONCE per cycle. Any new
-    # order whose leg collides with a held contract would 422 with a position-intent
-    # mismatch (Alpaca infers *_to_close), so we skip those in submit_paper_option_order.
+    # Fetch the account's currently-held option contracts, account id and buying
+    # power ONCE per cycle. Leg collisions cause Alpaca to 422 with a position-intent
+    # mismatch; scoping dedup by account id prevents stale broker_orders from a reset
+    # paper account from blocking new submissions; BP guards prevent submission past
+    # the account's option-buying limit.
+    account_id = None
+    account = None
+    try:
+        account = await alpaca_rest.get_account(api_key, api_secret)
+        account_id = account.get("id")
+    except Exception:
+        log.warning("options paper: account-id fetch failed; dedup will not be account-scoped", exc_info=True)
+    options_bp = _num((account or {}).get("options_buying_power"), 0.0) or _num(
+        (account or {}).get("buying_power"), 0.0
+    )
+    remaining_bp = options_bp
+
     try:
         held_symbols = await AlpacaOptionsBroker(
             api_key=api_key, api_secret=api_secret, paper=True
@@ -462,11 +481,22 @@ async def submit_active_option_orders(db: AsyncSession, api_key: str, api_secret
             "option_exp_gain": row.option_exp_gain,
         }
         try:
+            max_loss = float(sig.get("option_max_loss") or 0.0)
+            if remaining_bp > 0 and max_loss > remaining_bp:
+                log.info(
+                    "options paper: skipping %s — max_loss %.2f exceeds remaining option BP %.2f",
+                    row.ticker,
+                    max_loss,
+                    remaining_bp,
+                )
+                continue
+
             order = await submit_paper_option_order(
-                sig, row.id, db, api_key, api_secret, account_user_id, held_symbols=held_symbols
+                sig, row.id, db, api_key, api_secret, account_user_id, held_symbols=held_symbols, account_id=account_id
             )
             if order is not None and order.status not in ("rejected", "error"):
                 submitted += 1
+                remaining_bp -= max_loss
         except Exception:
             log.warning("submit_active_option_orders: failed for %s", row.ticker, exc_info=True)
     await db.commit()

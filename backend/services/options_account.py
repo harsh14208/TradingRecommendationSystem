@@ -124,27 +124,59 @@ async def compute_options_risk(positions: list[dict], equity: float) -> dict:
     risks are net delta (directional), theta (daily decay/income), vega (vol), and
     gross exposure. Greeks come from Polygon snapshots; qty is signed (short<0) and
     scaled by the 100-share contract multiplier.
+
+    Greek fetches are bounded to a small concurrency pool so a large options book
+    doesn't take seconds to load, while staying polite to the data provider.
     """
     if not positions:
         return {}
+    import asyncio
+
     from services.options_chain_resolver import _api_key
 
     key = _api_key()
     net = {"delta": 0.0, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
     gross = 0.0
     have_greeks = False
+
+    # Build a clean list of (symbol, qty, market_value) first; compute gross
+    # synchronously because it only uses local data.
+    legs: list[tuple[str, float, float]] = []
     for p in positions:
         try:
             qty = float(p.get("qty") or 0)
         except (TypeError, ValueError):
             qty = 0.0
         gross += abs(_num(p.get("market_value")))
-        g = await _fetch_greeks(p.get("symbol") or "", key) if key else None
+        legs.append((p.get("symbol") or "", qty))
+
+    if not key:
+        return {
+            "net_delta": None,
+            "net_gamma": None,
+            "net_theta": None,
+            "net_vega": None,
+            "gross_market_value": round(gross, 2),
+            "exposure_pct": round(gross / equity * 100.0, 2) if equity > 0 else None,
+        }
+
+    # Fetch Greeks concurrently with bounded parallelism.
+    MAX_CONCURRENT_GREEKS = 20
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_GREEKS)
+
+    async def _fetch_one(symbol: str) -> dict | None:
+        async with semaphore:
+            return await _fetch_greeks(symbol, key)
+
+    greeks_list = await asyncio.gather(*[_fetch_one(sym) for sym, _ in legs])
+
+    for (_, qty), g in zip(legs, greeks_list):
         if g:
             have_greeks = True
             for k in net:
                 if g.get(k) is not None:
                     net[k] += _num(g.get(k)) * qty * 100.0
+
     return {
         "net_delta": round(net["delta"], 1) if have_greeks else None,
         "net_gamma": round(net["gamma"], 2) if have_greeks else None,

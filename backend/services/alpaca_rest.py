@@ -11,6 +11,8 @@ import ssl
 import time
 from typing import Any, Optional
 
+import aiohttp
+
 from services.http_client import get_ssl_context, retry_with_backoff, shared_session
 
 PAPER_BASE = "https://paper-api.alpaca.markets"
@@ -47,6 +49,18 @@ def _ssl_ctx() -> ssl.SSLContext:
     return ctx
 
 
+def _raise_for_status(r):
+    """Map Alpaca HTTP errors to domain exceptions."""
+    try:
+        r.raise_for_status()
+    except aiohttp.ClientResponseError as e:
+        if e.status in (401, 403):
+            raise AlpacaAuthError(f"Alpaca auth failed ({e.status}): {e.message}") from e
+        if e.status == 429:
+            raise AlpacaRateLimitError(f"Alpaca rate limit ({e.status}): {e.message}") from e
+        raise
+
+
 async def get_account(api_key: str, api_secret: str, live: bool = False) -> dict:
     async with shared_session() as s:
         async with s.get(
@@ -54,7 +68,7 @@ async def get_account(api_key: str, api_secret: str, live: bool = False) -> dict
             headers=_headers(api_key, api_secret),
             ssl=_ssl_ctx(),
         ) as r:
-            r.raise_for_status()
+            _raise_for_status(r)
             return await r.json()
 
 
@@ -65,7 +79,7 @@ async def get_positions(api_key: str, api_secret: str, live: bool = False) -> li
             headers=_headers(api_key, api_secret),
             ssl=_ssl_ctx(),
         ) as r:
-            r.raise_for_status()
+            _raise_for_status(r)
             return await r.json()
 
 
@@ -77,7 +91,27 @@ async def get_orders(api_key: str, api_secret: str, status: str = "all", limit: 
             params={"status": status, "limit": limit, "direction": "desc"},
             ssl=_ssl_ctx(),
         ) as r:
-            r.raise_for_status()
+            _raise_for_status(r)
+            return await r.json()
+
+
+async def get_portfolio_history(
+    api_key: str,
+    api_secret: str,
+    period: str = "1A",
+    timeframe: str = "1D",
+    extended_hours: bool = False,
+    live: bool = False,
+) -> dict:
+    """Fetch account portfolio history (equity/profit_loss time series)."""
+    async with shared_session() as s:
+        async with s.get(
+            f"{_base(live)}/v2/account/portfolio/history",
+            headers=_headers(api_key, api_secret),
+            params={"period": period, "timeframe": timeframe, "extended_hours": "true" if extended_hours else "false"},
+            ssl=_ssl_ctx(),
+        ) as r:
+            _raise_for_status(r)
             return await r.json()
 
 
@@ -260,7 +294,7 @@ async def place_bracket_order(
             json=body,
             ssl=_ssl_ctx(),
         ) as r:
-            r.raise_for_status()
+            _raise_for_status(r)
             return await r.json()
 
 

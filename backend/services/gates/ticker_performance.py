@@ -114,19 +114,36 @@ def compute_snapshot(
     TickerPerformanceSnapshot with per-(ticker, action) statistics.
     """
     reference_time = reference_time or datetime.now(timezone.utc)
+    # Normalize every created_at to match reference_time's tz-awareness (not
+    # unconditionally to tz-aware UTC) — refresh_snapshot() passes a tz-naive
+    # reference to match signals.created_at (TIMESTAMP WITHOUT TIME ZONE), and
+    # comparing/subtracting naive vs. aware raises TypeError. That raise was
+    # silently swallowed by refresh_snapshot()'s broad except, so the gate kept
+    # falling back to a stale/empty snapshot (bug survived one layer below the
+    # 2026-07-15 "tz bug #3" fix; see refresh_snapshot() below).
+    ref_naive = reference_time.tzinfo is None
+
+    def _norm(dt: datetime | None) -> datetime | None:
+        if dt is None:
+            return None
+        if ref_naive:
+            return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
     cutoff = reference_time - timedelta(days=window_days)
 
     grouped: dict[tuple[str, str], list[tuple[float, datetime, bool]]] = {}
     for ticker, action, outcome_pct, created_at in rows:
         if action not in ("BUY", "SELL"):
             continue
+        created_at = _norm(created_at)
         if created_at is None or created_at < cutoff:
             continue
         key = (ticker.upper(), action)
         grouped.setdefault(key, []).append(
             (
                 float(outcome_pct),
-                created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo is None else created_at,
+                created_at,
                 _win(action, outcome_pct),
             )
         )

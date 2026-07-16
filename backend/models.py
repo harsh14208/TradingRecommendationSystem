@@ -359,6 +359,9 @@ class BrokerOrder(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     broker = Column(String(20), nullable=False)  # "alpaca"
     account_type = Column(String(10), nullable=False)  # "paper" | "live"
+    # Alpaca account id the order was placed against. Lets us ignore stale rows
+    # after the paper account is reset / keys are switched to a new account.
+    alpaca_account_id = Column(String(50), nullable=True, index=True)
     alpaca_order_id = Column(String(50), nullable=True)
     symbol = Column(String(24), nullable=False, index=True)  # TSYS-14: OCC option symbols are ~21 chars
     notional = Column(Float, nullable=False)  # dollar amount ordered

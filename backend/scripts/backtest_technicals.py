@@ -247,6 +247,7 @@ def cached_yf_download(
 warnings.filterwarnings("ignore")
 
 _CONSTITUENTS_MAP = None
+_CONSTITUENTS_MAP_LOCK = threading.Lock()
 
 
 _UNMAPPED_CONSTITUENTS_WARNED: set[str] = set()
@@ -256,37 +257,44 @@ _UNMAPPED_CONSTITUENTS_LOCK = threading.Lock()
 def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
     global _CONSTITUENTS_MAP
     if _CONSTITUENTS_MAP is None:
-        import json
-        import os
+        # Parallelized (4b78b84): multiple worker threads can call this before any
+        # of them has finished loading. Harmless in practice (GIL + atomic dict
+        # reassignment mean every thread computes the same content) but wastes
+        # I/O — double-checked locking avoids the redundant reads/parses.
+        with _CONSTITUENTS_MAP_LOCK:
+            if _CONSTITUENTS_MAP is None:
+                import json
+                import os
 
-        _HERE = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.abspath(os.path.join(_HERE, "..", "data", "sp500_historical_constituents.json"))
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"PIT constituents file missing: {path}. "
-                "Download from fja05680/sp500-historical-constituents or equivalent "
-                "point-in-time source. Auto-generated defaults silently remove the "
-                "survivorship correction and invalidate backtest results."
-            )
+                _HERE = os.path.dirname(os.path.abspath(__file__))
+                path = os.path.abspath(os.path.join(_HERE, "..", "data", "sp500_historical_constituents.json"))
+                if not os.path.exists(path):
+                    raise FileNotFoundError(
+                        f"PIT constituents file missing: {path}. "
+                        "Download from fja05680/sp500-historical-constituents or equivalent "
+                        "point-in-time source. Auto-generated defaults silently remove the "
+                        "survivorship correction and invalidate backtest results."
+                    )
 
-        try:
-            with open(path) as f:
-                _CONSTITUENTS_MAP = json.load(f)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load constituents file {path}: {e}") from e
+                try:
+                    with open(path) as f:
+                        _loaded = json.load(f)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to load constituents file {path}: {e}") from e
 
-        if not isinstance(_CONSTITUENTS_MAP, dict):
-            raise RuntimeError(f"Constituents file {path} is not a JSON object.")
+                if not isinstance(_loaded, dict):
+                    raise RuntimeError(f"Constituents file {path} is not a JSON object.")
 
-        # Provenance check: if the file was generated from a known PIT source it
-        # should carry a '_source' key.  Warn (don't hard-fail) so legacy files
-        # still load while the team pins provenance on the next refresh.
-        if "_source" not in _CONSTITUENTS_MAP:
-            print(
-                f"\n⚠ [PIT Constituents] {path} lacks '_source' provenance key. "
-                "Assert that this file came from fja05680/sp500-historical-constituents "
-                "or another verified PIT source.\n"
-            )
+                # Provenance check: if the file was generated from a known PIT source it
+                # should carry a '_source' key.  Warn (don't hard-fail) so legacy files
+                # still load while the team pins provenance on the next refresh.
+                if "_source" not in _loaded:
+                    print(
+                        f"\n⚠ [PIT Constituents] {path} lacks '_source' provenance key. "
+                        "Assert that this file came from fja05680/sp500-historical-constituents "
+                        "or another verified PIT source.\n"
+                    )
+                _CONSTITUENTS_MAP = _loaded
 
     lookup_ticker = ticker
     if ticker == "LEH":
@@ -8160,12 +8168,17 @@ def main():
 
     # ── Gate Validation — ablate all backtest-testable live engine gates ─────
     if "--oos" in sys.argv or "--sweep" in sys.argv:
+        # _max21_filter_pct already defaults to 0.55 unconditionally (set above,
+        # regardless of whether --max21-filter was passed) — gating it behind the
+        # flag string here silently ran --oos unfiltered against a MAX21-filtered
+        # IS baseline, contradicting run_oos_validation()'s own "same gates" claim
+        # (315e77f fixed the main IS call site but missed this one).
         run_oos_validation(
             vix,
             spy_trend,
             stlfsi4,
             buy_thresh_override=_buy_thresh_override,
-            max21_filter_pct=_max21_filter_pct if "--max21-filter" in sys.argv else None,
+            max21_filter_pct=_max21_filter_pct,
         )
 
     if "--sweep" in sys.argv:

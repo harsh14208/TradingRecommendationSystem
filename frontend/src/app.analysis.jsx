@@ -459,7 +459,7 @@ const COT_ENGINE_META = {
   book: "champion",
 };
 
-function CotEnginePanel({ account, positions, loading, err }) {
+function CotEnginePanel({ account, positions, risk, loading, err }) {
   positions = positions || [];
   const fmtMoney = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const fmtPct   = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${Number(v).toFixed(2)}%`;
@@ -468,13 +468,15 @@ function CotEnginePanel({ account, positions, loading, err }) {
 
   const openPl = positions.reduce((s, p) => s + (parseFloat(p.unrealized_pl) || 0), 0);
   const lastEq = parseFloat(account?.last_equity);
-  const dayPl  = Number.isFinite(lastEq) ? parseFloat(account?.equity) - lastEq : null;
-  const totalReturn = account?.equity ? ((parseFloat(account.equity) / 1000000) - 1) * 100 : null;
+  const curEq = parseFloat(account?.equity);
+  const dayPl  = Number.isFinite(lastEq) ? curEq - lastEq : null;
+  const dayReturn = Number.isFinite(lastEq) && lastEq ? ((curEq - lastEq) / lastEq) * 100 : null;
 
   return (
     <div style={{ padding:"20px 28px", overflowY:"auto", maxHeight:"calc(100vh - 100px)", display:"flex", flexDirection:"column", gap:20 }}>
       {err === "upgrade" && <UpgradePrompt feature="Paper Portfolio" minTier="basic"/>}
-      {err === "offline" && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline or Alpaca API keys not configured.</div>}
+      {err === "keys" && <div style={{ color:"var(--text-faint)", fontSize:12 }}>COT Engine Alpaca keys are missing or invalid — set <code>alpaca_se_api_key</code> and <code>alpaca_se_api_secret</code> in <code>backend/.env</code>.</div>}
+      {err === "offline" && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline or request failed.</div>}
       {loading && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading COT Engine account…</div>}
 
       {account && (
@@ -485,7 +487,7 @@ function CotEnginePanel({ account, positions, loading, err }) {
               ["Cash", fmtMoney(account.cash), "var(--text)"],
               ["Open P&L", positions.length ? fmtMoney(openPl) : "—", positions.length ? rc(openPl) : "var(--text-faint)"],
               ["Day P&L", dayPl == null ? "—" : fmtMoney(dayPl), rc(dayPl)],
-              ["Total return", fmtPct(totalReturn), rc(totalReturn)],
+              ["Day return", fmtPct(dayReturn), rc(dayReturn)],
               ["Vol target", `${m.volTarget}%`, "var(--accent)"],
             ].map(([l,v,c]) => (
               <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px" }}>
@@ -501,6 +503,27 @@ function CotEnginePanel({ account, positions, loading, err }) {
               Backtest Sharpe {m.backtestSharpe} (2007–2026 net). Live shadow marks since {m.since} ({m.nDays} days).
             </div>
           </div>
+
+          {risk && (
+            <div>
+              <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:2 }}>Risk metrics</div>
+              <div style={{ fontSize:10, color:"var(--text-faint)", marginBottom:10 }}>1-year historical proxy on current holdings — not realised account performance</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10 }}>
+                {[
+                  ["Beta vs SPY", risk.beta?.toFixed(2), risk.beta > 1.2 ? "var(--warn)" : "var(--text)"],
+                  ["Sharpe", risk.sharpe?.toFixed(2), (risk.sharpe||0) >= 0.5 ? "var(--up)" : "var(--text)"],
+                  ["Max Drawdown", risk.max_drawdown != null ? fmtPct(risk.max_drawdown) : "—", "var(--down)"],
+                  ["Exposure", risk.exposure_pct != null ? fmtPct(risk.exposure_pct) : "—", "var(--text)"],
+                ].map(([l,v,c]) => (
+                  <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"12px 14px", border:"1px solid var(--line)" }}>
+                    <div style={{ fontSize:9, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>{l}</div>
+                    <div style={{ fontSize:16, fontWeight:700, fontFamily:"var(--font-mono)", color:c }}>{v ?? "—"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Open positions ({positions.length})</div>
             {positions.length === 0 ? (
@@ -549,6 +572,13 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
   const [err,       setErr]       = useState(null);
   const [tab,       setTab]       = useState("equity");  // "equity" | "options" | "cot"
 
+  // Dedicated state for the COT / signal-engine shadow book (separate Alpaca keys).
+  const [cotAccount,   setCotAccount]   = useState(null);
+  const [cotPositions, setCotPositions] = useState([]);
+  const [cotRisk,      setCotRisk]      = useState(null);
+  const [cotLoading,   setCotLoading]   = useState(false);
+  const [cotErr,       setCotErr]       = useState(null);
+
   useEffect(() => {
     if (!open) return;
     if (!online) { setErr("offline"); return; }
@@ -572,6 +602,31 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
       .finally(() => setLoading(false));
     return () => ctrl.abort();
   }, [open, online]);
+
+  useEffect(() => {
+    if (tab !== "cot") return;
+    if (!online) { setCotErr("offline"); return; }
+    setCotErr(null);
+    setCotLoading(true);
+    setCotRisk(null);
+    const ctrl = new AbortController();
+    const signal = ctrl.signal;
+    Promise.all([
+      authFetch("/api/paper/cot/account", { signal }),
+      authFetch("/api/paper/cot/positions", { signal }),
+      authFetch("/api/paper/cot/risk", { signal }),
+    ]).then(async ([accR, posR, rskR]) => {
+      if (accR.status === 402) { setCotErr("upgrade"); return; }
+      if (accR.status === 403 || posR.status === 403 || rskR.status === 403) { setCotErr("keys"); return; }
+      if (!accR.ok || !posR.ok || !rskR.ok) { setCotErr("offline"); return; }
+      const [acc, pos, rsk] = await Promise.all([accR.json(), posR.json(), rskR.json()]);
+      if (acc && !acc.detail) setCotAccount(acc);
+      if (Array.isArray(pos)) setCotPositions(pos);
+      if (rsk && !rsk.detail) setCotRisk(rsk);
+    }).catch(() => setCotErr("offline"))
+      .finally(() => setCotLoading(false));
+    return () => ctrl.abort();
+  }, [tab, online]);
 
   const loadVolTarget = (tickers = "") => {
     setVolLoading(true);
@@ -614,7 +669,7 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
         ))}
       </div>
       {tab === "cot" ? (
-        <CotEnginePanel account={account} positions={positions} loading={loading} err={err} />
+        <CotEnginePanel account={cotAccount} positions={cotPositions} risk={cotRisk} loading={cotLoading} err={cotErr} />
       ) : tab === "options" ? (
         <OptionsPaperPanel online={online} />
       ) : (
@@ -651,11 +706,11 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
         {risk && (
           <div>
             <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:2 }}>Risk metrics</div>
-            <div style={{ fontSize:10, color:"var(--text-faint)", marginBottom:10 }}>3-month historical proxy on current holdings — not realized account performance</div>
+            <div style={{ fontSize:10, color:"var(--text-faint)", marginBottom:10 }}>1-year historical proxy on current holdings — not realized account performance</div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10 }}>
               {[
                 ["Beta vs SPY", risk.beta?.toFixed(2), risk.beta > 1.2 ? "var(--warn)" : "var(--text)"],
-                ["Sharpe (ann.)", risk.sharpe?.toFixed(2), (risk.sharpe||0) >= 1 ? "var(--up)" : "var(--text)"],
+                ["Sharpe", risk.sharpe?.toFixed(2), (risk.sharpe||0) >= 0.5 ? "var(--up)" : "var(--text)"],
                 ["Max Drawdown", risk.max_drawdown != null ? fmtPct(risk.max_drawdown) : "—", "var(--down)"],
                 ["Exposure", risk.exposure_pct != null ? fmtPct(risk.exposure_pct) : "—", "var(--text)"],
               ].map(([l,v,c]) => (
@@ -730,7 +785,8 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
                 {positions.map((p,i) => {
                   const sym = p.symbol || p.ticker || "—";
                   const pl = parseFloat(p.unrealized_pl || p.pnl || 0);
-                  const plPct = parseFloat(p.unrealized_plpc || p.pnl_pct || 0) * (Math.abs(p.unrealized_plpc||0) < 1 ? 100 : 1);
+                  // Alpaca returns unrealized_plpc as a decimal (e.g. 0.0123 = 1.23%).
+                  const plPct = parseFloat(p.unrealized_plpc || p.pnl_pct || 0) * 100;
                   return (
                     <tr key={i} style={{ borderBottom:"1px solid var(--line)" }}>
                       <td style={{ padding:"7px 10px", fontWeight:600 }}>{sym}</td>
@@ -832,8 +888,8 @@ function OptionsPaperPanel({ online }) {
   const risk = data.risk || {};
   const equity = parseFloat(acct.equity);
   const openPl = positions.reduce((s,p) => s + (parseFloat(p.unrealized_pl)||0), 0);
-  const start = history.length ? parseFloat(history[0].equity) : 1000000;
-  const totalPl = Number.isFinite(equity) ? equity - start : null;
+  const start = history.length ? parseFloat(history[0].equity) : null;
+  const totalPl = Number.isFinite(equity) && Number.isFinite(start) ? equity - start : null;
 
   return (
     <div style={wrap}>
@@ -872,6 +928,11 @@ function OptionsPaperPanel({ online }) {
               </div>
             ))}
           </div>
+          {risk.net_delta == null && (
+            <div style={{ marginTop:10, padding:"8px 10px", background:"var(--bg-2)", borderRadius:6, fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)" }}>
+              Set <code>POLYGON_API_KEY</code> in <code>.env</code> to populate option Greeks.
+            </div>
+          )}
         </div>
       )}
 

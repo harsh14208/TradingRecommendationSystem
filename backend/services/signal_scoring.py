@@ -308,9 +308,17 @@ def score_macd(
             {
                 "src": "Technical",
                 "head": "MACD Bearish Crossover",
-                "body": "MACD crossed below signal line — momentum flipping bearish.",
-                "sentiment": "neg",
-                "meta": f"Hist {hist:.5f}",
+                "body": (
+                    "MACD crossed below signal line at an oversold dip — bullish divergence; "
+                    "penalty skipped (live +5.2pp WR cohort, N=20)."
+                    if mr_dip
+                    else "MACD crossed below signal line — momentum flipping bearish."
+                ),
+                # Match sibling MR-dip cards (RSI/Stochastic/Williams%R/MACD-expanding):
+                # flip to "pos" when the penalty is skipped so this genuinely-confirming
+                # cohort counts toward Tier-6/orthogonality instead of being invisible.
+                "sentiment": "pos" if mr_dip else "neg",
+                "meta": f"Hist {hist:.5f} mr_dip={mr_dip}",
             }
         )
     elif hist > 0 and hist > hist_p:

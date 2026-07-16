@@ -89,7 +89,7 @@ async def test_build_cross_sectional_sleeve_signals_integration(monkeypatch, _pa
     monkeypatch.setattr(scanner, "AsyncSessionLocal", _FakeSessionLocal([]))
 
     class _MockSettings:
-        alpaca_api_key = "test_key"
+        alpaca_api_key = type("S", (), {"get_secret_value": lambda self: "test_key"})()
         alpaca_api_secret = type("S", (), {"get_secret_value": lambda self: "test_secret"})()
 
     signals = await scanner._build_cross_sectional_sleeve_signals(histories, _MockSettings())
@@ -116,7 +116,7 @@ async def test_build_cross_sectional_sleeve_signals_with_exit(monkeypatch, _patc
     )
 
     class _MockSettings:
-        alpaca_api_key = "test_key"
+        alpaca_api_key = type("S", (), {"get_secret_value": lambda self: "test_key"})()
         alpaca_api_secret = type("S", (), {"get_secret_value": lambda self: "test_secret"})()
 
     signals = await scanner._build_cross_sectional_sleeve_signals(histories, _MockSettings())
@@ -141,7 +141,7 @@ async def test_build_cross_sectional_sleeve_signals_skips_without_equity(monkeyp
     histories = {"A": _history(price=10.0), "B": _history(price=20.0)}
 
     class _MockSettings:
-        alpaca_api_key = "test_key"
+        alpaca_api_key = type("S", (), {"get_secret_value": lambda self: "test_key"})()
         alpaca_api_secret = type("S", (), {"get_secret_value": lambda self: "test_secret"})()
 
     signals = await scanner._build_cross_sectional_sleeve_signals(histories, _MockSettings())

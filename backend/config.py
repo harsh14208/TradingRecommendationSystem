@@ -26,8 +26,17 @@ class Settings(BaseSettings):
     # the options auto-paper path is inert (it does NOT fall back to the equity keys).
     alpaca_options_api_key: SecretStr = Field(default=SecretStr(""))
     alpaca_options_api_secret: SecretStr = Field(default=SecretStr(""))
+    # Separate Alpaca paper account for the signal-engine / COT shadow book.
+    # Kept isolated from the equity and options accounts. The .env keys may be
+    # lowercase (alpaca_se_api_key / alpaca_se_api_secret); BaseSettings maps them
+    # case-insensitively to these fields.
+    alpaca_se_api_key: SecretStr = Field(default=SecretStr(""))
+    alpaca_se_api_secret: SecretStr = Field(default=SecretStr(""))
     auto_send_notifications: bool = True
     min_confidence: float = 40.0  # recalibrated 57→40 post phantom-win correction (2026-05-31).
+    # Annual risk-free rate used for standard Sharpe-ratio excess-return calculation.
+    # Default 4.5% approximates current 3-month T-bill yields; override via RISK_FREE_RATE.
+    risk_free_rate: float = 0.045
     telegram_bot_token: SecretStr = Field(default=SecretStr(""))
     telegram_chat_id: str = ""
     # Scale prep: when set, signals are posted to ONE broadcast channel instead of

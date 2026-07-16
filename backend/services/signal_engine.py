@@ -2265,7 +2265,12 @@ async def generate_signal(
                                 else ""
                             )
                         ),
-                        "sentiment": "pos",
+                        # "neu" not "pos": score contribution removed 2026-07-15 (this
+                        # cohort underperforms -8.5pp), so it must not still count as
+                        # agreeing evidence for the Tier-6 clustering / orthogonality
+                        # boosts below — that would silently reintroduce the same
+                        # inflation the gate-audit removed.
+                        "sentiment": "neu",
                         "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts",
                     }
                 )
@@ -2279,7 +2284,7 @@ async def generate_signal(
                             f"Consensus target ${target_mean:.2f} implies {upside:.1f}% upside from ${price:.2f} "
                             f"across {analyst_count} analysts."
                         ),
-                        "sentiment": "pos",
+                        "sentiment": "neu",
                         "meta": f"Target ${target_mean:.2f} | {analyst_count} analysts",
                     }
                 )
@@ -4103,8 +4108,10 @@ async def generate_signal(
                         "src": "Fundamentals",
                         "head": f"Dividend Yield {div_yield:.1f}% > 10Y Treasury {t10y_rate:.1f}%",
                         "body": f"Stock yields {div_yield:.1f}% — {yield_gap:.1f}pp above the 10-year Treasury. When a blue chip yields more than risk-free bonds, yield-seeking demand increases.",
-                        "sentiment": "pos",
-                        "meta": f"Yield gap: +{yield_gap:.1f}pp",
+                        # "neu": +6 score removed 2026-07-15 (cohort -6.2pp) — must not
+                        # still count as agreeing evidence for Tier-6/orthogonality below.
+                        "sentiment": "neu",
+                        "meta": f"Yield gap: +{yield_gap:.1f}pp score_delta=0",
                     }
                 )
             elif yield_gap < -2.0:
@@ -4137,8 +4144,10 @@ async def generate_signal(
                             "Company announced an active share repurchase program within the last 90 days via Form 8-K. "
                             "Shows strong institutional support and capital allocation alignment at oversold levels."
                         ),
-                        "sentiment": "pos",
-                        "meta": "sec_buyback_8k=True score_delta=+5",
+                        # "neu": +5 score removed 2026-07-15 (delivered cohort -10.1pp) —
+                        # must not still count as agreeing evidence for Tier-6/orthogonality.
+                        "sentiment": "neu",
+                        "meta": "sec_buyback_8k=True score_delta=0",
                     }
                 )
         except Exception as e:

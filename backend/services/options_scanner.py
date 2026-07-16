@@ -294,18 +294,33 @@ async def run_options_scan(
     direction_df = _build_direction_df(stock_signals)
     log.info("Running daily options VRP scan (direction view: %d names)", len(direction_df))
 
-    # Size the VRP book against the LIVE options-account equity, not the engine's
-    # hardcoded $50k default (a $1M account otherwise sits ~idle at ~$5k book risk).
+    # Size the VRP book against the LIVE options-account buying power, not the
+    # engine's hardcoded $50k default. Use the most restrictive of equity and
+    # options_buying_power so a $1M account never sizes beyond its option BP.
     capital = 0.0
+    account = None
     try:
         from config import get_settings
         from services.options_account import _num, fetch_options_account
 
         snap = await fetch_options_account(get_settings())
-        if snap and snap.get("account"):
-            capital = _num((snap["account"] or {}).get("equity"), 0.0)
+        account = (snap or {}).get("account") or {}
+        if account:
+            equity = _num(account.get("equity"), 0.0)
+            options_bp = _num(account.get("options_buying_power"), 0.0)
+            bp = _num(account.get("buying_power"), 0.0)
+            # options_buying_power is the real limit for option orders; fall back
+            # to general buying_power/equity only if the broker didn't expose it.
+            effective_bp = options_bp or bp or equity
+            capital = min(e for e in (equity, effective_bp) if e > 0) if equity > 0 and effective_bp > 0 else 0.0
+            log.info(
+                "Options scan: equity=%.2f options_bp=%.2f effective_capital=%.2f",
+                equity,
+                options_bp or effective_bp,
+                capital,
+            )
     except Exception:
-        log.exception("Options scan: could not fetch account equity; using engine default")
+        log.exception("Options scan: could not fetch account equity/BP; using engine default")
 
     all_option_signals: list[dict] = []
     for universe in _OPTIONS_UNIVERSES:

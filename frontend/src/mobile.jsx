@@ -40,19 +40,6 @@ const POSITIONS_MOCK = [
   { tk:"TSLA", shares:-10, avg:172,   last:164.80,  pnl:72.00,  pct:4.19,  spark:[50,48,45,47,43,40,38,36] },
 ];
 
-const COT_POSITIONS_MOCK = [
-  { tk:"HYG",  units:5355, side:"long",  notional:427389, spark:[40,42,41,43,44,45,46,47] },
-  { tk:"SOXX", units:602,  side:"long",  notional:334158, spark:[30,34,38,42,45,48,52,55] },
-  { tk:"SPY",  units:391,  side:"long",  notional:295174, spark:[45,46,45,47,48,49,50,51] },
-  { tk:"FXY",  units:-5999,side:"short", notional:287245, spark:[50,48,46,45,43,42,40,39] },
-  { tk:"FXE",  units:-2185,side:"short", notional:231218, spark:[48,47,46,45,44,43,42,41] },
-  { tk:"LQD",  units:1650, side:"long",  notional:177526, spark:[35,36,37,36,38,39,40,41] },
-  { tk:"TIP",  units:1600, side:"long",  notional:172945, spark:[33,34,35,34,36,37,38,39] },
-  { tk:"EFA",  units:1227, side:"long",  notional:128387, spark:[38,39,38,40,41,40,42,43] },
-  { tk:"XSD",  units:209,  side:"long",  notional:111976, spark:[28,32,36,40,44,48,52,56] },
-  { tk:"VNQ",  units:1039, side:"long",  notional:101646, spark:[36,37,36,38,39,38,40,41] },
-];
-
 const OPTIONS_SUMMARY_MOCK = {
   label:"COT + carry + diversifier pack",
   n:24,
@@ -472,10 +459,15 @@ function PortfolioTabs({ active, onChange }) {
 }
 
 // ── Portfolio screen ─────────────────────────────────────────────────────────
-function PortfolioScreen({ positions, demo }) {
+function PortfolioScreen({ positions, demo, cotAccount, cotPositions, cotDemo = true }) {
   const [pfTab, setPfTab] = useState("equity");
   const equity = positions.reduce((s, p) => s + (p.last || 0) * Math.abs(p.shares || p.qty || 0), 0);
   const totalPnl = positions.reduce((s, p) => s + (p.pnl || 0), 0);
+  const cotPos = cotPositions || [];
+  const cotEquity = cotAccount ? parseFloat(cotAccount.equity) : null;
+  const cotLastEquity = cotAccount ? parseFloat(cotAccount.last_equity) : null;
+  const cotDayPl = Number.isFinite(cotEquity) && Number.isFinite(cotLastEquity) ? cotEquity - cotLastEquity : null;
+  const cotDayPlPct = cotDayPl != null && cotLastEquity ? (cotDayPl / cotLastEquity) * 100 : null;
   return (
     <>
       <MStatusBar/>
@@ -484,10 +476,10 @@ function PortfolioScreen({ positions, demo }) {
         <span className="live" style={{ color:"var(--info)" }}>SIM</span>
         <span className="ico"><MIcon name="settings" size={18}/></span>
       </div>
-      {demo && (
+      {((pfTab === "equity" && demo) || (pfTab === "cot" && cotDemo)) && (
         <div style={{ padding:"6px 16px", background:"var(--warn-soft)", borderBottom:"1px solid color-mix(in oklch, var(--warn) 30%, transparent)", fontSize:11, color:"var(--warn)", display:"flex", alignItems:"center", gap:6 }}>
           <span style={{ width:6, height:6, borderRadius:"50%", background:"var(--warn)" }}/>
-          Demo positions · connect to server for real P&L
+          {pfTab === "cot" ? "COT Engine not connected · demo positions shown" : "Demo positions · connect to server for real P&L"}
         </div>
       )}
       <div className="m-feed" style={{ padding:0 }}>
@@ -518,12 +510,14 @@ function PortfolioScreen({ positions, demo }) {
           )}
           {pfTab === "cot" && (
             <>
-              <div className="m-pf-bal">$1,004,620.00</div>
-              <div className="m-pf-ch">+$4,620.00 (+0.46%) · since Jun 22</div>
+              <div className="m-pf-bal">{cotDemo || cotEquity == null ? "—" : `$${cotEquity.toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 })}`}</div>
+              <div className="m-pf-ch" style={cotDayPl != null ? { color: cotDayPl >= 0 ? "var(--up)" : "var(--down)" } : undefined}>
+                {cotDemo ? "Connect COT Alpaca keys for live data" : cotDayPl == null ? "—" : `${cotDayPl >= 0 ? "+" : ""}$${cotDayPl.toFixed(2)} (${cotDayPlPct >= 0 ? "+" : ""}${cotDayPlPct.toFixed(2)}%) today`}
+              </div>
               <div className="m-pf-stats">
-                <div className="m-pf-stat"><div className="l">Open P&L</div><div className="v" style={{ color:"var(--up)" }}>+$4,620</div></div>
-                <div className="m-pf-stat"><div className="l">Live Sharpe</div><div className="v">0.90</div></div>
-                <div className="m-pf-stat"><div className="l">Vol target</div><div className="v">20%</div></div>
+                <div className="m-pf-stat"><div className="l">Positions</div><div className="v">{cotDemo ? "—" : cotPos.length}</div></div>
+                <div className="m-pf-stat"><div className="l">Day P&L</div><div className="v" style={cotDayPl != null ? { color: cotDayPl >= 0 ? "var(--up)" : "var(--down)" } : undefined}>{cotDemo || cotDayPl == null ? "—" : `${cotDayPl >= 0 ? "+" : ""}$${cotDayPl.toFixed(0)}`}</div></div>
+                <div className="m-pf-stat"><div className="l">Status</div><div className="v" style={{ color:"var(--info)" }}>{cotDemo ? "N/A" : "PAPER"}</div></div>
               </div>
             </>
           )}
@@ -573,21 +567,36 @@ function PortfolioScreen({ positions, demo }) {
         )}
         {pfTab === "cot" && (
           <>
-            <div className="m-list-head">Open positions · {COT_POSITIONS_MOCK.length}</div>
-            {COT_POSITIONS_MOCK.map((p, i) => (
-              <div key={i} className="m-pos-row">
-                <div className="m-pos-tk">{p.tk}</div>
-                <div className="m-pos-info">
-                  <div className="m-pos-shares">{p.side} · {Math.abs(p.units)} units</div>
-                  <div className="m-pos-px">${Math.abs(p.notional).toLocaleString()} notional</div>
-                </div>
-                <Sparkline data={p.spark} color={p.side === "long" ? "var(--up)" : "var(--down)"}/>
-                <div className={`m-pos-pnl ${p.side === "long" ? "up" : "down"}`}>
-                  <div className="v">{p.side === "long" ? "+" : "−"}${Math.abs(p.notional).toLocaleString()}</div>
-                  <div className="pct">{p.side === "long" ? "Long" : "Short"}</div>
-                </div>
+            {cotDemo ? (
+              <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:13 }}>
+                COT Engine keys not configured — no live data to show.
               </div>
-            ))}
+            ) : (
+              <>
+                <div className="m-list-head">Open positions · {cotPos.length}</div>
+                {cotPos.map((p, i) => {
+                  const tk = p.symbol || p.ticker;
+                  const side = p.side || (parseFloat(p.qty) < 0 ? "short" : "long");
+                  const notional = Math.abs(parseFloat(p.market_value ?? p.qty * (p.current_price || p.avg_entry_price || 0)) || 0);
+                  const pnl = parseFloat(p.unrealized_pl || 0);
+                  return (
+                    <div key={i} className="m-pos-row">
+                      <div className="m-pos-tk">{tk}</div>
+                      <div className="m-pos-info">
+                        <div className="m-pos-shares">{side} · {Math.abs(parseFloat(p.qty) || 0)} units</div>
+                        <div className="m-pos-px">${notional.toLocaleString()} notional</div>
+                      </div>
+                      <Sparkline data={p.spark || [40,42,41,43,44,45,46,47]} color={pnl >= 0 ? "var(--up)" : "var(--down)"}/>
+                      <div className={`m-pos-pnl ${pnl >= 0 ? "up" : "down"}`}>
+                        <div className="v">{pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(0)}</div>
+                        <div className="pct">{side === "long" ? "Long" : "Short"}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {cotPos.length === 0 && <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:13 }}>No open positions.</div>}
+              </>
+            )}
           </>
         )}
         <div style={{ padding:16 }}><button className="m-btn" style={{ width:"100%" }}>View closed trades →</button></div>
@@ -765,6 +774,9 @@ function MobileApp() {
   const [signalsDemo, setSignalsDemo] = useState(false);
   const [positionsDemo, setPositionsDemo] = useState(false);
   const [watchlistDemo, setWatchlistDemo] = useState(false);
+  const [cotAccount, setCotAccount] = useState(null);
+  const [cotPositions, setCotPositions] = useState([]);
+  const [cotDemo, setCotDemo] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
   const [stats,     setStats]     = useState(null);
   const [user,      setUser]      = useState(null);
@@ -814,6 +826,25 @@ function MobileApp() {
       setDataLoading(false);
     }
     apiFetch("/api/public/track-record", ctrl).then(d => { if (d && !d.no_data) setStats(d); }).catch(() => {});
+
+    // COT/signal-engine shadow book — separate Alpaca keys, may be unconfigured
+    // (403) for a given deployment. Only show real numbers; never fall back to
+    // fabricated "live" figures — an empty/unconfigured account renders an
+    // honest "not connected" state instead of invented P&L.
+    Promise.all([
+      apiFetch("/api/paper/cot/account", ctrl),
+      apiFetch("/api/paper/cot/positions", ctrl),
+    ]).then(([acct, pos]) => {
+      if (acct && !acct.detail) {
+        setCotAccount(acct);
+        setCotPositions(Array.isArray(pos) ? pos : []);
+        setCotDemo(false);
+      } else {
+        setCotAccount(null);
+        setCotPositions([]);
+        setCotDemo(true);
+      }
+    }).catch(() => { setCotAccount(null); setCotPositions([]); setCotDemo(true); });
   };
 
   // Auth
@@ -884,7 +915,7 @@ function MobileApp() {
     if (selected && tab === "feed") return <DetailScreen signal={selected} onBack={() => setSelected(null)} onSend={() => sendSignal(selected)} onPaperTrade={() => paperTrade(selected)}/>;
     switch (tab) {
       case "feed":      return <FeedScreen signals={signals} onSelect={s => setSelected(s)} loading={dataLoading} demo={signalsDemo} onRefresh={refresh}/>;
-      case "portfolio": return <PortfolioScreen positions={positions} demo={positionsDemo}/>;
+      case "portfolio": return <PortfolioScreen positions={positions} demo={positionsDemo} cotAccount={cotAccount} cotPositions={cotPositions} cotDemo={cotDemo}/>;
       case "record":    return <RecordScreen stats={stats}/>;
       case "account":   return <AccountScreen user={user}/>;
       case "watch":     return <WatchlistScreen tickers={watchlist} demo={watchlistDemo} onRefresh={refresh}/>;

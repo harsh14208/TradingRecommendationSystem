@@ -899,8 +899,13 @@ async def _maybe_paper_trade(
       - auto_paper_trade must be True in DB settings
       - BUY/SELL only (HOLD skipped)
       - Confidence >= min_confidence
-      - BUY  → skip if we already hold a long position in that ticker
-      - SELL → if we hold a long, close it (take profit); else short-sell
+      - BUY  → skip if we already hold a long position in that ticker; size off
+               non-margin buying power so no Alpaca margin is used
+      - SELL → if we hold a long, close it (take profit); otherwise skip UNLESS
+               it's a cross-sectional sleeve entry (``sleeve_notional`` set), in
+               which case it opens a genuine short — naked shorting is disabled
+               only for the main long-only MR engine, to keep its paper book
+               cash-secured.
       - market hours check
       - Sleeve signals may carry ``sleeve_notional`` and ``sleeve_exit`` markers.
     """
@@ -934,27 +939,31 @@ async def _maybe_paper_trade(
     is_sleeve_exit = bool(sig_dict.get("sleeve_exit", False))
     sleeve_notional = sig_dict.get("sleeve_notional")
 
-    # Size the position off LIVE account equity, not a flat notional. A fixed
-    # $1k/trade leaves a $1M paper account ~84% idle. `paper_trade_equity_pct`
-    # (fraction of equity per position) drives deployment; it falls back to the
-    # flat `paper_trade_notional` when the pct is 0/unset. One account fetch here
-    # is reused for both sizing and the BUY buying-power guard below.
+    # Size the position off LIVE non-margin buying power (cash), not equity and
+    # not Reg-T margin. A fixed $1k/trade leaves a $1M paper account ~84% idle.
+    # `paper_trade_equity_pct` (fraction of capital per position) drives
+    # deployment; it falls back to the flat `paper_trade_notional` when unset.
     # Cross-sectional sleeve entries override the per-position notional so the
     # L/S book stays dollar-neutral.
     try:
-        acct = await alpaca_rest.get_account(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value())
+        acct = await alpaca_rest.get_account(
+            settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value()
+        )
     except Exception as e:
         log.info(f" account check failed: {e}")
         return
     equity = float(acct.get("equity") or 0.0)
-    buying_power = float(acct.get("buying_power") or 0)
+    # non_marginable_buying_power is the cash-only figure; ignore the 2x/4x
+    # margin buying_power so the paper book stays fully paid-up.
+    non_marginable_bp = float(acct.get("non_marginable_buying_power") or acct.get("cash") or 0.0)
+    capital_base = non_marginable_bp if non_marginable_bp > 0 else equity
 
     if sleeve_notional is not None and sleeve_notional > 0:
         notional = float(sleeve_notional)
     else:
         equity_pct = float(db_settings.get("paper_trade_equity_pct", 0.0) or 0.0)
-        if equity_pct > 0 and equity > 0:
-            notional = equity * equity_pct
+        if equity_pct > 0 and capital_base > 0:
+            notional = capital_base * equity_pct
         else:
             notional = float(db_settings.get("paper_trade_notional", 1000.0))
 
@@ -978,12 +987,12 @@ async def _maybe_paper_trade(
     if is_sleeve_exit:
         if pos_side == "long" and action == "SELL":
             order = await alpaca_rest.close_position(
-                settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), ticker
+                settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value(), ticker
             )
             log.info(f" ✓ AUTO CLOSE long {ticker} — cross-sectional sleeve exit")
         elif pos_side == "short" and action == "BUY":
             order = await alpaca_rest.close_position(
-                settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), ticker
+                settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value(), ticker
             )
             log.info(f" ✓ AUTO CLOSE short {ticker} — cross-sectional sleeve exit")
         else:
@@ -995,24 +1004,24 @@ async def _maybe_paper_trade(
             if pos_side == "short":
                 # Flip short → long: cover first, then buy below.
                 await alpaca_rest.close_position(
-                    settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), ticker
+                    settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value(), ticker
                 )
                 log.info(f" ✓ AUTO CLOSE short {ticker} — flipping to long")
             elif pos_side == "long":
                 log.info(f" {ticker} BUY skipped — already long {pos['qty']} shares")
                 return
 
-            # Guard: check buying power before placing BUY orders (reuses the fetch above).
-            if buying_power < notional * 0.5:
+            # Guard: check non-margin buying power before placing BUY orders.
+            if non_marginable_bp > 0 and non_marginable_bp < notional:
                 log.info(
-                    f" {ticker} BUY skipped — insufficient buying power "
-                    f"(${buying_power:.0f} available, ${notional:.0f} needed). "
+                    f" {ticker} BUY skipped — insufficient non-margin buying power "
+                    f"(${non_marginable_bp:.0f} available, ${notional:.0f} needed). "
                     f"Reset your paper account at alpaca.markets."
                 )
                 return
 
             order = await alpaca_rest.place_order(
-                settings.alpaca_api_key,
+                settings.alpaca_api_key.get_secret_value(),
                 settings.alpaca_api_secret.get_secret_value(),
                 ticker,
                 qty,
@@ -1025,26 +1034,48 @@ async def _maybe_paper_trade(
 
         else:  # SELL entry
             if pos_side == "long":
-                # Flip long → short: close long, then short below.
                 await alpaca_rest.close_position(
-                    settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value(), ticker
+                    settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value(), ticker
                 )
-                log.info(f" ✓ AUTO CLOSE long {ticker} — flipping to short")
-            elif pos_side == "short":
-                log.info(f" {ticker} SELL skipped — already short {pos['qty']} shares")
+                log.info(f" ✓ AUTO CLOSE long {ticker}")
                 return
 
-            order = await alpaca_rest.place_order(
-                settings.alpaca_api_key,
-                settings.alpaca_api_secret.get_secret_value(),
-                ticker,
-                qty,
-                "sell",
-            )
+            if sleeve_notional is not None and sleeve_notional > 0:
+                # Cross-sectional sleeve is a genuine dollar-neutral long/short book
+                # (unlike the main MR engine, which is long-only by design — see the
+                # "no shorts" branch below). Its short leg must actually open a short
+                # position; previously this branch silently no-op'd every sleeve SELL
+                # entry, so the sleeve was long-only in practice with unintended net
+                # market exposure the h=63 research never validated.
+                if pos_side == "short":
+                    log.info(f" {ticker} SELL skipped — already short {pos['qty']} shares")
+                    return
+                margin_bp = float(acct.get("buying_power") or 0.0)
+                if margin_bp > 0 and margin_bp < notional:
+                    log.info(
+                        f" {ticker} SHORT skipped — insufficient buying power "
+                        f"(${margin_bp:.0f} available, ${notional:.0f} needed)."
+                    )
+                    return
+                order = await alpaca_rest.place_order(
+                    settings.alpaca_api_key.get_secret_value(),
+                    settings.alpaca_api_secret.get_secret_value(),
+                    ticker,
+                    qty,
+                    "sell",
+                )
+                log.info(
+                    f" ✓ AUTO SHORT {ticker} {qty}sh @ ~${price:.2f} — cross-sectional sleeve "
+                    f"| order {order.get('id', '?')[:8]} status={order.get('status')}"
+                )
+                return
+
+            # Main MR engine: cash-secured paper book, naked short selling disabled.
             log.info(
-                f" ✓ AUTO SELL {ticker} {qty}sh @ ~${price:.2f} "
-                f"| order {order.get('id', '?')[:8]} status={order.get('status')}"
+                f" {ticker} SELL skipped — no long position to close; "
+                f"naked short selling is disabled in paper mode to avoid margin"
             )
+            return
 
     except Exception as e:
         log.info(f" ✗ {ticker} {action} failed: {e}")
@@ -1065,12 +1096,34 @@ async def _build_cross_sectional_sleeve_signals(
         if settings.alpaca_api_key and settings.alpaca_api_secret:
             from services import alpaca_rest
 
-            acct = await alpaca_rest.get_account(settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value())
+            acct = await alpaca_rest.get_account(
+                settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value()
+            )
             total_equity = float(acct.get("equity") or 0.0)
 
         if total_equity <= 0:
             log.info("[scanner] cross-sectional sleeve skipped — no live equity")
             return []
+
+        # Rebalance cooldown: nothing gated the desired-book recompute to the h=63
+        # "quarterly-ish" cadence this sleeve was researched at — _run_scan_impl calls
+        # this every scan_interval_min (default 15) during market hours, so a ticker
+        # sitting near a decile boundary could open/close/reopen dozens of times a day,
+        # blowing through the turnover-cost assumptions the backtest validated. Cap
+        # rebalances to once per ET calendar day using the same AppSettings singleton
+        # pattern used elsewhere for lightweight persisted state. Bookkeeping errors
+        # here must never disable the sleeve itself, so they're caught locally rather
+        # than left to the function's outer catch-all (which would silently return []).
+        _today = _today_start_utc()
+        try:
+            async with AsyncSessionLocal() as _cd_db:
+                _app_row = (await _cd_db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+                _last_rebal = ((_app_row.data or {}) if _app_row else {}).get("cross_sectional_sleeve_last_rebalance")
+            if _last_rebal and datetime.fromisoformat(_last_rebal) >= _today:
+                log.info("[scanner] cross-sectional sleeve skipped — already rebalanced today")
+                return []
+        except Exception as _e:
+            log.warning("[scanner] cross-sectional sleeve cooldown check failed (proceeding): %s", _e)
 
         # Query currently active CrossSectional sleeve positions.
         active_positions: dict[str, str] = {}
@@ -1107,6 +1160,18 @@ async def _build_cross_sectional_sleeve_signals(
                 len(sleeve_signals),
                 sleeve_capital,
             )
+
+        try:
+            async with AsyncSessionLocal() as _cd_db:
+                _app_row = (await _cd_db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
+                if _app_row is None:
+                    _app_row = AppSettings(id=1, data={})
+                    _cd_db.add(_app_row)
+                _app_row.data = {**(_app_row.data or {}), "cross_sectional_sleeve_last_rebalance": _today.isoformat()}
+                await _cd_db.commit()
+        except Exception as _e:
+            log.warning("[scanner] cross-sectional sleeve failed to persist rebalance timestamp: %s", _e)
+
         return sleeve_signals
     except Exception as _e:
         log.warning("[scanner] cross-sectional sleeve build failed: %s", _e, exc_info=True)
@@ -1429,7 +1494,7 @@ async def fetch_market_context(tickers: list[str], settings) -> dict:
             from services.sector import SECTOR_MAP as SECTOR_ETF_MAP
 
             positions_list = await alpaca_rest.get_positions(
-                settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value()
+                settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value()
             )
             if positions_list:
                 total_mv = sum(abs(float(p.get("market_value") or 0)) for p in positions_list)
@@ -1982,6 +2047,12 @@ async def _persist_scan_signals(
                         # the row is traceable to the exact engine version that produced it.
                         # (Column existed but was never written — 100% null before this.)
                         policy_version=f"{SCORING_POLICY_VERSION}/{GATES_POLICY_VERSION}",
+                        # Sleeve exit rows are a terminal "position closed" event, not a new
+                        # open position — insert them inactive so the next scan's
+                        # active-positions query (_build_cross_sectional_sleeve_signals)
+                        # doesn't see them as still-open and emit another exit signal in the
+                        # opposite direction forever (BUY→SELL→BUY→SELL flip loop).
+                        is_active=not sig.get("sleeve_exit", False),
                     )
                     db.add(row)
                     await db.flush()
@@ -2661,7 +2732,7 @@ async def _run_scan_impl(broadcast_fn=None, broadcast_signal_fn=None):
             from services import alpaca_rest
 
             positions_list = await alpaca_rest.get_positions(
-                settings.alpaca_api_key, settings.alpaca_api_secret.get_secret_value()
+                settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value()
             )
             positions_map = {p["symbol"].upper(): p for p in positions_list}
         except Exception as e:

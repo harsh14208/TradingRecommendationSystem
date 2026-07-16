@@ -306,7 +306,12 @@ def trade_stats(trades: pd.DataFrame) -> dict:
         return {"n": 0, "wr": 0.0, "avg": 0.0, "sharpe": 0.0}
     avg = r.mean()
     std = r.std(ddof=0)
-    sharpe = (avg / std) * np.sqrt(252 / 5.0) if std > 1e-9 else 0.0
+    # Per-trade Sharpe, NOT annualized — matches backtest_technicals.py's stats()
+    # convention (trade-level returns, not daily; sqrt(252) would be misleading).
+    # Previously scaled by sqrt(252/5), inflating "Trd Sh" ~2.2x on a different
+    # scale than every other Sharpe figure this codebase reports, and hardcoded
+    # a 5-day hold vs the actual default HOLD_DAYS=10.
+    sharpe = (avg / std) if std > 1e-9 else 0.0
     return {"n": len(r), "wr": (r > 0).mean() * 100.0, "avg": avg, "sharpe": sharpe}
 
 

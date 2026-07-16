@@ -90,7 +90,7 @@ Key components:
 | Paper simulator | `services/options_paper.py` | Natural-side fills, mark-to-market P&L against Polygon |
 | Live broker | `services/brokers/alpaca_options.py` | Alpaca single/multi-leg option orders |
 | Opt-in/ack | `routers/me.py` `/api/me/options/*` | Mode settings + options-specific risk acknowledgement |
-| Order book | `models.py` → `BrokerOrder` | `option_legs`, `realized_pnl`, `unrealized_pnl` |
+| Order book | `models.py` → `BrokerOrder` | `option_legs`, `realized_pnl`, `unrealized_pnl`, `alpaca_account_id` (scopes dedup to the current Alpaca account) |
 
 ## Layer Boundaries
 
