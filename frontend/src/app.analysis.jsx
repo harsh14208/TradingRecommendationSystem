@@ -450,76 +450,88 @@ function SimulatedReturnsPanel({ signal, onClose }) {
   );
 }
 
-// ── COT engine paper book (shadow marks from local macro engine) ──────────────
-const COT_ENGINE_SUMMARY = {
-  capital: 1000000,
-  equity: 1004620,
-  openPnl: 4620,
-  returnPct: 0.46,
-  liveSharpe: 0.90,
+// ── COT engine paper book (linked to live Alpaca paper account) ───────────────
+const COT_ENGINE_META = {
   backtestSharpe: 0.88,
   volTarget: 20,
-  since: "Jun 22, 2026",
-  nDays: 13,
+  since: "Jul 15, 2026",
+  nDays: 1,
   book: "champion",
 };
 
-const COT_ENGINE_POSITIONS = [
-  { symbol:"HYG",  units:5355, side:"long",  notional:427389 },
-  { symbol:"SOXX", units:602,  side:"long",  notional:334158 },
-  { symbol:"SPY",  units:391,  side:"long",  notional:295174 },
-  { symbol:"FXY",  units:-5999,side:"short", notional:287245 },
-  { symbol:"FXE",  units:-2185,side:"short", notional:231218 },
-  { symbol:"LQD",  units:1650, side:"long",  notional:177526 },
-  { symbol:"TIP",  units:1600, side:"long",  notional:172945 },
-  { symbol:"EFA",  units:1227, side:"long",  notional:128387 },
-  { symbol:"XSD",  units:209,  side:"long",  notional:111976 },
-  { symbol:"VNQ",  units:1039, side:"long",  notional:101646 },
-];
+function CotEnginePanel({ account, positions, loading, err }) {
+  positions = positions || [];
+  const fmtMoney = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtPct   = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${Number(v).toFixed(2)}%`;
+  const rc = v => v == null ? "var(--text-faint)" : v >= 0 ? "var(--up)" : "var(--down)";
+  const m = COT_ENGINE_META;
 
-function CotEnginePanel() {
-  const s = COT_ENGINE_SUMMARY;
-  const fmtMoney = v => `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const openPl = positions.reduce((s, p) => s + (parseFloat(p.unrealized_pl) || 0), 0);
+  const lastEq = parseFloat(account?.last_equity);
+  const dayPl  = Number.isFinite(lastEq) ? parseFloat(account?.equity) - lastEq : null;
+  const totalReturn = account?.equity ? ((parseFloat(account.equity) / 1000000) - 1) * 100 : null;
+
   return (
     <div style={{ padding:"20px 28px", overflowY:"auto", maxHeight:"calc(100vh - 100px)", display:"flex", flexDirection:"column", gap:20 }}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12 }}>
-        {[
-          ["Equity", fmtMoney(s.equity), "var(--text)"],
-          ["Open P&L", fmtMoney(s.openPnl), "var(--up)"],
-          ["Live Sharpe", s.liveSharpe.toFixed(2), "var(--up)"],
-          ["Vol target", `${s.volTarget}%`, "var(--accent)"],
-        ].map(([l,v,c]) => (
-          <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px" }}>
-            <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>{l}</div>
-            <div style={{ fontSize:18, fontWeight:700, fontFamily:"var(--font-mono)", color:c }}>{v}</div>
-          </div>
-        ))}
-      </div>
-      <div style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px", border:"1px solid var(--line)" }}>
-        <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>Strategy</div>
-        <div style={{ fontSize:13, color:"var(--text)", lineHeight:1.5 }}>
-          COT positioning + trend/carry rules, vol targeting and IDM across ETFs/futures.
-          Backtest Sharpe {s.backtestSharpe} (2007–2026 net). Live shadow marks since {s.since} ({s.nDays} days).
-        </div>
-      </div>
-      <div>
-        <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Open positions ({COT_ENGINE_POSITIONS.length})</div>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, fontFamily:"var(--font-mono)" }}>
-          <thead><tr style={{ borderBottom:"1px solid var(--line)", color:"var(--text-faint)", fontSize:10, textTransform:"uppercase" }}>
-            {["Symbol","Side","Units","Notional"].map(h => <th key={h} style={{ padding:"7px 10px", textAlign: h==="Symbol"?"left":"right", fontWeight:500 }}>{h}</th>)}
-          </tr></thead>
-          <tbody>
-            {COT_ENGINE_POSITIONS.map((p,i) => (
-              <tr key={i} style={{ borderBottom:"1px solid var(--line)" }}>
-                <td style={{ padding:"7px 10px", fontWeight:600 }}>{p.symbol}</td>
-                <td style={{ padding:"7px 10px", textAlign:"right", textTransform:"capitalize", color: p.side==="long"?"var(--up)":"var(--down)" }}>{p.side}</td>
-                <td style={{ padding:"7px 10px", textAlign:"right" }}>{Math.abs(p.units).toLocaleString()}</td>
-                <td style={{ padding:"7px 10px", textAlign:"right", color:"var(--text-faint)" }}>${Math.abs(p.notional).toLocaleString()}</td>
-              </tr>
+      {err === "upgrade" && <UpgradePrompt feature="Paper Portfolio" minTier="basic"/>}
+      {err === "offline" && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Backend offline or Alpaca API keys not configured.</div>}
+      {loading && <div style={{ color:"var(--text-faint)", fontSize:12 }}>Loading COT Engine account…</div>}
+
+      {account && (
+        <>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12 }}>
+            {[
+              ["Equity", fmtMoney(account.equity), "var(--text)"],
+              ["Cash", fmtMoney(account.cash), "var(--text)"],
+              ["Open P&L", positions.length ? fmtMoney(openPl) : "—", positions.length ? rc(openPl) : "var(--text-faint)"],
+              ["Day P&L", dayPl == null ? "—" : fmtMoney(dayPl), rc(dayPl)],
+              ["Total return", fmtPct(totalReturn), rc(totalReturn)],
+              ["Vol target", `${m.volTarget}%`, "var(--accent)"],
+            ].map(([l,v,c]) => (
+              <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px" }}>
+                <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>{l}</div>
+                <div style={{ fontSize:18, fontWeight:700, fontFamily:"var(--font-mono)", color:c }}>{v}</div>
+              </div>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </div>
+          <div style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px", border:"1px solid var(--line)" }}>
+            <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>Strategy</div>
+            <div style={{ fontSize:13, color:"var(--text)", lineHeight:1.5 }}>
+              COT positioning + trend/carry rules, vol targeting and IDM across ETFs/futures.
+              Backtest Sharpe {m.backtestSharpe} (2007–2026 net). Live shadow marks since {m.since} ({m.nDays} days).
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Open positions ({positions.length})</div>
+            {positions.length === 0 ? (
+              <div style={{ color:"var(--text-faint)", fontSize:12 }}>No open positions.</div>
+            ) : (
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, fontFamily:"var(--font-mono)" }}>
+                <thead><tr style={{ borderBottom:"1px solid var(--line)", color:"var(--text-faint)", fontSize:10, textTransform:"uppercase" }}>
+                  {["Symbol","Side","Qty","Market value","Unrealized P&L"].map(h => <th key={h} style={{ padding:"7px 10px", textAlign: h==="Symbol"?"left":"right", fontWeight:500 }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {positions.map((p,i) => {
+                    const qty = parseFloat(p.qty);
+                    const side = qty >= 0 ? "long" : "short";
+                    const mv = parseFloat(p.market_value) || 0;
+                    const upl = parseFloat(p.unrealized_pl) || 0;
+                    return (
+                      <tr key={i} style={{ borderBottom:"1px solid var(--line)" }}>
+                        <td style={{ padding:"7px 10px", fontWeight:600 }}>{p.symbol}</td>
+                        <td style={{ padding:"7px 10px", textAlign:"right", textTransform:"capitalize", color: side==="long"?"var(--up)":"var(--down)" }}>{side}</td>
+                        <td style={{ padding:"7px 10px", textAlign:"right" }}>{Math.abs(qty).toLocaleString()}</td>
+                        <td style={{ padding:"7px 10px", textAlign:"right", color:"var(--text-faint)" }}>{fmtMoney(mv)}</td>
+                        <td style={{ padding:"7px 10px", textAlign:"right", color: rc(upl) }}>{fmtMoney(upl)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -602,7 +614,7 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
         ))}
       </div>
       {tab === "cot" ? (
-        <CotEnginePanel />
+        <CotEnginePanel account={account} positions={positions} loading={loading} err={err} />
       ) : tab === "options" ? (
         <OptionsPaperPanel online={online} />
       ) : (
