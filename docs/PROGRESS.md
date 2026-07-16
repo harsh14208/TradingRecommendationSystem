@@ -1,6 +1,6 @@
 # Signal.Trade — Development Progress
 
-> **Version: v8.8.9** · Updated: 2026-07-15 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v8.9** · Updated: 2026-07-15 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
 >
 > **v8.8.7 (2026-06-18) — Backtest realism, QA audit hardening, entry-score relaxation, sources removal, elite tier, and aiohttp CVE patch.** Replaced the Backtest Lab toy simulator with real `/api/signals/backtest/simulate` trade replay; shipped a major QA pass (WebSocket reconnect, a11y handlers, focus traps, mobile parity, form validation, API retry); lowered backtest `BUY_THRESH` 50→45 and live BUY score bar 35→32 (forward-validated, first live read pending); removed the dead `/api/sources` module; widened the user-tier check constraint for `'elite'`; bumped `aiohttp` to fix 8 CVEs and keep CI green. **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Frontend 9.0→9.1, Product Completeness 9.4→9.5, Security Posture 8.2→8.3; headline unchanged per v8.0.1 discipline).
 >
@@ -38,6 +38,18 @@ The 0.55 setting keeps 84% of trades while lifting isolated Sharpe +0.47 and cut
 **Backtest parallelization.** Converted `backend/scripts/backtest_technicals.py` from `multiprocessing.Pool` to `ThreadPoolExecutor` with `_run_simulation_parallel` / `_filter_simulation_results` helpers, applied to the main run, calm-sleeve, gate validation, exit-sweep, full-signal comparison, and research sections. A 15-ticker `--quick` run dropped from ~5 min to ~22 s; the full 26-year run completes in ~8 min (was much longer). Controllable via `BACKTEST_WORKERS` env var (default 8).
 
 **Other fixes today.** PIT constituent regeneration without the 2003-01-01 start clamp; live-engine log-audit fixes (tz bug #3, dead RSI-divergence, test-suite clobbering prod model stats); batch-1/2/3 wrong-signed/too-weak gate corrections from most-fired and mismatch audits; vol-targeting units/vol-annualization bugs fixed and claims retracted; §MAX tier analysis + §ON overnight/intraday decomposition auto-run added; patent/research-item harnesses and graduation report.
+
+### v8.9 (2026-07-15) — Cross-sectional h=63 sleeve promoted to paper trading
+
+**Highest-priority item from the MAX21/R7 audit reset.** The research-promoted h=63 cross-sectional model (nested-horizon net Sharpe +0.576, 90% CI excludes 0, cost- and borrow-robust) is no longer just a metadata shadow. It now runs as a standalone long/short paper sleeve inside the regular scan cycle.
+
+- `services/cross_sectional_sleeve.py`: builds a dollar-neutral top/bottom-decile L/S book from `score_batch_h63()`, emits entry signals for today's desired legs, and emits `sleeve_exit` signals for names that fall out of the book.
+- `services/scanner.py` Step 5e (`_build_cross_sectional_sleeve_signals()`): fetches live Alpaca paper equity, loads active `CrossSectional` positions, allocates capital via `services.alpha_sleeves.allocate_cross_sleeve_capital()`, and appends sleeve signals after the directional structural filters.
+- `services/scanner.py` `_maybe_paper_trade()`: honors per-name `sleeve_notional`, closes shorts on `BUY` flips, closes longs on `SELL` flips, and handles `sleeve_exit` signals without opening new positions.
+- Cohort discipline preserved: all sleeve signals are `cohort="shadow"`, `style="position"`, `recommendedHoldDays=63`, and paper-trade only — no Telegram/Discord spam.
+- Research blend: MR × XS-h63 correlation ≈ −0.02; a 50/50 risk blend produced Sharpe ~1.31 vs MR-alone ~0.88.
+- New tests: `tests/test_cross_sectional_sleeve.py` (8 cases) and `tests/test_scanner_cross_sectional_sleeve.py` (3 cases) pass.
+- Docs updated: `docs/RUNBOOK.md` §6.4.1.
 
 ### v8.8.8 (2026-06-27) — Signal Engine Confidence Ontology Refactor
 

@@ -350,6 +350,21 @@ BACKTEST_WORKERS=8 ../.venv311/bin/python scripts/backtest_technicals.py
 
 After promotion, `services.cross_sectional_shadow._SHADOW_SIZING_ACTIVE` is `True` and `services.alpha_sleeves.allocate_cross_sleeve_capital()` uses the validated MR + CrossSectional Sharpes/vols with risk-parity sizing.
 
+#### 6.4.1 Standalone h=63 paper sleeve (scan-cycle rebalance)
+
+The promoted h=63 model now runs as a standalone long/short paper sleeve inside the regular scan cycle:
+
+- `services/scanner.py` Step 5e calls `services.cross_sectional_sleeve.make_cross_sectional_sleeve_signals()` after the directional structural filters.
+- The sleeve uses live Alpaca paper equity to size its allocation via `services.alpha_sleeves.allocate_cross_sleeve_capital()`.
+- Top/bottom decile names produce `BUY`/`SELL` entry signals; names that fall out of the book produce `sleeve_exit` signals so stale positions are closed.
+- All sleeve signals are tagged `cohort="shadow"`, `sleeve="CrossSectional"`, and `style="position"` with a 63-day hold horizon. They paper-trade only and do not generate Telegram/Discord notifications.
+- `_maybe_paper_trade()` honors the per-name `sleeve_notional` override, covers shorts on `BUY` flips, and closes longs on `SELL` flips.
+
+Operational notes:
+- The sleeve requires the h=63 artifacts (`data/cross_sectional_model_h63.json` and `data/cross_sectional_features_h63.json`) and an Alpaca paper account with `auto_paper_trade=True`.
+- If Alpaca equity is unavailable, the sleeve is skipped gracefully for that cycle.
+- Correlation with the MR sleeve is ~−0.02; a 50/50 risk blend produced Sharpe ~1.31 vs MR-alone ~0.88 in research.
+
 ---
 
 ## 7. Going Live with Real-Money Auto-Execution
