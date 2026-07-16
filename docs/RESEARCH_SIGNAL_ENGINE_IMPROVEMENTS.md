@@ -123,25 +123,26 @@ published high-MAX effect, this vol-gated MR book performs **better on low-MAX n
 
 The low-MAX filter cuts MaxDD by ~56% and raises Sharpe +0.73, while removing ~42% of trades.
 
-**Integrated live-MAX21 gate (`--max21-filter 0.5`).** The live `Max21Gate` uses a
-*per-ticker* expanding median, which is less aggressive than the harness's portfolio-wide
-quantile.  Running it inside the 26-year simulation keeps **251 of 313 trades (20% filtered)**
-and produces event-time Sharpe **4.12**, MaxDD **−5.51%**, CAGR +3.9% — a +0.84 Sharpe
-improvement with a ~3pp MaxDD cut.
+**Integrated live-MAX21 gate (`--max21-filter 0.55`).** The live `Max21Gate` uses a
+*per-ticker* expanding 55th percentile, which is less aggressive than the harness's portfolio-wide
+quantile.  Running it inside the 26-year simulation keeps **264 of 313 trades (−16% filtered)**
+and produces event-time Sharpe **4.35**, MaxDD **−5.17%**, CAGR +4.2% — a +1.07 Sharpe
+improvement with a ~3.3pp MaxDD cut.
 
-A quick threshold sensitivity on the integrated run shows 0.50 is currently the sweet spot:
+A threshold sensitivity on the integrated run shows **0.55 is the sweet spot**:
 
 | `--max21-filter` | Trades kept | ΔN vs baseline | Port Sharpe | Max DD | CAGR |
 |:---|---:|---:|---:|---:|---:|
 | baseline (off) | 313 | — | 3.28 | −8.43% | +4.31% |
 | 0.33 | 191 | −39% | 4.01 | −5.34% | +3.70% |
-| **0.50** | **251** | **−20%** | **4.12** | **−5.51%** | **+3.90%** |
+| 0.50 | 251 | −20% | 4.12 | −5.51% | +3.90% |
+| **0.55** | **264** | **−16%** | **4.35** | **−5.17%** | **+4.20%** |
 | 0.67 | 297 | −5% | 3.21 | −6.08% | +4.10% |
 
-Tightening beyond 0.50 (e.g. 0.33) cuts too many trades for modest further Sharpe/DD gains;
-loosening to 0.67 keeps nearly all trades but loses the Sharpe lift.  The 182-trade figure
-from the post-processing harness is a portfolio-wide filter; the live gate's per-ticker
-median is the operational number.
+Tightening to 0.33 cuts too many trades for modest further Sharpe/DD gains; loosening to 0.67
+keeps nearly all trades but loses the Sharpe lift.  The 182-trade figure from the post-processing
+harness is a portfolio-wide filter; the live gate's per-ticker 55th percentile is the operational
+number.
 
 **Why the sign flips:** the existing entry gates (VIX≥20, score/quality, BB%B, etc.) already
 concentrate on lottery-like, high-vol names.  Within that pre-selected universe, the
@@ -149,10 +150,10 @@ concentrate on lottery-like, high-vol names.  Within that pre-selected universe,
 mean-reversion.
 
 **VERDICT: GRADUATE.**  The low-MAX filter materially improves the risk-adjusted path.
-The causal per-ticker expanding-median gate is now wired into **both** the backtest
+The causal per-ticker expanding-55th-percentile gate is now wired into **both** the backtest
 (`backtest_technicals.py --max21-filter p`) and the **live signal engine**
 (`Max21Gate` in `services/gates/technicals.py`, computed in `services/technicals.py`).
-It blocks BUY signals whose trailing 21-day MAX is above the ticker's expanding median.
+It blocks BUY signals whose trailing 21-day MAX is above the ticker's expanding 55th percentile.
 
 **Next step.** The gate is already live (`Max21Gate` in `services/gates/technicals.py`).
 Monitor forward outcomes for 30–60 days and compare blocked vs. delivered cohort WR.  Also
@@ -288,7 +289,7 @@ forward, then decide on real capital.
 | Rank | Idea | Test location | Effort | Expected impact |
 |------|------|---------------|--------|-----------------|
 | 1 | ~~Portfolio vol targeting~~ | `backtest_technicals.py --portfolio` | Low | **TESTED & REJECTED 2026-07-15** — redundant with §12b VIX entry gate (see §1.1) |
-| 2 | **MAX-effect conditioning** | `backtest_technicals.py --max21-filter 0.5` + live `Max21Gate` | Low | **GRADUATED 2026-07-15** — live gate wired; 26yr integrated backtest confirms Port Sharpe 3.28 → 4.12, MaxDD −8.43% → −5.51% |
+| 2 | **MAX-effect conditioning** | `backtest_technicals.py --max21-filter 0.55` + live `Max21Gate` | Low | **GRADUATED 2026-07-15** — live gate wired; 26yr integrated backtest confirms Port Sharpe 3.28 → 4.35, MaxDD −8.43% → −5.17% |
 | 3 | ~~Limit-below-close entry~~ | `backtest_technicals.py --entry-limit k` | Low | **TESTED & REJECTED 2026-07-15** — adverse selection kills more alpha than slippage saved (see §1.3) |
 | 4 | **Regime-conditional allocation** | `backend/scripts/backtest_regime_cohort.py` | Medium | **GRADUATED 2026-07-15** — +1.22 Sharpe on DD-throttle baseline; needs live cohort integration (see §1.4) |
 

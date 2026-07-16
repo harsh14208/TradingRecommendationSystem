@@ -1,6 +1,6 @@
 # Signal.Trade — Development Progress
 
-> **Version: v8.8.7** · Updated: 2026-06-18 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
+> **Version: v8.8.9** · Updated: 2026-07-15 · Server: `uvicorn main:app --host 0.0.0.0 --port 8000`
 >
 > **v8.8.7 (2026-06-18) — Backtest realism, QA audit hardening, entry-score relaxation, sources removal, elite tier, and aiohttp CVE patch.** Replaced the Backtest Lab toy simulator with real `/api/signals/backtest/simulate` trade replay; shipped a major QA pass (WebSocket reconnect, a11y handlers, focus traps, mobile parity, form validation, API retry); lowered backtest `BUY_THRESH` 50→45 and live BUY score bar 35→32 (forward-validated, first live read pending); removed the dead `/api/sources` module; widened the user-tier check constraint for `'elite'`; bumped `aiohttp` to fix 8 CVEs and keep CI green. **Ratings: 8.9/10 product · 8.3/10 B+ quality** (Frontend 9.0→9.1, Product Completeness 9.4→9.5, Security Posture 8.2→8.3; headline unchanged per v8.0.1 discipline).
 >
@@ -22,6 +22,26 @@
 > **Tests: 2615 passed, 33 skipped (ex-e2e) · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.8: N=155, WR=67.1%, Sharpe=0.25 with L7 score-band sizing + MR-count=2 (survivorship-corrected + §63 ADF gate)**
 > **v8.2 (2026-06-09) — Sharpe improvement sweep + live engine updates.** v10.8 backtest sweep: 12 candidate approaches on 100-ticker/23yr IS. Score-band sizing (+0.05 Sharpe, zero trade impact), MR-count=2 (+0.01 Sharpe, −1 trade), and dynamic RSI stops all validated and shipped live. IS Sharpe 0.23→0.25. See `docs/Stats.md §83`.
 > **v8.1 (2026-06-09) — Survivorship correction + new live gates + correctness fixes + open-source quant-library audit.** Survivorship bias corrected via free PIT S&P constituents (the #1 named ceiling); new live gates (§14 FRED macro-regime, Polygon short-volume, dynamic sector limits + XLI ML); live correctness fixes (`sector_etf` decouple — was nulling ~81% of signals; cohort-enrichment restore; dark_pool restart-storm); §63 cointegration ADF correctness fix + macro-regime HMM→hmmlearn (both live); cross-sectional model net-positive at h=21 (net +0.347, borrow-robust) deployed in **SHADOW**. **Overall 8.8/10 product · 8.6/10 quality** (+0.1 from v8.0.1; shadow/research work excluded per "implemented ≠ working live"). See Stats.md §15.
+### v8.8.9 (2026-07-15) — R7 drawdown throttle, MAX21 low-MAX filter graduation, and backtest parallelization
+
+**R7 graduated drawdown throttle.** New positions are now throttled when the portfolio is in drawdown. `services/portfolio_allocator.py` computes a throttle multiplier `max(1 - (drawdown - trigger) * mult, 0)` with env overrides `DD_THROTTLE_TRIGGER_PCT` (default 3.0) and `DD_THROTTLE_MULT` (default 0.5). `services/broker_svc.py` applies the same multiplier to notional sizes before sending orders. Unit tests and docs updated. The `--portfolio` backtest default now runs with the R7 throttle enabled.
+
+**MAX21 low-MAX filter graduates at the 55th percentile.** Re-validated on the honest 26-year PIT-corrected MR-only canon (N=313, Port Sharpe 3.28, MaxDD −8.43%). Contrary to Chen et al., this vol-gated book performs better on *low*-MAX names. Integrated threshold sweep:
+
+| `--max21-filter` | Trades kept | Port Sharpe | Max DD | CAGR |
+|:---|---:|---:|---:|---:|
+| baseline (off) | 313 | 3.28 | −8.43% | +4.31% |
+| 0.33 | 191 | 4.01 | −5.34% | +3.70% |
+| 0.50 | 251 | 4.12 | −5.51% | +3.90% |
+| **0.55** | **264** | **4.35** | **−5.17%** | **+4.20%** |
+| 0.67 | 297 | 3.21 | −6.08% | +4.10% |
+
+The 0.55 setting keeps −16% of trades while lifting Sharpe +1.07 and cutting MaxDD by ~3.3pp. `services/technicals.py` now emits `max_21_q55`, `services/gates/technicals.py` `Max21Gate` blocks high-MAX BUYs against the per-ticker expanding 55th percentile, and `backend/scripts/backtest_technicals.py` defaults `--max21-filter` to 0.55. Docs in `RESEARCH_SIGNAL_ENGINE_IMPROVEMENTS.md` updated.
+
+**Backtest parallelization.** Converted `backend/scripts/backtest_technicals.py` from `multiprocessing.Pool` to `ThreadPoolExecutor` with `_run_simulation_parallel` / `_filter_simulation_results` helpers, applied to the main run, calm-sleeve, gate validation, exit-sweep, full-signal comparison, and research sections. A 15-ticker `--quick` run dropped from ~5 min to ~22 s; the full 26-year run completes in ~8 min (was much longer). Controllable via `BACKTEST_WORKERS` env var (default 8).
+
+**Other fixes today.** PIT constituent regeneration without the 2003-01-01 start clamp; live-engine log-audit fixes (tz bug #3, dead RSI-divergence, test-suite clobbering prod model stats); batch-1/2/3 wrong-signed/too-weak gate corrections from most-fired and mismatch audits; vol-targeting units/vol-annualization bugs fixed and claims retracted; §MAX tier analysis + §ON overnight/intraday decomposition auto-run added; patent/research-item harnesses and graduation report.
+
 ### v8.8.8 (2026-06-27) — Signal Engine Confidence Ontology Refactor
 
 **Why this matters:** the live engine had overloaded `confidence` with at least
