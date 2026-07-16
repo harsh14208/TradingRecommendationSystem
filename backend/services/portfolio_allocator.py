@@ -60,12 +60,16 @@ _DD_THROTTLE_MULT = float(os.getenv("DD_THROTTLE_MULT", "0.5"))
 
 def compute_dd_multiplier(drawdown_pct: float) -> float:
     """
-    R7 graduated de-risk: scale new positions when portfolio is below peak.
+    R7 step-function drawdown throttle: halve new positions once portfolio is
+    more than ``trigger`` percent below peak.
+
+    Returns 1.0 when ``drawdown_pct <= trigger`` and ``mult`` otherwise.
+    This is intentionally a binary step (not a continuous ramp) so the rule is
+    robust and easy to reason about live.
 
     Defaults mirror the 26yr honest canon (2000-2026, PIT-corrected
     membership, N=313): Ann.Sharpe 3.28 -> 3.46 and max DD -8.43% -> -6.38%
-    at zero CAGR cost. (An earlier pre-PIT-fix run reported 3.01 -> 3.40 on
-    a contaminated 332-trade universe; see docs/RESEARCH_SIGNAL_ENGINE_IMPROVEMENTS.md.)
+    at zero CAGR cost.
     """
     if drawdown_pct <= _DD_THROTTLE_TRIGGER_PCT:
         return 1.0

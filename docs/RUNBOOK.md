@@ -92,7 +92,7 @@ When `CASH_OVERLAY_ENABLE=true`, the portfolio allocator auto-invests any capita
 
 ### 1.5 Drawdown Throttle (R7)
 
-Both the portfolio allocator and the per-signal execution path apply a graduated drawdown throttle to **new** positions:
+Both the portfolio allocator and the per-signal execution path apply a step-function drawdown throttle to **new** positions:
 
 - **Trigger**: `DD_THROTTLE_TRIGGER_PCT` (default **3%** below peak equity from `pnl_daily`).
 - **Multiplier**: `DD_THROTTLE_MULT` (default **0.5×** — new positions are sized at half normal).

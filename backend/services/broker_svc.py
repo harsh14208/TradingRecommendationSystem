@@ -604,7 +604,7 @@ async def execute_signal_for_user(
     notional = round(base_notional * scale, 2)
     notional = max(notional, 1.0)  # minimum
 
-    # R7: graduated drawdown throttle for new positions (mirrors portfolio path)
+    # R7: step-function drawdown throttle for new positions (mirrors portfolio path)
     try:
         from models import PnlDaily
         from sqlalchemy import func, select

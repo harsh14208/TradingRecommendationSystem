@@ -7726,7 +7726,7 @@ def main():
 
     # ── §QuantEngine: portfolio equity curve simulation ──────────────────────
     if "--portfolio" in sys.argv:
-        # R7 (2026-07-15): the graduated DD-throttle is DEPLOYED in the live
+        # R7 (2026-07-15): the step-function DD-throttle is DEPLOYED in the live
         # allocator (portfolio_allocator.compute_dd_multiplier — >3% off peak →
         # 0.5× new positions; 26yr A/B: Ann.Sharpe 3.28→3.46, MaxDD −8.43→−6.38
         # at zero CAGR cost). The headline sim mirrors live by default;
