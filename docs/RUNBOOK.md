@@ -97,7 +97,7 @@ Both the portfolio allocator and the per-signal execution path apply a graduated
 - **Trigger**: `DD_THROTTLE_TRIGGER_PCT` (default **3%** below peak equity from `pnl_daily`).
 - **Multiplier**: `DD_THROTTLE_MULT` (default **0.5×** — new positions are sized at half normal).
 - **Scope**: new positions only; existing holdings are not reduced.
-- **Calibration**: 26-year backtest (2000-2026) showed this cuts max portfolio DD from -8.43% to -6.38% and lifts Ann.Sharpe from 3.01 to 3.40 with no CAGR penalty.
+- **Calibration**: 26-year backtest (2000-2026) showed this cuts max portfolio DD from -8.43% to -6.38% and lifts Ann.Sharpe from 3.28 to 3.46 with no CAGR penalty.
 
 The hard **-5% circuit breaker** (`RISK-2`) in `broker_svc.py` remains the last-resort kill switch and is unchanged.
 
@@ -335,8 +335,9 @@ cd backend
   --horizon 63 --walk-forward --cost-bps 10 --save-monthly
 
 # 2. Ensure the continuous MR equity series is current
-#    (runs the full MR backtest; ~3 min with warm cache)
-../.venv311/bin/python scripts/backtest_technicals.py
+#    (runs the full MR backtest; ~8 min with warm cache on an 8-thread M-series Mac)
+#    Use BACKTEST_WORKERS=N to tune thread count; --sequential to bypass threading.
+BACKTEST_WORKERS=8 ../.venv311/bin/python scripts/backtest_technicals.py
 #    OR, if mr_trades.csv is already current:
 ../.venv311/bin/python scripts/generate_mr_equity_series.py
 
