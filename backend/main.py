@@ -950,6 +950,20 @@ async def _run_weekly_digest(force: bool = False):
         week_ago = now - timedelta(days=7)
         two_weeks_ago = now - timedelta(days=14)
 
+        # ── Dev guard: don't spam Telegram/email while coding on localhost ─────────
+        from config import get_settings as _get_digest_settings
+
+        _digest_settings = _get_digest_settings()
+        _is_local_digest = _digest_settings.app_url.startswith(
+            "http://localhost"
+        ) or _digest_settings.app_url.startswith("http://127.")
+        if _is_local_digest and not _digest_settings.weekly_digest_allow_dev:
+            log.info(
+                "[digest] local dev environment — skipping weekly digest send. "
+                "Set WEEKLY_DIGEST_ALLOW_DEV=true to enable."
+            )
+            return
+
         # ── Once-per-week idempotency guard ──────────────────────────────────────
         # The digest must fire at most once per week no matter how many times this
         # coroutine is reached (server restarts, an accidental admin click, a future
@@ -1803,7 +1817,12 @@ async def lifespan(app: FastAPI):
     global _scan_task
     _scan_task = asyncio.create_task(_periodic_scan())
     asyncio.create_task(_scan_watchdog())
-    _supervise("weekly_digest", _weekly_digest, restart=True)
+    if not (_is_local and not _s.weekly_digest_allow_dev):
+        _supervise("weekly_digest", _weekly_digest, restart=True)
+    else:
+        log.info(
+            "[startup] weekly_digest auto-supervisor disabled in local dev (set WEEKLY_DIGEST_ALLOW_DEV=true to enable)"
+        )
     _supervise("weekly_factor_mining", _weekly_factor_mining, restart=True)
     _supervise("weekly_ml_retrain", _weekly_ml_retrain, restart=True)
     _supervise("weekly_drift_detection", _weekly_drift_detection, restart=True)

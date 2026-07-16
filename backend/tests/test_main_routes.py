@@ -168,17 +168,12 @@ def test_weekly_digest_trigger_as_owner(client):
 
     app.dependency_overrides[get_current_user] = _owner
 
-    settings = MagicMock()
-    settings.telegram_bot_token = "token"
-    settings.telegram_chat_id = "12345"
-    settings.smtp_host = ""
-    settings.smtp_user = ""
-    settings.site_private_token = None
-
-    with patch("main.get_settings", return_value=settings):
+    # Patch the digest runner itself so local dev tests never hit the real Telegram API.
+    with patch("main._run_weekly_digest", new_callable=AsyncMock) as mock_digest:
         resp = client.post("/api/admin/trigger-weekly-digest")
     app.dependency_overrides.pop(get_current_user, None)
     assert resp.status_code in (200, 202)
+    mock_digest.assert_called_once_with(force=True)
 
 
 def test_weekly_digest_status_as_owner(client):

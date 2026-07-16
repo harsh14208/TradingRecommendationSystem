@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # looping per-user DMs. Telegram limits bots to 30 msgs/sec; at 100+ subscribers
     # a channel post is a single API call and avoids the per-user loop entirely.
     telegram_broadcast_channel_id: str = ""
+    # When false (default), the weekly digest is suppressed on localhost/127.* URLs
+    # to avoid accidentally spamming Telegram/email while developing. Set to true
+    # when you need to test digest delivery locally.
+    weekly_digest_allow_dev: bool = False
 
     # ── Auth ──────────────────────────────────────────────────────────────────
     jwt_secret: SecretStr = Field(default=SecretStr(""))

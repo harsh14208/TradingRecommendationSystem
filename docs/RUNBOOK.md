@@ -287,7 +287,7 @@ python3 backend/scripts/check_postgres.py
 
 | Task | Schedule | How |
 |---|---|---|
-| Weekly digest | Sunday 08:00 ET | Auto — `_weekly_digest` background task |
+| Weekly digest | Sunday 08:00 ET | Auto — `_weekly_digest` background task. Disabled on `localhost`/`127.*` unless `WEEKLY_DIGEST_ALLOW_DEV=true`. |
 | Factor mining | Sunday 10:00 ET | Auto — `_weekly_factor_mining` |
 | ML retrain | Sunday 11:00 ET | Auto — `_weekly_ml_retrain` |
 | Outcome resolution | Daily 02:00 ET | Auto — `_nightly_outcome_resolution` |

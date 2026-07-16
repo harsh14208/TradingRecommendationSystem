@@ -285,7 +285,7 @@ Every Telegram message includes:
 - Plain-English summary
 - Full legal disclaimer
 
-**Weekly digest** — every Sunday 8am ET, a Telegram summary of the week's signals, win rate, and avg return is sent automatically.
+**Weekly digest** — every Sunday 8am ET, a Telegram summary of the week's signals, win rate, and avg return is sent automatically. On `http://localhost` / `http://127.*` URLs the digest is suppressed by default (both auto and manual sends) to avoid spamming your real Telegram chat while developing. Set `WEEKLY_DIGEST_ALLOW_DEV=true` in `.env` to test digest delivery locally.
 
 ---
 
