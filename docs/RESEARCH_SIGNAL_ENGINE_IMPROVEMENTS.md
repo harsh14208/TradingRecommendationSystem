@@ -123,10 +123,25 @@ published high-MAX effect, this vol-gated MR book performs **better on low-MAX n
 
 The low-MAX filter cuts MaxDD by ~56% and raises Sharpe +0.73, while removing ~42% of trades.
 
-**Integrated live-MAX21 gate (`--max21-filter 0.5`).** Running the causal per-ticker
-expanding-median gate inside the 26-year simulation (not as a post-process) produces
-N=251, event-time Sharpe **4.12**, MaxDD **−5.51%**, CAGR +3.9%.  This confirms the
-harness lift survives slot-release and T-bill-on-idle dynamics.
+**Integrated live-MAX21 gate (`--max21-filter 0.5`).** The live `Max21Gate` uses a
+*per-ticker* expanding median, which is less aggressive than the harness's portfolio-wide
+quantile.  Running it inside the 26-year simulation keeps **251 of 313 trades (20% filtered)**
+and produces event-time Sharpe **4.12**, MaxDD **−5.51%**, CAGR +3.9% — a +0.84 Sharpe
+improvement with a ~3pp MaxDD cut.
+
+A quick threshold sensitivity on the integrated run shows 0.50 is currently the sweet spot:
+
+| `--max21-filter` | Trades kept | ΔN vs baseline | Port Sharpe | Max DD | CAGR |
+|:---|---:|---:|---:|---:|---:|
+| baseline (off) | 313 | — | 3.28 | −8.43% | +4.31% |
+| 0.33 | 191 | −39% | 4.01 | −5.34% | +3.70% |
+| **0.50** | **251** | **−20%** | **4.12** | **−5.51%** | **+3.90%** |
+| 0.67 | 297 | −5% | 3.21 | −6.08% | +4.10% |
+
+Tightening beyond 0.50 (e.g. 0.33) cuts too many trades for modest further Sharpe/DD gains;
+loosening to 0.67 keeps nearly all trades but loses the Sharpe lift.  The 182-trade figure
+from the post-processing harness is a portfolio-wide filter; the live gate's per-ticker
+median is the operational number.
 
 **Why the sign flips:** the existing entry gates (VIX≥20, score/quality, BB%B, etc.) already
 concentrate on lottery-like, high-vol names.  Within that pre-selected universe, the
