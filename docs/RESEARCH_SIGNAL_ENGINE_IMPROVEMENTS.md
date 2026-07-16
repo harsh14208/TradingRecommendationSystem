@@ -153,16 +153,36 @@ concentrate on lottery-like, high-vol names.  Within that pre-selected universe,
 *residual* high-MAX tail adds noise and tail risk; low-MAX names deliver steadier
 mean-reversion.
 
-**VERDICT: GRADUATE.**  The low-MAX filter materially improves the risk-adjusted path.
-The causal per-ticker expanding-55th-percentile gate is now wired into **both** the backtest
-(`backtest_technicals.py --max21-filter p`) and the **live signal engine**
+**VERDICT (revised 2026-07-15): INCLUDED, tracked for re-evaluation — not fully validated.**
+The causal per-ticker expanding-55th-percentile gate is wired into **both** the backtest
+(`backtest_technicals.py --max21-filter p`, unconditional default) and the **live signal engine**
 (`Max21Gate` in `services/gates/technicals.py`, computed in `services/technicals.py`).
 It blocks BUY signals whose trailing 21-day MAX is above the ticker's expanding 55th percentile.
+The decision was made to keep it shipped, but the rigor pass below means "GRADUATE" overstated
+the evidence — this is a small, mixed-evidence effect, not a confirmed one.
 
-**Next step.** The gate is already live (`Max21Gate` in `services/gates/technicals.py`).
-Monitor forward outcomes for 30–60 days and compare blocked vs. delivered cohort WR.  Also
-test interaction with turnover
-conditioning.
+**Walk-forward OOS** (pre-specified, uncontaminated 73-ticker `HELD_OUT_TICKERS` universe,
+locked before MAX21 research began): directionally consistent with IS on every per-trade
+metric — Sharpe 0.17→0.20, WR 66.9%→69.6%, PF 1.47×→1.59×, MaxDD −1.67%→−0.98% (N=139→112
+clean). This is genuine, non-trivial supporting evidence.
+
+**IS paired block-bootstrap** (`scripts/max21_bootstrap_ci.py`, filtered vs. same-block
+baseline, N=264/313): 90% CI on the delta is **[−0.028, +0.062]**, median +0.017 — includes
+zero, **not significant** at this N. Both marginal per-trade Sharpe CIs individually exclude
+zero, but the correct paired test (the filtered book is a strict subset of the baseline, so
+marginal CIs overstate independence) does not.
+
+**Portfolio-level Sharpe reverses OOS.** The IS portfolio-Sharpe jump that originally motivated
+"GRADUATE" (3.28→3.75/4.35) does **not** replicate on the held-out set — full-exposure
+portfolio Sharpe there goes 4.35→3.59 (filter *hurts*) at N=112–139. Likely small-N noise
+rather than a real reversal, but it is a directly measured contradiction and should not be
+waved away — the portfolio-level metric needs much larger N than these OOS samples provide to
+be trustworthy on its own.
+
+**Next step.** Tracked in `docs/TODO.md` §MAX. Re-run the paired bootstrap once the live
+delivered book has enough resolved signals to test the same lift on genuinely live (not
+backtested) data — the strongest remaining test, and the same promotion-gate pattern already
+used for §86/§91/§111. Also still worth testing: interaction with turnover conditioning.
 
 ---
 
@@ -293,7 +313,7 @@ forward, then decide on real capital.
 | Rank | Idea | Test location | Effort | Expected impact |
 |------|------|---------------|--------|-----------------|
 | 1 | ~~Portfolio vol targeting~~ | `backtest_technicals.py --portfolio` | Low | **TESTED & REJECTED 2026-07-15** — redundant with §12b VIX entry gate (see §1.1) |
-| 2 | **MAX-effect conditioning** | `backtest_technicals.py --max21-filter 0.55` + live `Max21Gate` | Low | **GRADUATED 2026-07-15** — live gate wired; isolated MAX21 lift Port Sharpe 3.28 → 3.75, MaxDD −8.43% → −7.15%; combined with R7 DD-throttle Sharpe 4.35 / MaxDD −5.17% |
+| 2 | **MAX-effect conditioning** | `backtest_technicals.py --max21-filter 0.55` + live `Max21Gate` | Low | **INCLUDED, tracked for re-eval (§1.2 revised 2026-07-15)** — live gate wired; OOS per-trade lift directionally confirmed (Sharpe 0.17→0.20) but IS paired bootstrap 90% CI includes zero and OOS portfolio Sharpe reverses (4.35→3.59). See `docs/TODO.md` §MAX. |
 | 3 | ~~Limit-below-close entry~~ | `backtest_technicals.py --entry-limit k` | Low | **TESTED & REJECTED 2026-07-15** — adverse selection kills more alpha than slippage saved (see §1.3) |
 | 4 | **Regime-conditional allocation** | `backend/scripts/backtest_regime_cohort.py` | Medium | **GRADUATED 2026-07-15** — +1.22 Sharpe on DD-throttle baseline; needs live cohort integration (see §1.4) |
 

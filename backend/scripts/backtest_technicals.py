@@ -4804,11 +4804,17 @@ def run_walk_forward_temporal(trades_df: pd.DataFrame) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def run_oos_validation(vix, spy_trend, stlfsi4, buy_thresh_override=None):
+def run_oos_validation(vix, spy_trend, stlfsi4, buy_thresh_override=None, max21_filter_pct=None):
     """Run the MR-only strategy on HELD_OUT_TICKERS and compare vs main universe.
 
     buy_thresh_override — if set (e.g. 45 from --buy-thresh), validates a relaxed
     entry-score gate out-of-sample (paired with --relax-sweep findings).
+
+    max21_filter_pct — if set (e.g. 0.55), applies the §MAX low-MAX filter
+    (per-ticker causal expanding quantile, same mechanism as the IS run) to
+    the held-out universe. HELD_OUT_TICKERS were locked before MAX21 research
+    began, so this is a genuine, uncontaminated OOS test of the IS-selected
+    0.55 threshold — not a re-tuned one.
 
     These tickers were never touched during research or gate calibration —
     any edge found here is genuinely out-of-sample.
@@ -4838,7 +4844,11 @@ def run_oos_validation(vix, spy_trend, stlfsi4, buy_thresh_override=None):
     oos_dfs = {ticker: ind_df for ticker, _bh, ind_df, _ed in results if ind_df is not None and not ind_df.empty}
     _sim_results = _run_simulation_parallel(
         oos_dfs,
-        common_kwargs={"mr_only": True, "buy_thresh_override": buy_thresh_override},
+        common_kwargs={
+            "mr_only": True,
+            "buy_thresh_override": buy_thresh_override,
+            "max21_filter_pct": max21_filter_pct,
+        },
         vix=vix,
         spy_trend=spy_trend,
         stlfsi4=stlfsi4,
@@ -8155,6 +8165,7 @@ def main():
             spy_trend,
             stlfsi4,
             buy_thresh_override=_buy_thresh_override,
+            max21_filter_pct=_max21_filter_pct if "--max21-filter" in sys.argv else None,
         )
 
     if "--sweep" in sys.argv:
