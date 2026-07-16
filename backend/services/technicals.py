@@ -89,20 +89,24 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             round(out["change"] / prev * 100, 4) if prev and math.isfinite(prev) and abs(prev) > 1e-9 else 0
         )
 
-        # ── MAX-21 trailing max daily return + expanding median (§MAX) ───
+        # ── MAX-21 trailing max daily return + expanding quantiles (§MAX) ─
         # Causal: at bar t, use only returns up to and including t.
         try:
             _rets = close.pct_change().dropna()
             if len(_rets) >= 21:
                 _max21_series = _rets.rolling(21, min_periods=21).max() * 100.0
+                _max21_exp = _max21_series.expanding(min_periods=21)
                 out["max_21"] = round(float(_max21_series.iloc[-1]), 2)
-                out["max_21_median"] = round(float(_max21_series.expanding(min_periods=21).median().iloc[-1]), 2)
+                out["max_21_median"] = round(float(_max21_exp.median().iloc[-1]), 2)
+                out["max_21_q55"] = round(float(_max21_exp.quantile(0.55).iloc[-1]), 2)
             else:
                 out["max_21"] = None
                 out["max_21_median"] = None
+                out["max_21_q55"] = None
         except Exception:
             out["max_21"] = None
             out["max_21_median"] = None
+            out["max_21_q55"] = None
 
         # ── RSI(14) ─────────────────────────────────────────────────────
         delta = close.diff()

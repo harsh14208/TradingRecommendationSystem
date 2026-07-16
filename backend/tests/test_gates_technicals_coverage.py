@@ -178,14 +178,14 @@ def test_deep_bear_rsi_gate_blocks():
 
 
 def test_max21_gate_blocks_high_max():
-    ctx = _ctx(has_mr=True, tech={"max_21": 5.0, "max_21_median": 2.5})
+    ctx = _ctx(has_mr=True, tech={"max_21": 5.0, "max_21_q55": 2.5})
     Max21Gate().apply(ctx)
     assert ctx.action == "HOLD"
     assert any(r["src"] == "Risk Gate" for r in ctx.rationale)
 
 
 def test_max21_gate_passes_low_max():
-    ctx = _ctx(has_mr=True, tech={"max_21": 1.5, "max_21_median": 2.5})
+    ctx = _ctx(has_mr=True, tech={"max_21": 1.5, "max_21_q55": 2.5})
     Max21Gate().apply(ctx)
     assert ctx.action == "BUY"
 
@@ -197,6 +197,6 @@ def test_max21_gate_no_data_passes():
 
 
 def test_max21_gate_ignores_non_buy():
-    ctx = _ctx(action="SELL", has_mr=True, tech={"max_21": 5.0, "max_21_median": 2.5})
+    ctx = _ctx(action="SELL", has_mr=True, tech={"max_21": 5.0, "max_21_q55": 2.5})
     Max21Gate().apply(ctx)
     assert ctx.action == "SELL"

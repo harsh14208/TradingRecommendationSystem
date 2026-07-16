@@ -16,7 +16,7 @@ Pre-options pipeline (run before OptionsFlowConfirmationGate):
   AtrRankCeilingGate      — §17a trending-panic ceiling (ATR rank > 70th pct)
   ReturnJumpGate          — §17b single-day drop > −6% fundamental repricing
   VixDirectionGate        — §17c rising VIX (3d slope > 3) blocks MR entry
-  Max21Gate               — §MAX low-MAX filter (trailing 21d max return > median)
+  Max21Gate               — §MAX low-MAX filter (trailing 21d max return > 55th pct)
 
 Post-options pipeline (run after OptionsFlowConfirmationGate):
   SectorScoreFloorGate    — §15d per-sector minimum score for MR BUY
@@ -592,13 +592,14 @@ class VixDirectionGate(GateBase):
 class Max21Gate(GateBase):
     """
     §MAX low-MAX filter — keep BUY signals whose trailing 21-day maximum daily
-    close-to-close return is at or below the ticker's own expanding median.
+    close-to-close return is at or below the ticker's own expanding 55th percentile.
 
     Chen et al. ("Maxing Out Short-term Reversals") find reversal returns are
     much stronger in high-MAX lottery-like names.  In this vol-gated MR book,
     the opposite holds: high-MAX names add noise and tail risk, while low-MAX
-    names deliver steadier mean-reversion.  The gate is causal — the median is
-    computed on the ticker's own expanding history up to and including today.
+    names deliver steadier mean-reversion.  The gate is causal — the 55th
+    percentile is computed on the ticker's own expanding history up to and
+    including today.
     """
 
     version = "1.0"
@@ -607,10 +608,10 @@ class Max21Gate(GateBase):
         if ctx.action != "BUY" or not ctx.has_mr:
             return
         max_21 = ctx.tech.get("max_21")
-        max_21_median = ctx.tech.get("max_21_median")
-        if max_21 is None or max_21_median is None:
+        max_21_q55 = ctx.tech.get("max_21_q55")
+        if max_21 is None or max_21_q55 is None:
             return
-        if float(max_21) <= float(max_21_median):
+        if float(max_21) <= float(max_21_q55):
             return
         ctx.action = "HOLD"
         ctx.sources.add("Risk Gate")
@@ -619,17 +620,17 @@ class Max21Gate(GateBase):
                 "src": "Risk Gate",
                 "head": (
                     f"MAX-21 Filter — Trailing 21-Day Max Return {float(max_21):.2f}% "
-                    f"Above Median {float(max_21_median):.2f}%"
+                    f"Above 55th pct {float(max_21_q55):.2f}%"
                 ),
                 "body": (
                     f"{ctx.ticker}'s highest daily return over the last 21 sessions was "
-                    f"{float(max_21):.2f}%, above its expanding median of "
-                    f"{float(max_21_median):.2f}%. High-MAX names behave like lottery "
+                    f"{float(max_21):.2f}%, above its expanding 55th percentile of "
+                    f"{float(max_21_q55):.2f}%. High-MAX names behave like lottery "
                     "tickets in this vol-gated universe and add reversal noise / tail "
                     "risk. The causal low-MAX filter keeps only lower-MAX setups."
                 ),
                 "sentiment": "neg",
-                "meta": (f"max21={float(max_21):.2f} median={float(max_21_median):.2f} filter=low_max"),
+                "meta": (f"max21={float(max_21):.2f} q55={float(max_21_q55):.2f} filter=low_max"),
             }
         )
 

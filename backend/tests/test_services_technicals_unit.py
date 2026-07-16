@@ -68,15 +68,15 @@ def test_calculate_indicators_short_df_returns_empty():
     assert calculate_indicators(df) == {}
 
 
-def test_calculate_indicators_emits_max21_and_median():
+def test_calculate_indicators_emits_max21_and_q55():
     df = _make_ohlcv(80)
     out = calculate_indicators(df)
     assert "max_21" in out
-    assert "max_21_median" in out
+    assert "max_21_q55" in out
     assert out["max_21"] is not None
-    assert out["max_21_median"] is not None
+    assert out["max_21_q55"] is not None
     assert out["max_21"] >= 0
-    assert out["max_21_median"] >= 0
+    assert out["max_21_q55"] >= 0
 
 
 # ── Extended calculate_indicators tests ──────────────────────────────────────

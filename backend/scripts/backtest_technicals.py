@@ -5353,7 +5353,7 @@ def main():
                 except ValueError:
                     pass
         if _max21_filter_pct is None:
-            _max21_filter_pct = 0.50  # default: keep bottom half (low MAX)
+            _max21_filter_pct = 0.55  # default: keep bottom 55% (low MAX)
 
     # Portfolio-level volatility target (Harvey et al. / Man Group).
     _vol_target: float | None = None
