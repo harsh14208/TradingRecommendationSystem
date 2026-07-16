@@ -55,9 +55,10 @@ import socket
 socket.setdefaulttimeout(10)
 
 import asyncio
+import threading
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
@@ -90,6 +91,72 @@ _alt_data_panels: dict[str, pd.DataFrame | None] = {
     "occ": None,
     "orats": None,
 }
+
+# ── Parallel simulation globals (set by main(), read by worker processes) ────
+# macOS uses fork() for Pool, so these are copy-on-write inherited by workers.
+_RUN_VIX: dict = {}
+_RUN_SPY_TREND: dict = {}
+_RUN_STLFSI4: dict = {}
+
+
+def _simulate_ticker_worker(args):
+    """Worker for parallel simulate_ticker runs."""
+    ticker, df, kwargs = args
+    try:
+        tr = simulate_ticker(ticker, df, _RUN_VIX, _RUN_SPY_TREND, _RUN_STLFSI4, **kwargs)
+        return ticker, tr
+    except Exception as e:
+        print(f"{ticker} simulate_ticker error: {e}", flush=True)
+        return ticker, None
+
+
+def _filter_simulation_results(results: list[tuple[str, pd.DataFrame | None]]) -> list[pd.DataFrame]:
+    """Return only non-empty DataFrames from worker results."""
+    return [tr for _, tr in results if tr is not None and not tr.empty]
+
+
+def _run_simulation_parallel(
+    all_dfs: dict[str, pd.DataFrame],
+    common_kwargs: dict | None = None,
+    per_ticker_kwargs: dict[str, dict] | None = None,
+    max_workers: int | None = None,
+    vix: dict | None = None,
+    spy_trend: dict | None = None,
+    stlfsi4: dict | None = None,
+) -> list[pd.DataFrame]:
+    """Run simulate_ticker for all tickers in parallel.
+
+    Respects `--sequential` to bypass the pool (useful for macOS fork-debugging
+    or when running under profilers).  Worker count defaults to
+    ``BACKTEST_WORKERS`` env var or 8.
+    """
+    global _RUN_VIX, _RUN_SPY_TREND, _RUN_STLFSI4
+    if vix is not None:
+        _RUN_VIX = vix
+    if spy_trend is not None:
+        _RUN_SPY_TREND = spy_trend
+    if stlfsi4 is not None:
+        _RUN_STLFSI4 = stlfsi4
+    if common_kwargs is None:
+        common_kwargs = {}
+    if per_ticker_kwargs is None:
+        per_ticker_kwargs = {}
+    if max_workers is None:
+        max_workers = int(os.getenv("BACKTEST_WORKERS", "8"))
+
+    args = []
+    for ticker, df in all_dfs.items():
+        kwargs = dict(common_kwargs)
+        kwargs.update(per_ticker_kwargs.get(ticker, {}))
+        args.append((ticker, df, kwargs))
+
+    if max_workers <= 1 or "--sequential" in sys.argv:
+        results = [_simulate_ticker_worker(a) for a in args]
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as p:
+            results = list(p.map(_simulate_ticker_worker, args))
+
+    return results
 
 
 def _log_experiment(
@@ -183,6 +250,7 @@ _CONSTITUENTS_MAP = None
 
 
 _UNMAPPED_CONSTITUENTS_WARNED: set[str] = set()
+_UNMAPPED_CONSTITUENTS_LOCK = threading.Lock()
 
 
 def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
@@ -231,9 +299,10 @@ def is_index_constituent(ticker: str, date: pd.Timestamp) -> bool:
         # Unknown ticker = survivorship correction silently bypassed for it.
         # Warn once per ticker so a stale constituents file can't quietly
         # readmit names with no membership data.
-        if lookup_ticker not in _UNMAPPED_CONSTITUENTS_WARNED:
-            _UNMAPPED_CONSTITUENTS_WARNED.add(lookup_ticker)
-            print(f"⚠ [PIT Constituents] {lookup_ticker} not in membership map — treating as always-member")
+        with _UNMAPPED_CONSTITUENTS_LOCK:
+            if lookup_ticker not in _UNMAPPED_CONSTITUENTS_WARNED:
+                _UNMAPPED_CONSTITUENTS_WARNED.add(lookup_ticker)
+                print(f"⚠ [PIT Constituents] {lookup_ticker} not in membership map — treating as always-member")
         return True
 
     date_dt = date.date()
@@ -4120,11 +4189,15 @@ def parameter_sweep(all_dfs, vix, spy_trend, stlfsi4):
                 BUY_THRESH_MAX = buy_max
                 HOLD_DAYS = hold
 
-                sweep_trades = []
-                for ticker, df in all_dfs.items():
-                    t = simulate_ticker(ticker, df, vix, spy_trend, stlfsi4, mr_only=True)
-                    if not t.empty:
-                        sweep_trades.append(t)
+                sweep_trades = _filter_simulation_results(
+                    _run_simulation_parallel(
+                        all_dfs,
+                        common_kwargs={"mr_only": True},
+                        vix=vix,
+                        spy_trend=spy_trend,
+                        stlfsi4=stlfsi4,
+                    )
+                )
 
                 if sweep_trades:
                     trades_df = pd.concat(sweep_trades, ignore_index=True)
@@ -4206,18 +4279,20 @@ def run_full_universe_curation_bias(vix, spy_trend, stlfsi4):
     print("> to show what portion of IS Sharpe is curation bias vs genuine alpha.\n")
 
     args_list = [(t, vix, spy_trend, stlfsi4, True, False, {}, False, False) for t in _CURATED_OUT_TICKERS]
-    with Pool(min(8, len(_CURATED_OUT_TICKERS))) as p:
-        results = p.map(process_ticker, args_list)
+    _workers = int(os.getenv("BACKTEST_WORKERS", "8"))
+    with ThreadPoolExecutor(max_workers=min(_workers, len(_CURATED_OUT_TICKERS))) as p:
+        results = list(p.map(process_ticker, args_list))
 
-    removed_trades: list[pd.DataFrame] = []
-    curated_trades: dict[str, pd.DataFrame] = {}
-    for ticker, _bh, ind_df, _ed in results:
-        if ind_df is None or ind_df.empty:
-            continue
-        t_df = simulate_ticker(ticker, ind_df, vix, spy_trend, stlfsi4, mr_only=True)
-        curated_trades[ticker] = t_df
-        if t_df is not None and not t_df.empty:
-            removed_trades.append(t_df)
+    curated_dfs = {ticker: ind_df for ticker, _bh, ind_df, _ed in results if ind_df is not None and not ind_df.empty}
+    _sim_results = _run_simulation_parallel(
+        curated_dfs,
+        common_kwargs={"mr_only": True},
+        vix=vix,
+        spy_trend=spy_trend,
+        stlfsi4=stlfsi4,
+    )
+    removed_trades = _filter_simulation_results(_sim_results)
+    curated_trades = {ticker: df for ticker, df in _sim_results if df is not None and not df.empty}
 
     if not removed_trades:
         print("> [warn] No trades generated for removed tickers — check data availability.\n")
@@ -4276,18 +4351,15 @@ def gate_sensitivity_sweep(
     print(">       hard-block gates (--validate-live-gates 2026-06-02: all ΔSh=0.00).\n")
 
     def _run_all(label: str) -> dict:
-        trades = []
-        for ticker, df in all_dfs.items():
-            t = simulate_ticker(
-                ticker,
-                df,
-                vix,
-                spy_trend,
-                stlfsi4,
-                mr_only=True,
+        trades = _filter_simulation_results(
+            _run_simulation_parallel(
+                all_dfs,
+                common_kwargs={"mr_only": True},
+                vix=vix,
+                spy_trend=spy_trend,
+                stlfsi4=stlfsi4,
             )
-            if not t.empty:
-                trades.append(t)
+        )
         if not trades:
             return {"label": label, "n": 0, "wr": 0.0, "avg": 0.0, "sharpe": None}
         sv = stats(pd.concat(trades, ignore_index=True)["net_pct"].tolist())
@@ -4563,18 +4635,15 @@ def run_walk_forward_with_opt(
     per_thresh: dict[int, pd.DataFrame] = {}
     for thresh in WF_THRESH:
         BUY_THRESH = thresh
-        t_list = []
-        for ticker, df in all_dfs.items():
-            t = simulate_ticker(
-                ticker,
-                df,
-                vix,
-                spy_trend,
-                stlfsi4,
-                mr_only=True,
+        t_list = _filter_simulation_results(
+            _run_simulation_parallel(
+                all_dfs,
+                common_kwargs={"mr_only": True},
+                vix=vix,
+                spy_trend=spy_trend,
+                stlfsi4=stlfsi4,
             )
-            if not t.empty:
-                t_list.append(t)
+        )
         per_thresh[thresh] = pd.concat(t_list, ignore_index=True) if t_list else pd.DataFrame()
     BUY_THRESH = orig_thresh
     print("done.\n")
@@ -4762,25 +4831,23 @@ def run_oos_validation(vix, spy_trend, stlfsi4, buy_thresh_override=None):
     print("> Same MR-Only strategy, same gates, same period — zero data-mining benefit.\n")
 
     args_list = [(t, vix, spy_trend, stlfsi4, True, False, {}, False, False) for t in HELD_OUT_TICKERS]
-    with Pool(min(8, len(HELD_OUT_TICKERS))) as p:
-        results = p.map(process_ticker, args_list)
+    _workers = int(os.getenv("BACKTEST_WORKERS", "8"))
+    with ThreadPoolExecutor(max_workers=min(_workers, len(HELD_OUT_TICKERS))) as p:
+        results = list(p.map(process_ticker, args_list))
 
-    oos_trades: list[pd.DataFrame] = []
-    clean_trades: list[pd.DataFrame] = []
-    per_ticker_trades: dict[str, pd.DataFrame] = {}
-    for ticker, _bh, ind_df, _ed in results:
-        if ind_df is None or ind_df.empty:
-            continue
-        # process_ticker returns the scored indicator frame; turn it into the
-        # MR-only trades frame (net_pct etc.) exactly like the IS pipeline.
-        t_df = simulate_ticker(
-            ticker, ind_df, vix, spy_trend, stlfsi4, mr_only=True, buy_thresh_override=buy_thresh_override
-        )
-        per_ticker_trades[ticker] = t_df
-        if t_df is not None and not t_df.empty:
-            oos_trades.append(t_df)
-            if ticker not in _OOS_BLOCKED_TICKERS:
-                clean_trades.append(t_df)
+    oos_dfs = {ticker: ind_df for ticker, _bh, ind_df, _ed in results if ind_df is not None and not ind_df.empty}
+    _sim_results = _run_simulation_parallel(
+        oos_dfs,
+        common_kwargs={"mr_only": True, "buy_thresh_override": buy_thresh_override},
+        vix=vix,
+        spy_trend=spy_trend,
+        stlfsi4=stlfsi4,
+    )
+    per_ticker_trades = {ticker: df for ticker, df in _sim_results}
+    oos_trades = [df for _, df in _sim_results if df is not None and not df.empty]
+    clean_trades = [
+        df for ticker, df in _sim_results if df is not None and not df.empty and ticker not in _OOS_BLOCKED_TICKERS
+    ]
 
     if not oos_trades:
         print("> [warn] No OOS trades generated — check data availability.\n")
@@ -5106,6 +5173,12 @@ def main():
     stlfsi4 = fetch_stlfsi4(START, END, _fred_key)
     print(f"ok ({len(stlfsi4)} daily obs)" if stlfsi4 else "skipped (no FRED_API_KEY)")
 
+    # ── Share macro state with parallel simulation workers ────────────────────
+    global _RUN_VIX, _RUN_SPY_TREND, _RUN_STLFSI4
+    _RUN_VIX = vix
+    _RUN_SPY_TREND = spy_trend
+    _RUN_STLFSI4 = stlfsi4
+
     # ── §104–§110: Load alt-data panels (if available) ────────────────────────
     _finra_sv_flag = "--finra-sv" in sys.argv
     _sec_ftd_flag = "--sec-ftd" in sys.argv
@@ -5400,17 +5473,13 @@ def main():
     # Run sequentially if --sequential is present or when running --pbo to prevent macOS fork deadlocks
     _run_seq = "--sequential" in sys.argv or "--pbo" in sys.argv
     if _run_seq:
-        print("Running ticker processing sequentially to avoid macOS fork deadlocks...")
+        print("Running ticker processing sequentially...")
         results = [process_ticker(args) for args in args_list]
     else:
-        import multiprocessing as _mp
-
-        try:
-            _mp.set_start_method("fork", force=True)  # macOS Python 3.14 spawn→fork
-        except Exception:
-            pass
-        with Pool(8) as p:
-            results = p.map(process_ticker, args_list)
+        _workers = int(os.getenv("BACKTEST_WORKERS", "8"))
+        print(f"Running ticker processing with {_workers} threads...")
+        with ThreadPoolExecutor(max_workers=_workers) as p:
+            results = list(p.map(process_ticker, args_list))
 
     all_earnings_dates = {}
     for ticker, bh_ret, df, earnings_dates in results:
@@ -5741,76 +5810,69 @@ def main():
             _si_rising_map = {}
 
     # Generate trades now that cointegration and scores are final!
-    all_trades = []
-    for ticker, df in all_dfs.items():
-        t = simulate_ticker(
-            ticker,
-            df,
-            vix,
-            spy_trend,
-            stlfsi4,
-            mr_only=BACKTEST_MR_DEFAULT,
-            earnings_dates=all_earnings_dates.get(ticker),
-            beta_hedge=_beta_hedge_flag,
-            spy_prices=spy_prices,
-            forecast_sizing=_forecast_sizing_flag,
-            score_band_sizing=_score_band_sizing_flag,
-            dynamic_stop_rsi=_dynamic_stop_rsi_flag,
-            no_family_discount=_no_family_discount_flag,
-            entry_delay_override=_entry_delay_flag,
-            require_consec_score_override=_consec_score_flag,
-            consec_score_sizing=_consec_score_sizing_flag,
-            consec_score_thresh_override=_consec_score_thresh_override,
-            target_mult_override=_target_mult_override,
-            max_loss_days_override=_max_loss_days_override,
-            dow_filter=_dow_filter,
-            require_mr_count_override=_mr_count_override,
-            mr_rsi_ceil_override=_rsi_ceil_override,
-            mr_bb_ceil_override=_bb_ceil_override,
-            mr_ibs_ceil_override=_ibs_ceil_override,
-            buy_thresh_override=_buy_thresh_override,
-            score_accel=_score_accel_flag,
-            entry_model=_entry_model,
-            hmm_cache=_hmm_cache,
-            vix3m_series=_vix3m_series,
-            sector_momentum_map=_sector_momentum_map,
-            ff_str=_ff_str,
-            si_rising_map=_si_rising_map,
-            ff_str_regime_map=_ff_str_regime_map,
-            entry_at_close=_entry_at_close_flag,
-            entry_limit_k=_entry_limit_k if _entry_limit_flag else None,
-            max21_filter_pct=_max21_filter_pct,
+    _per_ticker_earnings = {t: {"earnings_dates": all_earnings_dates.get(t)} for t in all_dfs}
+    all_trades = _filter_simulation_results(
+        _run_simulation_parallel(
+            all_dfs,
+            common_kwargs={
+                "mr_only": BACKTEST_MR_DEFAULT,
+                "beta_hedge": _beta_hedge_flag,
+                "spy_prices": spy_prices,
+                "forecast_sizing": _forecast_sizing_flag,
+                "score_band_sizing": _score_band_sizing_flag,
+                "dynamic_stop_rsi": _dynamic_stop_rsi_flag,
+                "no_family_discount": _no_family_discount_flag,
+                "entry_delay_override": _entry_delay_flag,
+                "require_consec_score_override": _consec_score_flag,
+                "consec_score_sizing": _consec_score_sizing_flag,
+                "consec_score_thresh_override": _consec_score_thresh_override,
+                "target_mult_override": _target_mult_override,
+                "max_loss_days_override": _max_loss_days_override,
+                "dow_filter": _dow_filter,
+                "require_mr_count_override": _mr_count_override,
+                "mr_rsi_ceil_override": _rsi_ceil_override,
+                "mr_bb_ceil_override": _bb_ceil_override,
+                "mr_ibs_ceil_override": _ibs_ceil_override,
+                "buy_thresh_override": _buy_thresh_override,
+                "score_accel": _score_accel_flag,
+                "entry_model": _entry_model,
+                "hmm_cache": _hmm_cache,
+                "vix3m_series": _vix3m_series,
+                "sector_momentum_map": _sector_momentum_map,
+                "ff_str": _ff_str,
+                "si_rising_map": _si_rising_map,
+                "ff_str_regime_map": _ff_str_regime_map,
+                "entry_at_close": _entry_at_close_flag,
+                "entry_limit_k": _entry_limit_k if _entry_limit_flag else None,
+                "max21_filter_pct": _max21_filter_pct,
+            },
+            per_ticker_kwargs=_per_ticker_earnings,
         )
-        if t is not None and not t.empty:
-            all_trades.append(t)
+    )
 
     # §88: Calm-regime sleeve — add low-VIX trades with relaxed config
     _calm_sleeve_flag = "--calm-sleeve" in sys.argv
     if _calm_sleeve_flag and all_dfs:
         print("\n## §88. Calm-Regime Sleeve (VIX<20, thresh=38, hold=5d, 0.5× size)\n")
-        _calm_list = []
-        for ticker, df in all_dfs.items():
-            _ct = simulate_ticker(
-                ticker,
-                df,
-                vix,
-                spy_trend,
-                stlfsi4,
-                mr_only=BACKTEST_MR_DEFAULT,
-                calm_sleeve=True,
-                earnings_dates=all_earnings_dates.get(ticker),
-                beta_hedge=_beta_hedge_flag,
-                spy_prices=spy_prices,
-                entry_model=_entry_model,
-                hmm_cache=_hmm_cache,
-                vix3m_series=_vix3m_series,
-                sector_momentum_map=_sector_momentum_map,
-                ff_str=_ff_str,
-                si_rising_map=_si_rising_map,
-                ff_str_regime_map=_ff_str_regime_map,
+        _calm_list = _filter_simulation_results(
+            _run_simulation_parallel(
+                all_dfs,
+                common_kwargs={
+                    "mr_only": BACKTEST_MR_DEFAULT,
+                    "calm_sleeve": True,
+                    "beta_hedge": _beta_hedge_flag,
+                    "spy_prices": spy_prices,
+                    "entry_model": _entry_model,
+                    "hmm_cache": _hmm_cache,
+                    "vix3m_series": _vix3m_series,
+                    "sector_momentum_map": _sector_momentum_map,
+                    "ff_str": _ff_str,
+                    "si_rising_map": _si_rising_map,
+                    "ff_str_regime_map": _ff_str_regime_map,
+                },
+                per_ticker_kwargs=_per_ticker_earnings,
             )
-            if _ct is not None and not _ct.empty:
-                _calm_list.append(_ct)
+        )
         if _calm_list:
             _calm_trades = pd.concat(_calm_list, ignore_index=True)
             _cs = stats(_calm_trades["net_pct"].tolist())
@@ -5855,11 +5917,7 @@ def main():
         print("> pSh = per-trade Sharpe (N-blind); hold = mean exit_day; TL/NP = % time_loss/no_progress exits.\n")
 
         def _exit_run(**ov) -> pd.DataFrame:
-            _lst = []
-            for _t, _df in all_dfs.items():
-                _tr = simulate_ticker(_t, _df, vix, spy_trend, stlfsi4, mr_only=True, **ov)
-                if _tr is not None and not _tr.empty:
-                    _lst.append(_tr)
+            _lst = _filter_simulation_results(_run_simulation_parallel(all_dfs, common_kwargs={"mr_only": True, **ov}))
             return pd.concat(_lst, ignore_index=True) if _lst else pd.DataFrame()
 
         def _exit_metrics(label: str, **ov) -> dict | None:
@@ -5946,18 +6004,7 @@ def main():
         global OU_HALFLIFE_MAX, HURST_TREND_CEIL
 
         # Build IS baseline (identical to main run)
-        _vg_base_list = []
-        for _t, _df in all_dfs.items():
-            _tr = simulate_ticker(
-                _t,
-                _df,
-                vix,
-                spy_trend,
-                stlfsi4,
-                mr_only=True,
-            )
-            if not _tr.empty:
-                _vg_base_list.append(_tr)
+        _vg_base_list = _filter_simulation_results(_run_simulation_parallel(all_dfs, common_kwargs={"mr_only": True}))
         _vg_base = pd.concat(_vg_base_list, ignore_index=True) if _vg_base_list else pd.DataFrame()
         _vg_sb = stats(_vg_base["net_pct"].tolist()) if not _vg_base.empty else dict(_EMPTY_STATS)
         _vg_shn = _vg_sb.get("sharpe") or 0.0
@@ -5969,11 +6016,9 @@ def main():
         def _vg_run(**overrides) -> dict:
             _defaults: dict = dict()
             _defaults.update(overrides)
-            _lst = []
-            for _t, _df in all_dfs.items():
-                _tr = simulate_ticker(_t, _df, vix, spy_trend, stlfsi4, mr_only=True, **_defaults)
-                if not _tr.empty:
-                    _lst.append(_tr)
+            _lst = _filter_simulation_results(
+                _run_simulation_parallel(all_dfs, common_kwargs={"mr_only": True, **_defaults})
+            )
             _combined = pd.concat(_lst, ignore_index=True) if _lst else pd.DataFrame()
             return stats(_combined["net_pct"].tolist()) if not _combined.empty else dict(_EMPTY_STATS)
 
@@ -6359,11 +6404,7 @@ def main():
         print("> Reuses downloaded price data — no extra network calls.")
         print(f"> Same gates as main run except MR gate is OFF. BUY_THRESH={BUY_THRESH}, HOLD_DAYS={HOLD_DAYS}.\n")
 
-        full_list = []
-        for ticker_k, df_k in all_dfs.items():
-            t_full = simulate_ticker(ticker_k, df_k, vix, spy_trend, stlfsi4, mr_only=False)
-            if not t_full.empty:
-                full_list.append(t_full)
+        full_list = _filter_simulation_results(_run_simulation_parallel(all_dfs, common_kwargs={"mr_only": False}))
 
         if not full_list:
             print("[no full-mode trades generated]\n")
@@ -7220,19 +7261,12 @@ def main():
         print("> VIX 25-35→thresh=45+ATRceil=70 · VIX>35→thresh=40+ATRceil=70")
         print("> Gate 1 relaxed: VIX 30-35 allowed at score≥45 (panic mode).\n")
 
-        v2_list = []
-        for ticker_k, df_k in all_dfs.items():
-            t_v2 = simulate_ticker(
-                ticker_k,
-                df_k,
-                vix,
-                spy_trend,
-                stlfsi4,
-                mr_only=True,
-                vix_regime_v2=True,
+        v2_list = _filter_simulation_results(
+            _run_simulation_parallel(
+                all_dfs,
+                common_kwargs={"mr_only": True, "vix_regime_v2": True},
             )
-            if not t_v2.empty:
-                v2_list.append(t_v2)
+        )
 
         if not v2_list:
             print("[no §54 trades generated]\n")
@@ -7273,19 +7307,12 @@ def main():
             n2 = sum(1 for c in headwind_counts if c == 2)
             print(f"ok ({len(cross_asset_data)} days, {n3} with 3/3 headwinds, {n2} with 2/3)\n")
 
-            ca_list = []
-            for ticker_k, df_k in all_dfs.items():
-                t_ca = simulate_ticker(
-                    ticker_k,
-                    df_k,
-                    vix,
-                    spy_trend,
-                    stlfsi4,
-                    mr_only=True,
-                    cross_asset=cross_asset_data,
+            ca_list = _filter_simulation_results(
+                _run_simulation_parallel(
+                    all_dfs,
+                    common_kwargs={"mr_only": True, "cross_asset": cross_asset_data},
                 )
-                if not t_ca.empty:
-                    ca_list.append(t_ca)
+            )
 
             if not ca_list:
                 print("[no §55 trades generated]\n")
@@ -7385,22 +7412,18 @@ def main():
             print("failed — §14 skipped (no FRED_API_KEY?).\n")
         else:
             print(f"ok ({', '.join(f'{k}={n}' for k, n in _have.items())} daily obs)\n")
-            fp_list = []
-            for ticker_k, df_k in all_dfs.items():
-                t_fp = simulate_ticker(
-                    ticker_k,
-                    df_k,
-                    vix,
-                    spy_trend,
-                    stlfsi4,
-                    mr_only=True,
-                    fred_panel=fred_panel_data,
-                    ff_str=_ff_str,
-                    si_rising_map=_si_rising_map,
-                    ff_str_regime_map=_ff_str_regime_map,
+            fp_list = _filter_simulation_results(
+                _run_simulation_parallel(
+                    all_dfs,
+                    common_kwargs={
+                        "mr_only": True,
+                        "fred_panel": fred_panel_data,
+                        "ff_str": _ff_str,
+                        "si_rising_map": _si_rising_map,
+                        "ff_str_regime_map": _ff_str_regime_map,
+                    },
                 )
-                if not t_fp.empty:
-                    fp_list.append(t_fp)
+            )
             if not fp_list:
                 print("[no §14 trades generated]\n")
             else:
@@ -7508,22 +7531,19 @@ def main():
     _stop_rows = []
     for _slabel, _smult, _tmult in _stop_configs:
         _st_trades: list[pd.DataFrame] = []
-        for _ticker, _df in all_dfs.items():
-            try:
-                _t = simulate_ticker(
-                    _ticker,
-                    _df,
-                    vix,
-                    spy_trend,
-                    stlfsi4,
-                    mr_only=True,
-                    stop_mult_override=_smult,
-                    target_mult_override=_tmult,
+        try:
+            _st_trades = _filter_simulation_results(
+                _run_simulation_parallel(
+                    all_dfs,
+                    common_kwargs={
+                        "mr_only": True,
+                        "stop_mult_override": _smult,
+                        "target_mult_override": _tmult,
+                    },
                 )
-                if not _t.empty:
-                    _st_trades.append(_t)
-            except Exception:
-                pass
+            )
+        except Exception:
+            pass
         if not _st_trades:
             continue
         _stdf = pd.concat(_st_trades, ignore_index=True)
@@ -7879,19 +7899,13 @@ def main():
         print("> Comparing 2022-present with gate ON (default) vs gate OFF (vix_min_override=0).\n")
         _epoch_start = pd.Timestamp("2022-01-01")
         for _label, _vix_min in [("VIX<20 gate ON (default)", 20.0), ("VIX<20 gate OFF", 0.0)]:
-            _ep_list = []
-            for _t, _df in all_dfs.items():
-                _tr = simulate_ticker(
-                    _t,
-                    _df,
-                    vix,
-                    spy_trend,
-                    stlfsi4,
-                    mr_only=True,
-                    vix_min_override=_vix_min,
+            _ep_list = _filter_simulation_results(
+                _run_simulation_parallel(
+                    all_dfs,
+                    common_kwargs={"mr_only": True, "vix_min_override": _vix_min},
                 )
-                if not _tr.empty:
-                    _ep_list.append(_tr[_tr["date"] >= _epoch_start])
+            )
+            _ep_list = [_tr[_tr["date"] >= _epoch_start] for _tr in _ep_list if not _tr.empty]
             if _ep_list:
                 _ep_df = pd.concat(_ep_list, ignore_index=True)
                 _se = stats(_ep_df["net_pct"].tolist())
@@ -7920,18 +7934,7 @@ def main():
         def _run_friction(label: str, fric: float) -> dict:
             global FRICTION_PCT
             FRICTION_PCT = fric
-            _lst = []
-            for _t, _df in all_dfs.items():
-                _tr = simulate_ticker(
-                    _t,
-                    _df,
-                    vix,
-                    spy_trend,
-                    stlfsi4,
-                    mr_only=True,
-                )
-                if not _tr.empty:
-                    _lst.append(_tr)
+            _lst = _filter_simulation_results(_run_simulation_parallel(all_dfs, common_kwargs={"mr_only": True}))
             FRICTION_PCT = _friction_orig
             _combined = pd.concat(_lst, ignore_index=True) if _lst else pd.DataFrame()
             return stats(_combined["net_pct"].tolist()) if not _combined.empty else dict(_EMPTY_STATS)
@@ -7977,22 +7980,18 @@ def main():
         print("> All gates already validated individually in §12/§17. This sweeps combinations.\n")
 
         def _qrun(require_mr=1, atr_max=None, ret_jump=None, ibs_streak=None):
-            trades_list = []
-            for ticker, df in all_dfs.items():
-                t = simulate_ticker(
-                    ticker,
-                    df,
-                    vix,
-                    spy_trend,
-                    stlfsi4,
-                    mr_only=True,
-                    require_mr_count_override=require_mr if require_mr > 1 else None,
-                    atr_pct_rank_max_override=atr_max,
-                    ret_jump_filter_override=ret_jump,
-                    ibs_sma20_streak_override=ibs_streak,
+            trades_list = _filter_simulation_results(
+                _run_simulation_parallel(
+                    all_dfs,
+                    common_kwargs={
+                        "mr_only": True,
+                        "require_mr_count_override": require_mr if require_mr > 1 else None,
+                        "atr_pct_rank_max_override": atr_max,
+                        "ret_jump_filter_override": ret_jump,
+                        "ibs_sma20_streak_override": ibs_streak,
+                    },
                 )
-                if not t.empty:
-                    trades_list.append(t)
+            )
             if not trades_list:
                 return dict(_EMPTY_STATS)
             return stats(pd.concat(trades_list, ignore_index=True)["net_pct"].tolist())
@@ -8077,21 +8076,17 @@ def main():
             if vwap is not None:
                 _mod.MR_VWAP_FLOOR = vwap
             try:
-                trades_list = []
-                for ticker, df in all_dfs.items():
-                    t = simulate_ticker(
-                        ticker,
-                        df,
-                        vix,
-                        spy_trend,
-                        stlfsi4,
-                        mr_only=True,
-                        mr_bb_ceil_override=bb,
-                        mr_ibs_ceil_override=ibs,
-                        buy_thresh_override=buy,
+                trades_list = _filter_simulation_results(
+                    _run_simulation_parallel(
+                        all_dfs,
+                        common_kwargs={
+                            "mr_only": True,
+                            "mr_bb_ceil_override": bb,
+                            "mr_ibs_ceil_override": ibs,
+                            "buy_thresh_override": buy,
+                        },
                     )
-                    if not t.empty:
-                        trades_list.append(t)
+                )
             finally:
                 _mod.MR_VWAP_FLOOR = _saved_vwap
             if not trades_list:
@@ -8206,11 +8201,12 @@ def main():
         _orig_bt = BUY_THRESH
         _ps_rows = []
         for _bt in range(45, 56):
-            _ps_trades = []
-            for _t, _df in all_dfs.items():
-                _tr = simulate_ticker(_t, _df, vix, spy_trend, stlfsi4, mr_only=True, buy_thresh_override=_bt)
-                if not _tr.empty:
-                    _ps_trades.append(_tr)
+            _ps_trades = _filter_simulation_results(
+                _run_simulation_parallel(
+                    all_dfs,
+                    common_kwargs={"mr_only": True, "buy_thresh_override": _bt},
+                )
+            )
             if not _ps_trades:
                 continue
             _ps_combined = pd.concat(_ps_trades, ignore_index=True)
@@ -8242,26 +8238,8 @@ def main():
         print("> VIX<20 (calm) / 20–30 (elevated) / >30 (stress)")
         print("> Reveals whether forward Sharpe estimate is regime-conditional.\n")
 
-        _all_trades_df = (
-            pd.concat(
-                [
-                    simulate_ticker(t, df, vix, spy_trend, stlfsi4, mr_only=True)
-                    for t, df in all_dfs.items()
-                    if simulate_ticker(t, df, vix, spy_trend, stlfsi4, mr_only=True) is not None
-                    and not simulate_ticker(t, df, vix, spy_trend, stlfsi4, mr_only=True).empty
-                ],
-                ignore_index=True,
-            )
-            if all_dfs
-            else pd.DataFrame()
-        )
-
-        # Re-run once (not 3x) — build trade list with vix level tagged
-        _rs_trades = []
-        for _t, _df in all_dfs.items():
-            _tr = simulate_ticker(_t, _df, vix, spy_trend, stlfsi4, mr_only=True)
-            if _tr is not None and not _tr.empty:
-                _rs_trades.append(_tr)
+        _rs_trades = _filter_simulation_results(_run_simulation_parallel(all_dfs, common_kwargs={"mr_only": True}))
+        _all_trades_df = pd.concat(_rs_trades, ignore_index=True) if _rs_trades else pd.DataFrame()
         if _rs_trades:
             _rs_all = pd.concat(_rs_trades, ignore_index=True)
 
@@ -8333,11 +8311,12 @@ def main():
 
         print("Simulating strategy variants...")
         for _bt in _trials:
-            _trades_list = []
-            for _t, _df in all_dfs.items():
-                _tr = simulate_ticker(_t, _df, vix, spy_trend, stlfsi4, mr_only=True, buy_thresh_override=_bt)
-                if _tr is not None and not _tr.empty:
-                    _trades_list.append(_tr)
+            _trades_list = _filter_simulation_results(
+                _run_simulation_parallel(
+                    all_dfs,
+                    common_kwargs={"mr_only": True, "buy_thresh_override": _bt},
+                )
+            )
             if _trades_list:
                 _all_trial_trades[_bt] = pd.concat(_trades_list, ignore_index=True)
             else:
