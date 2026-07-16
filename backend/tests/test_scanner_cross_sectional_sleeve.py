@@ -110,7 +110,9 @@ async def test_build_cross_sectional_sleeve_signals_with_exit(monkeypatch, _patc
 
     # C was long yesterday but is not in today's top/bottom decile.
     monkeypatch.setattr(
-        scanner, "AsyncSessionLocal", _FakeSessionLocal([type("R", (), {"ticker": "C", "action": "BUY"})])
+        scanner,
+        "AsyncSessionLocal",
+        _FakeSessionLocal([type("R", (), {"ticker": "C", "action": "BUY", "sources": ["CrossSectional"]})]),
     )
 
     class _MockSettings:

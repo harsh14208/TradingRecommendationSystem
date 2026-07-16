@@ -1078,13 +1078,12 @@ async def _build_cross_sectional_sleeve_signals(
             async with AsyncSessionLocal() as _cs_db:
                 _rows = (
                     await _cs_db.execute(
-                        select(Signal.ticker, Signal.action)
+                        select(Signal.ticker, Signal.action, Signal.sources)
                         .where(Signal.is_active == True)
                         .where(Signal.action.in_(["BUY", "SELL"]))
-                        .where(Signal.sources.contains(["CrossSectional"]))
                     )
                 ).all()
-                active_positions = {r.ticker: r.action for r in _rows}
+                active_positions = {r.ticker: r.action for r in _rows if r.sources and "CrossSectional" in r.sources}
         except Exception as _e:
             log.warning("[scanner] failed to load active cross-sectional positions: %s", _e)
 
