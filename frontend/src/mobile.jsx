@@ -40,6 +40,30 @@ const POSITIONS_MOCK = [
   { tk:"TSLA", shares:-10, avg:172,   last:164.80,  pnl:72.00,  pct:4.19,  spark:[50,48,45,47,43,40,38,36] },
 ];
 
+const COT_POSITIONS_MOCK = [
+  { tk:"HYG",  units:5355, side:"long",  notional:427389, spark:[40,42,41,43,44,45,46,47] },
+  { tk:"SOXX", units:602,  side:"long",  notional:334158, spark:[30,34,38,42,45,48,52,55] },
+  { tk:"SPY",  units:391,  side:"long",  notional:295174, spark:[45,46,45,47,48,49,50,51] },
+  { tk:"FXY",  units:-5999,side:"short", notional:287245, spark:[50,48,46,45,43,42,40,39] },
+  { tk:"FXE",  units:-2185,side:"short", notional:231218, spark:[48,47,46,45,44,43,42,41] },
+  { tk:"LQD",  units:1650, side:"long",  notional:177526, spark:[35,36,37,36,38,39,40,41] },
+  { tk:"TIP",  units:1600, side:"long",  notional:172945, spark:[33,34,35,34,36,37,38,39] },
+  { tk:"EFA",  units:1227, side:"long",  notional:128387, spark:[38,39,38,40,41,40,42,43] },
+  { tk:"XSD",  units:209,  side:"long",  notional:111976, spark:[28,32,36,40,44,48,52,56] },
+  { tk:"VNQ",  units:1039, side:"long",  notional:101646, spark:[36,37,36,38,39,38,40,41] },
+];
+
+const OPTIONS_SUMMARY_MOCK = {
+  label:"COT + carry + diversifier pack",
+  n:24,
+  netSharpe:0.88,
+  annReturn:18.7,
+  annVol:21.3,
+  maxDD:-38.5,
+  calmar:0.46,
+  since:"2007",
+};
+
 // ── Auth helpers (same pattern as app.auth.jsx) ─────────────────────────────
 let _accessToken = null;
 const getToken   = () => _accessToken;
@@ -427,8 +451,29 @@ function DetailScreen({ signal, onBack, onSend, onPaperTrade }) {
   );
 }
 
+// ── Portfolio tabs ───────────────────────────────────────────────────────────
+function PortfolioTabs({ active, onChange }) {
+  const tabs = [
+    { k:"equity",  l:"Equity" },
+    { k:"options", l:"Options" },
+    { k:"cot",     l:"COT Engine" },
+  ];
+  return (
+    <div className="m-pf-tabs">
+      {tabs.map(t => (
+        <button
+          key={t.k}
+          className={`m-pf-tab ${active === t.k ? "on" : ""}`}
+          onClick={() => onChange(t.k)}
+        >{t.l}</button>
+      ))}
+    </div>
+  );
+}
+
 // ── Portfolio screen ─────────────────────────────────────────────────────────
 function PortfolioScreen({ positions, demo }) {
+  const [pfTab, setPfTab] = useState("equity");
   const equity = positions.reduce((s, p) => s + (p.last || 0) * Math.abs(p.shares || p.qty || 0), 0);
   const totalPnl = positions.reduce((s, p) => s + (p.pnl || 0), 0);
   return (
@@ -447,40 +492,104 @@ function PortfolioScreen({ positions, demo }) {
       )}
       <div className="m-feed" style={{ padding:0 }}>
         <div className="m-pf-hero">
-          <div className="m-pf-eyebrow">Equity · Sim account</div>
-          <div className="m-pf-bal">${equity > 0 ? equity.toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }) : "—"}</div>
-          {totalPnl !== 0 && <div className="m-pf-ch" style={{ color: totalPnl >= 0 ? "var(--up)" : "var(--down)" }}>{totalPnl >= 0 ? "+" : ""}${Math.abs(totalPnl).toFixed(2)} open P&L</div>}
-          <div className="m-pf-stats">
-            <div className="m-pf-stat"><div className="l">Positions</div><div className="v">{positions.length}</div></div>
-            <div className="m-pf-stat"><div className="l">Open P&L</div><div className="v" style={{ color:totalPnl >= 0 ? "var(--up)" : "var(--down)" }}>{totalPnl >= 0 ? "+" : ""}${Math.abs(totalPnl).toFixed(0)}</div></div>
-            <div className="m-pf-stat"><div className="l">Status</div><div className="v" style={{ color:"var(--info)" }}>PAPER</div></div>
-          </div>
-        </div>
-        <div className="m-list-head">Open positions · {positions.length}</div>
-        {positions.map((p, i) => {
-          const tk   = p.symbol || p.tk;
-          const sh   = p.qty || p.shares || 0;
-          const last = p.current_price || p.last || 0;
-          const avg  = p.avg_entry_price || p.avg || 0;
-          const pnl  = p.unrealized_pl != null ? parseFloat(p.unrealized_pl) : (p.pnl || 0);
-          const pct  = p.unrealized_plpc != null ? parseFloat(p.unrealized_plpc) * 100 : (p.pct || 0);
-          const spark = p.spark || [40,42,44,43,46,45,48,50];
-          return (
-            <div key={i} className="m-pos-row">
-              <div className="m-pos-tk">{tk}</div>
-              <div className="m-pos-info">
-                <div className="m-pos-shares">{Math.abs(sh)} sh · avg ${Number(avg).toFixed(2)}</div>
-                <div className="m-pos-px">${Number(last).toFixed(2)}</div>
+          <div className="m-pf-eyebrow">Simulated trading account</div>
+          <PortfolioTabs active={pfTab} onChange={setPfTab} />
+          {pfTab === "equity" && (
+            <>
+              <div className="m-pf-bal">${equity > 0 ? equity.toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }) : "—"}</div>
+              {totalPnl !== 0 && <div className="m-pf-ch" style={{ color: totalPnl >= 0 ? "var(--up)" : "var(--down)" }}>{totalPnl >= 0 ? "+" : ""}${Math.abs(totalPnl).toFixed(2)} open P&L</div>}
+              <div className="m-pf-stats">
+                <div className="m-pf-stat"><div className="l">Positions</div><div className="v">{positions.length}</div></div>
+                <div className="m-pf-stat"><div className="l">Open P&L</div><div className="v" style={{ color:totalPnl >= 0 ? "var(--up)" : "var(--down)" }}>{totalPnl >= 0 ? "+" : ""}${Math.abs(totalPnl).toFixed(0)}</div></div>
+                <div className="m-pf-stat"><div className="l">Status</div><div className="v" style={{ color:"var(--info)" }}>PAPER</div></div>
               </div>
-              <Sparkline data={spark} color={pnl >= 0 ? "var(--up)" : "var(--down)"}/>
-              <div className={`m-pos-pnl ${pnl >= 0 ? "up" : "down"}`}>
-                <div className="v">{pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(0)}</div>
-                <div className="pct">{pnl >= 0 ? "+" : "−"}{Math.abs(pct).toFixed(2)}%</div>
+            </>
+          )}
+          {pfTab === "options" && (
+            <>
+              <div className="m-pf-bal">$1,000,000.00</div>
+              <div className="m-pf-ch">Options overlay backtest</div>
+              <div className="m-pf-stats">
+                <div className="m-pf-stat"><div className="l">Net Sharpe</div><div className="v" style={{ color:"var(--up)" }}>{OPTIONS_SUMMARY_MOCK.netSharpe}</div></div>
+                <div className="m-pf-stat"><div className="l">Ann. return</div><div className="v">{OPTIONS_SUMMARY_MOCK.annReturn}%</div></div>
+                <div className="m-pf-stat"><div className="l">Max DD</div><div className="v" style={{ color:"var(--down)" }}>{OPTIONS_SUMMARY_MOCK.maxDD}%</div></div>
+              </div>
+            </>
+          )}
+          {pfTab === "cot" && (
+            <>
+              <div className="m-pf-bal">$1,004,620.00</div>
+              <div className="m-pf-ch">+$4,620.00 (+0.46%) · since Jun 22</div>
+              <div className="m-pf-stats">
+                <div className="m-pf-stat"><div className="l">Open P&L</div><div className="v" style={{ color:"var(--up)" }}>+$4,620</div></div>
+                <div className="m-pf-stat"><div className="l">Live Sharpe</div><div className="v">0.90</div></div>
+                <div className="m-pf-stat"><div className="l">Vol target</div><div className="v">20%</div></div>
+              </div>
+            </>
+          )}
+        </div>
+        {pfTab === "equity" && (
+          <>
+            <div className="m-list-head">Open positions · {positions.length}</div>
+            {positions.map((p, i) => {
+              const tk   = p.symbol || p.tk;
+              const sh   = p.qty || p.shares || 0;
+              const last = p.current_price || p.last || 0;
+              const avg  = p.avg_entry_price || p.avg || 0;
+              const pnl  = p.unrealized_pl != null ? parseFloat(p.unrealized_pl) : (p.pnl || 0);
+              const pct  = p.unrealized_plpc != null ? parseFloat(p.unrealized_plpc) * 100 : (p.pct || 0);
+              const spark = p.spark || [40,42,44,43,46,45,48,50];
+              return (
+                <div key={i} className="m-pos-row">
+                  <div className="m-pos-tk">{tk}</div>
+                  <div className="m-pos-info">
+                    <div className="m-pos-shares">{Math.abs(sh)} sh · avg ${Number(avg).toFixed(2)}</div>
+                    <div className="m-pos-px">${Number(last).toFixed(2)}</div>
+                  </div>
+                  <Sparkline data={spark} color={pnl >= 0 ? "var(--up)" : "var(--down)"}/>
+                  <div className={`m-pos-pnl ${pnl >= 0 ? "up" : "down"}`}>
+                    <div className="v">{pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(0)}</div>
+                    <div className="pct">{pnl >= 0 ? "+" : "−"}{Math.abs(pct).toFixed(2)}%</div>
+                  </div>
+                </div>
+              );
+            })}
+            {positions.length === 0 && <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:13 }}>No open positions.</div>}
+          </>
+        )}
+        {pfTab === "options" && (
+          <>
+            <div className="m-list-head">Strategy · {OPTIONS_SUMMARY_MOCK.label}</div>
+            <div style={{ padding:"14px 16px", borderBottom:"1px solid var(--line-soft)" }}>
+              <div style={{ fontSize:13, color:"var(--text-dim)", lineHeight:1.5 }}>
+                Options overlay backtest on the COT + carry + diversifier pack ({OPTIONS_SUMMARY_MOCK.n} instruments, {OPTIONS_SUMMARY_MOCK.since}–2026).
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginTop:14 }}>
+                <div className="m-trade-card"><div className="l">Ann. vol</div><div className="v">{OPTIONS_SUMMARY_MOCK.annVol}%</div></div>
+                <div className="m-trade-card"><div className="l">Calmar</div><div className="v">{OPTIONS_SUMMARY_MOCK.calmar}</div></div>
               </div>
             </div>
-          );
-        })}
-        {positions.length === 0 && <div style={{ padding:"40px 0", textAlign:"center", color:"var(--text-faint)", fontSize:13 }}>No open positions.</div>}
+          </>
+        )}
+        {pfTab === "cot" && (
+          <>
+            <div className="m-list-head">Open positions · {COT_POSITIONS_MOCK.length}</div>
+            {COT_POSITIONS_MOCK.map((p, i) => (
+              <div key={i} className="m-pos-row">
+                <div className="m-pos-tk">{p.tk}</div>
+                <div className="m-pos-info">
+                  <div className="m-pos-shares">{p.side} · {Math.abs(p.units)} units</div>
+                  <div className="m-pos-px">${Math.abs(p.notional).toLocaleString()} notional</div>
+                </div>
+                <Sparkline data={p.spark} color={p.side === "long" ? "var(--up)" : "var(--down)"}/>
+                <div className={`m-pos-pnl ${p.side === "long" ? "up" : "down"}`}>
+                  <div className="v">{p.side === "long" ? "+" : "−"}${Math.abs(p.notional).toLocaleString()}</div>
+                  <div className="pct">{p.side === "long" ? "Long" : "Short"}</div>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
         <div style={{ padding:16 }}><button className="m-btn" style={{ width:"100%" }}>View closed trades →</button></div>
       </div>
     </>

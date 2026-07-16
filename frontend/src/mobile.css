@@ -146,6 +146,9 @@ button:focus-visible, [role="button"]:focus-visible {
 /* portfolio */
 .m-pf-hero { padding: 18px 16px; background: linear-gradient(180deg, color-mix(in oklch, var(--accent) 8%, transparent), var(--panel)); border-bottom: 1px solid var(--line-soft); }
 .m-pf-eyebrow { font-family: var(--mono); font-size: 10px; color: var(--text-faint); letter-spacing: 0.1em; text-transform: uppercase; }
+.m-pf-tabs { display: flex; gap: 6px; margin: 12px 0 14px; padding: 4px; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; }
+.m-pf-tab { flex: 1; padding: 7px 0; border-radius: 7px; border: none; background: transparent; color: var(--text-dim); font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; cursor: pointer; }
+.m-pf-tab.on { background: var(--accent); color: #042116; }
 .m-pf-bal { font-family: var(--mono); font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin-top: 4px; line-height: 1; }
 .m-pf-ch { font-family: var(--mono); font-size: 13px; color: var(--up); margin-top: 4px; }
 .m-pf-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }

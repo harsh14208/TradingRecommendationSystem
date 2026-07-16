@@ -97,6 +97,31 @@ footer{text-align:center;padding:40px 0;font-size:12px;color:var(--faint);border
     </div>
   </div>
 
+  <h2>Macro / COT Engine — Shadow Paper Book</h2>
+  <p>A separate cross-asset macro book run in shadow mode: COT positioning, trend/carry rules, vol targeting and IDM across ETFs and futures. This is <strong>not</strong> the same equity signal engine above; it is an independent allocation layer.</p>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Start capital</div>
+      <div class="value">$1.00M</div>
+      <div class="note">Jun 22, 2026</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Live return</div>
+      <div class="value metric-up">+0.46%</div>
+      <div class="note">13 shadow days</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Live Sharpe</div>
+      <div class="value metric-up">0.90</div>
+      <div class="note">Annualised</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Backtest Sharpe</div>
+      <div class="value metric-up">0.88</div>
+      <div class="note">2007–2026 net</div>
+    </div>
+  </div>
+
   <h2>In-Sample Backtest (23 years)</h2>
   <p>Our IS backtest spans 2003–2026 on a curated universe of ~100 large-cap tickers. The IS Sharpe is <strong>0.24</strong> (N=217, WR=69.1%, MaxDD −2.31%). However, the IS lever is <strong>statistically spent</strong> — deflated Sharpe FAILS at 744 trials, meaning we cannot improve it further by parameter tuning.</p>
 

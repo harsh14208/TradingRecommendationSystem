@@ -565,6 +565,26 @@ function TrackPage({ stats, statsLoading }) {
         <div><div className="stat-num">{statsLoading ? skel(48,28) : (o?.sharpe != null ? o.sharpe.toFixed(2) : "—")}</div><div className="stat-lbl">Sharpe ratio</div><div className="stat-sub">Annualized</div></div>
       </div>
       <div className="track-table">
+        <h3>COT + trend engine · shadow paper results</h3>
+        <p style={{ fontSize: 13, color: "var(--text-dim)", margin: "-8px 0 16px", lineHeight: 1.5 }}>
+          A separate macro book: COT positioning, trend/carry rules, vol targeting and IDM across ETFs/futures. Live shadow marks since Jun 22, 2026.
+        </p>
+        <div className="stat-strip" style={{ marginBottom: 24, padding: "18px 0", borderTop: "1px solid var(--line-soft)", borderBottom: "1px solid var(--line-soft)" }}>
+          <div><div className="stat-num">$1.00M</div><div className="stat-lbl">Start capital</div><div className="stat-sub">Jun 22, 2026</div></div>
+          <div><div className="stat-num">+0.46%</div><div className="stat-lbl">Live return</div><div className="stat-sub">13 shadow days</div></div>
+          <div><div className="stat-num">0.90</div><div className="stat-lbl">Live Sharpe</div><div className="stat-sub">Annualised</div></div>
+          <div><div className="stat-num">0.88</div><div className="stat-lbl">Backtest Sharpe</div><div className="stat-sub">2007–2026 net</div></div>
+        </div>
+        <table>
+          <thead><tr><th>Book</th><th>Strategy</th><th>Instruments</th><th>Vol target</th><th>Net Sharpe</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Champion</strong></td><td>COT + trend + carry</td><td>19 core ETFs</td><td>20%</td><td className="up">0.88</td></tr>
+            <tr><td><strong>Challenger semis</strong></td><td>+ semis pack (SMH/SOXX/XSD)</td><td>22 ETFs</td><td>20%</td><td className="up">0.90*</td></tr>
+          </tbody>
+        </table>
+        <p style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 10 }}>* Live Sharpe from shadow marks since Jun 22, 2026.</p>
+      </div>
+      <div className="track-table">
         <h3>Monthly performance</h3>
         <table>
           <thead><tr><th>Month</th><th>Signals</th><th>Win %</th><th>Avg Return</th><th>Sharpe</th></tr></thead>

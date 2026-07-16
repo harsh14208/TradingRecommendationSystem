@@ -450,6 +450,80 @@ function SimulatedReturnsPanel({ signal, onClose }) {
   );
 }
 
+// ── COT engine paper book (shadow marks from local macro engine) ──────────────
+const COT_ENGINE_SUMMARY = {
+  capital: 1000000,
+  equity: 1004620,
+  openPnl: 4620,
+  returnPct: 0.46,
+  liveSharpe: 0.90,
+  backtestSharpe: 0.88,
+  volTarget: 20,
+  since: "Jun 22, 2026",
+  nDays: 13,
+  book: "champion",
+};
+
+const COT_ENGINE_POSITIONS = [
+  { symbol:"HYG",  units:5355, side:"long",  notional:427389 },
+  { symbol:"SOXX", units:602,  side:"long",  notional:334158 },
+  { symbol:"SPY",  units:391,  side:"long",  notional:295174 },
+  { symbol:"FXY",  units:-5999,side:"short", notional:287245 },
+  { symbol:"FXE",  units:-2185,side:"short", notional:231218 },
+  { symbol:"LQD",  units:1650, side:"long",  notional:177526 },
+  { symbol:"TIP",  units:1600, side:"long",  notional:172945 },
+  { symbol:"EFA",  units:1227, side:"long",  notional:128387 },
+  { symbol:"XSD",  units:209,  side:"long",  notional:111976 },
+  { symbol:"VNQ",  units:1039, side:"long",  notional:101646 },
+];
+
+function CotEnginePanel() {
+  const s = COT_ENGINE_SUMMARY;
+  const fmtMoney = v => `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return (
+    <div style={{ padding:"20px 28px", overflowY:"auto", maxHeight:"calc(100vh - 100px)", display:"flex", flexDirection:"column", gap:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12 }}>
+        {[
+          ["Equity", fmtMoney(s.equity), "var(--text)"],
+          ["Open P&L", fmtMoney(s.openPnl), "var(--up)"],
+          ["Live Sharpe", s.liveSharpe.toFixed(2), "var(--up)"],
+          ["Vol target", `${s.volTarget}%`, "var(--accent)"],
+        ].map(([l,v,c]) => (
+          <div key={l} style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px" }}>
+            <div style={{ fontSize:10, color:"var(--text-faint)", fontFamily:"var(--font-mono)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>{l}</div>
+            <div style={{ fontSize:18, fontWeight:700, fontFamily:"var(--font-mono)", color:c }}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ background:"var(--bg-2)", borderRadius:8, padding:"14px 16px", border:"1px solid var(--line)" }}>
+        <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>Strategy</div>
+        <div style={{ fontSize:13, color:"var(--text)", lineHeight:1.5 }}>
+          COT positioning + trend/carry rules, vol targeting and IDM across ETFs/futures.
+          Backtest Sharpe {s.backtestSharpe} (2007–2026 net). Live shadow marks since {s.since} ({s.nDays} days).
+        </div>
+      </div>
+      <div>
+        <div style={{ fontSize:11, fontWeight:600, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Open positions ({COT_ENGINE_POSITIONS.length})</div>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, fontFamily:"var(--font-mono)" }}>
+          <thead><tr style={{ borderBottom:"1px solid var(--line)", color:"var(--text-faint)", fontSize:10, textTransform:"uppercase" }}>
+            {["Symbol","Side","Units","Notional"].map(h => <th key={h} style={{ padding:"7px 10px", textAlign: h==="Symbol"?"left":"right", fontWeight:500 }}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {COT_ENGINE_POSITIONS.map((p,i) => (
+              <tr key={i} style={{ borderBottom:"1px solid var(--line)" }}>
+                <td style={{ padding:"7px 10px", fontWeight:600 }}>{p.symbol}</td>
+                <td style={{ padding:"7px 10px", textAlign:"right", textTransform:"capitalize", color: p.side==="long"?"var(--up)":"var(--down)" }}>{p.side}</td>
+                <td style={{ padding:"7px 10px", textAlign:"right" }}>{Math.abs(p.units).toLocaleString()}</td>
+                <td style={{ padding:"7px 10px", textAlign:"right", color:"var(--text-faint)" }}>${Math.abs(p.notional).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /* ─── PaperView ──────────────────────────────────────────────────────────────── */
 function PaperView({ open, onClose, online, variant = "modal" }) {
   const isPage = variant === "page";
@@ -461,7 +535,7 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
   const [volLoading, setVolLoading] = useState(false);
   const [loading,   setLoading]   = useState(false);
   const [err,       setErr]       = useState(null);
-  const [tab,       setTab]       = useState("equity");  // "equity" | "options"
+  const [tab,       setTab]       = useState("equity");  // "equity" | "options" | "cot"
 
   useEffect(() => {
     if (!open) return;
@@ -523,11 +597,13 @@ function PaperView({ open, onClose, online, variant = "modal" }) {
         </div>
       )}
       <div style={{ display:"flex", gap:8, padding:"0 28px", marginTop:14 }}>
-        {[["equity","Equity"],["options","Options"]].map(([k,l]) => (
+        {[["equity","Equity"],["options","Options"],["cot","COT Engine"]].map(([k,l]) => (
           <button key={k} className={`btn ${tab===k ? "primary" : "ghost"}`} style={{ fontSize:12 }} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "options" ? (
+      {tab === "cot" ? (
+        <CotEnginePanel />
+      ) : tab === "options" ? (
         <OptionsPaperPanel online={online} />
       ) : (
       <div style={{ padding:"20px 28px", overflowY: isPage ? "visible" : "auto", maxHeight: isPage ? undefined : "calc(100vh - 100px)", display:"flex", flexDirection:"column", gap:20 }}>

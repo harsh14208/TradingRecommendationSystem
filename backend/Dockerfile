@@ -1,16 +1,15 @@
 # ── Stage 1: Frontend build ───────────────────────────────────────────────────
-# Uses Node.js (not present in final image) to compile JSX → dist/app-bundle.js.
+# Uses Node.js (not present in final image) to compile JSX → dist/*-bundle.js.
 # Eliminates Babel standalone (~900 KB) and allows removing 'unsafe-eval' from CSP.
 FROM node:20-slim AS frontend-builder
-WORKDIR /frontend
+WORKDIR /build
 
 COPY package.json ./
 RUN npm install --prefer-offline
 
-# Only copy files needed for the build (avoids cache-busting on backend changes)
+# Copy build script and JSX sources (frontend/src was reorganized 2026-06-13).
 COPY build.mjs ./
-COPY app.auth.jsx app.constants.jsx app.ui.jsx app.signal.jsx \
-     app.views.jsx app.modals.jsx app.analysis.jsx app.jsx ./
+COPY frontend/src ./frontend/src
 
 RUN node build.mjs
 
