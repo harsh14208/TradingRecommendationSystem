@@ -12,7 +12,7 @@ from config import get_settings, tier_gte
 from database import get_db
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+import jwt
 from models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,7 +62,7 @@ def create_access_token(user_id: int, tier: str, is_owner: bool) -> str:
 def decode_access_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, _secret(), algorithms=[_algo()])
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None
 
 
