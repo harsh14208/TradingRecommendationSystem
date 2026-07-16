@@ -179,7 +179,10 @@ async def test_execute_signal_ibkr_notional():
             return_value={"id": "ibkr_123", "status": "filled"},
         ) as mock_place:
             await execute_signal_for_user(
-                user, {"ticker": "AAPL", "action": "BUY", "price": 150.0, "positionSizeScale": 1.5}, 1, db
+                user,
+                {"ticker": "AAPL", "action": "BUY", "price": 150.0, "positionSizeScale": 1.5, "confidence": 100.0},
+                1,
+                db,
             )
 
             # Assert notional order placed with $150 ($100 * 1.5 scale)
@@ -217,7 +220,9 @@ async def test_execute_signal_ibkr_no_secret_still_executes():
             new_callable=AsyncMock,
             return_value={"id": "ibkr_999", "status": "filled"},
         ) as mock_place:
-            await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "price": 150.0}, 1, db)
+            await execute_signal_for_user(
+                user, {"ticker": "AAPL", "action": "BUY", "price": 150.0, "confidence": 100.0}, 1, db
+            )
 
             # Order placed despite missing secret (empty string passed through)
             mock_place.assert_called_once_with(
@@ -257,6 +262,7 @@ async def test_execute_signal_ibkr_bracket_stop():
                     "stop": 140.0,
                     "target": 170.0,
                     "positionSizeScale": 1.0,
+                    "confidence": 100.0,
                 },
                 1,
                 db,

@@ -22,7 +22,7 @@ def _make_app(has_keys=True):
     app.dependency_overrides[get_current_user] = lambda: mock_user
 
     settings = MagicMock()
-    settings.alpaca_api_key = "test_key" if has_keys else ""
+    settings.alpaca_api_key = SecretStr("test_key") if has_keys else ""
     settings.alpaca_api_secret = SecretStr("test_secret") if has_keys else SecretStr("")
 
     with patch("routers.paper_router.get_settings", return_value=settings):
@@ -46,7 +46,7 @@ def test_account_success():
         patch("routers.paper_router.get_settings") as mock_s,
         patch("services.alpaca_rest.get_account", new_callable=AsyncMock, return_value=account_data),
     ):
-        mock_s.return_value.alpaca_api_key = "key"
+        mock_s.return_value.alpaca_api_key = SecretStr("key")
         mock_s.return_value.alpaca_api_secret = SecretStr("secret")
         with TestClient(app) as client:
             resp = client.get("/api/paper/account")
@@ -60,7 +60,7 @@ def test_account_upstream_error():
         patch("routers.paper_router.get_settings") as mock_s,
         patch("services.alpaca_rest.get_account", new_callable=AsyncMock, side_effect=Exception("upstream down")),
     ):
-        mock_s.return_value.alpaca_api_key = "key"
+        mock_s.return_value.alpaca_api_key = SecretStr("key")
         mock_s.return_value.alpaca_api_secret = SecretStr("secret")
         with TestClient(app) as client:
             resp = client.get("/api/paper/account")
@@ -71,10 +71,10 @@ def test_positions_no_keys():
     app, _ = _make_app()
     with patch("routers.paper_router.get_settings") as mock_s:
         mock_s.return_value.alpaca_api_key = ""
+        mock_s.return_value.alpaca_api_secret = ""
         with TestClient(app) as client:
             resp = client.get("/api/paper/positions")
-    assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.status_code == 403
 
 
 def test_positions_success():
@@ -84,7 +84,7 @@ def test_positions_success():
         patch("routers.paper_router.get_settings") as mock_s,
         patch("services.alpaca_rest.get_positions", new_callable=AsyncMock, return_value=positions),
     ):
-        mock_s.return_value.alpaca_api_key = "key"
+        mock_s.return_value.alpaca_api_key = SecretStr("key")
         mock_s.return_value.alpaca_api_secret = SecretStr("secret")
         with TestClient(app) as client:
             resp = client.get("/api/paper/positions")
@@ -96,10 +96,10 @@ def test_orders_no_keys():
     app, _ = _make_app()
     with patch("routers.paper_router.get_settings") as mock_s:
         mock_s.return_value.alpaca_api_key = ""
+        mock_s.return_value.alpaca_api_secret = ""
         with TestClient(app) as client:
             resp = client.get("/api/paper/orders")
-    assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.status_code == 403
 
 
 def test_orders_success():
@@ -109,7 +109,7 @@ def test_orders_success():
         patch("routers.paper_router.get_settings") as mock_s,
         patch("services.alpaca_rest.get_orders", new_callable=AsyncMock, return_value=orders),
     ):
-        mock_s.return_value.alpaca_api_key = "key"
+        mock_s.return_value.alpaca_api_key = SecretStr("key")
         mock_s.return_value.alpaca_api_secret = SecretStr("secret")
         with TestClient(app) as client:
             resp = client.get("/api/paper/orders?status=open")

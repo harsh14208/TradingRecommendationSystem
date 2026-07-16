@@ -100,5 +100,5 @@ class TestConnectionManager:
     async def test_disconnect_removes_connection(self, manager):
         ws = _make_ws()
         await manager.connect(ws, _make_user("pro", "active"))
-        manager.disconnect(ws)
+        await manager.disconnect(ws)
         assert len(manager._connections) == 0

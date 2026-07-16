@@ -1371,10 +1371,15 @@ class TestIbkrRest:
 
     @pytest.mark.asyncio
     async def test_ssl_ctx_localhost(self):
+        import ssl
+
         from services.ibkr_rest import _ssl_ctx
 
         with patch("services.ibkr_rest._base", return_value="https://localhost:5000/v1/api"):
-            assert _ssl_ctx() is False
+            # IBKR_REST no longer disables TLS verification for localhost;
+            # it returns a default verified context unless IBKR_CA_CERT is set.
+            ctx = _ssl_ctx()
+            assert isinstance(ctx, ssl.SSLContext)
 
     @pytest.mark.asyncio
     async def test_get_account_no_accounts(self):

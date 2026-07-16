@@ -859,7 +859,14 @@ async def test_execute_signal_bracket_order():
     db = AsyncMock()
     fake_order = {"id": "bracket-1", "status": "accepted"}
 
-    sig = {"ticker": "AAPL", "action": "BUY", "stopPrice": 150.0, "targetPrice": 200.0, "entry": 170.0}
+    sig = {
+        "ticker": "AAPL",
+        "action": "BUY",
+        "stopPrice": 150.0,
+        "targetPrice": 200.0,
+        "entry": 170.0,
+        "confidence": 100.0,
+    }
 
     with patch("services.alpaca_rest.submit_bracket_stop_order", new_callable=AsyncMock, return_value=fake_order):
         await execute_signal_for_user(user, sig, 42, db)
@@ -884,7 +891,7 @@ async def test_execute_signal_sell_side():
     fake_order = {"id": "sell-1", "status": "accepted"}
 
     with patch("services.alpaca_rest.place_notional_order", new_callable=AsyncMock, return_value=fake_order):
-        await execute_signal_for_user(user, {"ticker": "TSLA", "action": "SELL"}, 7, db)
+        await execute_signal_for_user(user, {"ticker": "TSLA", "action": "SELL", "confidence": 100.0}, 7, db)
 
     db.add.assert_called_once()
     order_record = db.add.call_args[0][0]
@@ -905,7 +912,7 @@ async def test_execute_signal_ibkr():
     fake_order = {"id": "ibkr-1", "status": "accepted"}
 
     with patch("services.ibkr_rest.place_notional_order", new_callable=AsyncMock, return_value=fake_order):
-        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY"}, 1, db)
+        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "confidence": 100.0}, 1, db)
 
     db.add.assert_called_once()
     order_record = db.add.call_args[0][0]
@@ -924,7 +931,7 @@ async def test_execute_signal_risk_limit_block():
     db = AsyncMock()
 
     with patch("services.broker_svc.check_runtime_risk_limits", new_callable=AsyncMock, return_value="blocked"):
-        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY"}, None, db)
+        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "confidence": 100.0}, None, db)
 
     db.add.assert_not_called()
 
@@ -941,7 +948,7 @@ async def test_execute_signal_capacity_block():
     db = AsyncMock()
 
     with patch("services.tca_service.check_capacity_limits", new_callable=AsyncMock, return_value=(True, 0.0, 5.0)):
-        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY"}, None, db)
+        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "confidence": 100.0}, None, db)
 
     db.add.assert_not_called()
 
@@ -965,7 +972,7 @@ async def test_execute_signal_capacity_resize():
             "services.alpaca_rest.place_notional_order", new_callable=AsyncMock, return_value=fake_order
         ) as mock_place,
     ):
-        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY"}, None, db)
+        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "confidence": 100.0}, None, db)
 
     db.add.assert_called_once()
     call_kwargs = mock_place.call_args

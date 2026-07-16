@@ -57,7 +57,7 @@ async def test_place_single_leg_option_order() -> None:
     call_args = session.post.call_args
     assert call_args[0][0] == "https://paper-api.alpaca.markets/v2/orders"
     body = call_args.kwargs["json"]
-    assert body["symbol"] == "O:AAPL260717P00170000"
+    assert body["symbol"] == "AAPL260717P00170000"
     assert body["side"] == "sell"
     assert body["position_intent"] == "sell_to_open"
     assert body["qty"] == "1"
@@ -100,7 +100,7 @@ async def test_place_multi_leg_option_order() -> None:
     assert body["order_class"] == "mleg"
     assert body["qty"] == "2"
     assert len(body["legs"]) == 2
-    assert body["legs"][0]["symbol"] == "O:AAPL260717C00170000"
+    assert body["legs"][0]["symbol"] == "AAPL260717C00170000"
     assert body["legs"][0]["position_intent"] == "buy_to_open"
 
 
@@ -113,7 +113,7 @@ async def test_close_option_position() -> None:
 
     assert result["status"] == "closed"
     call_args = session.delete.call_args
-    assert call_args[0][0] == "https://paper-api.alpaca.markets/v2/positions/O:AAPL260717C00170000"
+    assert call_args[0][0] == "https://paper-api.alpaca.markets/v2/positions/AAPL260717C00170000"
     assert call_args.kwargs["params"] == {"qty": "1"}
 
 

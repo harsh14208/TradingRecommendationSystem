@@ -16,6 +16,15 @@ from services.http_client import get_ssl_context, retry_with_backoff, shared_ses
 PAPER_BASE = "https://paper-api.alpaca.markets"
 LIVE_BASE = "https://api.alpaca.markets"
 
+
+class AlpacaAuthError(Exception):
+    """Raised when Alpaca rejects the API key/secret (401/403)."""
+
+
+class AlpacaRateLimitError(Exception):
+    """Raised when Alpaca returns a 429 rate-limit response."""
+
+
 # Slippage protection configuration
 SLIPPAGE_THRESHOLD = 0.05  # $0.05 max price movement
 SLIPPAGE_WINDOW_MS = 100  # 100ms lookback window

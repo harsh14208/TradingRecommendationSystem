@@ -5,6 +5,7 @@ from models import BrokerOrder, User
 from pydantic import BaseModel
 from services import alpaca_rest
 from services.auth_svc import get_current_user
+from services.broker_svc import _normalize_broker_status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/paper", tags=["paper"])
@@ -12,8 +13,16 @@ router = APIRouter(prefix="/api/paper", tags=["paper"])
 
 def _require_keys():
     s = get_settings()
-    raw_key = s.alpaca_api_key.get_secret_value() if s.alpaca_api_key else ""
-    raw_secret = s.alpaca_api_secret.get_secret_value() if s.alpaca_api_secret else ""
+
+    def _unwrap(secret_val):
+        if not secret_val:
+            return ""
+        if hasattr(secret_val, "get_secret_value"):
+            return secret_val.get_secret_value() or ""
+        return str(secret_val)
+
+    raw_key = _unwrap(s.alpaca_api_key)
+    raw_secret = _unwrap(s.alpaca_api_secret)
     if not raw_key or not raw_secret:
         raise HTTPException(403, "Alpaca API keys not configured — set ALPACA_API_KEY and ALPACA_API_SECRET in .env")
     return raw_key, raw_secret
@@ -174,7 +183,7 @@ async def place_order(
             req.order_type,
             req.limit_price,
         )
-        order_record.status = result.get("status", "submitted")
+        order_record.status = _normalize_broker_status(result.get("status"))
         order_record.alpaca_order_id = result.get("id")
     except Exception as e:
         order_record.status = "error"

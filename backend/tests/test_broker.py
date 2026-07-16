@@ -178,7 +178,9 @@ async def test_execute_signal_buy_places_notional_order():
     fake_order = {"id": "abc123", "status": "pending_new"}
 
     with patch("services.alpaca_rest.place_notional_order", new_callable=AsyncMock, return_value=fake_order):
-        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "positionSizeScale": 1.0}, 42, db)
+        await execute_signal_for_user(
+            user, {"ticker": "AAPL", "action": "BUY", "positionSizeScale": 1.0, "confidence": 100.0}, 42, db
+        )
 
     db.add.assert_called_once()
     order_record = db.add.call_args[0][0]
@@ -203,7 +205,9 @@ async def test_execute_signal_scales_notional_by_position_size():
     fake_order = {"id": "xyz", "status": "new"}
 
     with patch("services.alpaca_rest.place_notional_order", new_callable=AsyncMock, return_value=fake_order) as mock:
-        await execute_signal_for_user(user, {"ticker": "TSLA", "action": "BUY", "positionSizeScale": 1.3}, 7, db)
+        await execute_signal_for_user(
+            user, {"ticker": "TSLA", "action": "BUY", "positionSizeScale": 1.3, "confidence": 100.0}, 7, db
+        )
 
     call_kwargs = mock.call_args
     # notional = 100 * 1.3 = 130
@@ -230,7 +234,7 @@ async def test_execute_signal_records_error_on_failure():
         new_callable=AsyncMock,
         side_effect=Exception("insufficient buying power"),
     ):
-        await execute_signal_for_user(user, {"ticker": "NVDA", "action": "BUY"}, None, db)
+        await execute_signal_for_user(user, {"ticker": "NVDA", "action": "BUY", "confidence": 100.0}, None, db)
 
     db.add.assert_called_once()
     order_record = db.add.call_args[0][0]

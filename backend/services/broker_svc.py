@@ -569,11 +569,11 @@ async def execute_signal_for_user(
         return
 
     # Defense-in-depth: kill-switch check
-    from services.redis_cache import redis_get
+    from services.redis_cache import cache_get
 
     try:
-        ks = await redis_get("execution_paused")
-        if ks and ks.lower() == "true":
+        ks = await cache_get("execution_paused")
+        if isinstance(ks, str) and ks.lower() == "true":
             log.info("broker_svc: execution paused by kill switch")
             return
     except Exception:

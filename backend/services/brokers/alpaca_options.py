@@ -143,7 +143,7 @@ class AlpacaOptionsBroker(OptionsBroker):
 
         If ``qty`` is omitted the entire position is liquidated.
         """
-        url = f"{self.base_url}/v2/positions/{option_symbol.upper()}"
+        url = f"{self.base_url}/v2/positions/{_alpaca_symbol(option_symbol)}"
         params: dict[str, str] = {}
         if qty is not None and qty > 0:
             params["qty"] = str(int(qty))
@@ -165,7 +165,7 @@ class AlpacaOptionsBroker(OptionsBroker):
 
     async def get_option_position(self, option_symbol: str) -> dict[str, Any] | None:
         """Return the current position for an option symbol, or None if flat."""
-        url = f"{self.base_url}/v2/positions/{option_symbol.upper()}"
+        url = f"{self.base_url}/v2/positions/{_alpaca_symbol(option_symbol)}"
         try:
             async with shared_session() as session:
                 async with session.get(url, headers=_headers(self.api_key, self.api_secret)) as resp:
