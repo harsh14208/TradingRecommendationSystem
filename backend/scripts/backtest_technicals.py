@@ -35,7 +35,7 @@ Run from backend/:
     python scripts/backtest_technicals.py --orats     # §111 ORATS options-flow alt-data tilt
     python scripts/backtest_technicals.py --portfolio --vol-target 0.10  # portfolio vol targeting
     python scripts/backtest_technicals.py --portfolio --entry-limit 0.20   # limit entry 0.2 ATR below close
-    python scripts/backtest_technicals.py --portfolio --max21-filter 0.50  # keep low-MAX signals (bottom half)
+    python scripts/backtest_technicals.py --portfolio --max21-filter 0.55  # keep low-MAX signals (bottom 55%)
 """
 
 from __future__ import annotations
@@ -5343,8 +5343,8 @@ def main():
             except ValueError:
                 pass
 
-    # §MAX: filter out signals whose trailing 21-day MAX is above the expanding median.
-    _max21_filter_pct = None
+    # §MAX: filter out signals whose trailing 21-day MAX is above the expanding 55th percentile.
+    _max21_filter_pct = 0.55  # default: keep bottom 55% (low MAX)
     if "--max21-filter" in sys.argv:
         for _i, _arg in enumerate(sys.argv):
             if _arg == "--max21-filter" and _i + 1 < len(sys.argv):
@@ -5352,8 +5352,6 @@ def main():
                     _max21_filter_pct = float(sys.argv[_i + 1])
                 except ValueError:
                     pass
-        if _max21_filter_pct is None:
-            _max21_filter_pct = 0.55  # default: keep bottom 55% (low MAX)
 
     # Portfolio-level volatility target (Harvey et al. / Man Group).
     _vol_target: float | None = None
