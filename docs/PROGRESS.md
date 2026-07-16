@@ -26,17 +26,14 @@
 
 **R7 step-function drawdown throttle.** New positions are halved once the portfolio drawdown exceeds `DD_THROTTLE_TRIGGER_PCT` (default 3.0). The multiplier is binary — 1.0 below the trigger and `DD_THROTTLE_MULT` (default 0.5) at or above it — not a continuous ramp. `services/portfolio_allocator.py` applies this to target weights and `services/broker_svc.py` applies the same multiplier to notional order sizes. Unit tests and docs updated. The `--portfolio` backtest default now runs with the R7 throttle enabled.
 
-**MAX21 low-MAX filter graduates at the 55th percentile.** Re-validated on the honest 26-year PIT-corrected MR-only canon (N=313, Port Sharpe 3.28, MaxDD −8.43%). Contrary to Chen et al., this vol-gated book performs better on *low*-MAX names. Integrated threshold sweep:
+**MAX21 low-MAX filter graduates at the 55th percentile.** Re-validated on the honest 26-year PIT-corrected MR-only canon (N=313, Port Sharpe 3.28, MaxDD −8.43%). Contrary to Chen et al., this vol-gated book performs better on *low*-MAX names. Isolated MAX21 effect (no R7 DD-throttle):
 
 | `--max21-filter` | Trades kept | Port Sharpe | Max DD | CAGR |
 |:---|---:|---:|---:|---:|
 | baseline (off) | 313 | 3.28 | −8.43% | +4.31% |
-| 0.33 | 191 | 4.01 | −5.34% | +3.70% |
-| 0.50 | 251 | 4.12 | −5.51% | +3.90% |
-| **0.55** | **264** | **4.35** | **−5.17%** | **+4.20%** |
-| 0.67 | 297 | 3.21 | −6.08% | +4.10% |
+| **0.55** | **264** | **3.75** | **−7.15%** | **+4.10%** |
 
-The 0.55 setting keeps −16% of trades while lifting Sharpe +1.07 and cutting MaxDD by ~3.3pp. `services/technicals.py` now emits `max_21_q55`, `services/gates/technicals.py` `Max21Gate` blocks high-MAX BUYs against the per-ticker expanding 55th percentile, and `backend/scripts/backtest_technicals.py` defaults `--max21-filter` to 0.55. Docs in `RESEARCH_SIGNAL_ENGINE_IMPROVEMENTS.md` updated.
+The 0.55 setting keeps 84% of trades while lifting isolated Sharpe +0.47 and cutting MaxDD by ~1.3pp. When the R7 step-function DD-throttle is stacked (the current `--portfolio` default), the combined path is Port Sharpe **4.35**, MaxDD **−5.17%**, CAGR **+4.2%** — that 4.35 is the combined MAX21 + DD-throttle effect, not the isolated MAX21 lift. `services/technicals.py` now emits `max_21_q55`, `services/gates/technicals.py` `Max21Gate` blocks high-MAX BUYs against the per-ticker expanding 55th percentile, and `backend/scripts/backtest_technicals.py` defaults `--max21-filter` to 0.55. Docs in `RESEARCH_SIGNAL_ENGINE_IMPROVEMENTS.md` updated.
 
 **Backtest parallelization.** Converted `backend/scripts/backtest_technicals.py` from `multiprocessing.Pool` to `ThreadPoolExecutor` with `_run_simulation_parallel` / `_filter_simulation_results` helpers, applied to the main run, calm-sleeve, gate validation, exit-sweep, full-signal comparison, and research sections. A 15-ticker `--quick` run dropped from ~5 min to ~22 s; the full 26-year run completes in ~8 min (was much longer). Controllable via `BACKTEST_WORKERS` env var (default 8).
 

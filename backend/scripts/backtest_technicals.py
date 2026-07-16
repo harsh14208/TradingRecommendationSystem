@@ -6976,7 +6976,7 @@ def main():
             print(
                 f"\n> Concurrent: ΔCAGR {_dca:+.1f}pp, ΔAnn.Sharpe {_dsa:+.3f}, MaxDD reduction {_dmd:+.2f}pp  "
                 + (
-                    "✅ deploy graduated DD-throttle in allocator"
+                    "✅ deploy step-function DD-throttle in allocator"
                     if (_dmd > 0.2 and _dsa > -0.03)
                     else "➖ neutral on concurrent path — DD already small"
                     if abs(_dsa) < 0.05
