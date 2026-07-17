@@ -874,7 +874,9 @@ async def test_execute_signal_bracket_order():
     db.add.assert_called_once()
     order_record = db.add.call_args[0][0]
     assert order_record.symbol == "AAPL"
-    assert order_record.status == "accepted"
+    # Raw Alpaca statuses (e.g. "accepted") are normalized to the broker_orders
+    # CheckConstraint vocabulary, not stored verbatim.
+    assert order_record.status == "submitted"
     assert order_record.alpaca_order_id == "bracket-1"
 
 

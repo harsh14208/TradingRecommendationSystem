@@ -98,10 +98,50 @@ async def test_place_multi_leg_option_order() -> None:
     assert result["status"] == "accepted"
     body = session.post.call_args.kwargs["json"]
     assert body["order_class"] == "mleg"
-    assert body["qty"] == "2"
+    assert body["qty"] == "1"
     assert len(body["legs"]) == 2
     assert body["legs"][0]["symbol"] == "AAPL260717C00170000"
     assert body["legs"][0]["position_intent"] == "buy_to_open"
+    assert body["legs"][0]["ratio_qty"] == "1"
+    assert body["legs"][1]["ratio_qty"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_place_multi_leg_option_order_reduces_ratio_qty() -> None:
+    """A 4-leg condor sized at 7 contracts must send qty=7/ratio_qty=1 per leg, not
+    qty=28/ratio_qty=7 — Alpaca 422s the latter as non-relatively-prime ratios
+    (observed live 2026-07-17 on EEM/NFLX)."""
+    session, cm = _mock_session(json_return={"id": "order-3", "status": "accepted"})
+    order = OptionOrder(
+        underlying="EEM",
+        strategy="SELL_DEFINED_RISK",
+        legs=[
+            OptionLeg(
+                side=side,
+                position=position,
+                option_symbol=f"O:EEM260717{opt}00170000",
+                quantity=7,
+                strike=170.0,
+                expiry="2026-07-17",
+            )
+            for side, position, opt in [
+                ("sell", "short", "C"),
+                ("buy", "long", "C"),
+                ("sell", "short", "P"),
+                ("buy", "long", "P"),
+            ]
+        ],
+        max_loss=1000.0,
+        expected_gain=50.0,
+    )
+    with patch("services.http_client.get_session", return_value=session):
+        broker = AlpacaOptionsBroker("KEY", "SECRET", paper=True)
+        result = await broker.place_option_order(order)
+
+    assert result["status"] == "accepted"
+    body = session.post.call_args.kwargs["json"]
+    assert body["qty"] == "7"
+    assert all(leg["ratio_qty"] == "1" for leg in body["legs"])
 
 
 @pytest.mark.asyncio

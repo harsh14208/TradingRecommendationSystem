@@ -188,7 +188,9 @@ async def test_execute_signal_buy_places_notional_order():
     assert order_record.side == "buy"
     assert order_record.notional == 200.0
     assert order_record.alpaca_order_id == "abc123"
-    assert order_record.status == "pending_new"
+    # Raw Alpaca statuses (e.g. "pending_new") are normalized to the
+    # broker_orders CheckConstraint vocabulary, not stored verbatim.
+    assert order_record.status == "submitted"
 
 
 @pytest.mark.asyncio

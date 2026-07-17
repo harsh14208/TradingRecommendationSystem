@@ -8,6 +8,7 @@ multi-leg option orders.  Multi-leg orders set ``order_class: "mleg"`` with a
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from typing import Any
 
@@ -91,14 +92,21 @@ class AlpacaOptionsBroker(OptionsBroker):
                 }
             )
         else:
+            # Alpaca's mleg "qty" is the number of spreads; each leg's "ratio_qty" is
+            # that leg's share of one spread, and the ratios must be relatively prime
+            # (e.g. a 7-contract iron condor is qty=7, ratio_qty=1 per leg — NOT
+            # qty=28/ratio_qty=7, which 422s with "ratio quantities should be
+            # relatively prime"). Reduce by the GCD of the leg quantities.
             body["order_class"] = "mleg"
-            body["qty"] = str(sum(int(leg.quantity) for leg in order.legs))
+            leg_quantities = [int(leg.quantity) for leg in order.legs]
+            multiplier = math.gcd(*leg_quantities)
+            body["qty"] = str(multiplier)
             body["legs"] = [
                 {
                     "side": leg.side,
                     "position_intent": _position_intent(leg, opening=True),
                     "symbol": _alpaca_symbol(leg.option_symbol),
-                    "ratio_qty": str(int(leg.quantity)),
+                    "ratio_qty": str(int(leg.quantity) // multiplier),
                 }
                 for leg in order.legs
             ]

@@ -876,15 +876,83 @@ async def _compute_adaptive_weights() -> dict:
 
 
 async def _load_db_settings() -> dict:
-    """Load persisted UI settings from DB (theme, auto_paper_trade, etc.)."""
+    """Load persisted UI settings from DB (theme, auto_paper_trade, etc.).
+
+    Merges with routers.settings_router._DEFAULTS the same way GET /api/settings
+    does — previously this returned the raw stored row only, so any key the row
+    didn't explicitly carry (e.g. paper_trade_equity_pct) silently fell back to
+    0/None here while the Settings UI showed the router's default (0.01) as the
+    active value. That divergence meant the scanner could size trades off the
+    flat $1000 notional while the UI claimed 1%-of-equity sizing was live.
+    """
+    from routers.settings_router import _DEFAULTS
+
     try:
         async with AsyncSessionLocal() as db:
             row = (await db.execute(select(AppSettings).where(AppSettings.id == 1))).scalar_one_or_none()
-            if row and row.data:
-                return row.data
+            return {**_DEFAULTS, **(row.data if row and row.data else {})}
     except Exception:
         log.warning("_load_db_settings failed", exc_info=True)
-    return {}
+    return dict(_DEFAULTS)
+
+
+async def _paper_owner_id(db) -> int | None:
+    """Bookkeeping account holder for scanner-placed paper BrokerOrder rows
+    (broker_orders.user_id is NOT NULL) — same convention as
+    services.options_paper.options_paper_active."""
+    return (await db.execute(select(User.id).where(User.is_owner == True).order_by(User.id))).scalars().first()
+
+
+async def _record_paper_order(
+    db,
+    owner_id: int | None,
+    signal_id: int | None,
+    ticker: str,
+    side: str,
+    notional: float,
+    qty: float | None,
+    price: float,
+    result: dict,
+) -> None:
+    """Persist a BrokerOrder row for a scanner-initiated paper trade.
+
+    This engine places real orders against the Alpaca paper account using the
+    global settings key, bypassing broker_svc.py's per-user execution path —
+    previously that meant these orders had NO local audit trail at all. `db`
+    and `owner_id` are None when a session/owner couldn't be resolved for this
+    cycle; recording is best-effort and never blocks the trade itself.
+    """
+    if db is None or owner_id is None:
+        return
+    from models import BrokerOrder
+    from services.broker_svc import _normalize_broker_status
+    from services.provider_telemetry import current_cycle_id
+
+    raw_status = result.get("status") if isinstance(result, dict) else None
+    # close_position() returns the synthetic {"status": "closed"} sentinel on a
+    # 204 (no order body to normalize), which _normalize_broker_status doesn't
+    # recognize — map it to "filled" directly rather than let it fall through
+    # to the "submitted" catch-all.
+    status = "filled" if raw_status == "closed" else _normalize_broker_status(raw_status)
+    order_record = BrokerOrder(
+        signal_id=signal_id,
+        user_id=owner_id,
+        broker="alpaca",
+        account_type="paper",
+        symbol=ticker,
+        notional=round(float(notional or 0.0), 2),
+        side=side,
+        status=status,
+        cycle_id=current_cycle_id.get(),
+        arrival_price=float(price or 0.0),
+        requested_qty=float(qty) if qty is not None else None,
+        alpaca_order_id=(result.get("id") if isinstance(result, dict) else None),
+    )
+    db.add(order_record)
+    try:
+        await db.flush()
+    except Exception:
+        log.warning("[paper] failed to persist BrokerOrder for %s", ticker, exc_info=True)
 
 
 async def _maybe_paper_trade(
@@ -892,6 +960,9 @@ async def _maybe_paper_trade(
     positions_map: dict,  # { symbol_upper: position_dict } from Alpaca
     settings,
     db_settings: dict,
+    db=None,
+    signal_id: int | None = None,
+    owner_id: int | None = None,
 ):
     """
     Place an Alpaca paper trade for a qualifying signal.
@@ -908,6 +979,9 @@ async def _maybe_paper_trade(
                cash-secured.
       - market hours check
       - Sleeve signals may carry ``sleeve_notional`` and ``sleeve_exit`` markers.
+      - `db`/`signal_id`/`owner_id` are optional — when given, every order placed
+        is recorded as a BrokerOrder row (see _record_paper_order); when not,
+        the trade still executes but goes unaudited locally, as before.
     """
     if not db_settings.get("auto_paper_trade"):
         return
@@ -989,11 +1063,15 @@ async def _maybe_paper_trade(
             order = await alpaca_rest.close_position(
                 settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value(), ticker
             )
+            pos_qty = abs(float(pos.get("qty") or 0.0))
+            await _record_paper_order(db, owner_id, signal_id, ticker, "sell", pos_qty * price, pos_qty, price, order)
             log.info(f" ✓ AUTO CLOSE long {ticker} — cross-sectional sleeve exit")
         elif pos_side == "short" and action == "BUY":
             order = await alpaca_rest.close_position(
                 settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value(), ticker
             )
+            pos_qty = abs(float(pos.get("qty") or 0.0))
+            await _record_paper_order(db, owner_id, signal_id, ticker, "buy", pos_qty * price, pos_qty, price, order)
             log.info(f" ✓ AUTO CLOSE short {ticker} — cross-sectional sleeve exit")
         else:
             log.info(f" {ticker} sleeve exit skipped — no matching {action} position")
@@ -1003,8 +1081,12 @@ async def _maybe_paper_trade(
         if action == "BUY":
             if pos_side == "short":
                 # Flip short → long: cover first, then buy below.
-                await alpaca_rest.close_position(
+                cover_order = await alpaca_rest.close_position(
                     settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value(), ticker
+                )
+                pos_qty = abs(float(pos.get("qty") or 0.0))
+                await _record_paper_order(
+                    db, owner_id, signal_id, ticker, "buy", pos_qty * price, pos_qty, price, cover_order
                 )
                 log.info(f" ✓ AUTO CLOSE short {ticker} — flipping to long")
             elif pos_side == "long":
@@ -1027,6 +1109,7 @@ async def _maybe_paper_trade(
                 qty,
                 "buy",
             )
+            await _record_paper_order(db, owner_id, signal_id, ticker, "buy", notional, qty, price, order)
             log.info(
                 f" ✓ AUTO BUY  {ticker} {qty}sh @ ~${price:.2f} "
                 f"| order {order.get('id', '?')[:8]} status={order.get('status')}"
@@ -1034,8 +1117,12 @@ async def _maybe_paper_trade(
 
         else:  # SELL entry
             if pos_side == "long":
-                await alpaca_rest.close_position(
+                close_order = await alpaca_rest.close_position(
                     settings.alpaca_api_key.get_secret_value(), settings.alpaca_api_secret.get_secret_value(), ticker
+                )
+                pos_qty = abs(float(pos.get("qty") or 0.0))
+                await _record_paper_order(
+                    db, owner_id, signal_id, ticker, "sell", pos_qty * price, pos_qty, price, close_order
                 )
                 log.info(f" ✓ AUTO CLOSE long {ticker}")
                 return
@@ -1064,6 +1151,7 @@ async def _maybe_paper_trade(
                     qty,
                     "sell",
                 )
+                await _record_paper_order(db, owner_id, signal_id, ticker, "sell", notional, qty, price, order)
                 log.info(
                     f" ✓ AUTO SHORT {ticker} {qty}sh @ ~${price:.2f} — cross-sectional sleeve "
                     f"| order {order.get('id', '?')[:8]} status={order.get('status')}"
@@ -2155,6 +2243,7 @@ async def _deliver_scan_signals(
     """
     if settings.auto_send_notifications:
         async with AsyncSessionLocal() as db:
+            owner_id = await _paper_owner_id(db)
             seen: set = set()
             candidates = []
             new_set = {id(row) for _, row, _ in new_signals}
@@ -2174,14 +2263,18 @@ async def _deliver_scan_signals(
                     await _maybe_send(
                         sig, merged, settings, db, label, force_resend=force, scan_started_at=scan_cycle_started_at
                     )
-                    await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+                    await _maybe_paper_trade(
+                        sig, positions_map, settings, db_settings, db=db, signal_id=merged.id, owner_id=owner_id
+                    )
                     delivered_signals.append((sig, merged.id))
                 elif cohort == "shadow":
                     log.info(
                         "Cohort: Ticker %s routed to SHADOW (paper-only). Skipping notifications/live orders.",
                         sig["ticker"],
                     )
-                    await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+                    await _maybe_paper_trade(
+                        sig, positions_map, settings, db_settings, db=db, signal_id=merged.id, owner_id=owner_id
+                    )
                 elif cohort == "withheld":
                     log.info(
                         "Cohort: Ticker %s routed to WITHHELD (control). Skipping all executions/notifications.",
@@ -2193,14 +2286,20 @@ async def _deliver_scan_signals(
 
             await db.commit()
     elif db_settings.get("auto_paper_trade"):
-        seen: set = set()
-        for sig, row, _force in new_signals + refreshed_unsent:
-            key = (sig["ticker"], sig["action"])
-            if key not in seen:
-                seen.add(key)
-                cohort = sig.get("cohort", "delivered")
-                if cohort != "withheld":
-                    await _maybe_paper_trade(sig, positions_map, settings, db_settings)
+        async with AsyncSessionLocal() as db:
+            owner_id = await _paper_owner_id(db)
+            seen: set = set()
+            for sig, row, _force in new_signals + refreshed_unsent:
+                key = (sig["ticker"], sig["action"])
+                if key not in seen:
+                    seen.add(key)
+                    cohort = sig.get("cohort", "delivered")
+                    if cohort != "withheld":
+                        merged = await db.merge(row)
+                        await _maybe_paper_trade(
+                            sig, positions_map, settings, db_settings, db=db, signal_id=merged.id, owner_id=owner_id
+                        )
+            await db.commit()
 
 
 async def eod_batch_send() -> None:

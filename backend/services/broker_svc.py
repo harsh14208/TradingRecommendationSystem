@@ -341,11 +341,18 @@ def _normalize_broker_status(status: str | None) -> str:
     if not status:
         return "submitted"
     s = status.lower()
-    if s in ("filled", "partially_filled"):
+    # Already one of our own target values — e.g. "error"/"rejected" set directly by
+    # an exception handler or a broker client's HTTP-error branch, not a raw Alpaca
+    # order-status enum value. Pass through unchanged so it isn't remapped to
+    # "submitted" by the catch-all below (raw Alpaca has no "error" or "submitted"
+    # status of its own).
+    if s in ("submitted", "filled", "rejected", "error", "orphan", "canceled"):
+        return s
+    if s == "partially_filled":
         return "filled"
-    if s in ("canceled", "cancelled", "expired", "done_for_day"):
+    if s in ("cancelled", "expired", "done_for_day"):
         return "canceled"
-    if s in ("rejected",) or "reject" in s:
+    if "reject" in s:
         return "rejected"
     # accepted, pending_new, new, etc. all map to submitted while we wait for fills.
     return "submitted"
@@ -503,10 +510,10 @@ async def _execute_option_signal_for_user(
     try:
         result = await broker.place_option_order(resolved_order)
         order_record.alpaca_order_id = result.get("alpaca_order_id")
-        order_record.status = result.get("status", "submitted")
-        if order_record.status == "error":
-            order_record.error_msg = result.get("reason", "")[:500]
-            order_record.reject_reason = result.get("reason", "")[:500]
+        order_record.status = _normalize_broker_status(result.get("status"))
+        if order_record.status in ("error", "rejected"):
+            order_record.error_msg = (result.get("reason") or "")[:500]
+            order_record.reject_reason = (result.get("reason") or "")[:500]
         log.info(
             "broker_svc: user=%d — live option order %s %s -> %s",
             user.id,
@@ -739,7 +746,7 @@ async def execute_signal_for_user(
 
         order_id = result.get("id") or result.get("orderId") or result.get("alpaca_order_id") or ""
         order_record.alpaca_order_id = order_id
-        order_record.status = result.get("status", "submitted")
+        order_record.status = _normalize_broker_status(result.get("status"))
         log.info(
             "broker_svc: user=%d %s %s $%.2f stop=%.2f → order_id=%s status=%s",
             user.id,
@@ -987,7 +994,7 @@ async def execute_portfolio_for_user(
 
             order_id = result.get("id") or result.get("orderId") or result.get("alpaca_order_id") or ""
             order_record.alpaca_order_id = order_id
-            order_record.status = result.get("status", "submitted")
+            order_record.status = _normalize_broker_status(result.get("status"))
             log.info(
                 "broker_svc: user=%d (HRP target weight %s) %s %s $%.2f stop=%.2f → order_id=%s status=%s",
                 user.id,

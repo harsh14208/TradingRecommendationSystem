@@ -228,7 +228,9 @@ def _normalize_status(raw: str | None) -> str:
         return "rejected"
     if s == "error":
         return "error"
-    # accepted / new / pending_new / accepted_for_bidding / partially_filled / etc.
+    if s == "partially_filled":
+        return "filled"
+    # accepted / new / pending_new / accepted_for_bidding / etc.
     return "submitted"
 
 

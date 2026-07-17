@@ -752,6 +752,28 @@ async def _intraday_stop_monitor():
         await asyncio.sleep(1800)  # 30-minute interval
 
 
+async def _broker_order_reconciliation():
+    """
+    Poll the broker for every 'submitted' BrokerOrder every 30 minutes and
+    update its status (filled/rejected/canceled) or flag it as an orphan.
+    Without this, broker_orders.status never advances past 'submitted' —
+    see TSYS-9a in services/broker_svc.py::reconcile_broker_orders.
+    """
+    from database import AsyncSessionLocal
+    from services.broker_svc import reconcile_broker_orders
+
+    await asyncio.sleep(120)  # let the first scan cycle complete before polling
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                await reconcile_broker_orders(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("[main] broker order reconciliation failed: %s", e)
+        await asyncio.sleep(1800)  # 30-minute interval
+
+
 async def _nightly_reflection_learning():
     """
     Automated Reflection & Learning — runs nightly at 4:30am ET alongside cleanup.
@@ -1833,6 +1855,7 @@ async def lifespan(app: FastAPI):
     _supervise("nightly_cboe_options_snapshot", _nightly_cboe_options_snapshot, restart=True)
     _supervise("nightly_massive_options_panel", _nightly_massive_options_panel, restart=True)
     _supervise("intraday_stop_monitor", _intraday_stop_monitor, restart=True)
+    _supervise("broker_order_reconciliation", _broker_order_reconciliation, restart=True)
     _supervise("nightly_reflection", _nightly_reflection_learning, restart=True)
     _supervise("weekly_screener", _weekly_ticker_screener, restart=True)
 
