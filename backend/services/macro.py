@@ -280,7 +280,19 @@ async def get_macro_context() -> dict:
 
         key = get_settings().fred_api_key
         if key:
-            fed_rate, cpi, hy_spread, ig_spread, stlfsi, icsa, umcsent, t10y3m, nfci, baa10y = await asyncio.gather(
+            (
+                fed_rate,
+                cpi,
+                hy_spread,
+                ig_spread,
+                stlfsi,
+                icsa,
+                umcsent,
+                t10y3m,
+                nfci,
+                baa10y,
+                dgs2,
+            ) = await asyncio.gather(
                 _fred("FEDFUNDS", key),
                 _fred_yoy("CPIAUCSL", key),  # CPI as YoY % (not the raw index level)
                 _fred("BAMLH0A0HYM2", key),  # ICE BofA US HY OAS spread (%)
@@ -291,7 +303,10 @@ async def get_macro_context() -> dict:
                 _fred("T10Y3M", key),  # 10-Year minus 3-Month yield spread
                 _fred("NFCI", key),  # Chicago Fed National Financial Conditions Index
                 _fred("BAA10Y", key),  # Moody's Baa Corporate Bond Yield Relative to 10-Year Treasury
+                _fred("DGS2", key),  # 2-Year Treasury constant-maturity yield (%)
             )
+            if dgs2 is not None:
+                result["t2y"] = round(dgs2, 3)
             if hy_spread is not None:
                 hy_spread *= 100
             if ig_spread is not None:
@@ -687,14 +702,19 @@ async def get_macro_context() -> dict:
     except Exception as e:
         log.warning(f"[macro] MOVE: {e}")
 
-    # ── Yield curve (2Y-10Y spread) ───────────────────────────────────────
+    # ── Yield curve (2Y-10Y spread) ─────────────────────────────────────────
+    # t2y comes from FRED's DGS2 (real constant-maturity 2-Year Treasury yield,
+    # fetched above). NOTE: this used to be derived from ^IRX (the 13-week /
+    # 3-month T-bill, not the 2-year note) with a stale "/10" scaling — that
+    # produced a bogus "2Y yield" that was actually numerically close to the
+    # true 10Y-2Y spread, which in turn made the computed "spread" wildly
+    # inflated (e.g. reporting +4% when the real curve was ~+0.4%). Skip this
+    # block entirely if FRED isn't configured rather than fall back to that.
     try:
-        t2y_df = await get_history("^IRX", period="5d", interval="1d")
+        t2y = result.get("t2y")
         t10y = result.get("t10y")
-        if t2y_df is not None and not t2y_df.empty and t10y:
-            t2y = round(float(t2y_df["Close"].iloc[-1]) / 10, 3)  # ^IRX is in basis pts / 10
+        if t2y is not None and t10y is not None:
             spread = round(t10y - t2y, 3)
-            result["t2y"] = t2y
             result["yc_spread"] = spread
             if spread < 0:
                 score -= 8

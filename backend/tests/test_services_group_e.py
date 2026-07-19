@@ -361,7 +361,18 @@ async def test_get_macro_context_move_index():
 
 @pytest.mark.asyncio
 async def test_get_macro_context_yield_curve_inverted():
+    # t2y is sourced from FRED's DGS2 (real constant-maturity 2-Year Treasury
+    # yield), not from ^IRX (the 13-week T-bill) — see macro.py's "Yield
+    # curve" section. So triggering an inversion in this test means mocking
+    # _fred("DGS2", ...) above the mocked ^TNX (10Y) level, the same way
+    # test_get_macro_context_fred_comprehensive mocks _fred for the other
+    # FRED-sourced series, rather than mocking ^IRX (which this section no
+    # longer reads at all).
     from services.macro import get_macro_context
+
+    async def _mock_fred(series_id, api_key):
+        values = {"DGS2": 5.0}
+        return values.get(series_id)
 
     mapping = {
         "^VIX": _make_df([18.0, 19.0, 20.0]),
@@ -371,7 +382,6 @@ async def test_get_macro_context_yield_curve_inverted():
         "^VIX3M": _make_df([20.0, 21.0, 22.0]),
         "^VIX9D": _make_df([21.0, 22.0, 23.0]),
         "^MOVE": _make_df([100.0, 105.0, 110.0]),
-        "^IRX": _make_df([500.0, 510.0, 520.0]),  # 2Y > 10Y
         "DX-Y.NYB": _make_df([100.0] * 66),
         "HG=F": _make_df([4.0] * 66),
         "GC=F": _make_df([2000.0] * 66),
@@ -383,15 +393,21 @@ async def test_get_macro_context_yield_curve_inverted():
     async def _mock_history(ticker, **kwargs):
         return mapping.get(ticker)
 
+    fake_settings = MagicMock()
+    fake_settings.fred_api_key = "fake_key"
+
     with (
         patch("services.macro.get_history", side_effect=_mock_history),
         patch("services.macro.cache_get", return_value=None),
         patch("services.macro.cache_set"),
+        patch("services.macro._fred", side_effect=_mock_fred),
+        patch("config.get_settings", return_value=fake_settings),
         patch("services.macro.os.getenv", return_value=""),
     ):
         result = await get_macro_context()
 
     assert isinstance(result, dict)
+    assert result.get("t2y") == 5.0
     assert result.get("yc_spread") is not None
     assert result.get("yc_spread") < 0
     assert any("Yield Curve Inverted" in r.get("head", "") for r in result.get("rationale", []))

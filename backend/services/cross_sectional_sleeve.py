@@ -26,7 +26,26 @@ log = logging.getLogger("signal.trade.cross_sectional_sleeve")
 _SLEEVE_NAME = "CrossSectional"
 _DEFAULT_DECILE = 0.10
 _HOLD_DAYS = 63
-_MIN_CONFIDENCE = 100.0
+
+
+def _percentile_confidence(pct: float) -> float:
+    """Map an h=63 percentile rank to a confidence figure.
+
+    Was a flat 100.0 for every entry regardless of percentile (named
+    `_MIN_CONFIDENCE` despite being used as a constant, not a floor) — a 51st
+    percentile name and a 99th percentile name were written with identical
+    "100% confidence," and because these shadow-cohort signals share the same
+    `signals` table as the live TRS system, that flat 100.0 skewed any
+    consumer that aggregates `confidence` across the table (e.g. a 24h
+    average) even though these rows never appear in the actionable feed
+    (`is_sent` is always False for this sleeve).
+    Scales with distance from the 50th-percentile midpoint, capped at 78 —
+    the same pre-calibration ceiling `_score_to_action` uses in the main
+    engine, so this sleeve's confidence sits on a comparable scale rather
+    than its own disconnected range.
+    """
+    extremity = abs(pct - 50.0)
+    return round(min(78.0, 50.0 + extremity * 0.56), 1)
 
 
 def build_cross_sectional_book(
@@ -90,6 +109,7 @@ def _base_signal_dict(
         )
         meta = f"sleeve=CrossSectional horizon=63 pct={pct:.1f} decile={decile}"
 
+    conf = _percentile_confidence(pct)
     signal: dict[str, Any] = {
         "ticker": ticker,
         "company": ticker,
@@ -98,11 +118,11 @@ def _base_signal_dict(
         "entry": round(price, 4),
         "change": 0.0,
         "changePct": 0.0,
-        "confidence": _MIN_CONFIDENCE,
-        "displayConfidence": _MIN_CONFIDENCE,
-        "calibratedProbability": _MIN_CONFIDENCE,
-        "alpha_score": _MIN_CONFIDENCE,
-        "raw_score": _MIN_CONFIDENCE,
+        "confidence": conf,
+        "displayConfidence": conf,
+        "calibratedProbability": conf,
+        "alpha_score": conf,
+        "raw_score": conf,
         "headline": headline,
         "sentiment": 0.0,
         "style": "position",

@@ -266,8 +266,16 @@ def _fetch_options_polygon(ticker: str) -> dict | None:
     import requests
 
     # Paginate up to 2000 contracts (8 pages × 250) — full chain for accurate GEX.
+    # sort=expiration_date/order=asc makes pagination deterministic: if a wide,
+    # multi-year chain (e.g. mega-caps with 30+ expiries) exceeds the 2000-contract
+    # cap, truncation always drops the far-dated tail, never near-term data. Without
+    # an explicit sort, Polygon's default ordering is unspecified, so the "total"
+    # aggregates computed below (put_oi, call_oi, zero_dte_ratio's denominator, etc.)
+    # could silently reflect an arbitrary partial slice of the chain rather than
+    # the near-dated, decision-relevant contracts — and any "total" label on the
+    # resulting numbers would overstate what was actually counted.
     url = f"https://api.polygon.io/v3/snapshot/options/{ticker}"
-    params = {"apiKey": api_key, "limit": 250}
+    params = {"apiKey": api_key, "limit": 250, "sort": "expiration_date", "order": "asc"}
     raw: list = []
     try:
         next_url: str | None = url
@@ -346,23 +354,43 @@ def _fetch_options_polygon(ticker: str) -> dict | None:
             gex_total += sign * g * oi * 100 * spot
     gex_total = round(gex_total, 0)
 
-    # IV stats for IV Rank / term spike (group by expiry)
+    # IV stats for IV Rank / term spike (group by expiry).
+    # Restricted to near-the-money (within 20% of spot), non-0DTE, and with
+    # some open interest — deep ITM/OTM and same-day-expiry contracts routinely
+    # show wildly distorted "implied volatility" from thin/stale quotes (a
+    # handful of penny options can report IVs in the hundreds or thousands of
+    # percent) and same-day annualization of a tiny time-to-expiry mechanically
+    # inflates IV even for calm contracts. Averaging the WHOLE chain (all
+    # strikes, all expiries, including 0DTE) used to produce headline figures
+    # like "166% avg IV" / "3.8x term spike" that were pure aggregation noise,
+    # not a real market read. ATM ±20%, OI > 0, non-0DTE contracts only.
     from collections import defaultdict
     from datetime import datetime as _dt
 
+    _today_str_iv = _dt.utcnow().strftime("%Y-%m-%d")
+    _lo, _hi = (spot * 0.8, spot * 1.2) if spot and spot > 0 else (0, float("inf"))
+
+    def _iv_eligible(r: dict) -> bool:
+        d = r.get("details") or {}
+        exp = d.get("expiration_date", "")
+        strike = d.get("strike_price")
+        oi = r.get("open_interest") or 0
+        if not exp or exp == _today_str_iv or not strike or oi <= 0:
+            return False
+        return _lo <= float(strike) <= _hi
+
     by_expiry: dict[str, list] = defaultdict(list)
     for r in raw:
-        exp = (r.get("details") or {}).get("expiration_date", "")
         iv = r.get("implied_volatility")
-        if exp and iv:
-            by_expiry[exp].append(float(iv))
+        if iv and _iv_eligible(r):
+            by_expiry[(r.get("details") or {}).get("expiration_date", "")].append(float(iv))
 
     sorted_exps = sorted(by_expiry.keys())
     near_iv = float(sum(by_expiry[sorted_exps[0]]) / len(by_expiry[sorted_exps[0]])) if sorted_exps else None
     far_iv = float(sum(by_expiry[sorted_exps[1]]) / len(by_expiry[sorted_exps[1]])) if len(sorted_exps) >= 2 else None
     iv_term_spike = round(near_iv / far_iv, 2) if near_iv and far_iv and far_iv > 0 else None
 
-    all_ivs = [float(r["implied_volatility"]) for r in raw if r.get("implied_volatility")]
+    all_ivs = [iv for ivs in by_expiry.values() for iv in ivs]
     avg_iv = round(sum(all_ivs) / len(all_ivs), 4) if all_ivs else None
 
     # IV Rank — load history from Redis so it survives restarts and is shared across workers
@@ -690,16 +718,42 @@ def _fetch_options(ticker: str) -> dict:
         otm_put_vol = int(otm_puts["volume"].fillna(0).sum())
 
         # ── IV calculations ───────────────────────────────────────────────────
+        # Restricted to near-the-money strikes (~ATM, using the ITM/OTM boundary
+        # as a spot proxy since this fallback path doesn't fetch an explicit spot
+        # price) and to non-0DTE expiries — averaging every strike including deep
+        # ITM/OTM contracts produces wildly inflated, noise-dominated "IV" figures.
+        # See the equivalent, more precise spot±20% filter in _fetch_options_polygon.
+        from datetime import datetime as _dt_iv2
+
+        _today_str_iv2 = _dt_iv2.utcnow().strftime("%Y-%m-%d")
+
+        def _near_atm_iv(calls_df):
+            df = calls_df[calls_df["openInterest"].fillna(0) > 0]
+            if df.empty:
+                return None
+            # Preferred: derive an ATM strike from the ITM/OTM boundary and
+            # average IV within ±20% of it. Falls back to a plain mean over
+            # all liquid (OI > 0) strikes when the chain doesn't straddle
+            # both sides (e.g. a thin/sparse book) — still excludes
+            # zero-OI junk, just can't pinpoint "near-the-money" precisely.
+            if "inTheMoney" in df.columns:
+                otm = df[df["inTheMoney"].fillna(True) == False]  # noqa: E712
+                itm = df[df["inTheMoney"].fillna(False) == True]  # noqa: E712
+                if not otm.empty and not itm.empty:
+                    atm_strike = (otm["strike"].min() + itm["strike"].max()) / 2
+                    band = df[(df["strike"] >= atm_strike * 0.8) & (df["strike"] <= atm_strike * 1.2)]
+                    ivs = band["impliedVolatility"].dropna()
+                    if len(ivs) > 0:
+                        return float(ivs.mean())
+            ivs = df["impliedVolatility"].dropna()
+            return float(ivs.mean()) if len(ivs) > 0 else None
+
         near_iv = None
         far_iv = None
-        if len(chains) >= 1:
-            c1 = chains[0][1]  # near-term calls
-            ivs = c1["impliedVolatility"].dropna()
-            near_iv = float(ivs.mean()) if len(ivs) > 0 else None
+        if len(chains) >= 1 and chains[0][0] != _today_str_iv2:
+            near_iv = _near_atm_iv(chains[0][1])  # near-term calls
         if len(chains) >= 2:
-            c2 = chains[1][1]  # further calls
-            ivs2 = c2["impliedVolatility"].dropna()
-            far_iv = float(ivs2.mean()) if len(ivs2) > 0 else None
+            far_iv = _near_atm_iv(chains[1][1])  # further calls
 
         # IV spike: near-term much higher than back-month signals event risk
         iv_term_spike = None
@@ -1156,7 +1210,12 @@ def score_options(opt: dict) -> tuple[float, list[dict]]:
                         )
                 # Charm: additional ±2 pts
                 if abs(net_c) > 0.0001:
-                    c_score = max(-2, min(2, -net_c * 5000))  # normalise to ±2 pts
+                    # net_c > 0 = bullish (dealers unwind short delta, buy pressure) —
+                    # see compute_dealer_positioning's charm_sig convention above.
+                    # This used to be negated (`-net_c * 5000`), which flipped the score,
+                    # sentiment, and body wording opposite to the head's Bullish/Bearish
+                    # label (e.g. "Charm Flow Bullish" body reading "sell pressure").
+                    c_score = max(-2, min(2, net_c * 5000))  # normalise to ±2 pts
                     score += c_score
                     if abs(c_score) >= 0.5:
                         rationale.append(

@@ -131,7 +131,7 @@ from services.fundamentals import get_fundamentals
 from services.market_data import get_extended_hours_data, get_history, get_info
 from services.news import get_analyst_recs, get_company_news
 from services.news_scraper import get_scraped_news
-from services.options import get_options_flow, score_options
+from services.options import get_options_flow
 from services.sector import get_sector_relative_strength
 from services.social import get_social_sentiment
 from services.technicals import calculate_indicators
@@ -1071,12 +1071,12 @@ async def generate_signal(
             _rng = _wk52h - _wk52l
             _pos = (price - _wk52l) / _rng  # 0.0 = at 52wk low, 1.0 = at 52wk high
             _pos_pct = round(_pos * 100, 1)
-            sources.add("Technicals")
+            sources.add("Technical")
             if _pos >= 0.90:
                 score += 4
                 rationale.append(
                     {
-                        "src": "Technicals",
+                        "src": "Technical",
                         "head": f"Near 52-Week High — {_pos_pct:.0f}th Percentile of Range",
                         "body": (
                             f"Price is in the top {100 - _pos_pct:.0f}% of its 52-week range "
@@ -1091,7 +1091,7 @@ async def generate_signal(
                 score += 2
                 rationale.append(
                     {
-                        "src": "Technicals",
+                        "src": "Technical",
                         "head": f"Upper Quartile of 52-Week Range — {_pos_pct:.0f}th Percentile",
                         "body": "Price in upper 25% of 52-week range — mild momentum confirmation.",
                         "sentiment": "pos",
@@ -1102,7 +1102,7 @@ async def generate_signal(
                 score -= 4
                 rationale.append(
                     {
-                        "src": "Technicals",
+                        "src": "Technical",
                         "head": f"Near 52-Week Low — {_pos_pct:.0f}th Percentile of Range",
                         "body": (
                             f"Price in the bottom {_pos_pct:.0f}% of its 52-week range. "
@@ -1117,7 +1117,7 @@ async def generate_signal(
                 score -= 2
                 rationale.append(
                     {
-                        "src": "Technicals",
+                        "src": "Technical",
                         "head": f"Lower Quartile of 52-Week Range — {_pos_pct:.0f}th Percentile",
                         "body": "Price in bottom 25% of 52-week range — mild downtrend confirmation.",
                         "sentiment": "neg",
@@ -2643,13 +2643,15 @@ async def generate_signal(
             # |gap|<1% combination never occurs in practice. The gap up/down
             # cards above fire and are unchanged.
 
-        # ── Options flow (yfinance multi-expiry enhanced sweep detection) ───
-        if opt_flow:
-            opt_score, opt_rationale = score_options(opt_flow)
-            if opt_score != 0:
-                score += opt_score
-                sources.add("Options")
-                rationale.extend(opt_rationale)
+        # Options flow scoring REMOVED from the inline TA pass (2026-07-18):
+        # this called score_options(opt_flow) and merged its score/rationale
+        # directly here, then options_worker() (launched concurrently above,
+        # merged at "Merge worker results" below) did the exact same
+        # score_options(opt_flow) call again on the same data — every
+        # Options-sourced card (Vanna, Charm Flow, IV spike, sweeps, etc.) was
+        # appended twice and its score contribution counted twice in every
+        # signal. options_worker is the current path; this duplicate direct
+        # call is deleted, not the worker.
 
         # 8-K material-events scoring REMOVED (dead-code audit 2026-07-14):
         # 0 cards in 87,982 signals — get_8k_signals() never returns |score|>=3.
@@ -4008,12 +4010,12 @@ async def generate_signal(
         _mom_factor = (analyst_recs or {}).get("momentum_factor")
         _r26w = (analyst_recs or {}).get("return_26w")
         if _mom_factor is not None and not _is_lev_etf:
-            sources.add("Technicals")
+            sources.add("Technical")
             if _mom_factor >= 20:
                 score += 5
                 rationale.append(
                     {
-                        "src": "Technicals",
+                        "src": "Technical",
                         "head": f"Strong Price Momentum Factor (+{_mom_factor:.1f}%)",
                         "body": (
                             f"6-month return of {_r26w:.1f}% with positive intermediate-term momentum. "
@@ -4028,7 +4030,7 @@ async def generate_signal(
                 score += 2
                 rationale.append(
                     {
-                        "src": "Technicals",
+                        "src": "Technical",
                         "head": f"Positive Price Momentum (+{_mom_factor:.1f}%)",
                         "body": f"Intermediate-term momentum positive at {_mom_factor:.1f}%. Mild continuation signal.",
                         "sentiment": "pos",
@@ -4039,7 +4041,7 @@ async def generate_signal(
                 score -= 5
                 rationale.append(
                     {
-                        "src": "Technicals",
+                        "src": "Technical",
                         "head": f"Strong Negative Momentum ({_mom_factor:.1f}%)",
                         "body": (
                             f"6-month return of {_r26w:.1f}% with large negative momentum factor. "
@@ -4054,7 +4056,7 @@ async def generate_signal(
                 score -= 2
                 rationale.append(
                     {
-                        "src": "Technicals",
+                        "src": "Technical",
                         "head": f"Negative Price Momentum ({_mom_factor:.1f}%)",
                         "body": "Intermediate-term momentum negative. Mild downtrend confirmation.",
                         "sentiment": "neg",
@@ -4349,8 +4351,14 @@ async def generate_signal(
                         "head": f"ETF Fund Flow {etf_flow_score:+.1f}pts — {etf_flow_reason}",
                         "body": (
                             "Institutional money flows at the sector ETF level lead individual stock "
-                            "prices by 1–3 trading days. Strong inflows into the sector ETF signal "
-                            "buy-side rotation into this area of the market."
+                            "prices by 1–3 trading days. "
+                            + (
+                                "Strong inflows into the sector ETF signal buy-side rotation into this "
+                                "area of the market."
+                                if etf_flow_score > 0
+                                else "Strong outflows from the sector ETF signal buy-side rotation out of "
+                                "this area of the market — a headwind for constituents."
+                            )
                         ),
                         "sentiment": "pos" if etf_flow_score > 0 else "neg",
                         "meta": f"etf_flow_score={etf_flow_score:+.1f}",

@@ -245,7 +245,12 @@ async def test_execute_signal_records_error_on_failure():
 
 
 @pytest.mark.asyncio
-async def test_execute_signal_ai_eval_blocks_order():
+async def test_execute_signal_ai_eval_does_not_block_order():
+    # AI pre-execution review is advisory only (see ai_evaluator.py's module
+    # docstring): a "not approved" result is recorded on the order for human
+    # review but does not stop submission. This replaces the old
+    # test_execute_signal_ai_eval_blocks_order, which asserted the opposite —
+    # that the order was never placed and never even reached db.add().
     from services.ai_evaluator import AIEvalResult
     from services.broker_svc import encrypt_credential, execute_signal_for_user
 
@@ -255,9 +260,12 @@ async def test_execute_signal_ai_eval_blocks_order():
         alpaca_account_type="paper",
     )
     db = AsyncMock()
+    fake_order = {"id": "ai-456", "status": "accepted"}
 
     with (
-        patch("services.alpaca_rest.place_notional_order", new_callable=AsyncMock) as mock_order,
+        patch(
+            "services.alpaca_rest.place_notional_order", new_callable=AsyncMock, return_value=fake_order
+        ) as mock_order,
         patch(
             "services.broker_svc.evaluate_trade",
             new_callable=AsyncMock,
@@ -271,8 +279,15 @@ async def test_execute_signal_ai_eval_blocks_order():
     ):
         await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "confidence": 100.0}, 42, db)
 
-    mock_order.assert_not_called()
-    db.add.assert_not_called()
+    mock_order.assert_called_once()
+    db.add.assert_called_once()
+    order_record = db.add.call_args[0][0]
+    assert order_record.ai_eval_data == {
+        "approved": False,
+        "reasoning": "Earnings event risk.",
+        "risk_flag": "earnings",
+        "confidence": 0.9,
+    }
 
 
 @pytest.mark.asyncio

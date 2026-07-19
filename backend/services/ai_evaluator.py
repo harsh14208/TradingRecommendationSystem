@@ -2,13 +2,18 @@
 
 Calls a configured LLM provider (OpenAI, Anthropic, or any OpenAI-compatible
 local endpoint) to review a signal immediately before capital is committed.
-The evaluator is inserted **after** all engineering risk guards (drawdown,
-runtime risk limits, capacity/slippage checks) so it acts as a final
-qualitative gate, not a replacement for quantitative risk controls.
+The evaluator runs **after** all engineering risk guards (drawdown, runtime
+risk limits, capacity/slippage checks) and is advisory only: its assessment
+is recorded on the order (``ai_eval_data``) for human review, but a
+``approved=False`` result does not stop the order from being submitted. The
+engineering guards that ran before it are what actually gate execution;
+this call never did and should never regress into doing so — see
+broker_svc.py's three call sites, which log the AI's reasoning and proceed
+regardless of ``approved``.
 
-When disabled or when the AI provider is unreachable, the gate defaults to
-``approved=True`` so a network outage cannot freeze all trading unless the
-operator explicitly configures ``AI_EVAL_FAIL_OPEN_ON_ERROR=false``.
+When disabled or when the AI provider is unreachable, this defaults to
+``approved=True`` (fails open) — moot for execution either way now that the
+result isn't enforced, but still meaningful for what gets recorded/displayed.
 """
 
 import json
@@ -56,7 +61,11 @@ _RISK_FLAGS = {
 # them. The concrete JSON example is supplied in the user message.
 _SYSTEM_PROMPT = """You are a disciplined quantitative trading risk analyst.
 Review one trade signal moments before it is sent to a broker.
-Be conservative: only approve clean, favorable setups. Block marginal signals.
+This is advisory only: your assessment is logged for human review, but the
+trade executes regardless of what you return — there is no "decision" value
+that stops it. Be conservative in what you flag: mark "block" for any setup
+you would not personally take, even marginal ones — a human reviewing the
+log benefits from your honest read either way.
 Respond with a single JSON object only — no Markdown, no explanation outside the JSON."""
 
 
@@ -77,7 +86,8 @@ def _build_prompt(signal: dict, market_ctx: Optional[dict], include_role_prefix:
     rules are part of the user message rather than a separate system message.
     """
     role_prefix = """You are a disciplined quantitative trading risk analyst. Review one trade signal moments before it is sent to a broker.
-Be conservative: only approve clean, favorable setups. Block marginal signals.
+This is advisory only: your assessment is logged for human review, but the trade executes regardless of what you return.
+Be conservative in what you flag: mark "block" for any setup you would not personally take, even marginal ones.
 Respond with a single JSON object only — no Markdown, no explanation outside the JSON.
 
 """

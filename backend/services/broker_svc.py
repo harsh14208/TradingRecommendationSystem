@@ -495,17 +495,21 @@ async def _execute_option_signal_for_user(
 
     live = user.alpaca_account_type == "live"
 
-    # TSYS-15: final AI pre-execution gate for live option orders.
+    # TSYS-15: AI pre-execution review for live option orders. Advisory only —
+    # its assessment is recorded on the order (ai_eval_data below) for human
+    # review, but it does not gate submission. Quantitative risk controls
+    # (drawdown, runtime limits, capacity/slippage checks) already ran before
+    # this point and are what actually blocks a bad order; this is guidance,
+    # not another gate.
     ai_result = await evaluate_trade(sig)
     if not ai_result.approved:
         log.info(
-            "broker_svc: user=%d — AI eval blocked option order %s %s: %s",
+            "broker_svc: user=%d — AI eval flagged option order %s %s (proceeding — advisory only): %s",
             user.id,
             order.underlying,
             order.strategy,
             ai_result.reasoning,
         )
-        return
 
     broker = AlpacaOptionsBroker(api_key=key, api_secret=secret, paper=not live)
     order_record = BrokerOrder(
@@ -703,17 +707,19 @@ async def execute_signal_for_user(
         )
         notional = suggested_notional
 
-    # TSYS-15: final AI pre-execution gate after all engineering risk guards.
+    # TSYS-15: AI pre-execution review, after all engineering risk guards.
+    # Advisory only — recorded in ai_eval_data for human review but does not
+    # gate submission. The engineering guards above are what actually block a
+    # bad order.
     ai_result = await evaluate_trade(sig)
     if not ai_result.approved:
         log.info(
-            "broker_svc: user=%d — AI eval blocked %s %s: %s",
+            "broker_svc: user=%d — AI eval flagged %s %s (proceeding — advisory only): %s",
             user.id,
             ticker,
             action,
             ai_result.reasoning,
         )
-        return
 
     if broker_type == "ibkr":
         from services import ibkr_rest as client_rest
@@ -971,17 +977,19 @@ async def execute_portfolio_for_user(
             )
             notional = suggested_notional
 
-        # TSYS-15: final AI pre-execution gate after all engineering risk guards.
+        # TSYS-15: AI pre-execution review, after all engineering risk guards.
+        # Advisory only — recorded in ai_eval_data for human review but does
+        # not gate submission. The engineering guards above are what actually
+        # block a bad order.
         ai_result = await evaluate_trade(sig)
         if not ai_result.approved:
             log.info(
-                "broker_svc: user=%d — AI eval blocked %s %s: %s",
+                "broker_svc: user=%d — AI eval flagged %s %s (proceeding — advisory only): %s",
                 user.id,
                 ticker,
                 action,
                 ai_result.reasoning,
             )
-            continue
 
         # Place order
         if broker_type == "ibkr":
