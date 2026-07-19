@@ -51,25 +51,13 @@ _RISK_FLAGS = {
 }
 
 
-# Shared system prompt used for every provider. It is intentionally long so the
-# model stays in a risk-aware, quantitative mindset and returns structured JSON.
+# Shared system prompt used for every provider. Keep it short so reasoning
+# models (e.g. Kimi Code) do not paraphrase instructions instead of following
+# them. The concrete JSON example is supplied in the user message.
 _SYSTEM_PROMPT = """You are a disciplined quantitative trading risk analyst.
-Your job is to review one trade signal moments before it is sent to a broker.
-
-Rules:
-- Only approve when the setup, risk/reward, and current market context are favorable.
-- Be conservative: a marginal signal should be blocked.
-- If the signal conflicts with common sense risk management (e.g., stop wider than target with no strong edge, low liquidity, adverse macro, upcoming earnings), block it.
-- Respond with a single JSON object. Do not wrap it in Markdown.
-
-Required JSON schema:
-{
-  "decision": "approve" | "block",
-  "reasoning": "1-3 sentence explanation",
-  "risk_flag": "none" | "macro" | "technical" | "concentration" | "liquidity" | "earnings" | "sentiment" | "valuation" | "other",
-  "confidence": 0.0-1.0
-}
-"""
+Review one trade signal moments before it is sent to a broker.
+Be conservative: only approve clean, favorable setups. Block marginal signals.
+Respond with a single JSON object only — no Markdown, no explanation outside the JSON."""
 
 
 def _normalize_risk_flag(flag: Any) -> Optional[str]:
@@ -82,8 +70,21 @@ def _normalize_risk_flag(flag: Any) -> Optional[str]:
     return flag if flag in _RISK_FLAGS else "other"
 
 
-def _build_prompt(signal: dict, market_ctx: Optional[dict]) -> str:
-    """Serialize signal + market context into a structured review prompt."""
+def _build_prompt(signal: dict, market_ctx: Optional[dict], include_role_prefix: bool = False) -> str:
+    """Serialize signal + market context into a structured review prompt.""
+
+    Kimi Code reasoning models respond better when the analyst role and JSON
+    rules are part of the user message rather than a separate system message.
+    """
+    role_prefix = """You are a disciplined quantitative trading risk analyst. Review one trade signal moments before it is sent to a broker.
+Be conservative: only approve clean, favorable setups. Block marginal signals.
+Respond with a single JSON object only — no Markdown, no explanation outside the JSON.
+
+"""
+    if include_role_prefix:
+        prompt = role_prefix
+    else:
+        prompt = ""
     ticker = signal.get("ticker", "UNKNOWN")
     action = signal.get("action", "UNKNOWN")
     confidence = signal.get("confidence")
@@ -114,7 +115,7 @@ def _build_prompt(signal: dict, market_ctx: Optional[dict]) -> str:
     if market_ctx:
         market_text = "\n".join(f"- {k}: {v}" for k, v in market_ctx.items() if v is not None)
 
-    prompt = f"""Review the following trade signal before execution.
+    prompt += f"""Review the following trade signal before execution.
 
 Signal:
 - Ticker: {ticker}
@@ -135,12 +136,23 @@ Rationale:
     if market_text:
         prompt += f"\nMarket context:\n{market_text}\n"
 
-    prompt += "\nReturn only the required JSON object."
+    prompt += """
+Return ONLY a single JSON object matching this schema:
+{
+  "decision": "approve" | "block",
+  "reasoning": "1-3 sentence explanation",
+  "risk_flag": "none" | "macro" | "technical" | "concentration" | "liquidity" | "earnings" | "sentiment" | "valuation" | "other",
+  "confidence": 0.0-1.0
+}
+
+Example response:
+{"decision": "approve", "reasoning": "Clean setup with favorable risk/reward.", "risk_flag": "none", "confidence": 0.85}
+"""
     return prompt
 
 
 def _extract_json(text: str) -> Optional[str]:
-    """Best-effort extraction of a JSON object from model output."""
+    """Best-effort extraction of the first valid JSON object from model output."""
     text = text.strip()
 
     # 1. Try a fenced code block.
@@ -148,10 +160,37 @@ def _extract_json(text: str) -> Optional[str]:
     if match:
         return match.group(1)
 
-    # 2. Try the first top-level JSON object in the text.
-    match = re.search(r"(\{.*\})", text, re.DOTALL)
-    if match:
-        return match.group(1)
+    # 2. Find the first `{` and walk forward to match braces, returning the
+    #    first substring that parses as JSON. This handles models that output
+    #    JSON followed by extra reasoning text.
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_string = False
+        escape = False
+        for i, ch in enumerate(text[start:], start=start):
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+            else:
+                if ch == '"':
+                    in_string = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start : i + 1]
+                        try:
+                            json.loads(candidate)
+                            return candidate
+                        except json.JSONDecodeError:
+                            break
+        start = text.find("{", start + 1)
 
     return None
 
@@ -212,21 +251,32 @@ def _get_secret(settings, name: str) -> str:
     return str(value)
 
 
-async def _call_openai(prompt: str, model: str, timeout: int, base_url: str, api_key: str) -> str:
+async def _call_openai(
+    prompt: str,
+    model: str,
+    timeout: int,
+    base_url: str,
+    api_key: str,
+    temperature: float = 0.1,
+    system_prompt: Optional[str] = _SYSTEM_PROMPT,
+    max_tokens: int = 1024,
+) -> str:
     """Call an OpenAI-compatible chat/completions endpoint."""
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
     payload: dict[str, Any] = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 512,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     }
     # response_format is only valid on the official OpenAI API and a few
     # compatible hosts. When an explicit local base URL is provided, skip it
@@ -245,7 +295,13 @@ async def _call_openai(prompt: str, model: str, timeout: int, base_url: str, api
         ) as resp:
             resp.raise_for_status()
             data = await resp.json()
-            return data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            # Reasoning models (e.g. Kimi Code) may split output across
+            # content and reasoning_content. Concatenate them so JSON extraction
+            # can find the object regardless of which field holds it.
+            content = message.get("content") or ""
+            reasoning = message.get("reasoning_content") or ""
+            return f"{content}\n{reasoning}".strip()
 
     return await retry_with_backoff(_post)
 
@@ -315,8 +371,22 @@ async def evaluate_trade(
             if not api_key:
                 log.warning("ai_evaluator: kimi provider selected but KIMI_API_KEY is unset")
                 return AIEvalResult(approved=fail_open, reasoning="Kimi key missing", risk_flag="config_error")
-            # Kimi exposes an OpenAI-compatible endpoint.
-            text = await _call_openai(prompt, model, timeout, "https://api.moonshot.cn/v1", api_key)
+            # Kimi Code keys (sk-kimi-...) use the coding endpoint. That endpoint
+            # only accepts temperature=1. Reasoning models also work best when
+            # instructions are inline in the user message, so we skip the system
+            # message and prepend the role prefix there. We request more tokens
+            # because reasoning models can consume a lot before emitting JSON.
+            kimi_prompt = _build_prompt(signal, market_ctx, include_role_prefix=True)
+            text = await _call_openai(
+                kimi_prompt,
+                model,
+                timeout,
+                "https://api.kimi.com/coding/v1",
+                api_key,
+                temperature=1.0,
+                system_prompt=None,
+                max_tokens=2048,
+            )
         elif provider in ("openai", "openai-compatible"):
             api_key = _get_secret(settings, "openai_api_key")
             base_url = getattr(settings, "ai_eval_base_url", "").rstrip("/") or "https://api.openai.com/v1"

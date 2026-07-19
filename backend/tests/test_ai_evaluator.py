@@ -227,8 +227,9 @@ async def test_kimi_approve(_reset_settings_cache):
     assert result.reasoning == "Setup looks clean."
 
     call_args = session.post.call_args
-    assert call_args[0][0] == "https://api.moonshot.cn/v1/chat/completions"
+    assert call_args[0][0] == "https://api.kimi.com/coding/v1/chat/completions"
     assert call_args[1]["headers"]["Authorization"] == "Bearer kimi-test-key"
+    assert call_args[1]["json"]["temperature"] == 1.0
 
 
 @pytest.mark.asyncio
