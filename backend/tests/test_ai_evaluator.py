@@ -66,6 +66,26 @@ async def test_disabled_returns_approved(_reset_settings_cache):
 
 
 @pytest.mark.asyncio
+async def test_enabled_by_default_with_no_key_fail_open(_reset_settings_cache):
+    from services.ai_evaluator import evaluate_trade
+
+    with patch("services.ai_evaluator.get_settings") as mock_settings:
+        mock_settings.return_value = MagicMock(
+            ai_eval_enabled=True,
+            ai_eval_provider="openai",
+            ai_eval_model="gpt-4o-mini",
+            ai_eval_timeout=15,
+            ai_eval_fail_open_on_error=True,
+            ai_eval_base_url="",
+            openai_api_key="",
+        )
+        result = await evaluate_trade(_sample_signal())
+
+    assert result.approved is True
+    assert result.risk_flag == "config_error"
+
+
+@pytest.mark.asyncio
 async def test_openai_approve(_reset_settings_cache):
     from services.ai_evaluator import evaluate_trade
 
@@ -177,6 +197,38 @@ async def test_openai_compatible_no_response_format(_reset_settings_cache):
     call_args = session.post.call_args
     assert call_args[0][0] == "http://localhost:1234/v1/chat/completions"
     assert "response_format" not in call_args[1]["json"]
+
+
+@pytest.mark.asyncio
+async def test_kimi_approve(_reset_settings_cache):
+    from services.ai_evaluator import evaluate_trade
+
+    ai_response = json.dumps(
+        {"decision": "approve", "reasoning": "Setup looks clean.", "risk_flag": "none", "confidence": 0.8}
+    )
+    session = _mock_session(ai_response)
+
+    with (
+        patch("services.ai_evaluator.get_settings") as mock_settings,
+        patch("services.ai_evaluator.get_session", return_value=session),
+    ):
+        mock_settings.return_value = MagicMock(
+            ai_eval_enabled=True,
+            ai_eval_provider="kimi",
+            ai_eval_model="kimi-latest",
+            ai_eval_timeout=15,
+            ai_eval_fail_open_on_error=True,
+            ai_eval_base_url="",
+            kimi_api_key="kimi-test-key",
+        )
+        result = await evaluate_trade(_sample_signal())
+
+    assert result.approved is True
+    assert result.reasoning == "Setup looks clean."
+
+    call_args = session.post.call_args
+    assert call_args[0][0] == "https://api.moonshot.cn/v1/chat/completions"
+    assert call_args[1]["headers"]["Authorization"] == "Bearer kimi-test-key"
 
 
 @pytest.mark.asyncio

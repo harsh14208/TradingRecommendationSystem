@@ -130,8 +130,8 @@ class Settings(BaseSettings):
     # ── AI pre-execution trade evaluator (TSYS-15) ───────────────────────────────
     # Calls an LLM immediately before capital is committed. The gate runs AFTER
     # all engineering risk guards (drawdown, runtime risk limits, capacity).
-    ai_eval_enabled: bool = False
-    ai_eval_provider: str = "openai"  # openai | anthropic | openai-compatible
+    ai_eval_enabled: bool = True
+    ai_eval_provider: str = "openai"  # openai | anthropic | kimi | openai-compatible
     ai_eval_model: str = "gpt-4o-mini"
     ai_eval_timeout: int = 15  # seconds; keep short so execution stays snappy
     # When True (default), an AI provider outage returns approved=True and logs
@@ -143,6 +143,7 @@ class Settings(BaseSettings):
     ai_eval_base_url: str = ""
     openai_api_key: SecretStr = Field(default=SecretStr(""))
     anthropic_api_key: SecretStr = Field(default=SecretStr(""))
+    kimi_api_key: SecretStr = Field(default=SecretStr(""))
 
     @model_validator(mode="after")
     def _check_cohort_pct(self):

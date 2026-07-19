@@ -310,6 +310,13 @@ async def evaluate_trade(
                 log.warning("ai_evaluator: anthropic provider selected but ANTHROPIC_API_KEY is unset")
                 return AIEvalResult(approved=fail_open, reasoning="Anthropic key missing", risk_flag="config_error")
             text = await _call_anthropic(prompt, model, timeout, api_key)
+        elif provider == "kimi":
+            api_key = _get_secret(settings, "kimi_api_key")
+            if not api_key:
+                log.warning("ai_evaluator: kimi provider selected but KIMI_API_KEY is unset")
+                return AIEvalResult(approved=fail_open, reasoning="Kimi key missing", risk_flag="config_error")
+            # Kimi exposes an OpenAI-compatible endpoint.
+            text = await _call_openai(prompt, model, timeout, "https://api.moonshot.cn/v1", api_key)
         elif provider in ("openai", "openai-compatible"):
             api_key = _get_secret(settings, "openai_api_key")
             base_url = getattr(settings, "ai_eval_base_url", "").rstrip("/") or "https://api.openai.com/v1"
