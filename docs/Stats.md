@@ -11,7 +11,7 @@
 > • **R4 Stop-width — CONFIRMS current.** No-stop vs 1.5-ATR ΔSharpe **−0.10**; removing the stop raises WR (67.9% vs 62.9%) but halves Sharpe (0.16 vs 0.26) and doubles MaxDD. 1.5-ATR is the sweet spot — keep it.
 > • **R5 Cross-sectional MR — NEGATIVE.** Within-day most-oversold tercile Sharpe 0.23 vs least-oversold 0.56 — taking the most extreme is *worse* (falling-knife). Don't add a top-K oversold filter (small N).
 > • **R6 Confluence — already enforced.** All 221 passing entries trip 2+ MR conditions ("multi") — single-trigger entries don't survive the gate stack, so there's no 1-of-3 cohort to improve.
-> • **R7 Portfolio DD-scaled exposure — IS-positive but OOS-FAILED → NO-DEPLOY.** Halving exposure when >3% off the equity peak looked strong in-sample: sequential Sharpe 0.23→0.31; **concurrent 5-slot portfolio Ann.Sharpe 3.29→4.11 (+0.81), MaxDD 7.70%→5.00% (−2.7pp), CAGR flat.** But on the held-out OOS set (N=100) it gave **0.00pp DD reduction and −0.18 Ann.Sharpe** — zero generalisation. Classic great-IS/fails-OOS overfit (the IS gain fit the 2008/2020/2022 clustered-drawdown episodes). Per the "if it holds, wire it" condition, **not wired live** (the existing hard RISK-2 circuit-breaker stays). All seven validators run automatically in every IS backtest; the concurrent A/B + OOS check are in `run_portfolio_simulation`/`run_oos_validation`.
+> • **R7 Portfolio DD-scaled exposure — IS-positive but OOS-FAILED → NO-DEPLOY.** Halving exposure when >3% off the equity peak looked strong in-sample: sequential Sharpe 0.23→0.31; **the old concurrent 5-slot portfolio Ann.Sharpe 3.29→4.11 was T-bill-inflated and is no longer reported as a real number** (MaxDD 7.70%→5.00%, CAGR flat). But on the held-out OOS set (N=100) it gave **0.00pp DD reduction and −0.18 Ann.Sharpe** — zero generalisation. Classic great-IS/fails-OOS overfit (the IS gain fit the 2008/2020/2022 clustered-drawdown episodes). Per the "if it holds, wire it" condition, **not wired live** (the existing hard RISK-2 circuit-breaker stays). All seven validators run automatically in every IS backtest; the concurrent A/B + OOS check are in `run_portfolio_simulation`/`run_oos_validation`.
 > **Net: 0 of 7 free-data levers produced an OOS-validated, deployable gain — the OHLCV path is at its technical ceiling; remaining upside requires external alpha data (paid).**
 > **QENG alpha-sleeve validation (2026-06-08, `scripts/backtest_sleeves.py`).** The cross-sleeve allocator weights sleeves on placeholder Sharpes (`{MR:1.0, StatArb:1.0, Trend:1.0, Factor:1.0}` + a single toy AAPL/MSFT pair) — none had ever been backtested. First standalone 23-yr validation:
 > • **Residual stat-arb (QENG-5a) — NON-VIABLE + misspecified in prod.** Live sleeve z-scores the *daily-return* residual → 1.4-day churn, −3.1 ann Sharpe. Corrected to the proper cumulative log-price-spread (Engle-Granger), the spread *does* revert (WR 57–60%, gross +0.22→+0.44% as entry |z| 2→3) but never clears the ~0.65% two-leg friction (best net ann Sharpe −0.11). Corr with MR +0.03 (uncorrelated) but negative-edge, so blending *halves* MR Sharpe. **Action: remove/down-weight the stat-arb sleeve in the live allocator — it's allocating to a money-loser.**
@@ -120,7 +120,7 @@
 |---|---:|---:|---:|---:|---:|
 | 1d | 529 | 42.0% | +0.29% | 1.45× | 1.78 |
 | 3d | 529 | 55.6% | +0.94% | 2.06× | 3.73 |
-| 7d (primary) | 529 | 58.8% | +2.51% | 3.02× | 5.67 |
+| 7d (primary) | 529 | 58.8% | +2.51% | 3.02× | **0.10–0.22** (honest OOS) |
 | **14d** | 484 | **63.8%** | **+4.90%** | **4.29×** | **7.48** |
 
 > **Key finding:** 14d horizon dominates all timeframes. Signals need more time to
@@ -222,7 +222,7 @@
 | Stop-Enforced WR | 42.2% | **82.0%** | **+39.8pp** |
 | Avg Return | +2.51% | **+2.87%** | +0.36pp |
 | Profit Factor | 3.02× | **3.56×** | +0.54× |
-| Sharpe | 5.67 | **6.40** | +0.74 |
+| Sharpe | **0.10–0.22** (honest OOS) | **0.16** (backtest) | — |
 | Sortino | 15.12 | **18.11** | +2.99 |
 | Phantom Wins | 88 | **87** | −1 |
 
@@ -341,7 +341,7 @@
 |---|---|
 | Beta = 0.918 | 91.8% market sensitivity. When SPY is up +1.75%, you get +2.51%. That's 78% of your return from beta alone (1.75 × 0.918 ≈ 1.61%) |
 | 91% long-only | 479 BUY vs 50 SELL. In a sustained bull market, this inflates all performance metrics |
-| 18-day live sample | Apr 20 – May 8, 2026 is too short. The 5.67 Sharpe would annualize to ~1.3-2.0 with a full year's variance |
+| 18-day live sample | Apr 20 – May 8, 2026 is too short. The reported 5.67 Sharpe was a 3-week artifact; the honest OOS expectation is 0.10–0.22 |
 | Stop-enforced WR 42.2% | Below coin-flip on the realistic number. If stops had been enforced intraday, 88 "wins" become losses |
 | 88 phantom wins (16.6%) | A systematic measurement artifact inflates reported WR by 16.6pp |
 | Bull market period | SPY was returning +1.75% per 7-day window during this period — above-average conditions |
@@ -357,7 +357,7 @@
 - The pro-forma quality filter (141 trades, 75.2% stop-enforced WR) suggests the system CAN generate high-quality signals when properly filtered
 
 **What's inflated:**
-- Sharpe 5.67 → probably 1.5–2.5 in a neutral market environment with proper stop enforcement
+- Sharpe 5.67 (3-week artifact) → honest OOS expectation 0.10–0.22
 - Reported WR 58.8% → realistic WR 42.2% (stop-enforced) or 75.2% (pro-forma quality filter)
 - The system has not been tested through a sustained downtrend with live capital
 
@@ -622,11 +622,14 @@ A Sharpe of ~2.0 in a normalized market is excellent — if the edge holds.
 
 | Metric | Live (543 trades, Apr–May 2026) | 20yr Backtest (372 MR-only) | Gap = alt-data value |
 |:---|---:|---:|---:|
-| Sharpe | **5.67** | **0.16** | +5.51 |
+| Sharpe | **0.10–0.22** (honest OOS) | **0.16** | ~flat |
 | Win Rate | 58.9% | 58.3% | ~flat |
 | Avg Return | +2.50% | +0.65% | +1.85pp |
 
-> The **5.51 Sharpe gap** between live and pure-technical is the measurable contribution of news, options flow, fundamentals, and alt-data scoring on top of the MR entry signal. Per-trade alpha of +1.85pp from alt-data.
+> The 3-week live Sharpe (5.67) is no longer reported as a real number. The honest OOS Sharpe
+> estimate is 0.10–0.22, in line with the 20-year backtest. The remaining contribution of news,
+> options flow, fundamentals, and alt-data scoring is measured by per-trade alpha, not by an
+> inflated Sharpe ratio.
 
 ---
 
@@ -2114,7 +2117,7 @@ STT, STX, SYF, TER, TTWO, USB, V, WBD, WDC, WSM, WYNN, ZBRA
 | Avg Win | +4.12% | |
 | Avg Loss | -2.95% | |
 | Profit Factor | 1.58× | |
-| Sharpe (per-trade) | 0.20 | technical-only; live engine is 5.67 (alt-data uplift) |
+| Sharpe (per-trade) | 0.20 | technical-only; live engine honest OOS 0.10–0.22 |
 | Max Drawdown | -1.71% | 5% position sizing |
 
 ### §31b — Adaptive Exit Validation
@@ -3081,7 +3084,7 @@ Same held-out tickers as §41c: ORCL, AMAT, KLAC, NOW, NKE, DHI, APTV, CHTR, TTW
 | Final capital | $12,805 | from $10,000 |
 | **CAGR** | **+1.1%/yr** | **over 22 years** |
 | Portfolio Max DD | −7.06% | concurrent-position compound DD |
-| Annualized Sharpe | 3.15 | event-time (see note) |
+| Annualized Sharpe | 3.15 | **event-time artifact — not reported as a real number** |
 
 > ⚠ **Annualized Sharpe of 3.15 is an artifact of the event-time computation** (dividing lumpy event returns by variable hold days amplifies the mu/std ratio). The honest summary metric is the CAGR.
 

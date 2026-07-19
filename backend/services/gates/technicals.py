@@ -7,6 +7,7 @@ Pre-options pipeline (run before OptionsFlowConfirmationGate):
   Sma200BuyGate           — SMA200 downtrend BUY suppression
   SellUptrendGate         — SELL above SMA200 without alt-data confirmation
   SpyNeutralZoneGate      — SPY ±2% of SMA200 transition zone
+  MacroSma200Gate         — SPY < −2% vs SMA200 macro bear BUY block
   BearHighVixGate         — S&P down + VIX > 25 + score < 50
   MrPersistenceGate       — AR(1) momentum-persistence haircut (Hurst proxy)
   MrEntryConditionGate    — require BB%B / IBS / VWAP% oversold condition
@@ -221,6 +222,40 @@ class SpyNeutralZoneGate(GateBase):
                 "meta": f"SPY/SMA200 ratio={sma200_ratio:.4f} | neutral_zone=True | score={ctx.score:.1f}",
             }
         )
+
+
+class MacroSma200Gate(GateBase):
+    """
+    SMA200 macro-regime gate.
+
+    When SPY is >2% below its 200-day MA, the broad market is in a sustained
+    downtrend. Long-biased BUY signals produced Sharpe −0.10 in the 2022
+    rate-hike bear. Block marginal BUY signals unless score ≥ 50
+    (alt-data conviction).
+    """
+
+    def apply(self, ctx: SignalContext) -> None:
+        if ctx.action != "BUY":
+            return
+        sma200_ratio = ctx.macro.get("sp500_sma200_ratio")
+        if sma200_ratio is None or ctx.score is None:
+            return
+        if sma200_ratio < 0.98 and ctx.score < 50:
+            ctx.action = "HOLD"
+            ctx.sources.add("Risk Gate")
+            ctx.rationale.append(
+                {
+                    "src": "Risk Gate",
+                    "head": f"Macro SMA200 Bear Gate — BUY Blocked (SPY {(sma200_ratio - 1) * 100:+.1f}% vs 200-DMA)",
+                    "body": (
+                        f"SPY is {(sma200_ratio - 1) * 100:+.1f}% below its 200-day MA — sustained macro downtrend. "
+                        "Long-biased rules produced negative Sharpe in the 2022 rate-hike bear. "
+                        "BUY signals require score ≥ 50 (alt-data confirmation) in this regime."
+                    ),
+                    "sentiment": "neg",
+                    "meta": f"SPY/SMA200 ratio={sma200_ratio:.4f} | macro_bear_gate=True | score={ctx.score:.1f}",
+                }
+            )
 
 
 class BearHighVixGate(GateBase):

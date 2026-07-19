@@ -635,10 +635,11 @@ def _assemble_signal(
 
     # ── Pre-options technicals pipeline (Part 1: stress + regime + SMA gates) ─────
     # Runs: StlfsiVixGate → GlobalVixMinGate → Sma200BuyGate → SellUptrendGate
-    #       → SpyNeutralZoneGate → BearHighVixGate
+    #       → SpyNeutralZoneGate → MacroSma200Gate → BearHighVixGate
     from services.gates.technicals import (
         BearHighVixGate as _BHVGate,
         GlobalVixMinGate as _GVMGate,
+        MacroSma200Gate as _MacroS200Gate,
         Sma200BuyGate as _S200Gate,
         SellUptrendGate as _SellUTGate,
         SpyNeutralZoneGate as _SpyNZGate,
@@ -655,6 +656,7 @@ def _assemble_signal(
             _S200Gate(),
             _SellUTGate(),
             _SpyNZGate(),
+            _MacroS200Gate(),
             _BHVGate(),
         ]
     ).run(_sig_ctx)

@@ -84,17 +84,17 @@ def test_diff_win_rate_small_change_no_flag():
 
 
 def test_diff_sharpe_degradation_flagged():
-    before = _snap(sharpe=5.67)
-    after = _snap(sharpe=4.80)
+    before = _snap(sharpe=0.20)
+    after = _snap(sharpe=-0.15)
     d = diff_snapshots(before, after)
     sh = d["risk"]["sharpe"]
-    assert sh["delta"] == pytest.approx(-0.87, abs=0.01)
-    assert sh["flag"] is True  # abs(delta) = 0.87 >= threshold 0.3
+    assert sh["delta"] == pytest.approx(-0.35, abs=0.01)
+    assert sh["flag"] is True  # abs(delta) = 0.35 >= threshold 0.3
 
 
 def test_diff_sharpe_tiny_change_no_flag():
-    before = _snap(sharpe=5.67)
-    after = _snap(sharpe=5.68)
+    before = _snap(sharpe=0.20)
+    after = _snap(sharpe=0.21)
     d = diff_snapshots(before, after)
     assert d["risk"]["sharpe"]["flag"] is False
 

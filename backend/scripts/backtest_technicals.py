@@ -4405,7 +4405,10 @@ def gate_sensitivity_sweep(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-_T_BILL_ANN = 0.035  # 3.5% historical average T-bill rate (conservative for 2003-2026)
+_T_BILL_ANN = 0.0  # T-bill credit on idle capital removed — it inflated the
+# concurrent-portfolio Sharpe (3.3) and was reported as a real
+# strategy number. Idle cash now earns 0% so the simulation
+# matches live deployment.
 
 
 def run_portfolio_simulation(
@@ -4427,14 +4430,10 @@ def run_portfolio_simulation(
     Models:
       1. Position overlap — multiple tickers open simultaneously (greedy slot allocation)
       2. Compound drawdown — concurrent losing trades amplify portfolio DD
-      3. T-bill return on idle capital — each event records how many slots were idle
-         in the preceding interval and credits _T_BILL_ANN × idle_fraction × days/365
-      4. Capital compounding — position P&L and T-bill return recycle into next slot
+      3. Capital compounding — position P&L recycles into next slot
 
     Idle capital: when fewer than max_concurrent slots are occupied, the undeployed
-    fraction earns _T_BILL_ANN prorated to the calendar days between events.  This
-    models investing idle cash in T-bills/money market — the most conservative
-    assumption for uninvested capital (QE4).
+    fraction earns 0% (no T-bill credit) so the simulation matches live deployment.
     """
     if trades_df is None or trades_df.empty:
         return None
@@ -4561,9 +4560,6 @@ def run_portfolio_simulation(
     n_years = total_days / 365.25 if total_days > 0 else 1.0
     cagr = round(((capital / 10_000) ** (1 / n_years) - 1) * 100, 2) if n_years > 0 else 0.0
 
-    # Counterfactual: pure T-bill CAGR over same period for comparison
-    tbill_cagr = round((_T_BILL_ANN * 100), 1)
-
     n_events = len(equity_log) - 1
     n_input = len(df)
 
@@ -4573,11 +4569,10 @@ def run_portfolio_simulation(
             ["Input trades", str(n_input), "signal-level"],
             ["Skipped (slots full)", str(skipped), f"{skipped / n_input * 100:.1f}%"],
             ["Exit events", str(n_events), "slot close events"],
-            ["Final capital", f"${capital:,.0f}", "from $10,000 start (incl. T-bill on idle)"],
+            ["Final capital", f"${capital:,.0f}", "from $10,000 start (idle cash earns 0%)"],
             ["CAGR", f"{cagr:+.1f}%", f"over {n_years:.1f} years"],
-            ["T-bill benchmark", f"+{tbill_cagr:.1f}%", f"{_T_BILL_ANN * 100:.1f}% annual on idle (QE4)"],
             ["Portfolio Max DD", f"-{max_dd:.2f}%", "concurrent-position compound DD"],
-            ["Annualized Sharpe", fmt_sharpe(ann_sharpe) if ann_sharpe else "—", "event-time (see note)"],
+            ["Annualized Sharpe", fmt_sharpe(ann_sharpe) if ann_sharpe else "—", "event-time (not comparable to live)"],
         ]
         if vol_target is not None and _vol_multipliers is not None:
             _avg_mult = float(np.mean(_vol_multipliers))
@@ -4587,7 +4582,7 @@ def run_portfolio_simulation(
             )
         print_table(["Metric", "Value", "Note"], _metrics_rows)
         print(
-            f"\n> Idle capital earns {_T_BILL_ANN * 100:.1f}%/yr T-bill rate (QE4: 3.5% historical 2003-2026 avg).\n"
+            "\n> Idle capital earns 0% — T-bill credit removed so the simulation matches live deployment.\n"
             "> Ann. Sharpe from event-time daily-equivalent returns — use CAGR as the primary metric.\n"
             f"> Concurrent DD compounding: {max_concurrent} simultaneous losing trades → "
             f"{max_concurrent * POSITION_SIZE * 100:.0f}% max concurrent exposure.\n"
@@ -6350,7 +6345,7 @@ def main():
             ["Trades", "529", str(s["n"]), "—"],
             ["Win Rate", "42.2%", f"{s['wr']:.1f}%", f"{s['wr'] - 42.2:+.1f}pp"],
             ["Avg Return", "  +0.45%", f"{s['avg']:+.2f}%", f"{s['avg'] - 0.45:+.2f}pp"],
-            ["Sharpe", "5.67", fmt_sharpe(s["sharpe"]), "—"],
+            ["Sharpe", "0.10–0.22 (honest OOS)", fmt_sharpe(s["sharpe"]), "—"],
         ],
     )
     print("\n> Gap = value of news, options, fundamentals, and alt-data stack on top of pure technical rules.")
@@ -6398,7 +6393,7 @@ def main():
             + ("strong performance in trend-following regime." if ai["avg"] > 1 else "moderate performance.")
         )
     print(
-        f"- **Sharpe {fmt_sharpe(s['sharpe'])} (technical-only) vs 5.67 live** — "
+        f"- **Sharpe {fmt_sharpe(s['sharpe'])} (technical-only) vs 0.10–0.22 honest OOS** — "
         "difference quantifies alt-data contribution."
     )
     print(f"- **Max Drawdown:** -{s['max_dd']:.2f}% (5% sizing) across 20 years.")
@@ -7744,8 +7739,8 @@ def main():
     if "--portfolio" in sys.argv:
         # R7 (2026-07-15): the step-function DD-throttle is DEPLOYED in the live
         # allocator (portfolio_allocator.compute_dd_multiplier — >3% off peak →
-        # 0.5× new positions; 26yr A/B: Ann.Sharpe 3.28→3.46, MaxDD −8.43→−6.38
-        # at zero CAGR cost). The headline sim mirrors live by default;
+        # 0.5× new positions; 26yr A/B: MaxDD −8.43% → −6.38% at zero CAGR cost).
+        # The headline sim mirrors live by default;
         # --no-dd-throttle shows the unthrottled path.
         _dd_on = "--no-dd-throttle" not in sys.argv
         run_portfolio_simulation(trades, vol_target=_vol_target, dd_throttle=_dd_on, dd_trig=3.0, throttle_mult=0.5)

@@ -1666,7 +1666,9 @@ async def generate_signal(
         # Regime adjustment: in bull trend, suppress bearish mean-rev (dip-buy valid).
         if _is_trending_bull and mean_rev_score < 0:
             mean_rev_score *= 0.20
-        score += (max(-18.0, min(18.0, osc_score)) * 1.0 + max(-18.0, min(18.0, mean_rev_score))) * 0.85
+        # Live/backtest parity: backtest applies separate 1.0/1.0 family weights
+        # (osc_f + mr_f), not a combined 0.85 discount on the pair.
+        score += max(-18.0, min(18.0, osc_score)) * 1.0 + max(-18.0, min(18.0, mean_rev_score)) * 1.0
 
         # ── Keltner Channels(20, 2×ATR) ──────────────────────────────────────
         # Backtest-validated (alpha decomp v3): below kc_lower on oversold RSI

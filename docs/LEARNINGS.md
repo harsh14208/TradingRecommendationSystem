@@ -605,17 +605,20 @@ All bugs were present in both `screen_russell1000_mr_candidates.py` and `screen_
 | Weighted Avg Return | +0.80% | +0.99% | **+0.19pp** |
 | Weighted Sharpe | 0.24 | 0.30 | **+0.06** |
 
-### Portfolio simulation (5 concurrent slots, T-bill on idle, compound DD)
+### Portfolio simulation (5 concurrent slots, compound DD)
 | Metric | Baseline (flat) | §87 (sizing) | Δ |
 |:---|---:|---:|---:|
 | Portfolio CAGR | +3.6% | +3.7% | **+0.1pp** |
-| Portfolio Ann.Sharpe | 2.87 | 3.03 | **+0.16 (+5.6%)** |
+| Portfolio Ann.Sharpe | — | — | **no longer reported** (was T-bill-inflated) |
 | Portfolio Max DD | -6.16% | -6.33% | -0.17pp |
 | Skipped (slots full) | 21 (9.7%) | 21 (9.7%) | +0 |
 
+> ⚠ The previous Ann.Sharpe figures (2.87 → 3.03) were T-bill-inflated event-time artifacts
+> and are no longer reported as real numbers. CAGR remains the honest summary metric.
+
 **Verdict: DEPLOY with monitoring.**
 
-- Sizing-only layer yields +0.16 portfolio ann.Sharpe (+5.6% relative) with zero trade-count cost.
+- Sizing-only layer improves CAGR +0.1pp with zero trade-count cost.
 - MC P5 = 0.07 > 0 confirms edge survives block-bootstrap autocorrelation correction.
 - Slight DD worsening (-0.17pp) is acceptable given Sharpe gain; DD-throttle (R7) still deployable and additive.
 - Sizing mode is strictly superior to the previous filter mode (skip single-day spikes) because it retains marginal trades at reduced size rather than discarding them entirely.

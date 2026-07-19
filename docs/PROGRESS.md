@@ -414,7 +414,7 @@ At h=21, `--finra-sv` lands inside the placebo band; `--wiki` and `--naaim` land
 Prev-day score ≥ BUY_THRESH → 1.3× position size; otherwise 1.0×. Preserves all trades (ΔN = 0).
 - **Unweighted per-trade:** Sharpe 0.24 → 0.24 (identical by construction — sizing does not affect entry/exit).
 - **Size-weighted:** Sharpe 0.24 → 0.30 (+0.06), WR 69.1% → 70.7% (+1.6pp), 50/217 trades boosted.
-- **Portfolio simulation (5 slots, T-bill on idle):** CAGR +3.6% → +3.7% (+0.1pp), Ann.Sharpe 2.87 → 3.03 (+0.16, +5.6%), MaxDD −6.16% → −6.33% (−0.17pp). MC P5 = 0.07 > 0.
+- **Portfolio simulation (5 slots, idle cash earns 0%):** CAGR +3.6% → +3.7% (+0.1pp), MaxDD −6.16% → −6.33% (−0.17pp). The previous Ann.Sharpe 2.87 → 3.03 was a T-bill-inflated event-time artifact and is no longer reported as a real number. MC P5 = 0.07 > 0.
 - **Verdict: DEPLOY.** Live engine: `_apply_l10_conviction_sizing()` in `scanner.py` Step 5b, with global L1–L10 clamp [0.10, 3.00]. Committed `ede79b2`.
 
 **§88 Calm-Regime Sleeve — ABANDONED:**

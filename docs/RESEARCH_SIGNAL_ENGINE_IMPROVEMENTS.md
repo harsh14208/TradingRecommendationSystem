@@ -259,15 +259,20 @@ HMM+bull/bear/transition, VIX level (calm/elevated/stress), macro composite
 (`VIX|SPY_trend`), and HMM×VIX-stress.  It computes an expanding-window empirical-Bayes net
 edge per `(sector_etf, regime)` cohort and applies filter / size / both strategies.
 
-| Config | Trades | CAGR | Event-time Sharpe | Max DD |
+| Config | Trades | CAGR | Event-time Sharpe* | Max DD |
 |:---|---:|---:|---:|---:|
 | Baseline portfolio (DD-throttle) | 217 | +3.35% | **3.30** | −3.80% |
 | Regime filter (skip LB ≤ 0 cohorts) | 141 | +3.18% | 4.32 | −3.38% |
 | Regime size (scale by shrunk net edge) | 217 | +3.58% | 3.77 | −4.48% |
 | **Regime both (filter + size)** | **141** | **+3.39%** | **4.52** | **−4.48%** |
 
-The best variant (`both | regime_2`) raises Sharpe **+1.22** (from 3.30 to 4.52) while
-keeping CAGR roughly flat (+3.35% → +3.39%).  The pure filter variant is arguably more
+\* Event-time Sharpe values are simulation artifacts (T-bill-inflated / variable-hold-day
+annualisation) and are no longer reported as real numbers. CAGR and Max DD remain the honest
+summary metrics.
+
+The best variant (`both | regime_2`) shows the highest event-time Sharpe, but these
+values are simulation artifacts (see table footnote) — CAGR and Max DD are the honest
+metrics.  Keeping CAGR roughly flat (+3.35% → +3.39%) while the pure filter variant improves
 attractive: Sharpe **+1.02** with MaxDD improving from −3.80% to −3.38%.  Sector edge divergence is stark and consistent across regimes: every `bull`
 cohort for XLB/XLC/XLE/XLF/XLP/XLV is blocked (negative shrunk net edge), while nearly
 every `bear` cohort is delivered with positive edge.  The VIX-level and macro-composite

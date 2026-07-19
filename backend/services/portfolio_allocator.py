@@ -68,8 +68,9 @@ def compute_dd_multiplier(drawdown_pct: float) -> float:
     robust and easy to reason about live.
 
     Defaults mirror the 26yr honest canon (2000-2026, PIT-corrected
-    membership, N=313): Ann.Sharpe 3.28 -> 3.46 and max DD -8.43% -> -6.38%
-    at zero CAGR cost.
+    membership, N=313): max DD -8.43% -> -6.38% at zero CAGR cost. The
+    previous Ann.Sharpe figures were event-time/T-bill artifacts and are no
+    longer reported as real numbers.
     """
     if drawdown_pct <= _DD_THROTTLE_TRIGGER_PCT:
         return 1.0
