@@ -244,6 +244,75 @@ async def test_execute_signal_records_error_on_failure():
     assert "insufficient buying power" in (order_record.error_msg or "")
 
 
+@pytest.mark.asyncio
+async def test_execute_signal_ai_eval_blocks_order():
+    from services.ai_evaluator import AIEvalResult
+    from services.broker_svc import encrypt_credential, execute_signal_for_user
+
+    user = _make_user(
+        alpaca_key_enc=encrypt_credential("KEY"),
+        alpaca_secret_enc=encrypt_credential("SECRET"),
+        alpaca_account_type="paper",
+    )
+    db = AsyncMock()
+
+    with (
+        patch("services.alpaca_rest.place_notional_order", new_callable=AsyncMock) as mock_order,
+        patch(
+            "services.broker_svc.evaluate_trade",
+            new_callable=AsyncMock,
+            return_value=AIEvalResult(
+                approved=False,
+                reasoning="Earnings event risk.",
+                risk_flag="earnings",
+                confidence=0.9,
+            ),
+        ),
+    ):
+        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "confidence": 100.0}, 42, db)
+
+    mock_order.assert_not_called()
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_signal_ai_eval_approval_records_snapshot():
+    from services.ai_evaluator import AIEvalResult
+    from services.broker_svc import encrypt_credential, execute_signal_for_user
+
+    user = _make_user(
+        alpaca_key_enc=encrypt_credential("KEY"),
+        alpaca_secret_enc=encrypt_credential("SECRET"),
+        alpaca_account_type="paper",
+    )
+    db = AsyncMock()
+    fake_order = {"id": "ai-123", "status": "accepted"}
+
+    with (
+        patch("services.alpaca_rest.place_notional_order", new_callable=AsyncMock, return_value=fake_order),
+        patch(
+            "services.broker_svc.evaluate_trade",
+            new_callable=AsyncMock,
+            return_value=AIEvalResult(
+                approved=True,
+                reasoning="Clean setup.",
+                risk_flag=None,
+                confidence=0.85,
+            ),
+        ),
+    ):
+        await execute_signal_for_user(user, {"ticker": "AAPL", "action": "BUY", "confidence": 100.0}, 42, db)
+
+    db.add.assert_called_once()
+    order_record = db.add.call_args[0][0]
+    assert order_record.ai_eval_data == {
+        "approved": True,
+        "reasoning": "Clean setup.",
+        "risk_flag": None,
+        "confidence": 0.85,
+    }
+
+
 # ── alpaca_rest: base URL switching ──────────────────────────────────────────
 
 

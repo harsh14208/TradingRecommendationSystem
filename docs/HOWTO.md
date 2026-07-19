@@ -389,6 +389,7 @@ These are stored on the user record and enforced in `services/broker_svc.py`.
    - Check portfolio drawdown (< −5% blocks).
    - Check daily/ticker limits.
    - Check slippage/capacity.
+   - **Optional AI pre-execution review** (`services/ai_evaluator.py`) — set `AI_EVAL_ENABLED=true` and an `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in `.env` to enable. The LLM reviews the signal after all engineering risk guards and can block a trade; the result is stored in `BrokerOrder.ai_eval_data`.
    - Submit bracket-stop order.
    - Record `BrokerOrder`.
 4. You receive a Telegram alert with the order details.

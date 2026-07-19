@@ -35,13 +35,14 @@ When a user enables broker auto-execution, the signal path is:
 ```text
 Scanner (15-min market-hours loop)
   └── Signal generated → delivery gates (confidence, MR-count, sector, time-of-day)
-        └── _maybe_auto_execute_for_signal()
+        └── _maybe_auto_execute_portfolio() / execute_signal_for_user()
               ├── Fetch users with auto_execute=True + valid broker keys
               ├── Per-user runtime risk limits (daily orders, per-ticker notional)
               ├── Portfolio drawdown circuit-breaker (< −5% equity blocks)
               ├── TCA / capacity check (expected slippage)
+              ├── AI pre-execution review (`services/ai_evaluator.py`)
               ├── Submit bracket-stop order via Alpaca/IBKR REST
-              └── Record BrokerOrder + audit log
+              └── Record BrokerOrder + audit log (with `ai_eval_data`)
 ```
 
 Key components:
@@ -56,6 +57,7 @@ Key components:
 | Daily PnL mark | `models.py` → `PnlDaily` | Equity, cash, gross/net exposure, drawdown tracking |
 | Cross-sectional alpha | `services/cross_sectional_shadow.py` | Persisted h=21/h=63 XGBoost models; live bottom-decile sizing |
 | TCA / capacity | `services/tca_service.py` | Slippage estimation and fill-quality feedback |
+| AI pre-execution gate | `services/ai_evaluator.py` | LLM review immediately before capital commitment; stores result in `BrokerOrder.ai_eval_data` |
 | User settings | `models.py` | `auto_execute`, `auto_execute_qty_dollars`, `max_daily_orders`, etc. |
 | API surface | `routers/broker.py` | Connect credentials, toggle auto-execute, view status |
 | Analytics sink | `routers/analytics_router.py` | First-party CTA/feature-gate events → `logs/analytics.jsonl` |

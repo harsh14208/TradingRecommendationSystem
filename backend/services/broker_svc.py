@@ -15,6 +15,7 @@ from typing import Optional
 from cryptography.fernet import Fernet, MultiFernet
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.ai_evaluator import evaluate_trade
 from services.brokers.options_broker import OptionLeg, OptionOrder
 from services.portfolio_allocator import compute_dd_multiplier
 
@@ -493,6 +494,19 @@ async def _execute_option_signal_for_user(
         return
 
     live = user.alpaca_account_type == "live"
+
+    # TSYS-15: final AI pre-execution gate for live option orders.
+    ai_result = await evaluate_trade(sig)
+    if not ai_result.approved:
+        log.info(
+            "broker_svc: user=%d — AI eval blocked option order %s %s: %s",
+            user.id,
+            order.underlying,
+            order.strategy,
+            ai_result.reasoning,
+        )
+        return
+
     broker = AlpacaOptionsBroker(api_key=key, api_secret=secret, paper=not live)
     order_record = BrokerOrder(
         signal_id=signal_id,
@@ -506,6 +520,12 @@ async def _execute_option_signal_for_user(
         cycle_id=current_cycle_id.get(),
         arrival_price=float(sig.get("entry") or sig.get("price") or 0.0),
         option_legs=[leg.__dict__ for leg in resolved_order.legs],
+        ai_eval_data={
+            "approved": ai_result.approved,
+            "reasoning": ai_result.reasoning,
+            "risk_flag": ai_result.risk_flag,
+            "confidence": ai_result.confidence,
+        },
     )
     try:
         result = await broker.place_option_order(resolved_order)
@@ -683,6 +703,18 @@ async def execute_signal_for_user(
         )
         notional = suggested_notional
 
+    # TSYS-15: final AI pre-execution gate after all engineering risk guards.
+    ai_result = await evaluate_trade(sig)
+    if not ai_result.approved:
+        log.info(
+            "broker_svc: user=%d — AI eval blocked %s %s: %s",
+            user.id,
+            ticker,
+            action,
+            ai_result.reasoning,
+        )
+        return
+
     if broker_type == "ibkr":
         from services import ibkr_rest as client_rest
     else:
@@ -701,6 +733,12 @@ async def execute_signal_for_user(
         status="submitted",
         cycle_id=current_cycle_id.get(),
         arrival_price=entry_price,
+        ai_eval_data={
+            "approved": ai_result.approved,
+            "reasoning": ai_result.reasoning,
+            "risk_flag": ai_result.risk_flag,
+            "confidence": ai_result.confidence,
+        },
     )
     db.add(order_record)
     await db.flush()
@@ -933,6 +971,18 @@ async def execute_portfolio_for_user(
             )
             notional = suggested_notional
 
+        # TSYS-15: final AI pre-execution gate after all engineering risk guards.
+        ai_result = await evaluate_trade(sig)
+        if not ai_result.approved:
+            log.info(
+                "broker_svc: user=%d — AI eval blocked %s %s: %s",
+                user.id,
+                ticker,
+                action,
+                ai_result.reasoning,
+            )
+            continue
+
         # Place order
         if broker_type == "ibkr":
             from services import ibkr_rest as client_rest
@@ -952,6 +1002,12 @@ async def execute_portfolio_for_user(
             status="submitted",
             cycle_id=current_cycle_id.get(),
             arrival_price=entry_price,
+            ai_eval_data={
+                "approved": ai_result.approved,
+                "reasoning": ai_result.reasoning,
+                "risk_flag": ai_result.risk_flag,
+                "confidence": ai_result.confidence,
+            },
         )
 
         try:

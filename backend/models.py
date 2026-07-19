@@ -388,6 +388,9 @@ class BrokerOrder(Base):
     target_child_order_id = Column(String(50), nullable=True)
     final_execution_status = Column(String(20), nullable=True)
 
+    # TSYS-15: AI pre-execution evaluation snapshot
+    ai_eval_data = Column(JSON, nullable=True)
+
     # TSYS-14: option-specific order book columns
     option_legs = Column(JSON, nullable=True)  # snapshot of leg fills at entry
     realized_pnl = Column(Float, nullable=True)

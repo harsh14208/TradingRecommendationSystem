@@ -127,6 +127,23 @@ class Settings(BaseSettings):
     max_sends_per_ticker_per_day: int = 1
     max_buys_per_sector_per_day: int = 2
 
+    # ── AI pre-execution trade evaluator (TSYS-15) ───────────────────────────────
+    # Calls an LLM immediately before capital is committed. The gate runs AFTER
+    # all engineering risk guards (drawdown, runtime risk limits, capacity).
+    ai_eval_enabled: bool = False
+    ai_eval_provider: str = "openai"  # openai | anthropic | openai-compatible
+    ai_eval_model: str = "gpt-4o-mini"
+    ai_eval_timeout: int = 15  # seconds; keep short so execution stays snappy
+    # When True (default), an AI provider outage returns approved=True and logs
+    # a warning so trading is not frozen by a third-party failure. Set to False
+    # only when you want a provider failure to block all executions.
+    ai_eval_fail_open_on_error: bool = True
+    # Override endpoint for openai-compatible/local servers (e.g. http://localhost:1234/v1).
+    # Leave blank to use the official OpenAI API.
+    ai_eval_base_url: str = ""
+    openai_api_key: SecretStr = Field(default=SecretStr(""))
+    anthropic_api_key: SecretStr = Field(default=SecretStr(""))
+
     @model_validator(mode="after")
     def _check_cohort_pct(self):
         shadow = self.signal_cohort_shadow_pct
