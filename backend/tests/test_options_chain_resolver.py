@@ -63,6 +63,20 @@ def test_select_contract_prefers_target_delta() -> None:
     assert chosen.strike == 180.0
 
 
+def test_select_contract_exclude_forces_next_strike() -> None:
+    expiry = date(2026, 7, 17)
+    chain = [
+        _contract("O:AAPL260717C00170000", "call", 170.0, expiry, delta=0.30),
+        _contract("O:AAPL260717C00180000", "call", 180.0, expiry, delta=0.15),
+    ]
+    # Both the short (0.30 delta) and wing (0.15 delta) targets would normally
+    # resolve independently, but on a sparse chain a wing search that isn't
+    # told to avoid the short's own contract could still land on it.
+    chosen = select_contract(chain, "call", expiry, target_delta=0.30, exclude={"O:AAPL260717C00170000"})
+    assert chosen is not None
+    assert chosen.option_symbol == "O:AAPL260717C00180000"
+
+
 def test_select_contract_falls_back_to_target_strike() -> None:
     expiry = date(2026, 7, 17)
     chain = [

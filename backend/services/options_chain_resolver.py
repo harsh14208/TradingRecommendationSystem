@@ -249,6 +249,7 @@ def select_contract(
     max_spread_pct: float = 0.15,
     max_abs_spread: float = 0.50,
     expiry_window_days: int = 14,
+    exclude: set[str] | None = None,
 ) -> OptionContract | None:
     """Select the best liquid contract for a leg.
 
@@ -256,12 +257,19 @@ def select_contract(
       - expiry within ``expiry_window_days`` of target (soft preference)
       - closest to ``target_delta`` when provided (delta-aware)
       - closest to ``target_strike`` otherwise
+
+    ``exclude`` drops specific option symbols from consideration — used when
+    building a spread so a protective wing can't collapse onto the same
+    contract as the leg it's meant to hedge (e.g. on a coarse strike grid
+    where the short and wing deltas both land on the sole nearby liquid
+    strike).
     """
     ctype = ctype.lower()
     candidates = [
         c
         for c in contracts
         if c.ctype == ctype
+        and (not exclude or c.option_symbol not in exclude)
         and c.is_liquid(
             min_volume=min_volume, min_oi=min_oi, max_spread_pct=max_spread_pct, max_abs_spread=max_abs_spread
         )

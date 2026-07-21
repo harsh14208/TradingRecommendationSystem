@@ -813,6 +813,55 @@ async def execute_signal_for_user(
     # Caller is responsible for committing the session.
 
 
+async def compute_realized_pnl_today(db: AsyncSession, user_id: int, today) -> float:
+    """FIFO cost-basis realized P&L for round-trips closed today.
+
+    Walks the user's full local fill history (oldest first) per symbol to build
+    FIFO lots, so a position opened before today but closed today is still
+    priced off its real entry. A closing fill that draws down more size than we
+    have recorded opening lots for (e.g. a position opened before fill-tracking
+    began) has no known cost basis for the unmatched portion — that portion is
+    skipped rather than guessed, so this can under-report but never fabricate.
+    """
+    from sqlalchemy import select
+
+    from models import BrokerOrder, Fill
+
+    rows = (
+        await db.execute(
+            select(Fill.side, Fill.qty, Fill.price, Fill.filled_at, BrokerOrder.symbol)
+            .join(BrokerOrder, BrokerOrder.id == Fill.broker_order_id)
+            .where(Fill.user_id == user_id)
+            .order_by(Fill.filled_at.asc())
+        )
+    ).all()
+
+    lots: dict[str, list[list[float]]] = {}  # symbol -> FIFO queue of [signed_qty, price]
+    realized_today = 0.0
+
+    for side, qty, price, filled_at, symbol in rows:
+        signed = float(qty) if side == "buy" else -float(qty)
+        price = float(price)
+        is_close_today = filled_at is not None and filled_at.date() == today
+        queue = lots.setdefault(symbol, [])
+
+        while signed != 0 and queue and (queue[0][0] > 0) != (signed > 0):
+            lot_qty, lot_price = queue[0]
+            matched = min(abs(signed), abs(lot_qty))
+            pnl = matched * (price - lot_price) if lot_qty > 0 else matched * (lot_price - price)
+            if is_close_today:
+                realized_today += pnl
+            queue[0][0] = lot_qty - matched if lot_qty > 0 else lot_qty + matched
+            if queue[0][0] == 0:
+                queue.pop(0)
+            signed -= matched if signed > 0 else -matched
+
+        if signed != 0:
+            queue.append([signed, price])
+
+    return round(realized_today, 2)
+
+
 async def execute_portfolio_for_user(
     user,
     active_signals: list[dict],
@@ -875,7 +924,7 @@ async def execute_portfolio_for_user(
 
     # Persist daily equity/PL mark (TSYS-8a / RISK-2 / Drawdown Throttle)
     try:
-        from models import PnlDaily, Position
+        from models import PnlDaily
         from sqlalchemy import select
         import datetime
 
@@ -887,23 +936,34 @@ async def execute_portfolio_for_user(
         unrealized_pl = float(account.get("unrealized_pl") or 0.0)
         cash = float(account.get("cash") or 0.0)
 
-        # Compute gross/net exposure from current positions for drawdown/exposure tracking.
+        # Compute position count + gross/net exposure from the broker's live position
+        # list — the local `positions` table is not kept in sync by any job, so it is
+        # not a reliable source here (broker is ground truth, same as equity/cash above).
+        n_positions = 0
         gross_exposure = 0.0
         net_exposure = 0.0
         try:
-            pos_stmt = select(Position).where(Position.user_id == user.id, Position.status == "open")
-            pos_res = await db.execute(pos_stmt)
-            for p in pos_res.scalars().all():
-                mv = p.market_value or (p.qty * (p.last_price or p.avg_entry_price or 0.0))
+            broker_positions = await broker_rest.get_positions(key, secret, live=live)
+            n_positions = len(broker_positions)
+            for p in broker_positions:
+                mv = float(p.get("market_value") or 0.0)
                 gross_exposure += abs(mv)
-                net_exposure += mv if p.side == "long" else -mv
+                net_exposure += mv
         except Exception as exposure_err:
-            log.warning("broker_svc: user=%d — failed to compute exposure: %s", user.id, exposure_err)
+            log.warning("broker_svc: user=%d — failed to fetch positions for exposure: %s", user.id, exposure_err)
+
+        realized_pnl_today = 0.0
+        try:
+            realized_pnl_today = await compute_realized_pnl_today(db, user.id, today)
+        except Exception as realized_err:
+            log.warning("broker_svc: user=%d — failed to compute realized pnl: %s", user.id, realized_err)
 
         if pnl_row:
             pnl_row.equity = equity
             pnl_row.cash = cash
             pnl_row.unrealized_pnl = unrealized_pl
+            pnl_row.realized_pnl = realized_pnl_today
+            pnl_row.n_positions = n_positions
             pnl_row.gross_exposure = gross_exposure
             pnl_row.net_exposure = net_exposure
         else:
@@ -913,8 +973,8 @@ async def execute_portfolio_for_user(
                 equity=equity,
                 cash=cash,
                 unrealized_pnl=unrealized_pl,
-                realized_pnl=0.0,
-                n_positions=len(active_signals),
+                realized_pnl=realized_pnl_today,
+                n_positions=n_positions,
                 gross_exposure=gross_exposure,
                 net_exposure=net_exposure,
             )

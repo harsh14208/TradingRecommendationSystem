@@ -128,3 +128,81 @@ async def test_reconcile_updates_filled_and_flags_orphan(monkeypatch):
     assert summary["updated"] == 1
     assert summary["orphaned"] == 1
     db.commit.assert_awaited()
+
+
+# ── compute_realized_pnl_today (FIFO cost-basis) ─────────────────────────────
+
+
+def _fill_rows(rows):
+    """rows: list of (side, qty, price, filled_at, symbol) tuples."""
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=MagicMock(all=lambda: rows))
+    return db
+
+
+@pytest.mark.asyncio
+async def test_realized_pnl_long_round_trip_closed_today():
+    yesterday = datetime(2026, 7, 19, 14, 0, 0)
+    today_dt = datetime(2026, 7, 20, 15, 0, 0)
+    db = _fill_rows(
+        [
+            ("buy", 10.0, 100.0, yesterday, "AAPL"),
+            ("sell", 10.0, 110.0, today_dt, "AAPL"),
+        ]
+    )
+    pnl = await broker_svc.compute_realized_pnl_today(db, 1, today_dt.date())
+    assert pnl == 100.0  # 10 * (110 - 100)
+
+
+@pytest.mark.asyncio
+async def test_realized_pnl_short_round_trip_closed_today():
+    yesterday = datetime(2026, 7, 19, 14, 0, 0)
+    today_dt = datetime(2026, 7, 20, 15, 0, 0)
+    db = _fill_rows(
+        [
+            ("sell", 5.0, 50.0, yesterday, "TSLA"),  # open short
+            ("buy", 5.0, 40.0, today_dt, "TSLA"),  # cover today
+        ]
+    )
+    pnl = await broker_svc.compute_realized_pnl_today(db, 1, today_dt.date())
+    assert pnl == 50.0  # 5 * (50 - 40)
+
+
+@pytest.mark.asyncio
+async def test_realized_pnl_only_counts_closes_dated_today():
+    yesterday = datetime(2026, 7, 19, 14, 0, 0)
+    db = _fill_rows(
+        [
+            ("buy", 10.0, 100.0, yesterday, "AAPL"),
+            ("sell", 10.0, 110.0, yesterday, "AAPL"),  # closed yesterday, not today
+        ]
+    )
+    pnl = await broker_svc.compute_realized_pnl_today(db, 1, datetime(2026, 7, 20).date())
+    assert pnl == 0.0
+
+
+@pytest.mark.asyncio
+async def test_realized_pnl_partial_close_matches_oldest_lot_first():
+    d1 = datetime(2026, 7, 18, 14, 0, 0)
+    d2 = datetime(2026, 7, 19, 14, 0, 0)
+    today_dt = datetime(2026, 7, 20, 15, 0, 0)
+    db = _fill_rows(
+        [
+            ("buy", 5.0, 100.0, d1, "MSFT"),  # lot A: 5 @ 100
+            ("buy", 5.0, 120.0, d2, "MSFT"),  # lot B: 5 @ 120
+            ("sell", 6.0, 130.0, today_dt, "MSFT"),  # closes all of A, 1 of B
+        ]
+    )
+    pnl = await broker_svc.compute_realized_pnl_today(db, 1, today_dt.date())
+    # 5 * (130 - 100) + 1 * (130 - 120) = 150 + 10
+    assert pnl == 160.0
+
+
+@pytest.mark.asyncio
+async def test_realized_pnl_closing_untracked_position_reports_zero_not_fabricated():
+    today_dt = datetime(2026, 7, 20, 15, 0, 0)
+    # A sell with no prior recorded buy for this symbol — no known cost basis,
+    # so it must open a fresh (short) lot rather than invent a realized P&L.
+    db = _fill_rows([("sell", 10.0, 200.0, today_dt, "NVDA")])
+    pnl = await broker_svc.compute_realized_pnl_today(db, 1, today_dt.date())
+    assert pnl == 0.0

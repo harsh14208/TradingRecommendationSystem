@@ -2,11 +2,44 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
+from services.options_chain_resolver import OptionContract
 from services.options_engine import _build_option_legs, _nearest_monthly_expiry, book_to_signal_dicts
 from services.options_scanner import _build_direction_df, _persist_option_signals
+
+
+def _contract(
+    option_symbol: str,
+    ctype: str,
+    strike: float,
+    expiry,
+    bid: float = 1.0,
+    ask: float = 1.1,
+    volume: int = 100,
+    oi: int = 500,
+    delta: float | None = None,
+) -> OptionContract:
+    mid = (bid + ask) / 2
+    return OptionContract(
+        option_symbol=option_symbol,
+        underlying="XLF",
+        ctype=ctype,
+        strike=strike,
+        expiry=expiry,
+        bid=bid,
+        ask=ask,
+        midpoint=mid,
+        spread=ask - bid,
+        spread_pct=(ask - bid) / mid,
+        volume=volume,
+        open_interest=oi,
+        delta=delta,
+        iv=0.30,
+    )
 
 
 def test_build_direction_df_maps_stock_signals() -> None:
@@ -71,6 +104,46 @@ def test_build_option_legs_cash_secured_put() -> None:
     assert legs[0]["side"] == "sell"
     assert legs[0]["position"] == "short"
     assert legs[0]["strike"] < 170.0
+
+
+def test_build_option_legs_defined_risk_wing_avoids_short_strike_collision() -> None:
+    """Regression: XLF/XLC produced empty legs all day 2026-07-20.
+
+    On a sparse chain (only one liquid strike near the target delta), the
+    short leg and its protective wing both independently resolved to the
+    SAME listed contract, which _finalize then dropped as a degenerate
+    duplicate — silently zeroing out the whole signal's legs. The wing
+    resolution must exclude the short's own contract so it either finds a
+    real next strike or falls back to an (unresolved) placeholder — either
+    way, never collapses to an empty leg list.
+    """
+    expiry = date(2026, 7, 17)
+    px = 100.0
+    call_strike = px * 1.015  # matches impl_move=0.015 below
+    # Only ONE liquid call and ONE liquid put exist near the target deltas —
+    # both the 0.30-delta short and the 0.15-delta wing would resolve here.
+    chain = [
+        _contract("O:XLF260717C00102000", "call", round(call_strike, 0), expiry, delta=0.22),
+        _contract("O:XLF260717P00098000", "put", round(px * 0.985, 0), expiry, delta=-0.22),
+    ]
+    row = pd.Series(
+        {
+            "ticker": "XLF",
+            "stk_px": px,
+            "action": "SELL_DEFINED_RISK",
+            "impl_move": 0.015,
+            "exp_gain": 3.0,
+            "units": 1.0,
+        }
+    )
+    legs = _build_option_legs(row, expiry, chain=chain)
+    assert len(legs) == 4
+    symbols = [leg["option_symbol"] for leg in legs]
+    assert len(set(symbols)) == 4  # no duplicate contract across legs
+    call_legs = [leg for leg in legs if leg["option_type"] == "call"]
+    assert call_legs[0]["position"] == "short"
+    assert call_legs[1]["position"] == "long"
+    assert call_legs[0]["option_symbol"] != call_legs[1]["option_symbol"]
 
 
 def test_book_to_signal_dicts() -> None:

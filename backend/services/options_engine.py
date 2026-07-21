@@ -180,7 +180,11 @@ def _build_option_legs(
         }
 
     def _resolve_leg(
-        option_type: str, strike: float, position: str, pin_expiry: date | None = None
+        option_type: str,
+        strike: float,
+        position: str,
+        pin_expiry: date | None = None,
+        exclude: set[str] | None = None,
     ) -> dict[str, Any] | None:
         if not chain or select_contract is None:
             return None
@@ -194,6 +198,7 @@ def _build_option_legs(
             # Pin every leg of a spread to the first leg's exact expiry so the
             # structure shares one expiry (no calendar/mixed-expiry drops).
             expiry_window_days=0 if pin_expiry else 14,
+            exclude=exclude,
         )
         if contract is None:
             return None
@@ -212,8 +217,14 @@ def _build_option_legs(
             "resolved": True,
         }
 
-    def _leg(option_type: str, strike: float, position: str, pin_expiry: date | None = None) -> dict[str, Any]:
-        return _resolve_leg(option_type, strike, position, pin_expiry) or _placeholder_leg(
+    def _leg(
+        option_type: str,
+        strike: float,
+        position: str,
+        pin_expiry: date | None = None,
+        exclude: set[str] | None = None,
+    ) -> dict[str, Any]:
+        return _resolve_leg(option_type, strike, position, pin_expiry, exclude=exclude) or _placeholder_leg(
             option_type, strike, position, pin_expiry
         )
 
@@ -254,15 +265,24 @@ def _build_option_legs(
         # _finalize dropped → empty legs).
         short_call = _resolve_leg("call", call_strike, "short")
         pin = date.fromisoformat(short_call["expiry"]) if short_call else None
+        short_put = _resolve_leg("put", put_strike, "short", pin)
         legs = [
             short_call or _placeholder_leg("call", call_strike, "short"),
-            _leg("put", put_strike, "short", pin),
+            short_put or _placeholder_leg("put", put_strike, "short", pin),
         ]
         if action == "SELL_DEFINED_RISK":
+            # Exclude the short leg's own contract when resolving its protective
+            # wing — on a coarse strike grid (e.g. lower-priced sector ETFs) the
+            # 0.30-delta short and 0.15-delta wing can both land on the same
+            # sole nearby liquid strike, which _finalize then drops as a
+            # degenerate duplicate. Excluding forces the wing to the next
+            # strike out instead of collapsing the whole structure to nothing.
+            exclude_call = {short_call["option_symbol"]} if short_call else None
+            exclude_put = {short_put["option_symbol"]} if short_put else None
             legs.extend(
                 [
-                    _leg("call", call_strike * 1.05, "long", pin),
-                    _leg("put", put_strike * 0.95, "long", pin),
+                    _leg("call", call_strike * 1.05, "long", pin, exclude=exclude_call),
+                    _leg("put", put_strike * 0.95, "long", pin, exclude=exclude_put),
                 ]
             )
         return _finalize(legs)
