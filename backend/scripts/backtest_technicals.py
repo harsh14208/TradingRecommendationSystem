@@ -3315,6 +3315,8 @@ def simulate_ticker(
                 "date": date,
                 "ticker": ticker,
                 "action": action,
+                "entry_date": pd.Timestamp(str(df.index[_fill_bar])[:10]),
+                "exit_date": pd.Timestamp(str(df.index[_exit_bar_idx])[:10]),
                 "score": score,
                 "entry": round(entry_price, 2),
                 "stop": round(stop_price, 2),
@@ -6650,7 +6652,24 @@ def main():
             _mrm["_m"] = pd.to_datetime(_mrm["date"]).dt.to_period("M").astype(str)
             _mrm.groupby("_m")["net_pct"].mean().to_csv("data/mr_monthly.csv")
             # Per-trade dump for the short-volume alt-data alpha check.
-            _cols = [c for c in ("date", "ticker", "score", "net_pct", "atr_pct", "vix_entry") if c in trades.columns]
+            _cols = [
+                c
+                for c in (
+                    "date",
+                    "entry_date",
+                    "exit_date",
+                    "exit_reason",
+                    "exit_day",
+                    "ticker",
+                    "score",
+                    "gross_pct",
+                    "net_pct",
+                    "atr_pct",
+                    "vix_entry",
+                    "size_mult",
+                )
+                if c in trades.columns
+            ]
             trades[_cols].to_csv("data/mr_trades.csv", index=False)
 
             # Continuous month-end equity series for robust sleeve blending.

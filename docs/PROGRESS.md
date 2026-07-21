@@ -22,6 +22,33 @@
 > **Tests: 2615 passed, 33 skipped (ex-e2e) · run the full suite with `--ignore=tests/e2e` (e2e leaves a running event loop) · Backtest IS v10.8: N=155, WR=67.1%, Sharpe=0.25 with L7 score-band sizing + MR-count=2 (survivorship-corrected + §63 ADF gate)**
 > **v8.2 (2026-06-09) — Sharpe improvement sweep + live engine updates.** v10.8 backtest sweep: 12 candidate approaches on 100-ticker/23yr IS. Score-band sizing (+0.05 Sharpe, zero trade impact), MR-count=2 (+0.01 Sharpe, −1 trade), and dynamic RSI stops all validated and shipped live. IS Sharpe 0.23→0.25. See `docs/Stats.md §83`.
 > **v8.1 (2026-06-09) — Survivorship correction + new live gates + correctness fixes + open-source quant-library audit.** Survivorship bias corrected via free PIT S&P constituents (the #1 named ceiling); new live gates (§14 FRED macro-regime, Polygon short-volume, dynamic sector limits + XLI ML); live correctness fixes (`sector_etf` decouple — was nulling ~81% of signals; cohort-enrichment restore; dark_pool restart-storm); §63 cointegration ADF correctness fix + macro-regime HMM→hmmlearn (both live); cross-sectional model net-positive at h=21 (net +0.347, borrow-robust) deployed in **SHADOW**. **Overall 8.8/10 product · 8.6/10 quality** (+0.1 from v8.0.1; shadow/research work excluded per "implemented ≠ working live"). See Stats.md §15.
+
+### v8.9.1 (2026-07-19) — Shared alpha simulator and real MR exit dates
+
+Rebuilt the MR and futures alpha analysis on a single compounding/fee/timing engine instead of importing each engine's pre-aggregated returns. The first-pass headline ("real exits double MR Sharpe") was confounded by three simultaneous changes, so the simulator was corrected to isolate the exit-date effect.
+
+- `backend/scripts/backtest_technicals.py` now emits `entry_date`, `exit_date`, `exit_reason`, `gross_pct`, and `size_mult` in `backend/data/mr_trades.csv`.
+- `backend/scripts/shared_alpha_simulator.py` compounds MR discrete trades and futures per-instrument returns with one concurrent-slot simulator and one month-end timing rule.
+- `backend/scripts/run_shared_alpha_analysis.py` orchestrates the pipeline, reconciles against original curves, runs single-factor sensitivities, and builds risk-parity blends.
+- Full report: `analysis_output/shared_alpha_analysis_report.md`.
+
+Corrected reconciliation (matching the original engine's `MAX_PORTFOLIO_SLOTS=5`, `net_pct` friction, and `_T_BILL_ANN=0.0`):
+- MR (real exits): Sharpe **0.453**, CAGR **1.48%**, MaxDD **−7.69%**.
+- MR (original imputed `exit_day=4`): Sharpe **0.451**, CAGR **1.48%**, MaxDD **−7.97%**.
+- Correlation **0.992**; mean abs diff 0.022%, max abs diff 1.03%.
+- The imputed-exit approximation is essentially correct; the exit-date fix alone does not materially change the MR curve.
+
+Decomposition of the confounds that drove the first-pass result:
+- Removing the 0.5% round-trip friction raised Sharpe from 0.453 → **0.697** and CAGR by ~0.96pp.
+- Adding a 4% T-bill credit on idle capital raised Sharpe from 0.453 → **0.928** and CAGR by ~2.43pp.
+- Changing from 5 to 6 concurrent slots had almost no Sharpe effect and changed CAGR by ~−0.18pp.
+
+Blends on the now-matched series:
+- Shared MR + Futures risk-parity: 230 months, Sharpe **0.819**, CAGR **3.46%**, MaxDD **−7.28%**, MR–Futures correlation **−0.028**.
+- Internal project four-sleeve risk-parity: 165 months, Sharpe **1.160**, CAGR **4.15%**, MaxDD **−8.08%** (weights: MR 42.3%, TS-Momentum 33.0%, Stat-Arb 0.3%, Cross-Sectional 24.4%). This is **not** the same construction as the published macro four-sleeve (equity / gold / bonds / trend).
+
+Caveats: the four-sleeve blend still uses pre-aggregated monthly files for TS-Momentum, Stat-Arb, and Cross-Sectional; a uniform 5–15 bps spread convention was not applied to the raw inputs. The PDF `Structure Beats Prophecy — Final Results v4.pdf` cannot be edited here; only project docs are updated.
+
 ### v8.8.9 (2026-07-15) — R7 drawdown throttle, MAX21 low-MAX filter graduation, and backtest parallelization
 
 **R7 step-function drawdown throttle.** New positions are halved once the portfolio drawdown exceeds `DD_THROTTLE_TRIGGER_PCT` (default 3.0). The multiplier is binary — 1.0 below the trigger and `DD_THROTTLE_MULT` (default 0.5) at or above it — not a continuous ramp. `services/portfolio_allocator.py` applies this to target weights and `services/broker_svc.py` applies the same multiplier to notional order sizes. Unit tests and docs updated. The `--portfolio` backtest default now runs with the R7 throttle enabled.
