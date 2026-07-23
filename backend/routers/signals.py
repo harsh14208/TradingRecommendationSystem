@@ -217,6 +217,7 @@ async def list_signals(
             confidence=r.confidence or 0,
             min_confidence=min_conf,
             has_mr=_has_mr,
+            require_mr_setup=getattr(settings, "require_mr_setup", True),
             ticker_win_rates=ticker_win_rates,
             promoted_sectors=promoted_sectors,
         )

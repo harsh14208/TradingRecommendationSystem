@@ -163,7 +163,7 @@ jobs:
       - name: Start backend and run Lighthouse CI
         env:
           SIGNAL_TRADE_TESTING: "1"
-          DATABASE_URL: sqlite+aiosqlite:///./backend/data/trading_lh_ci.db
+          DATABASE_URL: sqlite+aiosqlite:///./data/trading_lh_ci.db
           JWT_SECRET: ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci
           OWNER_EMAIL: owner@example.com
           OWNER_PASSWORD: ci-ci-ci-ci-ci-ci-ci

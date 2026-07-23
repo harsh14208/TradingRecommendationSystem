@@ -1,54 +1,54 @@
 {
-  "generated_at": "2026-07-21T02:27:48.913648+00:00",
+  "generated_at": "2026-07-23T01:02:15.252713+00:00",
   "window_days": 180,
   "friction": 0.5,
-  "total_n": 741,
+  "total_n": 752,
   "passthrough": false,
   "global": {
-    "n": 741,
-    "net": 0.7187,
-    "std": 7.2554
+    "n": 752,
+    "net": 0.709,
+    "std": 7.2414
   },
   "parents": {
     "SELL|intraday": {
       "n": 71,
       "raw_net": -3.4569,
-      "net": -2.5392
+      "net": -2.5413
     },
     "BUY|intraday": {
       "n": 32,
       "raw_net": -1.33,
-      "net": -0.5421
+      "net": -0.5458
     },
     "SELL|position": {
       "n": 80,
       "raw_net": -1.002,
-      "net": -0.6579
+      "net": -0.6598
     },
     "SELL|swing": {
       "n": 29,
       "raw_net": -0.4531,
-      "net": 0.0252
+      "net": 0.0212
     },
     "BUY|swing": {
       "n": 70,
       "raw_net": 0.6723,
-      "net": 0.6826
+      "net": 0.6804
     },
     "BUY|position": {
       "n": 403,
       "raw_net": 2.3547,
-      "net": 2.2773
+      "net": 2.2769
     },
     "BUY|options_vrp": {
       "n": 15,
       "raw_net": -0.1267,
-      "net": 0.3564
+      "net": 0.3509
     },
     "SELL|options_vrp": {
-      "n": 41,
-      "raw_net": -1.9576,
-      "net": -1.0801
+      "n": 52,
+      "raw_net": -1.5313,
+      "net": -0.909
     }
   },
   "cohorts": {
@@ -58,9 +58,9 @@
       "sector": "XLV",
       "n": 24,
       "raw_net": -2.3167,
-      "net": -2.4178,
+      "net": -2.4188,
       "se": 0.5301,
-      "lb_net": -2.9479,
+      "lb_net": -2.9489,
       "deliver": false,
       "size_mult": 0.597
     },
@@ -70,9 +70,9 @@
       "sector": "XLY",
       "n": 4,
       "raw_net": 4.695,
-      "net": 0.3308,
-      "se": 1.481,
-      "lb_net": -1.1503,
+      "net": 0.3277,
+      "se": 1.4781,
+      "lb_net": -1.1505,
       "deliver": false,
       "size_mult": 1.055
     },
@@ -82,11 +82,11 @@
       "sector": "XLY",
       "n": 17,
       "raw_net": -3.6971,
-      "net": -2.0543,
-      "se": 1.1928,
-      "lb_net": -3.2471,
+      "net": -2.0553,
+      "se": 1.1905,
+      "lb_net": -3.2458,
       "deliver": false,
-      "size_mult": 0.658
+      "size_mult": 0.657
     },
     "SELL|position|XLV": {
       "action": "SELL",
@@ -94,9 +94,9 @@
       "sector": "XLV",
       "n": 5,
       "raw_net": -3.516,
-      "net": -1.2295,
-      "se": 1.4511,
-      "lb_net": -2.6806,
+      "net": -1.231,
+      "se": 1.4483,
+      "lb_net": -2.6793,
       "deliver": false,
       "size_mult": 0.795
     },
@@ -106,11 +106,11 @@
       "sector": "XLV",
       "n": 8,
       "raw_net": -2.0663,
-      "net": -0.5724,
-      "se": 1.3711,
-      "lb_net": -1.9435,
+      "net": -0.5752,
+      "se": 1.3685,
+      "lb_net": -1.9437,
       "deliver": false,
-      "size_mult": 0.905
+      "size_mult": 0.904
     },
     "SELL|intraday|XLK": {
       "action": "SELL",
@@ -118,9 +118,9 @@
       "sector": "XLK",
       "n": 28,
       "raw_net": -4.5961,
-      "net": -3.739,
+      "net": -3.7399,
       "se": 1.2254,
-      "lb_net": -4.9644,
+      "lb_net": -4.9653,
       "deliver": false,
       "size_mult": 0.5
     },
@@ -130,11 +130,11 @@
       "sector": "XLY",
       "n": 1,
       "raw_net": 0.13,
-      "net": 0.0302,
-      "se": 1.5833,
-      "lb_net": -1.5531,
+      "net": 0.0264,
+      "se": 1.5802,
+      "lb_net": -1.5538,
       "deliver": false,
-      "size_mult": 1.005
+      "size_mult": 1.004
     },
     "SELL|intraday|NONE": {
       "action": "SELL",
@@ -142,11 +142,11 @@
       "sector": null,
       "n": 6,
       "raw_net": -3.8433,
-      "net": -2.8402,
-      "se": 1.4229,
-      "lb_net": -4.2631,
+      "net": -2.8418,
+      "se": 1.4202,
+      "lb_net": -4.2619,
       "deliver": false,
-      "size_mult": 0.527
+      "size_mult": 0.526
     },
     "SELL|intraday|XLB": {
       "action": "SELL",
@@ -154,9 +154,9 @@
       "sector": "XLB",
       "n": 6,
       "raw_net": -3.0283,
-      "net": -2.6521,
-      "se": 1.4229,
-      "lb_net": -4.075,
+      "net": -2.6537,
+      "se": 1.4202,
+      "lb_net": -4.0738,
       "deliver": false,
       "size_mult": 0.558
     },
@@ -166,9 +166,9 @@
       "sector": "XLC",
       "n": 3,
       "raw_net": -3.42,
-      "net": -0.4242,
-      "se": 1.5129,
-      "lb_net": -1.937,
+      "net": -0.4277,
+      "se": 1.5099,
+      "lb_net": -1.9376,
       "deliver": false,
       "size_mult": 0.929
     },
@@ -178,11 +178,11 @@
       "sector": "XLY",
       "n": 7,
       "raw_net": -2.8457,
-      "net": -2.6187,
-      "se": 1.3963,
-      "lb_net": -4.015,
+      "net": -2.6202,
+      "se": 1.3936,
+      "lb_net": -4.0138,
       "deliver": false,
-      "size_mult": 0.564
+      "size_mult": 0.563
     },
     "SELL|swing|NONE": {
       "action": "SELL",
@@ -190,11 +190,11 @@
       "sector": null,
       "n": 7,
       "raw_net": 2.4257,
-      "net": 0.6476,
-      "se": 1.3963,
-      "lb_net": -0.7487,
+      "net": 0.6446,
+      "se": 1.3936,
+      "lb_net": -0.749,
       "deliver": false,
-      "size_mult": 1.108
+      "size_mult": 1.107
     },
     "SELL|swing|XLF": {
       "action": "SELL",
@@ -202,11 +202,11 @@
       "sector": "XLF",
       "n": 1,
       "raw_net": -8.0,
-      "net": -0.357,
-      "se": 1.5833,
-      "lb_net": -1.9402,
+      "net": -0.3608,
+      "se": 1.5802,
+      "lb_net": -1.941,
       "deliver": false,
-      "size_mult": 0.941
+      "size_mult": 0.94
     },
     "BUY|swing|NONE": {
       "action": "BUY",
@@ -214,9 +214,9 @@
       "sector": null,
       "n": 7,
       "raw_net": 11.63,
-      "net": 3.5208,
-      "se": 1.3963,
-      "lb_net": 2.1245,
+      "net": 3.5192,
+      "se": 1.3936,
+      "lb_net": 2.1256,
       "deliver": true,
       "size_mult": 1.5
     },
@@ -226,9 +226,9 @@
       "sector": "XLK",
       "n": 7,
       "raw_net": 2.3657,
-      "net": 0.632,
-      "se": 1.3963,
-      "lb_net": -0.7643,
+      "net": 0.629,
+      "se": 1.3936,
+      "lb_net": -0.7646,
       "deliver": false,
       "size_mult": 1.105
     },
@@ -238,11 +238,11 @@
       "sector": "XLK",
       "n": 10,
       "raw_net": -0.938,
-      "net": -0.6741,
-      "se": 1.3247,
-      "lb_net": -1.9987,
+      "net": -0.6765,
+      "se": 1.3221,
+      "lb_net": -1.9986,
       "deliver": false,
-      "size_mult": 0.888
+      "size_mult": 0.887
     },
     "SELL|position|XLF": {
       "action": "SELL",
@@ -250,9 +250,9 @@
       "sector": "XLF",
       "n": 19,
       "raw_net": -0.5832,
-      "net": -0.6215,
-      "se": 1.1618,
-      "lb_net": -1.7833,
+      "net": -0.6225,
+      "se": 1.1596,
+      "lb_net": -1.782,
       "deliver": false,
       "size_mult": 0.896
     },
@@ -262,9 +262,9 @@
       "sector": "XLF",
       "n": 58,
       "raw_net": -1.2648,
-      "net": -0.3566,
+      "net": -0.3567,
       "se": 0.349,
-      "lb_net": -0.7056,
+      "lb_net": -0.7057,
       "deliver": false,
       "size_mult": 0.941
     },
@@ -274,9 +274,9 @@
       "sector": "XLP",
       "n": 40,
       "raw_net": -0.965,
-      "net": 0.1158,
+      "net": 0.1156,
       "se": 0.2733,
-      "lb_net": -0.1576,
+      "lb_net": -0.1577,
       "deliver": false,
       "size_mult": 1.019
     },
@@ -286,9 +286,9 @@
       "sector": "XLV",
       "n": 53,
       "raw_net": 2.5277,
-      "net": 2.4591,
+      "net": 2.459,
       "se": 0.8176,
-      "lb_net": 1.6415,
+      "lb_net": 1.6414,
       "deliver": true,
       "size_mult": 1.41
     },
@@ -298,9 +298,9 @@
       "sector": "XLK",
       "n": 20,
       "raw_net": -0.17,
-      "net": -0.4139,
+      "net": -0.4149,
       "se": 0.9396,
-      "lb_net": -1.3535,
+      "lb_net": -1.3545,
       "deliver": false,
       "size_mult": 0.931
     },
@@ -310,11 +310,11 @@
       "sector": "XLC",
       "n": 17,
       "raw_net": 0.4429,
-      "net": -0.1521,
-      "se": 1.1928,
-      "lb_net": -1.3449,
+      "net": -0.1531,
+      "se": 1.1905,
+      "lb_net": -1.3436,
       "deliver": false,
-      "size_mult": 0.975
+      "size_mult": 0.974
     },
     "BUY|position|XLK": {
       "action": "BUY",
@@ -334,9 +334,9 @@
       "sector": "XLE",
       "n": 16,
       "raw_net": -3.0163,
-      "net": -0.0754,
-      "se": 1.2092,
-      "lb_net": -1.2846,
+      "net": -0.0756,
+      "se": 1.2069,
+      "lb_net": -1.2825,
       "deliver": false,
       "size_mult": 0.987
     },
@@ -346,9 +346,9 @@
       "sector": "XLC",
       "n": 21,
       "raw_net": 3.6333,
-      "net": 2.9719,
+      "net": 2.9717,
       "se": 1.1942,
-      "lb_net": 1.7776,
+      "lb_net": 1.7774,
       "deliver": true,
       "size_mult": 1.495
     },
@@ -358,9 +358,9 @@
       "sector": "XLC",
       "n": 8,
       "raw_net": -6.9925,
-      "net": -1.5103,
-      "se": 1.3711,
-      "lb_net": -2.8814,
+      "net": -1.5119,
+      "se": 1.3685,
+      "lb_net": -2.8804,
       "deliver": false,
       "size_mult": 0.748
     },
@@ -370,9 +370,9 @@
       "sector": "XLY",
       "n": 30,
       "raw_net": 2.9813,
-      "net": 2.6997,
+      "net": 2.6996,
       "se": 0.6472,
-      "lb_net": 2.0525,
+      "lb_net": 2.0523,
       "deliver": true,
       "size_mult": 1.45
     },
@@ -382,11 +382,11 @@
       "sector": "XLI",
       "n": 1,
       "raw_net": -12.22,
-      "net": -0.5579,
-      "se": 1.5833,
-      "lb_net": -2.1412,
+      "net": -0.5617,
+      "se": 1.5802,
+      "lb_net": -2.1419,
       "deliver": false,
-      "size_mult": 0.907
+      "size_mult": 0.906
     },
     "BUY|options_vrp|NONE": {
       "action": "BUY",
@@ -394,11 +394,11 @@
       "sector": null,
       "n": 15,
       "raw_net": -0.1267,
-      "net": 0.1494,
-      "se": 1.2264,
-      "lb_net": -1.077,
+      "net": 0.1462,
+      "se": 1.224,
+      "lb_net": -1.0778,
       "deliver": false,
-      "size_mult": 1.025
+      "size_mult": 1.024
     },
     "SELL|swing|XLP": {
       "action": "SELL",
@@ -406,11 +406,11 @@
       "sector": "XLP",
       "n": 1,
       "raw_net": 0.2,
-      "net": 0.0335,
-      "se": 1.5833,
-      "lb_net": -1.5497,
+      "net": 0.0297,
+      "se": 1.5802,
+      "lb_net": -1.5505,
       "deliver": false,
-      "size_mult": 1.006
+      "size_mult": 1.005
     },
     "BUY|position|NONE": {
       "action": "BUY",
@@ -418,9 +418,9 @@
       "sector": null,
       "n": 12,
       "raw_net": 3.3608,
-      "net": 2.6836,
-      "se": 1.2826,
-      "lb_net": 1.401,
+      "net": 2.6834,
+      "se": 1.2801,
+      "lb_net": 1.4033,
       "deliver": true,
       "size_mult": 1.447
     },
@@ -428,13 +428,13 @@
       "action": "SELL",
       "style": "options_vrp",
       "sector": null,
-      "n": 41,
-      "raw_net": -1.9576,
-      "net": -1.6699,
-      "se": 0.6742,
-      "lb_net": -2.3441,
+      "n": 52,
+      "raw_net": -1.5313,
+      "net": -1.3585,
+      "se": 0.6531,
+      "lb_net": -2.0116,
       "deliver": false,
-      "size_mult": 0.722
+      "size_mult": 0.774
     },
     "BUY|swing|XLK": {
       "action": "BUY",
@@ -442,11 +442,11 @@
       "sector": "XLK",
       "n": 17,
       "raw_net": 4.4029,
-      "net": 2.3919,
-      "se": 1.1928,
-      "lb_net": 1.1992,
+      "net": 2.3908,
+      "se": 1.1905,
+      "lb_net": 1.2003,
       "deliver": true,
-      "size_mult": 1.399
+      "size_mult": 1.398
     },
     "SELL|position|XLB": {
       "action": "SELL",
@@ -454,9 +454,9 @@
       "sector": "XLB",
       "n": 2,
       "raw_net": 3.61,
-      "net": -0.2699,
-      "se": 1.5469,
-      "lb_net": -1.8168,
+      "net": -0.2716,
+      "se": 1.5439,
+      "lb_net": -1.8155,
       "deliver": false,
       "size_mult": 0.955
     },
@@ -466,9 +466,9 @@
       "sector": "XLB",
       "n": 3,
       "raw_net": -3.7267,
-      "net": 0.1075,
-      "se": 1.5129,
-      "lb_net": -1.4054,
+      "net": 0.1056,
+      "se": 1.5099,
+      "lb_net": -1.4044,
       "deliver": false,
       "size_mult": 1.018
     },
@@ -478,9 +478,9 @@
       "sector": "XLI",
       "n": 10,
       "raw_net": -0.475,
-      "net": 0.2967,
-      "se": 1.3247,
-      "lb_net": -1.0279,
+      "net": 0.2953,
+      "se": 1.3221,
+      "lb_net": -1.0268,
       "deliver": false,
       "size_mult": 1.049
     },
@@ -490,9 +490,9 @@
       "sector": "XLU",
       "n": 3,
       "raw_net": -4.1767,
-      "net": 1.4355,
-      "se": 1.5129,
-      "lb_net": -0.0774,
+      "net": 1.4351,
+      "se": 1.5099,
+      "lb_net": -0.0748,
       "deliver": false,
       "size_mult": 1.239
     },
@@ -502,11 +502,11 @@
       "sector": "XLP",
       "n": 2,
       "raw_net": 0.595,
-      "net": -0.4387,
-      "se": 1.5469,
-      "lb_net": -1.9856,
+      "net": -0.4421,
+      "se": 1.5439,
+      "lb_net": -1.986,
       "deliver": false,
-      "size_mult": 0.927
+      "size_mult": 0.926
     },
     "BUY|position|XLI": {
       "action": "BUY",
@@ -514,9 +514,9 @@
       "sector": "XLI",
       "n": 24,
       "raw_net": -1.6592,
-      "net": 0.1301,
+      "net": 0.13,
       "se": 0.5915,
-      "lb_net": -0.4614,
+      "lb_net": -0.4616,
       "deliver": false,
       "size_mult": 1.022
     },
@@ -526,11 +526,11 @@
       "sector": null,
       "n": 6,
       "raw_net": -4.4967,
-      "net": -1.4547,
-      "se": 1.4229,
-      "lb_net": -2.8776,
+      "net": -1.4575,
+      "se": 1.4202,
+      "lb_net": -2.8777,
       "deliver": false,
-      "size_mult": 0.758
+      "size_mult": 0.757
     },
     "BUY|swing|XLV": {
       "action": "BUY",
@@ -538,9 +538,9 @@
       "sector": "XLV",
       "n": 6,
       "raw_net": 0.1783,
-      "net": 0.5662,
-      "se": 1.4229,
-      "lb_net": -0.8567,
+      "net": 0.5645,
+      "se": 1.4202,
+      "lb_net": -0.8556,
       "deliver": false,
       "size_mult": 1.094
     },
@@ -550,9 +550,9 @@
       "sector": "XLB",
       "n": 2,
       "raw_net": -0.28,
-      "net": 2.0448,
-      "se": 1.5469,
-      "lb_net": 0.498,
+      "net": 2.0445,
+      "se": 1.5439,
+      "lb_net": 0.5006,
       "deliver": true,
       "size_mult": 1.341
     },
@@ -562,9 +562,9 @@
       "sector": "XLE",
       "n": 2,
       "raw_net": -0.855,
-      "net": 0.5428,
-      "se": 1.5469,
-      "lb_net": -1.004,
+      "net": 0.5408,
+      "se": 1.5439,
+      "lb_net": -1.0031,
       "deliver": false,
       "size_mult": 1.09
     },
@@ -574,9 +574,9 @@
       "sector": "XLRE",
       "n": 3,
       "raw_net": 0.2067,
-      "net": 0.6205,
-      "se": 1.5129,
-      "lb_net": -0.8923,
+      "net": 0.6186,
+      "se": 1.5099,
+      "lb_net": -0.8913,
       "deliver": false,
       "size_mult": 1.103
     },
@@ -586,11 +586,11 @@
       "sector": "XLF",
       "n": 9,
       "raw_net": -2.9189,
-      "net": -1.2797,
-      "se": 1.3473,
+      "net": -1.2823,
+      "se": 1.3447,
       "lb_net": -2.627,
       "deliver": false,
-      "size_mult": 0.787
+      "size_mult": 0.786
     },
     "BUY|swing|XLP": {
       "action": "BUY",
@@ -598,9 +598,9 @@
       "sector": "XLP",
       "n": 8,
       "raw_net": -2.96,
-      "net": -0.3581,
-      "se": 1.3711,
-      "lb_net": -1.7293,
+      "net": -0.3597,
+      "se": 1.3685,
+      "lb_net": -1.7282,
       "deliver": false,
       "size_mult": 0.94
     },
@@ -610,11 +610,11 @@
       "sector": "XLF",
       "n": 5,
       "raw_net": -2.02,
-      "net": 0.1421,
-      "se": 1.4511,
-      "lb_net": -1.309,
+      "net": 0.1403,
+      "se": 1.4483,
+      "lb_net": -1.308,
       "deliver": false,
-      "size_mult": 1.024
+      "size_mult": 1.023
     },
     "BUY|intraday|XLI": {
       "action": "BUY",
@@ -622,11 +622,11 @@
       "sector": "XLI",
       "n": 1,
       "raw_net": 0.1,
-      "net": -0.5115,
-      "se": 1.5833,
-      "lb_net": -2.0948,
+      "net": -0.515,
+      "se": 1.5802,
+      "lb_net": -2.0953,
       "deliver": false,
-      "size_mult": 0.915
+      "size_mult": 0.914
     },
     "BUY|swing|XLU": {
       "action": "BUY",
@@ -634,9 +634,9 @@
       "sector": "XLU",
       "n": 1,
       "raw_net": -3.53,
-      "net": 0.482,
-      "se": 1.5833,
-      "lb_net": -1.1013,
+      "net": 0.4799,
+      "se": 1.5802,
+      "lb_net": -1.1003,
       "deliver": false,
       "size_mult": 1.08
     }

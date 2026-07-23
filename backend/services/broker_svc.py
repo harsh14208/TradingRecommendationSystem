@@ -1007,7 +1007,21 @@ async def execute_portfolio_for_user(
 
         side = "buy" if action == "BUY" else "sell"
         sig = sig_map.get(ticker)
-        if not sig:
+        if not sig and signal_id is None:
+            # Cash-overlay order (SGOV parking / VOO beta sleeve, see
+            # portfolio_allocator._add_overlay_orders) — not tied to a trading
+            # signal, so it has no natural entry/stop/target. Was previously
+            # silently dropped here (sig_map lookup always misses for SGOV/VOO),
+            # which meant the overlay computed and logged orders but never
+            # actually submitted them. Build a minimal synthetic sig: a plain
+            # notional order with no stop/target is correct for a parking
+            # position (no defined risk levels to bracket).
+            from services import market_data
+
+            quote = await market_data.get_quote(ticker)
+            quote_price = quote.get("p") if quote else None
+            sig = {"entry": quote_price, "price": quote_price, "stop": None, "target": None, "ticker": ticker}
+        elif not sig:
             continue
 
         # TSYS-9b: per-user risk limits

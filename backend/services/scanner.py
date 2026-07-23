@@ -2755,6 +2755,7 @@ async def _run_scan_impl(broadcast_fn=None, broadcast_signal_fn=None):
                 has_mr=sig.get("hasMr", True),
                 has_mr_sell=sig.get("hasMrSell", False),
                 long_only=getattr(settings, "long_only", True),
+                require_mr_setup=getattr(settings, "require_mr_setup", True),
                 ticker_win_rates=market_ctx.get("adaptive_weights", {}).get("ticker_win_rates") if market_ctx else None,
                 promoted_sectors=_promoted_sectors,
             )

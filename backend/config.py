@@ -123,6 +123,14 @@ class Settings(BaseSettings):
     # Long-only regime: when True, SELL signals are never delivered. When False,
     # SELLs are allowed through a mirrored MR-setup gate.
     long_only: bool = True
+    # MR-setup hard block (added 2026-06-05 to fix a 42% live vs 68% backtest WR
+    # gap; relaxed 2→1 condition 2026-06-17). Requiring ≥1 of RSI/BB%B/IBS/VWAP%
+    # oversold cut BUY delivery to near zero once the market stopped offering
+    # oversold dips (April/May ~200-290 BUY/mo -> June/July single digits).
+    # Disabled 2026-07-22 pending a better-calibrated replacement gate; the
+    # underlying hasMr/hasMrSell flags are still computed and tagged on every
+    # signal so a new gate can be designed from real outcome data.
+    require_mr_setup: bool = False
     # Daily send caps. 0 = no cap.
     max_sends_per_ticker_per_day: int = 1
     max_buys_per_sector_per_day: int = 2

@@ -152,6 +152,7 @@ def structural_delivery_status(
     has_mr: bool = True,
     has_mr_sell: bool = False,
     long_only: bool = True,
+    require_mr_setup: bool = True,
     ticker_win_rates: dict | None = None,
     promoted_sectors: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[bool, str | None]:
@@ -191,10 +192,15 @@ def structural_delivery_status(
     # so it is exempt — gated by its own style floor instead. Intraday SELL is NOT
     # exempt (2026-06-22): the MR-exempt intraday-SELL cohort resolved 0% WR /
     # −6.46%/trade since 2026-06-15, so all SELLs require an overbought setup.
-    if action == "BUY" and style != "intraday" and not has_mr:
-        return False, "no mean-reversion setup — needs ≥1 oversold condition"
-    if action == "SELL" and not has_mr_sell:
-        return False, "no SELL mean-reversion setup — needs ≥1 overbought condition"
+    # Disabled by default 2026-07-22 (require_mr_setup=False) — the gate fixed a
+    # real WR gap but collapsed live volume to near zero once the market stopped
+    # offering oversold dips; hasMr/hasMrSell are still passed through so a
+    # replacement gate can be built from real outcome data.
+    if require_mr_setup:
+        if action == "BUY" and style != "intraday" and not has_mr:
+            return False, "no mean-reversion setup — needs ≥1 oversold condition"
+        if action == "SELL" and not has_mr_sell:
+            return False, "no SELL mean-reversion setup — needs ≥1 overbought condition"
 
     # Blocked tickers (no confirmed 10-day MR edge, N≥30).
     if ticker in BLOCKED_TICKERS:
@@ -241,6 +247,7 @@ def passes_structural_delivery_gates(
     has_mr: bool = True,
     has_mr_sell: bool = False,
     long_only: bool = True,
+    require_mr_setup: bool = True,
     ticker_win_rates: dict | None = None,
     promoted_sectors: frozenset[str] | set[str] = frozenset(),
 ) -> bool:
@@ -255,6 +262,7 @@ def passes_structural_delivery_gates(
         has_mr=has_mr,
         has_mr_sell=has_mr_sell,
         long_only=long_only,
+        require_mr_setup=require_mr_setup,
         ticker_win_rates=ticker_win_rates,
         promoted_sectors=promoted_sectors,
     )
@@ -306,13 +314,19 @@ async def check_delivery_gates(
     # cohort resolved at 0% WR / −6.46%/trade since 2026-06-15 (shorting momentum
     # into a rising tape). All SELLs now require an overbought MR setup.
     # NOTE: default missing hasMr to True for pre-field rows (aligns with structural_delivery_status).
-    _has_mr = sig_dict.get("hasMr")
-    if _has_mr is None:
-        _has_mr = True
-    if action == "BUY" and style != "intraday" and not _has_mr:
-        return "no MR setup — ≥1 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
-    if action == "SELL" and not sig_dict.get("hasMrSell", False):
-        return "no SELL MR setup — ≥1 overbought condition required for SELL delivery", sig_dict
+    # Disabled by default 2026-07-22 (settings.require_mr_setup=False) — see
+    # config.py comment: the gate fixed a real WR gap but collapsed live BUY
+    # volume to near zero once the market stopped offering oversold dips.
+    # hasMr/hasMrSell are still computed and tagged on every signal for a
+    # future replacement gate.
+    if getattr(settings, "require_mr_setup", True):
+        _has_mr = sig_dict.get("hasMr")
+        if _has_mr is None:
+            _has_mr = True
+        if action == "BUY" and style != "intraday" and not _has_mr:
+            return "no MR setup — ≥1 of RSI/BB%B/IBS/VWAP% oversold conditions required for BUY delivery", sig_dict
+        if action == "SELL" and not sig_dict.get("hasMrSell", False):
+            return "no SELL MR setup — ≥1 overbought condition required for SELL delivery", sig_dict
 
     # ── Cohort-EV gate (QENG-COHORT) — self-calibrating (action, style, sector) ──
     # Learned from the system's own trailing resolved outcomes; blocks cohorts

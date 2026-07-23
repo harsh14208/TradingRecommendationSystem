@@ -242,7 +242,7 @@ def test_signals_list_tags_delivery_status():
         _make_feed_signal(5, "LRCX", "BUY", 80, "swing"),  # blocked ticker
         _make_feed_signal(6, "JPM", "BUY", 80, "swing", sector_etf="XLF"),  # blocked sector
         _make_feed_signal(7, "TSLA", "BUY", 35, "intraday"),  # intraday below 40 floor
-        _make_feed_signal(8, "SCCO", "BUY", 80, "swing", has_mr=False),  # no MR setup
+        _make_feed_signal(8, "SCCO", "BUY", 80, "swing", has_mr=False),  # no MR setup (gate disabled by default)
     ]
 
     mock_result = MagicMock()
@@ -266,20 +266,21 @@ def test_signals_list_tags_delivery_status():
     by_ticker = {s["ticker"]: s for s in body}
     # All BUYs surfaced, none hidden.
     assert set(by_ticker) == {"AAPL", "AMD", "LRCX", "JPM", "TSLA", "SCCO"}
-    # Only AAPL is deliverable, and it sorts first.
-    assert body[0]["ticker"] == "AAPL"
+    # AAPL and SCCO are deliverable (SCCO has no MR setup, but require_mr_setup
+    # defaults to False as of 2026-07-22 — see config.py).
+    assert body[0]["ticker"] in ("AAPL", "SCCO")
     assert by_ticker["AAPL"]["deliverable"] is True
     assert by_ticker["AAPL"]["deliveryStatus"] is None
+    assert by_ticker["SCCO"]["deliverable"] is True
+    assert by_ticker["SCCO"]["deliveryStatus"] is None
     # Undeliverable ones carry a flag + reason.
-    for tk in ("AMD", "LRCX", "JPM", "TSLA", "SCCO"):
+    for tk in ("AMD", "LRCX", "JPM", "TSLA"):
         assert by_ticker[tk]["deliverable"] is False
         assert by_ticker[tk]["deliveryStatus"]
     assert "floor" in by_ticker["AMD"]["deliveryStatus"]
     assert "blocked" in by_ticker["LRCX"]["deliveryStatus"]
     assert "XLF" in by_ticker["JPM"]["deliveryStatus"]
     assert "40" in by_ticker["TSLA"]["deliveryStatus"]  # intraday below the 40% floor
-    # MR-setup gate: a BUY without ≥2 oversold conditions is not deliverable.
-    assert "mean-reversion setup" in by_ticker["SCCO"]["deliveryStatus"]
 
 
 @pytest.mark.skipif(router is None, reason="routers.signals import failed")

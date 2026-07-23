@@ -71,7 +71,7 @@ async def _run(api_key: str, api_secret: str, tickers: list[str], broadcast_fn: 
                 raw = await ws.recv()
                 _last_frame = time.monotonic()
                 msgs = json.loads(raw)
-                if not any(m.get("T") == "connected" for m in msgs):
+                if not any(m.get("T") == "success" and m.get("msg") == "connected" for m in msgs):
                     log.warning("Alpaca WS unexpected greeting: %s", msgs)
 
                 await ws.send(json.dumps({"action": "auth", "key": api_key, "secret": api_secret}))
