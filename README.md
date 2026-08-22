@@ -1,9 +1,9 @@
-| ![CI](https://github.com/harsh14208/TradingRecommendationSystem/actions/workflows/ci.yml/badge.svg) | ~2700 tests | Python 3.11 · FastAPI · PostgreSQL | React frontend |
-|---|---|---|---|
-
 # Signal.Trade
 
 A quantitative mean-reversion trading system: a 23-year backtested signal engine, a FastAPI backend that scans a live watchlist and delivers scored BUY/SELL signals over Telegram, and an optional broker-execution layer (Alpaca/IBKR paper or live).
+
+| ![CI](https://github.com/harsh14208/TradingRecommendationSystem/actions/workflows/ci.yml/badge.svg) | ~2700 tests | Python 3.11 · FastAPI · PostgreSQL | React frontend |
+|---|---|---|---|
 
 > ⚠️ **Not financial advice.** All signals are algorithmic output for informational and educational purposes only. This is a personal research project, not a registered investment adviser or broker-dealer. Past performance does not guarantee future results — see [Honest performance](#honest-performance) below before trusting any headline number.
 
