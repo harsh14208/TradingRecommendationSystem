@@ -1,7 +1,7 @@
 # Integration Status Report
 
-> Last updated: 2026-11-15T04:42:31Z
-> Commit: `2f740a59d6b99294fbe4fd8c623b03b31220b76d`
+> Last updated: 2026-11-22T04:57:16Z
+> Commit: `7d9794d88e40ecef0203f18962e518c2b0044209`
 > Pipeline: **FAILED**
 
 ## Summary
@@ -12,7 +12,7 @@
 | Failed | 2 |
 | Skipped | 32 |
 | Coverage | 75.4% |
-| Duration | 133.82s |
+| Duration | 157.21s |
 
 ## Feature Breakdown
 | Feature / Module | Tests | Status | Duration (s) | Errors |
@@ -50,8 +50,8 @@
 ## Trend
 | Run | Timestamp | Tests | Coverage | Status |
 |-----|-----------|-------|----------|--------|
-| Current | 2026-11-15T04:42:31Z | 2700 | 75.4% | FAILED |
-| Previous | 2026-11-08T04:16:48Z | 2700 | 75.4% | FAILED |
+| Current | 2026-11-22T04:57:16Z | 2700 | 75.4% | FAILED |
+| Previous | 2026-11-15T04:42:31Z | 2700 | 75.4% | FAILED |
 
 ### Health Delta
 - Tests: +0 vs previous
